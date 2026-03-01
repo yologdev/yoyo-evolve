@@ -162,6 +162,9 @@ async fn main() {
     if !skills.is_empty() {
         println!("{DIM}  skills: {} loaded{RESET}", skills.len());
     }
+    if let Some(branch) = git_branch() {
+        println!("{DIM}  git:   {branch}{RESET}");
+    }
     println!("{DIM}  cwd:   {cwd}{RESET}\n");
 
     let stdin = io::stdin();
@@ -169,7 +172,12 @@ async fn main() {
     let mut session_total = Usage::default();
 
     loop {
-        print!("{BOLD}{GREEN}> {RESET}");
+        let prompt = if let Some(branch) = git_branch() {
+            format!("{BOLD}{GREEN}{branch}{RESET} {BOLD}{GREEN}> {RESET}")
+        } else {
+            format!("{BOLD}{GREEN}> {RESET}")
+        };
+        print!("{prompt}");
         io::stdout().flush().ok();
 
         let line = match lines.next() {
@@ -210,6 +218,23 @@ async fn main() {
     }
 
     println!("\n{DIM}  bye 👋{RESET}\n");
+}
+
+/// Get the current git branch name, if we're in a git repo.
+fn git_branch() -> Option<String> {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
 }
 
 async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage) {
@@ -415,5 +440,18 @@ mod tests {
         assert_eq!(truncate_with_ellipsis("hello world", 5), "hello…");
         assert_eq!(truncate_with_ellipsis("hi", 5), "hi");
         assert_eq!(truncate_with_ellipsis("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_git_branch_returns_something_in_repo() {
+        // We're running tests inside the yoyo repo, so we should get a branch name
+        let branch = git_branch();
+        assert!(branch.is_some(), "Expected to be in a git repo");
+        let name = branch.unwrap();
+        assert!(!name.is_empty(), "Branch name should not be empty");
+        assert!(
+            !name.contains('\n'),
+            "Branch name should not contain newlines"
+        );
     }
 }
