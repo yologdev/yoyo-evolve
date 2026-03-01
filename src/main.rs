@@ -199,6 +199,14 @@ async fn main() {
             continue;
         }
 
+        // Multi-line input: collect continuation lines
+        let input = if needs_continuation(input) {
+            collect_multiline(input, &mut lines)
+        } else {
+            input.to_string()
+        };
+        let input = input.trim();
+
         match input {
             "/quit" | "/exit" => break,
             "/help" => {
@@ -206,7 +214,11 @@ async fn main() {
                 println!("  /quit, /exit   Exit yoyo");
                 println!("  /clear         Clear conversation history");
                 println!("  /model <name>  Switch model (clears conversation)");
-                println!("  /status        Show session info{RESET}\n");
+                println!("  /status        Show session info");
+                println!();
+                println!("  Multi-line input:");
+                println!("  End a line with \\ to continue on the next line");
+                println!("  Start with ``` to enter a fenced code block{RESET}\n");
                 continue;
             }
             "/status" => {
@@ -257,6 +269,64 @@ fn git_branch() -> Option<String> {
                 None
             }
         })
+}
+
+/// Check if a line needs continuation (backslash at end, or opens a code fence).
+fn needs_continuation(line: &str) -> bool {
+    line.ends_with('\\') || line.starts_with("```")
+}
+
+/// Collect multi-line input. Supports:
+/// - Backslash continuation: lines ending with `\` continue on the next line
+/// - Code fences: input starting with ``` collects until closing ```
+fn collect_multiline(
+    first_line: &str,
+    lines: &mut io::Lines<io::StdinLock<'_>>,
+) -> String {
+    let mut buf = String::new();
+
+    if first_line.starts_with("```") {
+        // Code fence mode: collect until closing ```
+        buf.push_str(first_line);
+        buf.push('\n');
+        loop {
+            print!("{DIM}  ...{RESET} ");
+            io::stdout().flush().ok();
+            match lines.next() {
+                Some(Ok(line)) => {
+                    buf.push_str(&line);
+                    buf.push('\n');
+                    if line.trim() == "```" {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+    } else {
+        // Backslash continuation mode
+        let mut current = first_line.to_string();
+        loop {
+            if current.ends_with('\\') {
+                current.truncate(current.len() - 1);
+                buf.push_str(&current);
+                buf.push('\n');
+                print!("{DIM}  ...{RESET} ");
+                io::stdout().flush().ok();
+                match lines.next() {
+                    Some(Ok(line)) => {
+                        current = line;
+                    }
+                    _ => break,
+                }
+            } else {
+                buf.push_str(&current);
+                break;
+            }
+        }
+    }
+
+    buf
 }
 
 async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage) {
@@ -544,6 +614,22 @@ mod tests {
     fn test_format_tool_summary_unknown_tool() {
         let args = serde_json::json!({});
         assert_eq!(format_tool_summary("custom_tool", &args), "custom_tool");
+    }
+
+    #[test]
+    fn test_needs_continuation_backslash() {
+        assert!(needs_continuation("hello \\"));
+        assert!(needs_continuation("line ends with\\"));
+        assert!(!needs_continuation("normal line"));
+        assert!(!needs_continuation("has \\ in middle"));
+    }
+
+    #[test]
+    fn test_needs_continuation_code_fence() {
+        assert!(needs_continuation("```rust"));
+        assert!(needs_continuation("```"));
+        assert!(!needs_continuation("some text ```"));
+        assert!(!needs_continuation("normal"));
     }
 
     #[test]
