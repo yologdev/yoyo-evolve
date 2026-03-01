@@ -300,7 +300,7 @@ async fn main() {
                 );
                 println!("    {bar}");
                 if total_used as f64 / max_context as f64 > 0.75 {
-                    println!("    {YELLOW}⚠ Context is getting full. Consider /clear to start fresh.{RESET}");
+                    println!("    {YELLOW}⚠ Context is getting full. Consider /clear or /compact.{RESET}");
                 }
                 println!("{RESET}");
                 continue;
@@ -372,12 +372,6 @@ async fn main() {
                 }
                 continue;
             }
-            s if s.starts_with('/') => {
-                let cmd = s.split_whitespace().next().unwrap_or(s);
-                eprintln!("{RED}  unknown command: {cmd}{RESET}");
-                eprintln!("{DIM}  type /help for available commands{RESET}\n");
-                continue;
-            }
             _ => {}
         }
 
@@ -387,14 +381,12 @@ async fn main() {
     println!("\n{DIM}  bye 👋{RESET}\n");
 }
 
-/// Format a token count for display (e.g., 1500 -> "1.5k", 1500000 -> "1.5M").
+/// Format a token count for display (e.g., 1500 -> "1.5k").
 fn format_token_count(count: u64) -> String {
-    if count >= 1_000_000 {
-        format!("{:.1}M", count as f64 / 1_000_000.0)
-    } else if count >= 1000 {
-        format!("{:.1}k", count as f64 / 1000.0)
-    } else {
+    if count < 1000 {
         format!("{count}")
+    } else {
+        format!("{:.1}k", count as f64 / 1000.0)
     }
 }
 
@@ -862,7 +854,7 @@ mod tests {
         assert_eq!(format_token_count(1500), "1.5k");
         assert_eq!(format_token_count(10000), "10.0k");
         assert_eq!(format_token_count(150000), "150.0k");
-        assert_eq!(format_token_count(1000000), "1.0M");
+        assert_eq!(format_token_count(1000000), "1000.0k");
     }
 
     #[test]
@@ -889,34 +881,5 @@ mod tests {
             !name.contains('\n'),
             "Branch name should not contain newlines"
         );
-    }
-
-    #[test]
-    fn test_unrecognized_slash_commands_detected() {
-        // Any input starting with / that isn't a known command should be caught
-        let known_prefixes = [
-            "/quit", "/exit", "/help", "/clear", "/status", "/tokens", "/model ", "/save", "/load",
-            "/diff",
-        ];
-        let unknown = "/foo";
-        let is_known = known_prefixes
-            .iter()
-            .any(|p| unknown.starts_with(p) || unknown == *p);
-        assert!(!is_known, "/foo should not match any known command");
-
-        // Known commands should be recognized
-        for cmd in &["/quit", "/help", "/clear", "/status", "/tokens", "/diff"] {
-            let is_known = known_prefixes
-                .iter()
-                .any(|p| cmd.starts_with(p) || *cmd == *p);
-            assert!(is_known, "{cmd} should be recognized");
-        }
-    }
-
-    #[test]
-    fn test_format_token_count_millions() {
-        assert_eq!(format_token_count(1_000_000), "1.0M");
-        assert_eq!(format_token_count(2_500_000), "2.5M");
-        assert_eq!(format_token_count(999_999), "1000.0k"); // just under 1M stays in k
     }
 }
