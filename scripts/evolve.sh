@@ -77,10 +77,7 @@ else
 fi
 echo ""
 
-# ── Step 4: Prepare journal tail (last 10 entries for context) ──
-RECENT_JOURNAL=$(head -200 JOURNAL.md 2>/dev/null || echo "No journal yet.")
-
-# ── Step 5: Run evolution session ──
+# ── Step 4: Run evolution session ──
 SESSION_START_SHA=$(git rev-parse HEAD)
 echo "→ Starting evolution session..."
 echo ""
@@ -134,9 +131,10 @@ Make as many improvements as you can this session. Prioritize:
 For each improvement, follow the evolve skill rules:
 - Write a test first if possible
 - Use edit_file for surgical changes
-- Run cargo build && cargo test after changes
-- If build fails, try to fix it. If you can't, revert with: bash git checkout -- src/
-- After each successful change, commit: git add -A && git commit -m "Day $DAY ($SESSION_TIME): <short description>"
+- Run cargo fmt && cargo clippy --all-targets -- -D warnings && cargo build && cargo test after changes
+- If any check fails, read the error and fix it. Keep trying until it passes.
+- Only if you've tried 3+ times and are stuck, revert this change with: git checkout -- . (keeps previous commits)
+- After ALL checks pass, commit: git add -A && git commit -m "Day $DAY ($SESSION_TIME): <short description>"
 - Then move on to the next improvement
 
 === PHASE 5: Journal (MANDATORY — DO NOT SKIP) ===
@@ -177,12 +175,43 @@ rm -f "$PROMPT_FILE"
 echo ""
 echo "→ Session complete. Checking results..."
 
-# ── Step 6: Verify build and handle leftovers ──
-if cargo build --quiet 2>/dev/null && cargo test --quiet 2>/dev/null && cargo clippy --quiet --all-targets 2>/dev/null && cargo fmt -- --check 2>/dev/null; then
+# ── Step 6: Verify build ──
+# Agent is told to run fmt + clippy + build + test before each commit.
+# But if it didn't, we auto-fix what we can and revert what we can't.
+
+# Auto-fix formatting (never worth reverting over)
+if ! cargo fmt -- --check 2>/dev/null; then
+    echo "  Formatting issues — auto-fixing with cargo fmt..."
+    cargo fmt
+    git add -A && git commit -m "Day $DAY ($SESSION_TIME): cargo fmt" || true
+fi
+
+if cargo build --quiet 2>/dev/null && cargo test --quiet 2>/dev/null && cargo clippy --quiet --all-targets -- -D warnings 2>/dev/null; then
     echo "  Build: PASS"
 else
-    echo "  Build: FAIL — reverting source changes"
-    git checkout -- src/
+    echo "  Build: FAIL — finding last good commit..."
+    # Walk through session commits to find the last one that passes
+    GOOD_SHA=""
+    for SHA in $(git log --reverse --format="%H" "$SESSION_START_SHA"..HEAD); do
+        git checkout --quiet "$SHA" -- src/
+        cargo fmt --quiet
+        if cargo build --quiet 2>/dev/null && cargo test --quiet 2>/dev/null && cargo clippy --quiet --all-targets -- -D warnings 2>/dev/null; then
+            GOOD_SHA="$SHA"
+        else
+            break
+        fi
+    done
+
+    if [ -n "$GOOD_SHA" ]; then
+        echo "  Keeping good commits up to $(git log --oneline -1 "$GOOD_SHA" | head -c 60)"
+        git checkout "$GOOD_SHA" -- src/
+        cargo fmt --quiet
+        git add -A && git commit -m "Day $DAY ($SESSION_TIME): revert broken changes, keep passing commits" || true
+    else
+        echo "  No good commits found — resetting to pre-session state"
+        git checkout "$SESSION_START_SHA" -- src/
+        git add -A && git commit -m "Day $DAY ($SESSION_TIME): revert all session changes (build failed)" || true
+    fi
 fi
 
 # ── Step 6b: Verify journal was written ──
