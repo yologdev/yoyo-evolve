@@ -87,7 +87,7 @@ fn print_banner() {
     println!("{DIM}  Type /help for commands, /quit to exit{RESET}\n");
 }
 
-fn print_usage(usage: &Usage, total: &Usage) {
+fn print_usage(usage: &Usage, total: &Usage, model: &str) {
     if usage.input > 0 || usage.output > 0 {
         let cache_info = if usage.cache_read > 0 || usage.cache_write > 0 {
             format!(
@@ -97,8 +97,14 @@ fn print_usage(usage: &Usage, total: &Usage) {
         } else {
             String::new()
         };
+        let cost_info = estimate_cost(usage, model)
+            .map(|c| format!("  cost: {}", format_cost(c)))
+            .unwrap_or_default();
+        let total_cost_info = estimate_cost(total, model)
+            .map(|c| format!("  total: {}", format_cost(c)))
+            .unwrap_or_default();
         println!(
-            "\n{DIM}  tokens: {} in / {} out{cache_info}  (session: {} in / {} out){RESET}",
+            "\n{DIM}  tokens: {} in / {} out{cache_info}  (session: {} in / {} out){cost_info}{total_cost_info}{RESET}",
             usage.input, usage.output, total.input, total.output
         );
     }
@@ -230,7 +236,7 @@ async fn main() {
     if let Some(prompt_text) = prompt_arg {
         eprintln!("{DIM}  yoyo (prompt mode) — model: {model}{RESET}");
         let mut session_total = Usage::default();
-        run_prompt(&mut agent, prompt_text.trim(), &mut session_total).await;
+        run_prompt(&mut agent, prompt_text.trim(), &mut session_total, &model).await;
         return;
     }
 
@@ -246,7 +252,7 @@ async fn main() {
 
         eprintln!("{DIM}  yoyo (piped mode) — model: {model}{RESET}");
         let mut session_total = Usage::default();
-        run_prompt(&mut agent, input, &mut session_total).await;
+        run_prompt(&mut agent, input, &mut session_total, &model).await;
         return;
     }
 
@@ -368,6 +374,9 @@ async fn main() {
                     "    cache write: {} tokens",
                     format_token_count(session_total.cache_write)
                 );
+                if let Some(cost) = estimate_cost(&session_total, &model) {
+                    println!("    est. cost:   {}", format_cost(cost));
+                }
                 println!("{RESET}");
                 continue;
             }
@@ -493,7 +502,7 @@ async fn main() {
             _ => {}
         }
 
-        run_prompt(&mut agent, input, &mut session_total).await;
+        run_prompt(&mut agent, input, &mut session_total, &model).await;
 
         // Auto-compact when context window is getting full
         auto_compact_if_needed(&mut agent);
@@ -532,6 +541,54 @@ fn auto_compact_if_needed(agent: &mut Agent) {
             format_token_count(used),
             format_token_count(after)
         );
+    }
+}
+
+/// Estimate cost in USD for a given usage and model.
+/// Returns None if the model pricing is unknown.
+fn estimate_cost(usage: &Usage, model: &str) -> Option<f64> {
+    // Pricing per million tokens (MTok) from https://docs.anthropic.com/en/about-claude/pricing
+    let (input_per_m, cache_write_per_m, cache_read_per_m, output_per_m) = if model.contains("opus")
+    {
+        if model.contains("4-6")
+            || model.contains("4-5")
+            || model.contains("4.6")
+            || model.contains("4.5")
+        {
+            (5.0, 6.25, 0.50, 25.0)
+        } else {
+            // Opus 4, 4.1 etc.
+            (15.0, 18.75, 1.50, 75.0)
+        }
+    } else if model.contains("sonnet") {
+        (3.0, 3.75, 0.30, 15.0)
+    } else if model.contains("haiku") {
+        if model.contains("4-5") || model.contains("4.5") {
+            (1.0, 1.25, 0.10, 5.0)
+        } else {
+            (0.80, 1.0, 0.08, 4.0)
+        }
+    } else {
+        return None;
+    };
+
+    let cost = (usage.input as f64 * input_per_m
+        + usage.cache_write as f64 * cache_write_per_m
+        + usage.cache_read as f64 * cache_read_per_m
+        + usage.output as f64 * output_per_m)
+        / 1_000_000.0;
+
+    Some(cost)
+}
+
+/// Format a cost in USD for display (e.g., "$0.0042", "$1.23").
+fn format_cost(cost: f64) -> String {
+    if cost < 0.01 {
+        format!("${:.4}", cost)
+    } else if cost < 1.0 {
+        format!("${:.3}", cost)
+    } else {
+        format!("${:.2}", cost)
     }
 }
 
@@ -646,7 +703,7 @@ fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>)
     buf
 }
 
-async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage) {
+async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage, model: &str) {
     let mut rx = agent.prompt(input).await;
     let mut last_usage = Usage::default();
     let mut in_text = false;
@@ -756,7 +813,7 @@ async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage) {
     session_total.output += last_usage.output;
     session_total.cache_read += last_usage.cache_read;
     session_total.cache_write += last_usage.cache_write;
-    print_usage(&last_usage, session_total);
+    print_usage(&last_usage, session_total, model);
     println!();
 }
 
@@ -1158,6 +1215,71 @@ mod tests {
     fn test_auto_compact_threshold_constants() {
         assert_eq!(MAX_CONTEXT_TOKENS, 200_000);
         assert!((AUTO_COMPACT_THRESHOLD - 0.80).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_estimate_cost_opus() {
+        let usage = Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "claude-opus-4-6").unwrap();
+        // $5/MTok input + $25/MTok * 0.1 = $5 + $2.50 = $7.50
+        assert!((cost - 7.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_cost_sonnet() {
+        let usage = Usage {
+            input: 500_000,
+            output: 50_000,
+            cache_read: 200_000,
+            cache_write: 100_000,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "claude-sonnet-4-6").unwrap();
+        // $3 * 0.5 + $15 * 0.05 + $0.30 * 0.2 + $3.75 * 0.1
+        // = 1.50 + 0.75 + 0.06 + 0.375 = 2.685
+        assert!((cost - 2.685).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_cost_haiku() {
+        let usage = Usage {
+            input: 1_000_000,
+            output: 500_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "claude-haiku-4-5").unwrap();
+        // $1 * 1 + $5 * 0.5 = $3.50
+        assert!((cost - 3.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_cost_unknown_model() {
+        let usage = Usage {
+            input: 1000,
+            output: 1000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        assert!(estimate_cost(&usage, "gpt-4o").is_none());
+    }
+
+    #[test]
+    fn test_format_cost() {
+        assert_eq!(format_cost(0.0001), "$0.0001");
+        assert_eq!(format_cost(0.0042), "$0.0042");
+        assert_eq!(format_cost(0.05), "$0.050");
+        assert_eq!(format_cost(0.123), "$0.123");
+        assert_eq!(format_cost(1.5), "$1.50");
+        assert_eq!(format_cost(12.345), "$12.35");
     }
 
     #[test]
