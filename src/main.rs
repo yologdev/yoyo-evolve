@@ -1050,13 +1050,13 @@ mod tests {
     fn test_command_help_recognized() {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-            "/load", "/diff", "/undo", "/retry", "/history",
+            "/load", "/diff", "/undo", "/retry", "/history", "/model",
         ];
         for cmd in &commands {
             assert!(
                 [
                     "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-                    "/load", "/diff", "/undo", "/retry", "/history"
+                    "/load", "/diff", "/undo", "/retry", "/history", "/model"
                 ]
                 .contains(cmd),
                 "Command not recognized: {cmd}"
