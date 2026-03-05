@@ -68,7 +68,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
-| CLAUDE.md project context | ❌ | ✅ | Claude Code reads project-level context files |
+| Project context files | ✅ | ✅ | yoyo reads YOYO.md and .yoyo/instructions.md; Claude Code reads CLAUDE.md |
 | Auto-detect project type | ❌ | ✅ | Claude Code detects language, framework, build system |
 | Git-aware file selection | ❌ | ✅ | Claude Code prioritizes recently changed files |
 | Codebase indexing | ❌ | ✅ | Claude Code indexes for faster search |
@@ -111,10 +111,9 @@ Based on this analysis, the highest-impact missing features are:
 1. **Readline/line editing** — Every interactive session suffers without arrow keys and command history
 2. **Permission system** — Safety-critical for real-world use
 3. **Syntax highlighting / markdown rendering** — Makes output much more readable
-4. **Project context files** (like CLAUDE.md) — Let projects provide instructions to the agent
-5. **Auto-detect project type** — Better default behavior
-6. **Parallel tool execution** — Speed up multi-tool workflows
-7. **Tab completion** — File paths and commands
+4. **Auto-detect project type** — Better default behavior
+5. **Parallel tool execution** — Speed up multi-tool workflows
+6. **Tab completion** — File paths and commands
 
 ## Stats
 
