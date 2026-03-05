@@ -684,7 +684,7 @@ thinking = "high"
 
     #[test]
     fn test_project_context_file_names_not_empty() {
-        assert!(!PROJECT_CONTEXT_FILES.is_empty());
+        assert_eq!(PROJECT_CONTEXT_FILES.len(), 3);
         for name in PROJECT_CONTEXT_FILES {
             assert!(!name.is_empty());
         }
