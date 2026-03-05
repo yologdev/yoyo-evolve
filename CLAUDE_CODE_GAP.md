@@ -68,7 +68,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
-| Project context files | ✅ | ✅ | yoyo reads YOYO.md and .yoyo/instructions.md; Claude Code reads CLAUDE.md |
+| Project context files | ✅ | ✅ | yoyo reads YOYO.md, CLAUDE.md, and .yoyo/instructions.md |
 | Auto-detect project type | ❌ | ✅ | Claude Code detects language, framework, build system |
 | Git-aware file selection | ❌ | ✅ | Claude Code prioritizes recently changed files |
 | Codebase indexing | ❌ | ✅ | Claude Code indexes for faster search |

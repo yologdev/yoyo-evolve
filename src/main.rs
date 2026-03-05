@@ -519,7 +519,7 @@ async fn main() {
                 if files.is_empty() {
                     println!("{DIM}  No project context files found.");
                     println!("  Searched for: {}", PROJECT_CONTEXT_FILES.join(", "));
-                    println!("  Create YOYO.md or .yoyo/instructions.md to add project context.{RESET}\n");
+                    println!("  Create YOYO.md, CLAUDE.md, or .yoyo/instructions.md to add project context.{RESET}\n");
                 } else {
                     println!("{DIM}  Project context files:");
                     for (name, lines) in &files {

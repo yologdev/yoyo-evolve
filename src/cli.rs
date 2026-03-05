@@ -30,7 +30,7 @@ pub struct Config {
 }
 
 /// Project context file names, checked in order. All found files are concatenated.
-pub const PROJECT_CONTEXT_FILES: &[&str] = &["YOYO.md", ".yoyo/instructions.md"];
+pub const PROJECT_CONTEXT_FILES: &[&str] = &["YOYO.md", "CLAUDE.md", ".yoyo/instructions.md"];
 
 pub fn print_help() {
     println!("yoyo v{VERSION} — a coding agent growing up in public");
