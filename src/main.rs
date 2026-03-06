@@ -31,7 +31,7 @@ use prompt::*;
 
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
-use yoagent::context::{compact_messages, total_tokens, ContextConfig};
+use yoagent::context::{compact_messages, total_tokens, ContextConfig, ExecutionLimits};
 use yoagent::provider::AnthropicProvider;
 use yoagent::tools::default_tools;
 use yoagent::*;
@@ -44,6 +44,7 @@ fn build_agent(
     thinking: ThinkingLevel,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
+    max_turns: Option<usize>,
 ) -> Agent {
     let mut agent = Agent::new(AnthropicProvider)
         .with_system_prompt(system_prompt)
@@ -57,6 +58,12 @@ fn build_agent(
     }
     if let Some(temp) = temperature {
         agent.temperature = Some(temp);
+    }
+    if let Some(turns) = max_turns {
+        agent = agent.with_execution_limits(ExecutionLimits {
+            max_turns: turns,
+            ..ExecutionLimits::default()
+        });
     }
     agent
 }
@@ -86,6 +93,7 @@ async fn main() {
     let mut thinking = config.thinking;
     let max_tokens = config.max_tokens;
     let temperature = config.temperature;
+    let max_turns = config.max_turns;
     let continue_session = config.continue_session;
     let output_path = config.output_path;
     let mcp_servers = config.mcp_servers;
@@ -98,6 +106,7 @@ async fn main() {
         thinking,
         max_tokens,
         temperature,
+        max_turns,
     );
 
     // Connect to MCP servers (--mcp flags)
@@ -132,6 +141,7 @@ async fn main() {
                     thinking,
                     max_tokens,
                     temperature,
+                    max_turns,
                 );
                 eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
             }
@@ -376,6 +386,7 @@ async fn main() {
                     thinking,
                     max_tokens,
                     temperature,
+                    max_turns,
                 );
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
@@ -403,6 +414,7 @@ async fn main() {
                     thinking,
                     max_tokens,
                     temperature,
+                    max_turns,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -441,6 +453,7 @@ async fn main() {
                     thinking,
                     max_tokens,
                     temperature,
+                    max_turns,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -621,6 +634,12 @@ async fn main() {
                     max_tokens
                         .map(|m| m.to_string())
                         .unwrap_or_else(|| "default (8192)".to_string())
+                );
+                println!(
+                    "    max_turns:  {}",
+                    max_turns
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| "default (50)".to_string())
                 );
                 println!(
                     "    temperature: {}",

@@ -155,6 +155,14 @@ pub async fn run_prompt(
                             }
                         }
                     }
+                    AgentEvent::ToolExecutionUpdate { partial_result, .. } => {
+                        // Stream partial results from tools (MCP servers, sub-agents)
+                        let preview = tool_result_preview(&partial_result, 500);
+                        if !preview.is_empty() {
+                            print!("{DIM}{preview}{RESET}");
+                            io::stdout().flush().ok();
+                        }
+                    }
                     AgentEvent::MessageUpdate {
                         delta: StreamDelta::Text { delta },
                         ..

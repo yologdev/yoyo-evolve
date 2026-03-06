@@ -25,6 +25,7 @@ pub struct Config {
     pub thinking: ThinkingLevel,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    pub max_turns: Option<usize>,
     pub continue_session: bool,
     pub output_path: Option<String>,
     pub prompt_arg: Option<String>,
@@ -57,6 +58,7 @@ pub fn print_help() {
     println!("  --model <name>    Model to use (default: claude-opus-4-6)");
     println!("  --thinking <lvl>  Enable extended thinking (off, minimal, low, medium, high)");
     println!("  --max-tokens <n>  Maximum output tokens per response (default: 8192)");
+    println!("  --max-turns <n>   Maximum agent turns per prompt (default: 50)");
     println!("  --temperature <f> Sampling temperature (0.0-1.0, default: model default)");
     println!("  --skills <dir>    Directory containing skill files");
     println!("  --system <text>   Custom system prompt (overrides default)");
@@ -104,6 +106,7 @@ pub fn print_help() {
     println!("  model = \"claude-sonnet-4-20250514\"");
     println!("  thinking = \"medium\"");
     println!("  max_tokens = 4096");
+    println!("  max_turns = 20");
     println!("  api_key = \"sk-ant-...\"");
     println!();
     println!("CLI flags override config file values.");
@@ -152,6 +155,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--model",
     "--thinking",
     "--max-tokens",
+    "--max-turns",
     "--temperature",
     "--skills",
     "--system",
@@ -325,6 +329,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "--model",
         "--thinking",
         "--max-tokens",
+        "--max-turns",
         "--temperature",
         "--skills",
         "--system",
@@ -489,6 +494,22 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         })
         .map(clamp_temperature);
 
+    let max_turns = args
+        .iter()
+        .position(|a| a == "--max-turns")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| {
+            s.parse::<usize>().ok().or_else(|| {
+                eprintln!("{YELLOW}warning:{RESET} Invalid --max-turns value '{s}', using default");
+                None
+            })
+        })
+        .or_else(|| {
+            file_config
+                .get("max_turns")
+                .and_then(|s| s.parse::<usize>().ok())
+        });
+
     let output_path = args
         .iter()
         .position(|a| a == "--output" || a == "-o")
@@ -519,6 +540,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         thinking,
         max_tokens,
         temperature,
+        max_turns,
         continue_session,
         output_path,
         prompt_arg,
@@ -892,6 +914,7 @@ thinking = "high"
             "--model",
             "--thinking",
             "--max-tokens",
+            "--max-turns",
             "--temperature",
             "--skills",
             "--system",
