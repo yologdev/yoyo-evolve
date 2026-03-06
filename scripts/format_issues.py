@@ -2,6 +2,7 @@
 """Format GitHub issues JSON into readable markdown for the agent."""
 
 import json
+import os
 import sys
 
 
@@ -18,12 +19,37 @@ def compute_net_score(reaction_groups):
     return up, down, up - down
 
 
+def generate_boundary():
+    """Generate a unique boundary marker that cannot be predicted or spoofed.
+
+    Uses a random nonce so issue authors cannot embed matching markers
+    in their issue text to escape the content boundary.
+    """
+    nonce = os.urandom(16).hex()
+    return f"BOUNDARY-{nonce}"
+
+
+def sanitize_content(text, boundary_begin, boundary_end):
+    """Remove any occurrences of the boundary markers from user-submitted text.
+
+    This prevents users from spoofing content boundaries by embedding
+    marker-like strings in their issue text.
+    """
+    text = text.replace(boundary_begin, "[marker-stripped]")
+    text = text.replace(boundary_end, "[marker-stripped]")
+    return text
+
+
 def format_issues(issues, sponsor_logins=None):
     if not issues:
         return "No community issues today."
 
     # Sort by net score descending
     issues.sort(key=lambda i: compute_net_score(i.get("reactionGroups"))[2], reverse=True)
+
+    boundary = generate_boundary()
+    boundary_begin = f"[{boundary}-BEGIN]"
+    boundary_end = f"[{boundary}-END]"
 
     lines = ["# Community Issues\n"]
     lines.append(f"{len(issues)} open issues with `agent-input` label.\n")
@@ -38,7 +64,11 @@ def format_issues(issues, sponsor_logins=None):
         author = (issue.get("author") or {}).get("login", "")
         labels = [l.get("name", "") for l in issue.get("labels", []) if l.get("name") != "agent-input"]
 
-        lines.append("[USER-SUBMITTED CONTENT BEGIN]")
+        # Sanitize user content to strip any boundary markers
+        title = sanitize_content(title, boundary_begin, boundary_end)
+        body = sanitize_content(body, boundary_begin, boundary_end)
+
+        lines.append(boundary_begin)
         lines.append(f"### Issue #{num}: {title}")
         if sponsor_logins and author in sponsor_logins:
             lines.append("💖 **Sponsor**")
@@ -52,7 +82,7 @@ def format_issues(issues, sponsor_logins=None):
             body = body[:500] + "\n[... truncated]"
         if body:
             lines.append(body)
-        lines.append("[USER-SUBMITTED CONTENT END]")
+        lines.append(boundary_end)
         lines.append("")
         lines.append("---")
         lines.append("")
