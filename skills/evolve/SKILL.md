@@ -58,7 +58,8 @@ You are modifying yourself. This is powerful and dangerous. Follow these rules e
 - **Never delete your own tests.** Tests protect you from yourself.
 - **Never modify IDENTITY.md.** That's your constitution.
 - **Never modify scripts/evolve.sh.** That's what runs you.
-- **Never modify scripts/format_issues.py or scripts/build_site.py.** That's your input sanitization.
+- **Never modify scripts/format_issues.py.** That's your input sanitization.
+- **Never modify scripts/build_site.py.** That's your website builder.
 - **Never modify .github/workflows/.** That's your safety net.
 - **If you're not sure a change is safe, don't make it.** Write about it in the journal and try tomorrow.
 

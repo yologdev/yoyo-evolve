@@ -160,7 +160,8 @@ if command -v gh &>/dev/null; then
     SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
         --label "agent-self" --limit 5 \
         --json number,title,body \
-        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null || true)
+        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
+        | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
     if [ -n "$SELF_ISSUES" ]; then
         echo "  $(echo "$SELF_ISSUES" | grep -c '^### Issue') self-issues loaded."
     else
@@ -175,7 +176,8 @@ if command -v gh &>/dev/null; then
     HELP_ISSUES=$(gh issue list --repo "$REPO" --state open \
         --label "agent-help-wanted" --limit 5 \
         --json number,title,body,comments \
-        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n\(if (.comments | length) > 0 then "⚠️ Human replied:\n" + (.comments | map(.body) | join("\n---\n")) else "No replies yet." end)\n'"$BOUNDARY_END"'\n"' 2>/dev/null || true)
+        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n\(if (.comments | length) > 0 then "⚠️ Human replied:\n" + (.comments | map(.body) | join("\n---\n")) else "No replies yet." end)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
+        | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
     if [ -n "$HELP_ISSUES" ]; then
         echo "  $(echo "$HELP_ISSUES" | grep -c '^### Issue') help-wanted issues loaded."
     else
@@ -465,19 +467,23 @@ Only claim "fixed" if you're confident the issue is fully resolved.
 Use "partial" if you made progress but it's not complete.
 IEOF
 
+    AGENT_EXIT=0
     ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} cargo run -- \
         --model "$MODEL" \
         --skills ./skills \
-        < "$ISSUE_PROMPT" || true
+        < "$ISSUE_PROMPT" || AGENT_EXIT=$?
     rm -f "$ISSUE_PROMPT"
 
-    # Bash fallback: extract issue refs from commits
-    if [ ! -f ISSUE_RESPONSE.md ]; then
+    # Bash fallback: only if agent ran successfully but skipped the file.
+    # If agent crashed (non-zero exit), skip fallback to avoid false notifications.
+    if [ "$AGENT_EXIT" -ne 0 ]; then
+        echo "  Agent exited with code $AGENT_EXIT — skipping bash fallback to avoid false issue responses."
+    elif [ ! -f ISSUE_RESPONSE.md ]; then
         echo "  Agent still skipped issue response — using commit-based fallback."
         FOUND_ISSUES=""
         while IFS= read -r commit_msg; do
             for num in $(echo "$commit_msg" | grep -oE '#[0-9]+' | tr -d '#'); do
-                if grep -q "### Issue #${num}" "$ISSUES_FILE" 2>/dev/null; then
+                if grep -q "### Issue #${num}:" "$ISSUES_FILE" 2>/dev/null; then
                     if ! echo "$FOUND_ISSUES" | grep -q "^${num}$"; then
                         FOUND_ISSUES="${FOUND_ISSUES}${FOUND_ISSUES:+
 }${num}"
@@ -490,7 +496,7 @@ IEOF
             RESP=""
             while IFS= read -r inum; do
                 [ -z "$inum" ] && continue
-                COMMIT_REF=$(echo "$SESSION_COMMITS" | grep "#${inum}" | head -1)
+                COMMIT_REF=$(echo "$SESSION_COMMITS" | grep -E "#${inum}([^0-9]|$)" | head -1)
                 if [ -n "$RESP" ]; then
                     RESP="${RESP}
 ---
