@@ -398,7 +398,7 @@ done
 # ── Step 6b: Ensure journal was written ──
 if ! grep -q "## Day $DAY.*$SESSION_TIME" JOURNAL.md 2>/dev/null; then
     echo "  No journal entry found — running agent to write one..."
-    COMMITS=$(git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" | grep -v "session wrap-up\|cargo fmt" | sed "s/Day $DAY[^:]*: //" | paste -sd ", " -)
+    COMMITS=$(git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" | grep -v "session wrap-up\|cargo fmt" | sed "s/Day $DAY[^:]*: //" | paste -sd ", " - || true)
     if [ -z "$COMMITS" ]; then
         COMMITS="no commits made"
     fi
