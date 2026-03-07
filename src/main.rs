@@ -1008,15 +1008,16 @@ fn thinking_level_name(level: ThinkingLevel) -> &'static str {
 /// Run health checks (build, test, clippy, fmt) and return results.
 /// Each result is (name, passed, detail_message).
 fn run_health_check() -> Vec<(&'static str, bool, String)> {
-    let checks: Vec<(&str, &[&str])> = vec![
-        ("build", &["cargo", "build"]),
-        ("test", &["cargo", "test"]),
-        (
-            "clippy",
-            &["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
-        ),
-        ("fmt", &["cargo", "fmt", "--", "--check"]),
-    ];
+    let mut checks: Vec<(&str, &[&str])> = vec![("build", &["cargo", "build"])];
+    // Skip "cargo test" when built with #[cfg(test)] to avoid infinite recursion
+    // (test_health_check_function → run_health_check → cargo test → test_health_check_function → …)
+    #[cfg(not(test))]
+    checks.push(("test", &["cargo", "test"]));
+    checks.push((
+        "clippy",
+        &["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+    ));
+    checks.push(("fmt", &["cargo", "fmt", "--", "--check"]));
 
     let mut results = Vec::new();
     for (name, args) in checks {
@@ -1173,7 +1174,7 @@ mod tests {
 
     #[test]
     fn test_health_check_function() {
-        // run_health_check should return results for each check
+        // run_health_check skips "cargo test" under #[cfg(test)] to avoid recursion
         let results = run_health_check();
         assert!(
             !results.is_empty(),
@@ -1181,11 +1182,15 @@ mod tests {
         );
         for (name, passed, _) in &results {
             assert!(!name.is_empty(), "Check name should not be empty");
-            // In the test environment, at minimum cargo build should pass
             if *name == "build" {
                 assert!(passed, "cargo build should pass in test environment");
             }
         }
+        // "test" check should be excluded under cfg(test)
+        assert!(
+            !results.iter().any(|(name, _, _)| *name == "test"),
+            "cargo test check should be skipped to avoid recursion"
+        );
     }
 
     #[test]
