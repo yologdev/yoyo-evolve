@@ -160,7 +160,7 @@ if command -v gh &>/dev/null; then
     echo "→ Fetching self-issues..."
     SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
         --label "agent-self" --limit 5 \
-        --author "yoagent-evolve[bot]" \
+        --author "yoyo-evolve[bot]" \
         --json number,title,body \
         --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
         | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
@@ -177,7 +177,7 @@ if command -v gh &>/dev/null; then
     echo "→ Fetching help-wanted issues..."
     HELP_ISSUES=$(gh issue list --repo "$REPO" --state open \
         --label "agent-help-wanted" --limit 5 \
-        --author "yoagent-evolve[bot]" \
+        --author "yoyo-evolve[bot]" \
         --json number,title,body,comments \
         --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n\(if (.comments | length) > 0 then "⚠️ Human replied:\n" + (.comments | map(.body) | join("\n---\n")) else "No replies yet." end)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
         | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
