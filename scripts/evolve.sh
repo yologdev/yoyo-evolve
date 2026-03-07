@@ -189,7 +189,7 @@ if command -v gh &>/dev/null; then
 fi
 echo ""
 
-# ── Step 4: Run evolution session (two-phase architecture) ──
+# ── Step 4: Run evolution session (plan → implement → respond) ──
 SESSION_START_SHA=$(git rev-parse HEAD)
 echo "→ Starting evolution session..."
 echo ""
@@ -312,12 +312,14 @@ Then STOP. Do not implement anything. Your job is planning only.
 PLANEOF
 
 AGENT_LOG=$(mktemp)
+# Planning gets 1/3 of total budget (min 15 min); remaining budget is split across impl tasks
 PLAN_TIMEOUT=$((TIMEOUT / 3))
 [ "$PLAN_TIMEOUT" -lt 900 ] && PLAN_TIMEOUT=900
-${TIMEOUT_CMD:+$TIMEOUT_CMD "$PLAN_TIMEOUT"} $YOYO_BIN \
+PLAN_EXIT=0
+${TIMEOUT_CMD:+$TIMEOUT_CMD "$PLAN_TIMEOUT"} "$YOYO_BIN" \
     --model "$MODEL" \
     --skills ./skills \
-    < "$PLAN_PROMPT" 2>&1 | tee "$AGENT_LOG" || true
+    < "$PLAN_PROMPT" 2>&1 | tee "$AGENT_LOG" || PLAN_EXIT=$?
 
 rm -f "$PLAN_PROMPT"
 
@@ -329,9 +331,23 @@ if grep -q '"type":"error"' "$AGENT_LOG"; then
 fi
 rm -f "$AGENT_LOG"
 
+if [ "$PLAN_EXIT" -eq 124 ]; then
+    echo "  WARNING: Planning agent TIMED OUT after ${PLAN_TIMEOUT}s."
+elif [ "$PLAN_EXIT" -ne 0 ]; then
+    echo "  WARNING: Planning agent exited with code $PLAN_EXIT."
+fi
+
 # Check if planning agent produced a plan
 if [ ! -f SESSION_PLAN.md ]; then
     echo "  Planning agent did not produce SESSION_PLAN.md — falling back to single task."
+    # Generate parseable issue responses for fallback
+    FALLBACK_RESPONSES=""
+    while IFS= read -r issue_line; do
+        inum=$(echo "$issue_line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+        [ -z "$inum" ] && continue
+        FALLBACK_RESPONSES="${FALLBACK_RESPONSES}
+- #${inum}: partial — planning agent failed, will revisit next session"
+    done < <(grep '^### Issue #' "$ISSUES_FILE" 2>/dev/null)
     cat > SESSION_PLAN.md <<FALLBACK
 ## Session Plan
 
@@ -341,7 +357,7 @@ Description: Read your own source code, identify the most impactful improvement 
 Issue: none
 
 ### Issue Responses
-(no plan produced — acknowledging all issues as partial)
+${FALLBACK_RESPONSES:-(no issues)}
 FALLBACK
     git add SESSION_PLAN.md && git commit -m "Day $DAY ($SESSION_TIME): fallback session plan" || true
 fi
@@ -351,15 +367,27 @@ echo ""
 
 # ── Phase B: Implementation loop ──
 echo "  Phase B: Implementation..."
-IMPL_LOG=$(mktemp)
+TASK_COUNT=$(grep -c '^### Task' SESSION_PLAN.md 2>/dev/null || echo 1)
+# Divide remaining time budget across tasks (min 5 min per task)
+IMPL_BUDGET=$((TIMEOUT - PLAN_TIMEOUT))
+IMPL_TIMEOUT=$((IMPL_BUDGET / TASK_COUNT))
+[ "$IMPL_TIMEOUT" -lt 300 ] && IMPL_TIMEOUT=300
+[ "$IMPL_TIMEOUT" -gt 1200 ] && IMPL_TIMEOUT=1200
 TASK_NUM=0
+TASK_FAILURES=0
 while IFS= read -r task_line; do
     TASK_NUM=$((TASK_NUM + 1))
     task_title="${task_line#*: }"
     echo "  → Task $TASK_NUM: $task_title"
 
-    # Extract task block from SESSION_PLAN.md (between this ### Task and the next ### or EOF)
-    TASK_DESC=$(sed -n "/^### Task $TASK_NUM:/,/^### /{/^### Task $TASK_NUM:/p; /^### /!p}" SESSION_PLAN.md)
+    # Extract task block (portable awk instead of GNU-only sed syntax)
+    TASK_DESC=$(awk "/^### Task $TASK_NUM:/{found=1} found{if(/^### / && !/^### Task $TASK_NUM:/)exit; print}" SESSION_PLAN.md)
+
+    if [ -z "$TASK_DESC" ]; then
+        echo "    WARNING: Could not extract description for Task $TASK_NUM. Skipping."
+        TASK_FAILURES=$((TASK_FAILURES + 1))
+        continue
+    fi
 
     TASK_PROMPT=$(mktemp)
     cat > "$TASK_PROMPT" <<TEOF
@@ -380,23 +408,39 @@ Follow the evolve skill rules:
 - Do NOT work on anything else. This is your only task.
 TEOF
 
-    IMPL_TIMEOUT=1200
-    ${TIMEOUT_CMD:+$TIMEOUT_CMD "$IMPL_TIMEOUT"} $YOYO_BIN \
+    TASK_LOG=$(mktemp)
+    TASK_EXIT=0
+    ${TIMEOUT_CMD:+$TIMEOUT_CMD "$IMPL_TIMEOUT"} "$YOYO_BIN" \
         --model "$MODEL" \
         --skills ./skills \
-        < "$TASK_PROMPT" 2>&1 | tee -a "$IMPL_LOG" || true
+        < "$TASK_PROMPT" 2>&1 | tee "$TASK_LOG" || TASK_EXIT=$?
     rm -f "$TASK_PROMPT"
 
-done < <(grep '^### Task' SESSION_PLAN.md | head -5)
-rm -f "$IMPL_LOG"
+    if [ "$TASK_EXIT" -eq 124 ]; then
+        echo "    WARNING: Task $TASK_NUM TIMED OUT after ${IMPL_TIMEOUT}s."
+        TASK_FAILURES=$((TASK_FAILURES + 1))
+    elif [ "$TASK_EXIT" -ne 0 ]; then
+        echo "    WARNING: Task $TASK_NUM exited with code $TASK_EXIT."
+        TASK_FAILURES=$((TASK_FAILURES + 1))
+    fi
 
-echo "  Implementation complete."
+    # Abort on API errors — no point running remaining tasks
+    if grep -q '"type":"error"' "$TASK_LOG"; then
+        echo "    API error in Task $TASK_NUM. Aborting implementation loop."
+        rm -f "$TASK_LOG"
+        break
+    fi
+    rm -f "$TASK_LOG"
+
+done < <(grep '^### Task' SESSION_PLAN.md | head -5)
+
+echo "  Implementation complete. $TASK_FAILURES of $TASK_NUM tasks had issues."
 echo ""
 
 # ── Phase C: Extract issue responses from plan ──
 # Only write ISSUE_RESPONSE.md if implementation agents didn't already create one
 echo "  Phase C: Issue responses..."
-if [ ! -f ISSUE_RESPONSE.md ] && grep -q '^### Issue Responses' SESSION_PLAN.md; then
+if [ ! -f ISSUE_RESPONSE.md ] && grep -qi '^### Issue Responses' SESSION_PLAN.md 2>/dev/null; then
     # Parse issue responses from the plan
     RESP=""
     while IFS= read -r resp_line; do
@@ -419,8 +463,12 @@ if [ ! -f ISSUE_RESPONSE.md ] && grep -q '^### Issue Responses' SESSION_PLAN.md;
             status="partial"
         fi
 
-        # Extract the reason after the em dash or hyphen
-        reason=$(echo "$resp_line" | sed 's/.*— //' | sed 's/.*- //')
+        # Extract the reason after the first em dash or hyphen delimiter
+        if echo "$resp_line" | grep -q '— '; then
+            reason=$(echo "$resp_line" | sed 's/.*— //')
+        else
+            reason=$(echo "$resp_line" | sed -E 's/^- #[0-9]+: *[a-zA-Z]+ - //')
+        fi
         [ -z "$reason" ] && reason="Addressed in this session."
 
         if [ -n "$RESP" ]; then
@@ -431,7 +479,7 @@ if [ ! -f ISSUE_RESPONSE.md ] && grep -q '^### Issue Responses' SESSION_PLAN.md;
         RESP="${RESP}issue_number: ${issue_num}
 status: ${status}
 comment: ${reason}"
-    done < <(sed -n '/^### Issue Responses/,/^### /p' SESSION_PLAN.md | grep '^- #')
+    done < <(sed -n '/^### [Ii]ssue [Rr]esponses/,/^### /p' SESSION_PLAN.md | grep '^- #')
 
     if [ -n "$RESP" ]; then
         echo "$RESP" > ISSUE_RESPONSE.md
@@ -441,6 +489,8 @@ comment: ${reason}"
     fi
 elif [ -f ISSUE_RESPONSE.md ]; then
     echo "  ISSUE_RESPONSE.md already exists (written by implementation agent)."
+else
+    echo "  No Issue Responses section found in plan."
 fi
 
 # Clean up plan file (don't commit it in wrap-up)
@@ -491,7 +541,7 @@ Steps:
 4. Keep fixing until all checks pass
 5. Commit: git add -A && git commit -m "Day $DAY ($SESSION_TIME): fix build errors"
 FIXEOF
-        ${TIMEOUT_CMD:+$TIMEOUT_CMD 300} cargo run -- \
+        ${TIMEOUT_CMD:+$TIMEOUT_CMD 300} "$YOYO_BIN" \
             --model "$MODEL" \
             --skills ./skills \
             < "$FIX_PROMPT" || true
@@ -530,7 +580,7 @@ Then 2-4 sentences: what you did, what worked, what's next.
 Be specific and honest. Then commit: git add JOURNAL.md && git commit -m "Day $DAY ($SESSION_TIME): journal entry"
 JEOF
 
-    ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} cargo run -- \
+    ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} "$YOYO_BIN" \
         --model "$MODEL" \
         --skills ./skills \
         < "$JOURNAL_PROMPT" || true
@@ -586,7 +636,7 @@ Use "partial" if you made progress but it's not complete.
 IEOF
 
     AGENT_EXIT=0
-    ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} cargo run -- \
+    ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} "$YOYO_BIN" \
         --model "$MODEL" \
         --skills ./skills \
         < "$ISSUE_PROMPT" || AGENT_EXIT=$?

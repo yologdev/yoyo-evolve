@@ -92,7 +92,7 @@ def format_issues(issues, sponsor_logins=None, pick=3, day=0):
     # Sort by net score descending
     issues.sort(key=lambda i: compute_net_score(i.get("reactionGroups"))[2], reverse=True)
 
-    # Select rotating subset
+    # Select subset: sponsors + top scorer + random sample
     issues = select_issues(issues, sponsor_logins, pick=pick, day=day)
 
     boundary = generate_boundary()
