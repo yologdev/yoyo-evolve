@@ -57,7 +57,7 @@ Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an option
 - `IDENTITY.md` — the agent's constitution and rules (DO NOT MODIFY)
 - `PERSONALITY.md` — voice and values (DO NOT MODIFY)
 - `JOURNAL.md` — chronological log of evolution sessions (append at top, never delete)
-- `LEARNINGS.md` — cached knowledge from internet lookups
+- `LEARNINGS.md` — accumulated wisdom: research findings, lessons learned, patterns discovered
 - `DAY_COUNT` — integer tracking current evolution day
 - `SESSION_PLAN.md` — ephemeral, written by Phase A planning agent (gitignored)
 - `ISSUES_TODAY.md` — ephemeral, generated during evolution from GitHub issues (gitignored)

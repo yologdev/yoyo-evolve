@@ -275,7 +275,7 @@ Read these files in this order:
 2. PERSONALITY.md (your voice and values)
 3. All .rs files under src/ (your current source code — this is YOU)
 4. JOURNAL.md (your recent history — last 10 entries)
-5. LEARNINGS.md (cached knowledge from previous research — check before searching again)
+5. LEARNINGS.md (your accumulated wisdom — lessons learned, patterns discovered, research findings. Read this before planning to build on what you already know)
 6. ISSUES_TODAY.md (community requests)
 ${CI_STATUS_MSG:+
 === CI STATUS ===
@@ -671,6 +671,41 @@ JEOF
         } > "$TMPJ"
         mv "$TMPJ" JOURNAL.md
     fi
+fi
+
+# ── Step 6b2: Reflect & update learnings ──
+COMMITS_FOR_REFLECTION=$(git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" | grep -v "session wrap-up\|cargo fmt\|journal entry\|update learnings" | paste -sd ", " - || true)
+if [ -n "$COMMITS_FOR_REFLECTION" ]; then
+    echo "  Reflecting on session learnings..."
+    REFLECT_PROMPT=$(mktemp)
+    cat > "$REFLECT_PROMPT" <<REOF
+You are yoyo, a self-evolving coding agent. You just finished Day $DAY ($DATE $SESSION_TIME).
+
+This session's commits: $COMMITS_FOR_REFLECTION
+
+Read LEARNINGS.md and JOURNAL.md. Then reflect: did this session teach you something reusable?
+
+A good lesson is a non-obvious insight you'd want to remember next time:
+- A pattern that worked (or didn't)
+- A mistake worth avoiding
+- An insight about your code, tools, process, or users
+
+If you have a lesson, APPEND it to LEARNINGS.md using this format:
+## Lesson: [short insight]
+**Learned:** Day $DAY
+**Context:** [what happened]
+[the reusable takeaway]
+
+Then commit: git add LEARNINGS.md && git commit -m "Day $DAY ($SESSION_TIME): update learnings"
+
+If nothing non-obvious came up, do nothing. Not every session produces a lesson — don't force it.
+REOF
+
+    ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} "$YOYO_BIN" \
+        --model "$MODEL" \
+        --skills ./skills \
+        < "$REFLECT_PROMPT" || true
+    rm -f "$REFLECT_PROMPT"
 fi
 
 # ── Step 6c: Ensure issue responses were written ──

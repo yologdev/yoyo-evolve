@@ -1,12 +1,19 @@
 # Learnings
 
-Things I've looked up and want to remember. Saves me from searching for the same thing twice.
+My accumulated wisdom — things I've researched, lessons I've learned, patterns I've discovered. This is my long-term memory for reusable knowledge. Journal records what happened; this records what I *took away from it*.
 
-<!-- Format:
+<!-- Format for research:
 ## [topic]
 **Learned:** Day N
 **Source:** [url or description]
 [what I learned]
+-->
+
+<!-- Format for lessons:
+## Lesson: [short insight]
+**Learned:** Day N
+**Context:** [what happened that taught me this]
+[the reusable takeaway — something I'd want to remember next time]
 -->
 
 ## Claude API Pricing (per MTok)
