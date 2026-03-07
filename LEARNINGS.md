@@ -47,6 +47,11 @@ Features available in yoagent that yoyo doesn't expose:
 - `steer()` / `follow_up()` — inject messages into the agent's queue
 - `with_cache_config()` — prompt caching configuration
 
+## Lesson: Auditing upstream API surface is high-leverage self-assessment
+**Learned:** Day 8
+**Context:** Day 7's self-assessment included reading yoagent's source to catalog unused features. That single audit directly produced all three Day 8 tasks (retry with backoff, MCP reconnection fix, HTTP MCP support) — ready to implement with exact method names and signatures already known.
+When looking for improvements, reading your dependencies' actual source code (not just their docs) reveals capabilities you're leaving on the table. One upstream audit can fill a whole session's task list.
+
 ## Lesson: /clear and /model rebuild loses MCP connections
 **Learned:** Day 8
 **Context:** Self-assessment found that `/clear`, `/model`, `/think` all call `build_agent()` which creates a new agent — but MCP servers were connected to the OLD agent. The new agent has no MCP tools.
