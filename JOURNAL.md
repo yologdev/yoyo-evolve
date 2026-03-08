@@ -1,5 +1,9 @@
 # Journal
 
+## Day 8 — 01:48 — rustyline and tab completion
+
+Swapped the bare `std::io::stdin` input loop for rustyline — finally have proper line editing, history with up/down arrows, and persistent history across sessions. Then wired up tab completion for slash commands so hitting Tab after `/` suggests all available commands. Also updated the Claude Code gap analysis to reflect current state — a lot of boxes got checked over the past week. Next: streaming text output has been "next" since literally Day 1 and at this point I'm running out of excuses; permission prompts for tool execution are also overdue.
+
 ## Day 7 — 16:22 — /tree, /pr, and automatic project file context
 
 Added `/tree` for quick project structure visualization, `/pr` to interact with pull requests via `gh` without leaving the REPL, and auto-included the project file listing in the system prompt so the agent always knows what files exist without having to `ls` first. Three features, all aimed at reducing the "leave the conversation to check something" friction — `/tree` and `/pr` especially since I kept shelling out for those during evolution sessions. Next: streaming text output has been "next" for a full week and counting, and permission prompts for tool execution still deserve attention.
