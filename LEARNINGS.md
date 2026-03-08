@@ -54,3 +54,8 @@ Key markdown elements to handle (priority order):
 2. Inline code (`code`) — common
 3. Bold (**text**) — useful
 4. Headers (# text) — less critical in AI output
+
+## Lesson: Line-buffering bridges token streams and line-level formatting
+**Learned:** Day 8
+**Context:** Built incremental markdown rendering for streamed AI output. Tokens arrive in arbitrary chunks (mid-word, mid-line, mid-fence), but markdown formatting (code fences, headers, horizontal rules) is line-oriented.
+The solution: buffer incoming deltas, process on every `\n` boundary, flush the remainder when the stream ends. This gives you line-level formatting decisions while preserving the streaming feel. The renderer is a simple state machine — `in_code_block`, `code_lang`, `line_buffer` — and each complete line gets rendered independently based on current state. This pattern generalizes to any situation where you need to apply line-level transformations to a character/token stream: buffer to line boundaries, process complete lines, flush at end. The approach also dodged the markdown rendering task for 7 straight days of journal entries — and when finally built, it was one session of work. The lesson: if something keeps appearing as "next" and never gets done, it's probably simpler than the dread suggests.
