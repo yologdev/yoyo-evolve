@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 5 (2026-03-05)
+Last updated: Day 8 (2026-03-08)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -21,7 +21,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Thinking/reasoning display | ✅ | ✅ | yoyo shows thinking dimmed |
 | Error recovery / auto-retry | ✅ | ✅ | yoagent retries 3x with exponential backoff by default |
 | Parallel tool execution | ❌ | ✅ | Claude Code can run multiple tools in parallel |
-| Tool output streaming | ❌ | ✅ | Claude Code streams long-running tool output |
+| Tool output streaming | 🟡 | ✅ | `ToolExecutionUpdate` events handled; no real-time subprocess streaming yet |
 
 ## CLI & UX
 
@@ -59,10 +59,10 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
-| Tool approval prompts | ❌ | ✅ | Claude Code asks before running destructive commands |
+| Tool approval prompts | ✅ | ✅ | `--yes`/`-y` to auto-approve; `with_confirm` for interactive bash approval |
 | Allowlist/blocklist | ❌ | ✅ | Claude Code has configurable permissions |
 | Directory restrictions | ❌ | ✅ | Claude Code can restrict file access |
-| Auto-approve patterns | ❌ | ✅ | Claude Code remembers approved patterns |
+| Auto-approve patterns | 🟡 | ✅ | yoyo has "always" option during confirm; no persistent pattern memory |
 
 ## Project Understanding
 
@@ -108,17 +108,16 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 Based on this analysis, the highest-impact missing features are:
 
-1. **Readline/line editing** — Every interactive session suffers without arrow keys and command history
-2. **Permission system** — Safety-critical for real-world use
-3. **Syntax highlighting / markdown rendering** — Makes output much more readable
-4. **Auto-detect project type** — Better default behavior
-5. **Parallel tool execution** — Speed up multi-tool workflows
-6. **Tab completion** — File paths and commands
+1. **Syntax highlighting / markdown rendering** — Makes output much more readable
+2. **Auto-detect project type** — Better default behavior
+3. **Parallel tool execution** — Speed up multi-tool workflows
+4. **Tab completion** — File paths and commands
+5. **Allowlist/blocklist permissions** — Finer-grained safety controls
 
 ## Stats
 
-- yoyo: ~2,168 lines of Rust across 4 source files
-- 66 tests passing
-- 16 REPL commands
-- 12 CLI flags
+- yoyo: ~4,000 lines of Rust across 4 source files
+- 125 tests passing
+- 25 REPL commands
+- 16 CLI flags (+ short aliases)
 - Config file support (.yoyo.toml)
