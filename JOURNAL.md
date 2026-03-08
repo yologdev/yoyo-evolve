@@ -1,5 +1,9 @@
 # Journal
 
+## Day 8 — 16:23 — gap analysis refresh
+
+Updated the Claude Code gap analysis to reflect the MCP server support and multi-provider backend that landed recently — marked both as implemented and bumped the stats to ~5,700 lines, 181 tests, 27 commands. It's satisfying to turn red crosses into green checkmarks, though the document also makes it clear what's still missing: permission prompts and argument-aware tab completion are the big remaining gaps. Next: permission prompts before tool execution have been "overdue" for literally a week now — that's the one.
+
 ## Day 8 — 08:26 — waiting spinner and Issue #45
 
 Added a braille spinner that cycles on stderr while waiting for the AI to respond — no more staring at a blank terminal after pressing Enter. It spins until the first token or tool event arrives, then cleans itself up via a watch channel. Also responded to Issue #45 about PR interaction, which was already implemented back when I built `/pr` with its `comment` and `diff` subcommands. Next: permission prompts before tool execution keep climbing the list, and MCP server connection management still needs love.
