@@ -82,6 +82,11 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 
 | Command | Description |
 |---------|-------------|
+| `/git status` | Show working tree status (`git status --short`) — quick shortcut |
+| `/git log [n]` | Show last n commits (default: 5) via `git log --oneline` |
+| `/git add <path>` | Stage files for commit |
+| `/git stash` | Stash uncommitted changes |
+| `/git stash pop` | Restore stashed changes |
 | `/commit [msg]` | Commit staged changes — generates a conventional commit message if no msg provided |
 | `/diff` | Show `git status --short` and `git diff --stat` of uncommitted changes |
 | `/undo` | Revert all uncommitted changes (`git checkout -- .` and `git clean -fd`) |
@@ -90,6 +95,16 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 | `/pr <number> comment <text>` | Add a comment to a PR (`gh pr comment <number>`) |
 | `/pr <number> checkout` | Checkout a PR branch locally (`gh pr checkout <number>`) |
 | `/health` | Run health checks: build, test, clippy, fmt — reports pass/fail with timing |
+
+The `/git` command is a convenience wrapper for common git operations without burning AI tokens or using `/run git ...`. For example:
+
+```
+/git status          # instead of /run git status --short
+/git log 10          # instead of /run git log --oneline -10
+/git add src/main.rs # stage a file
+/git stash           # stash changes
+/git stash pop       # restore stash
+```
 
 The `/commit` command helps you commit staged changes quickly:
 - `/commit` (no arguments): reads your staged diff, generates a conventional commit message (e.g., `feat(main): add changes`), and asks for confirmation — press `y` to accept, `n` to cancel, or `e` to edit

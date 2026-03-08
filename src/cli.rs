@@ -84,6 +84,7 @@ pub fn print_help() {
     println!("  /context          Show loaded project context files");
     println!("  /cost             Show estimated session cost");
     println!("  /diff             Show git diff summary of uncommitted changes");
+    println!("  /git <subcmd>     Quick git: status, log [n], add <path>, stash, stash pop");
     println!("  /health           Run health checks (build, test, clippy, fmt)");
     println!("  /pr [number]      List open PRs, or view details of a specific PR");
     println!("  /history          Show summary of conversation messages");

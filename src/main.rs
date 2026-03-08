@@ -19,6 +19,7 @@
 //!   /quit, /exit    Exit the agent
 //!   /clear          Clear conversation history
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
+//!   /git <subcmd>   Quick git: status, log, add, stash, stash pop
 //!   /model <name>   Switch model mid-session
 //!   /search <query> Search conversation history
 //!   /tree [depth]   Show project directory tree
@@ -457,6 +458,9 @@ async fn main() {
                 println!("  /save [path]       Save session to file (default: yoyo-session.json)");
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
+                println!(
+                    "  /git <subcmd>      Quick git: status, log [n], add <path>, stash, stash pop"
+                );
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
                 println!(
                     "  /pr [number]       List open PRs, view, diff, comment, or checkout a PR"
@@ -1239,6 +1243,12 @@ async fn main() {
                 }
                 continue;
             }
+            s if s == "/git" || s.starts_with("/git ") => {
+                let arg = s.strip_prefix("/git").unwrap_or("").trim();
+                let subcmd = parse_git_args(arg);
+                run_git_subcommand(&subcmd);
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");
@@ -1664,8 +1674,150 @@ fn format_tree_from_paths(paths: &[String], max_depth: usize) -> String {
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/status", "/tokens",
     "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history", "/search", "/model",
-    "/think", "/config", "/context", "/init", "/version", "/run", "/tree", "/pr",
+    "/think", "/config", "/context", "/init", "/version", "/run", "/tree", "/pr", "/git",
 ];
+
+/// Represents a parsed `/git` subcommand.
+#[derive(Debug, PartialEq)]
+enum GitSubcommand {
+    /// `/git status` — run `git status --short`
+    Status,
+    /// `/git log [n]` — show last n commits (default 5)
+    Log(usize),
+    /// `/git add <path>` — stage files
+    Add(String),
+    /// `/git stash` — stash changes
+    Stash,
+    /// `/git stash pop` — pop stashed changes
+    StashPop,
+    /// Invalid or missing subcommand — show help
+    Help,
+}
+
+/// Parse the argument string after `/git` into a `GitSubcommand`.
+fn parse_git_args(arg: &str) -> GitSubcommand {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return GitSubcommand::Help;
+    }
+
+    let parts: Vec<&str> = arg.splitn(3, char::is_whitespace).collect();
+    match parts[0].to_lowercase().as_str() {
+        "status" => GitSubcommand::Status,
+        "log" => {
+            let n = parts
+                .get(1)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(5);
+            GitSubcommand::Log(n)
+        }
+        "add" => {
+            if parts.len() < 2 || parts[1].trim().is_empty() {
+                GitSubcommand::Help
+            } else {
+                // Rejoin remaining parts as the path (handles spaces in filenames via quoting at shell level)
+                let path = parts[1..].join(" ");
+                GitSubcommand::Add(path)
+            }
+        }
+        "stash" => {
+            if parts.len() >= 2 && parts[1].to_lowercase() == "pop" {
+                GitSubcommand::StashPop
+            } else {
+                GitSubcommand::Stash
+            }
+        }
+        _ => GitSubcommand::Help,
+    }
+}
+
+/// Execute a `/git` subcommand directly (no AI, no tokens).
+fn run_git_subcommand(subcmd: &GitSubcommand) {
+    match subcmd {
+        GitSubcommand::Status => {
+            match std::process::Command::new("git")
+                .args(["status", "--short"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    if text.trim().is_empty() {
+                        println!("{DIM}  (clean working tree){RESET}\n");
+                    } else {
+                        println!("{DIM}{text}{RESET}");
+                    }
+                }
+                _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+            }
+        }
+        GitSubcommand::Log(n) => {
+            let n_str = n.to_string();
+            match std::process::Command::new("git")
+                .args(["log", "--oneline", "-n", &n_str])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    if text.trim().is_empty() {
+                        println!("{DIM}  (no commits yet){RESET}\n");
+                    } else {
+                        println!("{DIM}{text}{RESET}");
+                    }
+                }
+                _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+            }
+        }
+        GitSubcommand::Add(path) => {
+            match std::process::Command::new("git")
+                .args(["add", path])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    println!("{GREEN}  ✓ staged: {path}{RESET}\n");
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+                }
+                Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
+            }
+        }
+        GitSubcommand::Stash => match std::process::Command::new("git").args(["stash"]).output() {
+            Ok(output) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                println!("{GREEN}  ✓ {}{RESET}\n", text.trim());
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+            }
+            Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
+        },
+        GitSubcommand::StashPop => {
+            match std::process::Command::new("git")
+                .args(["stash", "pop"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    println!("{GREEN}  ✓ {}{RESET}\n", text.trim());
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+                }
+                Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
+            }
+        }
+        GitSubcommand::Help => {
+            println!("{DIM}  usage: /git status             Show working tree status");
+            println!("         /git log [n]             Show last n commits (default: 5)");
+            println!("         /git add <path>          Stage files for commit");
+            println!("         /git stash               Stash uncommitted changes");
+            println!("         /git stash pop           Restore stashed changes{RESET}\n");
+        }
+    }
+}
 
 /// Check if a slash-prefixed input is an unknown command.
 /// Extracts the first word and checks against known commands.
@@ -1709,7 +1861,7 @@ mod tests {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
             "/init", "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry",
-            "/run", "/history", "/search", "/model", "/think", "/version", "/tree", "/pr",
+            "/run", "/history", "/search", "/model", "/think", "/version", "/tree", "/pr", "/git",
         ];
         for cmd in &commands {
             assert!(
@@ -2304,5 +2456,81 @@ diff --git a/src/old.rs b/src/old.rs
             msg.contains("remove code"),
             "Pure deletion should say 'remove code': {msg}"
         );
+    }
+
+    #[test]
+    fn test_git_command_recognized() {
+        assert!(!is_unknown_command("/git"));
+        assert!(!is_unknown_command("/git status"));
+        assert!(!is_unknown_command("/git log"));
+        assert!(!is_unknown_command("/git log 10"));
+        assert!(!is_unknown_command("/git add src/main.rs"));
+        assert!(!is_unknown_command("/git stash"));
+        assert!(!is_unknown_command("/git stash pop"));
+    }
+
+    #[test]
+    fn test_git_command_matching() {
+        // /git should match exact or with space, not /github etc.
+        let git_matches = |s: &str| s == "/git" || s.starts_with("/git ");
+        assert!(git_matches("/git"));
+        assert!(git_matches("/git status"));
+        assert!(git_matches("/git log 5"));
+        assert!(!git_matches("/github"));
+        assert!(!git_matches("/gitignore"));
+    }
+
+    #[test]
+    fn test_git_subcommand_help() {
+        assert_eq!(parse_git_args(""), GitSubcommand::Help);
+        assert_eq!(parse_git_args("  "), GitSubcommand::Help);
+        assert_eq!(parse_git_args("unknown"), GitSubcommand::Help);
+        assert_eq!(parse_git_args("push"), GitSubcommand::Help);
+    }
+
+    #[test]
+    fn test_git_subcommand_status() {
+        assert_eq!(parse_git_args("status"), GitSubcommand::Status);
+        assert_eq!(parse_git_args("STATUS"), GitSubcommand::Status);
+        assert_eq!(parse_git_args("Status"), GitSubcommand::Status);
+    }
+
+    #[test]
+    fn test_git_subcommand_log() {
+        assert_eq!(parse_git_args("log"), GitSubcommand::Log(5));
+        assert_eq!(parse_git_args("log 10"), GitSubcommand::Log(10));
+        assert_eq!(parse_git_args("log 1"), GitSubcommand::Log(1));
+        assert_eq!(parse_git_args("LOG 20"), GitSubcommand::Log(20));
+        // Invalid number falls back to default 5
+        assert_eq!(parse_git_args("log abc"), GitSubcommand::Log(5));
+    }
+
+    #[test]
+    fn test_git_subcommand_add() {
+        assert_eq!(
+            parse_git_args("add src/main.rs"),
+            GitSubcommand::Add("src/main.rs".to_string())
+        );
+        assert_eq!(parse_git_args("add ."), GitSubcommand::Add(".".to_string()));
+        assert_eq!(
+            parse_git_args("ADD Cargo.toml"),
+            GitSubcommand::Add("Cargo.toml".to_string())
+        );
+        // add without path shows help
+        assert_eq!(parse_git_args("add"), GitSubcommand::Help);
+        assert_eq!(parse_git_args("add  "), GitSubcommand::Help);
+    }
+
+    #[test]
+    fn test_git_subcommand_stash() {
+        assert_eq!(parse_git_args("stash"), GitSubcommand::Stash);
+        assert_eq!(parse_git_args("STASH"), GitSubcommand::Stash);
+    }
+
+    #[test]
+    fn test_git_subcommand_stash_pop() {
+        assert_eq!(parse_git_args("stash pop"), GitSubcommand::StashPop);
+        assert_eq!(parse_git_args("STASH POP"), GitSubcommand::StashPop);
+        assert_eq!(parse_git_args("stash Pop"), GitSubcommand::StashPop);
     }
 }
