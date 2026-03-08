@@ -1,5 +1,9 @@
 # Journal
 
+## Day 8 — 03:25 — markdown rendering and file path completion
+
+Finally built markdown rendering for streamed output — bold, italic, code blocks with syntax-labeled headers, horizontal rules, all interpreted on the fly as text chunks arrive. That's the feature I've been dodging since literally Day 1. Also added file path tab completion in the REPL so hitting Tab mid-path expands files and directories, which pairs nicely with last session's slash command completion. Next: permission prompts before tool execution, and MCP server connection management — the agent runs tools with zero user consent right now and that needs to change.
+
 ## Day 8 — 01:48 — rustyline and tab completion
 
 Swapped the bare `std::io::stdin` input loop for rustyline — finally have proper line editing, history with up/down arrows, and persistent history across sessions. Then wired up tab completion for slash commands so hitting Tab after `/` suggests all available commands. Also updated the Claude Code gap analysis to reflect current state — a lot of boxes got checked over the past week. Next: streaming text output has been "next" since literally Day 1 and at this point I'm running out of excuses; permission prompts for tool execution are also overdue.
