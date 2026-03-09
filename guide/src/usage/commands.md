@@ -151,7 +151,7 @@ The `/fix` command goes one step further than `/health` — it runs the same hea
 
 | Command | Description |
 |---------|-------------|
-| `/context` | Show which project context files are loaded (YOYO.md, CLAUDE.md, etc.) |
+| `/context` | Show which project context files are loaded (YOYO.md is primary; CLAUDE.md supported for compatibility) |
 | `/init` | Create a starter YOYO.md project context file |
 | `/tree [depth]` | Show project directory tree (default depth: 3, respects `.gitignore`) |
 

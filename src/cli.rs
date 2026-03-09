@@ -64,7 +64,9 @@ pub fn is_verbose() -> bool {
     *VERBOSE.get_or_init(|| false)
 }
 
-/// Project context file names, checked in order. All found files are concatenated.
+/// Project context file names, checked in order. YOYO.md is the canonical name;
+/// CLAUDE.md is supported as a compatibility alias for projects that already use it.
+/// All found files are concatenated.
 pub const PROJECT_CONTEXT_FILES: &[&str] = &["YOYO.md", "CLAUDE.md", ".yoyo/instructions.md"];
 
 pub fn print_help() {
@@ -101,7 +103,7 @@ pub fn print_help() {
     println!("  /compact          Compact conversation to save context space");
     println!("  /commit [msg]     Commit staged changes (AI-generates message if no msg)");
     println!("  /config           Show all current settings");
-    println!("  /context          Show loaded project context files");
+    println!("  /context          Show loaded project context files (YOYO.md)");
     println!("  /cost             Show estimated session cost");
     println!("  /diff             Show git diff summary of uncommitted changes");
     println!("  /git <subcmd>     Quick git: status, log [n], add <path>, stash, stash pop");
@@ -269,7 +271,8 @@ pub fn get_project_file_listing() -> Option<String> {
     Some(listing)
 }
 
-/// Load project context from YOYO.md or .yoyo/instructions.md.
+/// Load project context from YOYO.md (primary), CLAUDE.md (compatibility alias),
+/// or .yoyo/instructions.md.
 /// Returns the combined content of all found files, or None if none exist.
 /// Also appends a project file listing from `git ls-files` when available.
 pub fn load_project_context() -> Option<String> {
@@ -1032,6 +1035,11 @@ thinking = "high"
     #[test]
     fn test_project_context_file_names_not_empty() {
         assert_eq!(PROJECT_CONTEXT_FILES.len(), 3);
+        // YOYO.md must be first — it's the canonical context file name
+        assert_eq!(PROJECT_CONTEXT_FILES[0], "YOYO.md");
+        // CLAUDE.md is a compatibility alias
+        assert_eq!(PROJECT_CONTEXT_FILES[1], "CLAUDE.md");
+        assert_eq!(PROJECT_CONTEXT_FILES[2], ".yoyo/instructions.md");
         for name in PROJECT_CONTEXT_FILES {
             assert!(!name.is_empty());
         }
@@ -1269,6 +1277,24 @@ thinking = "high"
             assert!(path.is_some());
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_yoyo_md_is_primary_context_file() {
+        // YOYO.md should be the first (primary) context file
+        assert_eq!(
+            PROJECT_CONTEXT_FILES[0], "YOYO.md",
+            "YOYO.md must be the primary context file"
+        );
+        // CLAUDE.md should be present as compatibility alias but not first
+        assert!(
+            PROJECT_CONTEXT_FILES.contains(&"CLAUDE.md"),
+            "CLAUDE.md should still be supported for compatibility"
+        );
+        assert_ne!(
+            PROJECT_CONTEXT_FILES[0], "CLAUDE.md",
+            "CLAUDE.md should not be the primary context file"
+        );
     }
 
     #[test]

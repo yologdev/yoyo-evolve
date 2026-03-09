@@ -1244,9 +1244,11 @@ async fn main() {
                 let files = cli::list_project_context_files();
                 if files.is_empty() {
                     println!("{DIM}  No project context files found.");
-                    println!("  Searched for: {}", PROJECT_CONTEXT_FILES.join(", "));
-                    println!("  Create YOYO.md, CLAUDE.md, or .yoyo/instructions.md to add project context.");
-                    println!("  Or run /init to create a starter YOYO.md.{RESET}\n");
+                    println!("  Create a YOYO.md to give yoyo project context.");
+                    println!(
+                        "  Also supports: CLAUDE.md (compatibility alias), .yoyo/instructions.md"
+                    );
+                    println!("  Run /init to create a starter YOYO.md.{RESET}\n");
                 } else {
                     println!("{DIM}  Project context files:");
                     for (name, lines) in &files {
@@ -1260,12 +1262,19 @@ async fn main() {
                 let path = "YOYO.md";
                 if std::path::Path::new(path).exists() {
                     println!("{DIM}  {path} already exists — not overwriting.{RESET}\n");
+                } else if std::path::Path::new("CLAUDE.md").exists() {
+                    println!(
+                        "{DIM}  CLAUDE.md already exists — yoyo reads it as a compatibility alias."
+                    );
+                    println!(
+                        "  Rename it to YOYO.md when you're ready: mv CLAUDE.md YOYO.md{RESET}\n"
+                    );
                 } else {
                     let template = concat!(
                         "# Project Context\n",
                         "\n",
-                        "<!-- This file is read by yoyo at startup to understand your project. -->\n",
-                        "<!-- Customize it with project-specific instructions, conventions, and context. -->\n",
+                        "<!-- YOYO.md — yoyo's primary project context file. -->\n",
+                        "<!-- Also works as CLAUDE.md for compatibility with other tools. -->\n",
                         "\n",
                         "## About This Project\n",
                         "\n",
