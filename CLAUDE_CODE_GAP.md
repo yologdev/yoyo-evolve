@@ -60,9 +60,9 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
 | Tool approval prompts | ✅ | ✅ | `--yes`/`-y` to auto-approve; `with_confirm` for interactive bash approval |
-| Allowlist/blocklist | ❌ | ✅ | Claude Code has configurable permissions |
+| Allowlist/blocklist | ✅ | ✅ | `--allow`/`--deny` flags with glob matching; `[permissions]` config section; deny overrides allow |
 | Directory restrictions | ❌ | ✅ | Claude Code can restrict file access |
-| Auto-approve patterns | 🟡 | ✅ | yoyo has "always" option during confirm; no persistent pattern memory |
+| Auto-approve patterns | ✅ | ✅ | `--allow` glob patterns + config file `allow` array; "always" option during confirm |
 
 ## Project Understanding
 
@@ -92,6 +92,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Custom tool definitions | ✅ | ✅ | yoyo supports MCP servers via `--mcp` (stdio transport) |
 | Multi-provider support | ✅ | ❌ | yoyo supports 10+ providers via `--provider` (anthropic, openai, google, ollama, etc.) |
 | Skills/plugins | ✅ | ✅ | yoyo has --skills; Claude Code has MCP |
+| OpenAPI tool support | ✅ | ❌ | `--openapi <spec>` loads OpenAPI specs and registers API tools (Day 9) |
 
 ## Error Handling
 
@@ -112,10 +113,12 @@ Based on this analysis, the highest-impact missing features are:
 1. **Syntax-aware code highlighting** — Upgrade markdown rendering with language-specific highlighting in code blocks
 2. **Parallel tool execution** — Speed up multi-tool workflows
 3. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
-4. **Allowlist/blocklist permissions** — Finer-grained safety controls
-5. **Git-aware file selection** — Prioritize recently changed files for context
+4. **Git-aware file selection** — Prioritize recently changed files for context
 
 Recently completed:
+- ✅ OpenAPI tool support (Day 9) — `--openapi <spec>` loads specs and registers API tools
+- ✅ yoagent 0.6.0 upgrade (Day 9) — updated to yoagent 0.6 with OpenAPI feature
+- ✅ Permission system (Day 9) — `--allow`/`--deny` glob flags, `[permissions]` config, deny-overrides-allow
 - ✅ Auto-fix lint errors (Day 9) — `/fix` command runs checks and sends failures to AI
 - ✅ Project type detection (Day 9) — `detect_project_type` for Rust, Node, Python, Go, Make
 - ✅ Commit message generation (Day 8) — `/commit` with heuristic-based message generation
@@ -127,10 +130,12 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~6,300 lines of Rust across 4 source files
-- 207 tests passing
+- yoyo: ~6,900 lines of Rust across 4 source files
+- 235 tests passing
 - 28 REPL commands
 - 20 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
+- OpenAPI tool loading
 - Config file support (.yoyo.toml)
+- Permission system (allow/deny globs)
