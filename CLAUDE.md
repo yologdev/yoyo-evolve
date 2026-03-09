@@ -46,11 +46,10 @@ Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an option
 4. **Phase C** (Communication): Extracts issue responses from plan
 5. Verifies build, fixes or reverts → posts issue responses → greets unvisited issues → pushes
 
-**Skills** (`skills/`): Markdown files with YAML frontmatter loaded via `--skills ./skills`. Five skills define the agent's evolution workflow:
+**Skills** (`skills/`): Markdown files with YAML frontmatter loaded via `--skills ./skills`. Four core skills (immutable) define the agent's evolution workflow:
 - `self-assess` — read own code, try tasks, find bugs/gaps
 - `evolve` — safely modify source, test, revert on failure
 - `communicate` — write journal entries and issue responses
-- `release` — version management and release workflow
 - `research` — internet lookups and knowledge caching
 
 **State files** (read/written by the agent during evolution):
@@ -68,7 +67,7 @@ Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an option
 These are enforced by the `evolve` skill and `evolve.sh`:
 - Never modify `IDENTITY.md`, `PERSONALITY.md`, `scripts/evolve.sh`, `scripts/format_issues.py`, `scripts/build_site.py`, or `.github/workflows/`
 - Every code change must pass `cargo build && cargo test`
-- If build fails after changes, revert with `git checkout -- src/`
+- If build fails after changes, revert with `git checkout -- src/ Cargo.toml Cargo.lock`
 - Never delete existing tests
 - Multiple tasks per evolution session, each verified independently
 - Write tests before adding features
