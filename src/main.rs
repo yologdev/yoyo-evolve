@@ -170,12 +170,14 @@ impl rustyline::Helper for YoyoHelper {}
 /// Build the tool set, optionally with a bash confirmation prompt.
 /// When `auto_approve` is false (default), bash commands require user approval.
 /// The "always" option sets a session-wide flag so subsequent commands are auto-approved.
-fn build_tools(auto_approve: bool) -> Vec<Box<dyn AgentTool>> {
+/// When `permissions` has patterns, matching commands are auto-approved or auto-denied.
+fn build_tools(auto_approve: bool, permissions: &cli::PermissionConfig) -> Vec<Box<dyn AgentTool>> {
     let bash = if auto_approve {
         BashTool::default()
     } else {
         let always_approved = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&always_approved);
+        let perms = permissions.clone();
         BashTool::default().with_confirm(move |cmd: &str| {
             // If user previously chose "always", skip the prompt
             if flag.load(Ordering::Relaxed) {
@@ -184,6 +186,22 @@ fn build_tools(auto_approve: bool) -> Vec<Box<dyn AgentTool>> {
                     truncate_with_ellipsis(cmd, 120)
                 );
                 return true;
+            }
+            // Check permission patterns before prompting
+            if let Some(allowed) = perms.check(cmd) {
+                if allowed {
+                    eprintln!(
+                        "{GREEN}  ✓ Permitted: {RESET}{}",
+                        truncate_with_ellipsis(cmd, 120)
+                    );
+                    return true;
+                } else {
+                    eprintln!(
+                        "{RED}  ✗ Denied by permission rule: {RESET}{}",
+                        truncate_with_ellipsis(cmd, 120)
+                    );
+                    return false;
+                }
             }
             use std::io::BufRead;
             // Show the command and ask for approval
@@ -314,6 +332,7 @@ fn build_agent(
     temperature: Option<f32>,
     max_turns: Option<usize>,
     auto_approve: bool,
+    permissions: &cli::PermissionConfig,
 ) -> Agent {
     let mut agent = if provider == "anthropic" && base_url.is_none() {
         // Default Anthropic path — unchanged
@@ -323,7 +342,7 @@ fn build_agent(
             .with_api_key(api_key)
             .with_thinking(thinking)
             .with_skills(skills.clone())
-            .with_tools(build_tools(auto_approve))
+            .with_tools(build_tools(auto_approve, permissions))
     } else if provider == "google" {
         // Google uses its own provider
         let config = create_model_config(provider, model, base_url);
@@ -333,7 +352,7 @@ fn build_agent(
             .with_api_key(api_key)
             .with_thinking(thinking)
             .with_skills(skills.clone())
-            .with_tools(build_tools(auto_approve))
+            .with_tools(build_tools(auto_approve, permissions))
             .with_model_config(config)
     } else {
         // All other providers use OpenAI-compatible API
@@ -344,7 +363,7 @@ fn build_agent(
             .with_api_key(api_key)
             .with_thinking(thinking)
             .with_skills(skills.clone())
-            .with_tools(build_tools(auto_approve))
+            .with_tools(build_tools(auto_approve, permissions))
             .with_model_config(config)
     };
 
@@ -396,6 +415,7 @@ async fn main() {
     // Auto-approve in non-interactive modes (piped, --prompt) or when --yes is set
     let is_interactive = io::stdin().is_terminal() && config.prompt_arg.is_none();
     let auto_approve = config.auto_approve || !is_interactive;
+    let permissions = config.permissions;
 
     let mut agent = build_agent(
         &model,
@@ -409,6 +429,7 @@ async fn main() {
         temperature,
         max_turns,
         auto_approve,
+        &permissions,
     );
 
     // Connect to MCP servers (--mcp flags)
@@ -447,6 +468,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    &permissions,
                 );
                 eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
             }
@@ -529,6 +551,13 @@ async fn main() {
     }
     if !auto_approve {
         println!("{DIM}  tools: confirmation required (use --yes to skip){RESET}");
+    }
+    if !permissions.is_empty() {
+        println!(
+            "{DIM}  permissions: {} allow, {} deny pattern(s){RESET}",
+            permissions.allow.len(),
+            permissions.deny.len()
+        );
     }
     if let Some(branch) = git_branch() {
         println!("{DIM}  git:   {branch}{RESET}");
@@ -744,6 +773,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    &permissions,
                 );
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
@@ -775,6 +805,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    &permissions,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -817,6 +848,7 @@ async fn main() {
                     temperature,
                     max_turns,
                     auto_approve,
+                    &permissions,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -3267,8 +3299,9 @@ diff --git a/src/old.rs b/src/old.rs
     #[test]
     fn test_build_tools_returns_six_tools() {
         // build_tools should return 6 tools regardless of auto_approve
-        let tools_approved = build_tools(true);
-        let tools_confirm = build_tools(false);
+        let perms = cli::PermissionConfig::default();
+        let tools_approved = build_tools(true, &perms);
+        let tools_confirm = build_tools(false, &perms);
         assert_eq!(tools_approved.len(), 6);
         assert_eq!(tools_confirm.len(), 6);
     }

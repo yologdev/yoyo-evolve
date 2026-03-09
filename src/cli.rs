@@ -31,6 +31,139 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "custom",
 ];
 
+/// Permission configuration for tool execution.
+/// Controls which bash commands are auto-approved, auto-denied, or require prompting.
+/// Patterns use simple glob matching: `*` matches any sequence of characters.
+#[derive(Debug, Clone, Default)]
+pub struct PermissionConfig {
+    /// Patterns that auto-approve matching bash commands (no prompt needed).
+    pub allow: Vec<String>,
+    /// Patterns that auto-deny matching bash commands (rejected with message).
+    pub deny: Vec<String>,
+}
+
+impl PermissionConfig {
+    /// Check a command against deny patterns first, then allow patterns.
+    /// Returns `Some(true)` if allowed, `Some(false)` if denied, `None` if no match (prompt user).
+    pub fn check(&self, command: &str) -> Option<bool> {
+        // Deny takes priority — check deny patterns first
+        for pattern in &self.deny {
+            if glob_match(pattern, command) {
+                return Some(false);
+            }
+        }
+        // Then check allow patterns
+        for pattern in &self.allow {
+            if glob_match(pattern, command) {
+                return Some(true);
+            }
+        }
+        // No match — prompt the user
+        None
+    }
+
+    /// Returns true if no patterns are configured.
+    pub fn is_empty(&self) -> bool {
+        self.allow.is_empty() && self.deny.is_empty()
+    }
+}
+
+/// Simple glob matching: `*` matches any sequence of characters (including empty).
+/// Supports multiple `*` wildcards. No other special characters.
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+
+    // No wildcards — exact match
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+
+    let mut pos = 0;
+
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if i == 0 {
+            // First segment must match at the start
+            if !text.starts_with(part) {
+                return false;
+            }
+            pos = part.len();
+        } else if i == parts.len() - 1 {
+            // Last segment must match at the end
+            if !text[pos..].ends_with(part) {
+                return false;
+            }
+            pos = text.len();
+        } else {
+            // Middle segments must appear in order
+            match text[pos..].find(part) {
+                Some(idx) => pos += idx + part.len(),
+                None => return false,
+            }
+        }
+    }
+
+    true
+}
+
+/// Parse a TOML-style array value like `["pattern1", "pattern2"]` into a Vec<String>.
+pub fn parse_toml_array(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return Vec::new();
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+    inner
+        .split(',')
+        .map(|s| {
+            let s = s.trim();
+            // Strip quotes
+            if (s.starts_with('"') && s.ends_with('"'))
+                || (s.starts_with('\'') && s.ends_with('\''))
+            {
+                s[1..s.len() - 1].to_string()
+            } else {
+                s.to_string()
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Parse a `[permissions]` section from a TOML config file content.
+/// Looks for `allow = [...]` and `deny = [...]` lines under `[permissions]`.
+pub fn parse_permissions_from_config(content: &str) -> PermissionConfig {
+    let mut config = PermissionConfig::default();
+    let mut in_permissions = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Check for section headers
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_permissions = trimmed == "[permissions]";
+            continue;
+        }
+        if !in_permissions {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            match key {
+                "allow" => config.allow = parse_toml_array(value),
+                "deny" => config.deny = parse_toml_array(value),
+                _ => {}
+            }
+        }
+    }
+    config
+}
+
 /// Parsed CLI configuration.
 pub struct Config {
     pub model: String,
@@ -49,6 +182,7 @@ pub struct Config {
     pub verbose: bool,
     pub mcp_servers: Vec<String>,
     pub auto_approve: bool,
+    pub permissions: PermissionConfig,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -93,6 +227,8 @@ pub fn print_help() {
     println!("  --no-color        Disable colored output (also respects NO_COLOR env)");
     println!("  --verbose, -v     Show debug info (API errors, request details)");
     println!("  --yes, -y         Auto-approve all tool executions (skip confirmation prompts)");
+    println!("  --allow <pat>     Auto-approve bash commands matching glob pattern (repeatable)");
+    println!("  --deny <pat>      Auto-deny bash commands matching glob pattern (repeatable)");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -146,6 +282,10 @@ pub fn print_help() {
     println!("  max_tokens = 4096");
     println!("  max_turns = 20");
     println!("  api_key = \"sk-ant-...\"");
+    println!();
+    println!("  [permissions]");
+    println!("  allow = [\"git *\", \"cargo *\"]");
+    println!("  deny = [\"rm -rf *\"]");
     println!();
     println!("CLI flags override config file values.");
 }
@@ -206,6 +346,8 @@ const KNOWN_FLAGS: &[&str] = &[
     "-o",
     "--api-key",
     "--mcp",
+    "--allow",
+    "--deny",
     "--no-color",
     "--verbose",
     "-v",
@@ -427,6 +569,24 @@ fn load_config_file() -> HashMap<String, String> {
     HashMap::new()
 }
 
+/// Load permission config from config file, checking project-level then user-level paths.
+/// Returns a default (empty) PermissionConfig if no config file or no [permissions] section.
+fn load_permissions_from_config_file() -> PermissionConfig {
+    // Check project-level config first
+    for name in CONFIG_FILE_NAMES {
+        if let Ok(content) = std::fs::read_to_string(name) {
+            return parse_permissions_from_config(&content);
+        }
+    }
+    // Check user-level config
+    if let Some(path) = user_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            return parse_permissions_from_config(&content);
+        }
+    }
+    PermissionConfig::default()
+}
+
 /// Parse CLI arguments into a Config, or exit with help/version.
 /// Returns None if --help or --version was handled (program should exit).
 pub fn parse_args(args: &[String]) -> Option<Config> {
@@ -461,6 +621,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "-o",
         "--api-key",
         "--mcp",
+        "--allow",
+        "--deny",
     ];
     for flag in &flags_needing_values {
         if let Some(pos) = args.iter().position(|a| a == flag) {
@@ -693,6 +855,33 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 
     let auto_approve = args.iter().any(|a| a == "--yes" || a == "-y");
 
+    // --allow <pattern> flags: collect all allow patterns (repeatable)
+    let cli_allow: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == "--allow")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+
+    // --deny <pattern> flags: collect all deny patterns (repeatable)
+    let cli_deny: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == "--deny")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+
+    // Build permission config: CLI flags override config file
+    let permissions = if cli_allow.is_empty() && cli_deny.is_empty() {
+        // No CLI flags — try loading from config file
+        load_permissions_from_config_file()
+    } else {
+        PermissionConfig {
+            allow: cli_allow,
+            deny: cli_deny,
+        }
+    };
+
     // --mcp <command> flags: collect all MCP server commands (repeatable)
     let mcp_servers: Vec<String> = args
         .iter()
@@ -718,6 +907,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         verbose,
         mcp_servers,
         auto_approve,
+        permissions,
     })
 }
 
@@ -1134,6 +1324,8 @@ thinking = "high"
             "--output",
             "-o",
             "--api-key",
+            "--allow",
+            "--deny",
         ];
         for flag in &flags_with_values {
             assert!(
@@ -1304,5 +1496,254 @@ thinking = "high"
             let dir = data_dir_hint();
             assert!(dir.is_some(), "Should return a data dir path");
         }
+    }
+
+    // === Permission system tests ===
+
+    #[test]
+    fn test_glob_match_exact() {
+        assert!(glob_match("ls", "ls"));
+        assert!(!glob_match("ls", "ls -la"));
+        assert!(!glob_match("ls -la", "ls"));
+    }
+
+    #[test]
+    fn test_glob_match_wildcard_suffix() {
+        assert!(glob_match("git *", "git status"));
+        assert!(glob_match("git *", "git commit -m 'hello'"));
+        assert!(!glob_match("git *", "echo git"));
+        assert!(!glob_match("git *", "gitignore"));
+    }
+
+    #[test]
+    fn test_glob_match_wildcard_prefix() {
+        assert!(glob_match("*.rs", "main.rs"));
+        assert!(glob_match("*.rs", "src/main.rs"));
+        assert!(!glob_match("*.rs", "main.py"));
+    }
+
+    #[test]
+    fn test_glob_match_wildcard_middle() {
+        assert!(glob_match("cargo * --release", "cargo build --release"));
+        assert!(glob_match("cargo * --release", "cargo test --release"));
+        assert!(!glob_match("cargo * --release", "cargo build --debug"));
+    }
+
+    #[test]
+    fn test_glob_match_multiple_wildcards() {
+        assert!(glob_match("*git*", "git status"));
+        assert!(glob_match("*git*", "echo git hello"));
+        assert!(glob_match("*git*", "something git something"));
+        assert!(!glob_match("*git*", "echo hello"));
+    }
+
+    #[test]
+    fn test_glob_match_star_only() {
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("*", ""));
+        assert!(glob_match("*", "ls -la /tmp"));
+    }
+
+    #[test]
+    fn test_glob_match_empty_pattern() {
+        assert!(glob_match("", ""));
+        assert!(!glob_match("", "something"));
+    }
+
+    #[test]
+    fn test_glob_match_rm_rf() {
+        assert!(glob_match("rm -rf *", "rm -rf /"));
+        assert!(glob_match("rm -rf *", "rm -rf /tmp"));
+        assert!(!glob_match("rm -rf *", "rm file.txt"));
+        assert!(!glob_match("rm -rf *", "rm -r dir"));
+    }
+
+    #[test]
+    fn test_permission_config_check_allow() {
+        let config = PermissionConfig {
+            allow: vec!["git *".to_string(), "cargo *".to_string()],
+            deny: vec![],
+        };
+        assert_eq!(config.check("git status"), Some(true));
+        assert_eq!(config.check("cargo build"), Some(true));
+        assert_eq!(config.check("rm -rf /"), None);
+    }
+
+    #[test]
+    fn test_permission_config_check_deny() {
+        let config = PermissionConfig {
+            allow: vec![],
+            deny: vec!["rm -rf *".to_string(), "sudo *".to_string()],
+        };
+        assert_eq!(config.check("rm -rf /tmp"), Some(false));
+        assert_eq!(config.check("sudo apt install"), Some(false));
+        assert_eq!(config.check("ls"), None);
+    }
+
+    #[test]
+    fn test_permission_config_deny_overrides_allow() {
+        // Deny should take priority when both match
+        let config = PermissionConfig {
+            allow: vec!["*".to_string()],
+            deny: vec!["rm -rf *".to_string()],
+        };
+        assert_eq!(config.check("rm -rf /"), Some(false));
+        assert_eq!(config.check("ls"), Some(true));
+        assert_eq!(config.check("git status"), Some(true));
+    }
+
+    #[test]
+    fn test_permission_config_empty() {
+        let config = PermissionConfig::default();
+        assert!(config.is_empty());
+        assert_eq!(config.check("anything"), None);
+    }
+
+    #[test]
+    fn test_parse_toml_array_basic() {
+        let arr = parse_toml_array(r#"["git *", "cargo *"]"#);
+        assert_eq!(arr, vec!["git *", "cargo *"]);
+    }
+
+    #[test]
+    fn test_parse_toml_array_single() {
+        let arr = parse_toml_array(r#"["rm -rf *"]"#);
+        assert_eq!(arr, vec!["rm -rf *"]);
+    }
+
+    #[test]
+    fn test_parse_toml_array_empty() {
+        let arr = parse_toml_array("[]");
+        assert!(arr.is_empty());
+    }
+
+    #[test]
+    fn test_parse_toml_array_single_quotes() {
+        let arr = parse_toml_array("['git *', 'ls']");
+        assert_eq!(arr, vec!["git *", "ls"]);
+    }
+
+    #[test]
+    fn test_parse_toml_array_not_array() {
+        let arr = parse_toml_array("not an array");
+        assert!(arr.is_empty());
+    }
+
+    #[test]
+    fn test_parse_permissions_from_config() {
+        let content = r#"
+model = "claude-opus-4-6"
+thinking = "medium"
+
+[permissions]
+allow = ["git *", "cargo *", "echo *"]
+deny = ["rm -rf *", "sudo *"]
+"#;
+        let perms = parse_permissions_from_config(content);
+        assert_eq!(perms.allow, vec!["git *", "cargo *", "echo *"]);
+        assert_eq!(perms.deny, vec!["rm -rf *", "sudo *"]);
+    }
+
+    #[test]
+    fn test_parse_permissions_from_config_no_section() {
+        let content = r#"
+model = "claude-opus-4-6"
+thinking = "medium"
+"#;
+        let perms = parse_permissions_from_config(content);
+        assert!(perms.is_empty());
+    }
+
+    #[test]
+    fn test_parse_permissions_from_config_empty_section() {
+        let content = r#"
+[permissions]
+"#;
+        let perms = parse_permissions_from_config(content);
+        assert!(perms.is_empty());
+    }
+
+    #[test]
+    fn test_parse_permissions_from_config_only_allow() {
+        let content = r#"
+[permissions]
+allow = ["git *"]
+"#;
+        let perms = parse_permissions_from_config(content);
+        assert_eq!(perms.allow, vec!["git *"]);
+        assert!(perms.deny.is_empty());
+    }
+
+    #[test]
+    fn test_parse_permissions_from_config_other_section_after() {
+        let content = r#"
+[permissions]
+allow = ["git *"]
+
+[other]
+key = "value"
+"#;
+        let perms = parse_permissions_from_config(content);
+        assert_eq!(perms.allow, vec!["git *"]);
+        assert!(perms.deny.is_empty());
+    }
+
+    #[test]
+    fn test_permission_config_realistic_scenario() {
+        // Simulate a real workflow: allow common dev commands, deny dangerous ones
+        let config = PermissionConfig {
+            allow: vec![
+                "git *".to_string(),
+                "cargo *".to_string(),
+                "cat *".to_string(),
+                "ls *".to_string(),
+                "echo *".to_string(),
+            ],
+            deny: vec![
+                "rm -rf *".to_string(),
+                "sudo *".to_string(),
+                "curl * | sh".to_string(),
+            ],
+        };
+
+        // Safe commands auto-approve
+        assert_eq!(config.check("git status"), Some(true));
+        assert_eq!(config.check("cargo test"), Some(true));
+        assert_eq!(config.check("cat Cargo.toml"), Some(true));
+
+        // Dangerous commands auto-deny
+        assert_eq!(config.check("rm -rf /"), Some(false));
+        assert_eq!(config.check("sudo rm -rf /"), Some(false));
+
+        // Unknown commands prompt
+        assert_eq!(config.check("python script.py"), None);
+        assert_eq!(config.check("npm install"), None);
+    }
+
+    #[test]
+    fn test_allow_deny_flags_parsing() {
+        let args = [
+            "yoyo".to_string(),
+            "--allow".to_string(),
+            "git *".to_string(),
+            "--allow".to_string(),
+            "cargo *".to_string(),
+            "--deny".to_string(),
+            "rm -rf *".to_string(),
+        ];
+        let allow: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--allow")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        let deny: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--deny")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        assert_eq!(allow, vec!["git *", "cargo *"]);
+        assert_eq!(deny, vec!["rm -rf *"]);
     }
 }
