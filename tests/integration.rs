@@ -507,6 +507,190 @@ fn system_flag_with_text_does_not_error() {
 
 // ── Piped input with bad API key (needs network) ────────────────────
 
+// ── --thinking without a value ───────────────────────────────────────
+
+#[test]
+fn thinking_flag_without_value_shows_error() {
+    // --thinking without a value should exit non-zero with a clear error
+    let output = yoyo_cmd()
+        .arg("--thinking")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "--thinking without value should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--thinking requires a value"),
+        "should say '--thinking requires a value': {stderr}"
+    );
+    assert!(stderr.contains("--help"), "should suggest --help: {stderr}");
+}
+
+// ── --verbose flag accepted ─────────────────────────────────────────
+
+#[test]
+fn verbose_flag_accepted_with_help() {
+    // --verbose should not produce an "unknown flag" warning
+    let output = yoyo_cmd()
+        .arg("--verbose")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(output.status.success(), "--verbose --help should exit 0");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "--verbose should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+#[test]
+fn verbose_short_flag_accepted_with_help() {
+    // -v should not produce an "unknown flag" warning
+    let output = yoyo_cmd()
+        .arg("-v")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(output.status.success(), "-v --help should exit 0");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "-v should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+// ── --allow and --deny flags accepted ───────────────────────────────
+
+#[test]
+fn allow_flag_accepted_with_help() {
+    // --allow with a pattern should be silently accepted (no unknown flag warning)
+    let output = yoyo_cmd()
+        .arg("--allow")
+        .arg("git *")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--allow 'git *' --help should exit 0"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "--allow should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+#[test]
+fn deny_flag_accepted_with_help() {
+    // --deny with a pattern should be silently accepted
+    let output = yoyo_cmd()
+        .arg("--deny")
+        .arg("rm -rf *")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--deny 'rm -rf *' --help should exit 0"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "--deny should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+#[test]
+fn allow_and_deny_combined_with_other_flags() {
+    // --allow and --deny together with --model should all be accepted
+    let output = yoyo_cmd()
+        .arg("--allow")
+        .arg("cargo *")
+        .arg("--deny")
+        .arg("sudo *")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--allow + --deny + --help should exit 0"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "combined --allow/--deny should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+// ── --model without value (specific exit code + error format) ───────
+
+#[test]
+fn model_flag_without_value_exits_nonzero() {
+    // Regression guard: --model with nothing after it must not panic or hang
+    let output = yoyo_cmd()
+        .arg("--model")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "--model without value should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should give a clear error, not a panic
+    assert!(
+        !stderr.contains("panicked at"),
+        "--model without value should not panic: {stderr}"
+    );
+    assert!(
+        stderr.contains("--model requires a value"),
+        "should explain the error: {stderr}"
+    );
+}
+
+// ── Unknown slash-command-like arguments don't crash ────────────────
+
+#[test]
+fn unknown_flag_does_not_panic() {
+    // Even weird flag-like inputs should produce a warning, not a crash
+    let output = yoyo_cmd()
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--foobar")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "unknown flag should not panic: {stderr}"
+    );
+    assert!(
+        stderr.contains("warning:") && stderr.contains("--foobar"),
+        "should warn about --foobar: {stderr}"
+    );
+}
+
+// ── Piped input with bad API key (needs network) ────────────────────
+
 #[test]
 #[ignore] // Requires network access — run with `cargo test -- --ignored`
 fn piped_input_with_bad_api_key_shows_auth_error_gracefully() {
