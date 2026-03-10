@@ -257,6 +257,254 @@ fn ollama_provider_does_not_require_api_key() {
     );
 }
 
+// ── Flags requiring values show clear errors ────────────────────────
+
+#[test]
+fn flag_requiring_value_without_value_shows_error() {
+    // --model without a value should exit 1 with a clear error
+    let output = yoyo_cmd()
+        .arg("--model")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "--model without value should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--model requires a value"),
+        "should say '--model requires a value': {stderr}"
+    );
+    assert!(stderr.contains("--help"), "should suggest --help: {stderr}");
+}
+
+#[test]
+fn provider_flag_without_value_shows_error() {
+    // --provider without a value should exit 1 with a clear error
+    let output = yoyo_cmd()
+        .arg("--provider")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "--provider without value should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--provider requires a value"),
+        "should say '--provider requires a value': {stderr}"
+    );
+}
+
+// ── /help output lists all documented commands ──────────────────────
+
+#[test]
+fn help_output_lists_all_documented_cli_flags() {
+    let output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Every documented CLI flag should be mentioned in --help output
+    let expected_flags = [
+        "--model",
+        "--provider",
+        "--base-url",
+        "--thinking",
+        "--max-tokens",
+        "--max-turns",
+        "--temperature",
+        "--skills",
+        "--system",
+        "--system-file",
+        "--prompt",
+        "--output",
+        "--api-key",
+        "--mcp",
+        "--openapi",
+        "--no-color",
+        "--verbose",
+        "--yes",
+        "--allow",
+        "--deny",
+        "--continue",
+        "--help",
+        "--version",
+    ];
+    for flag in &expected_flags {
+        assert!(
+            stdout.contains(flag),
+            "help output should mention flag {flag}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn help_output_lists_all_documented_repl_commands() {
+    let output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Every documented REPL command should appear in --help output
+    let expected_commands = [
+        "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context", "/cost", "/diff",
+        "/git", "/health", "/pr", "/history", "/search", "/init", "/load", "/model", "/retry",
+        "/run", "/save", "/status", "/think", "/tokens", "/tree", "/undo", "/version",
+    ];
+    for cmd in &expected_commands {
+        assert!(
+            stdout.contains(cmd),
+            "help output should mention REPL command {cmd}: {stdout}"
+        );
+    }
+}
+
+// ── --no-color output contains no ANSI escape sequences ─────────────
+
+#[test]
+fn no_color_flag_suppresses_ansi_in_version() {
+    let output = yoyo_cmd()
+        .arg("--no-color")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--no-color --version should exit 0"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("\x1b["),
+        "version output with --no-color should not contain ANSI escapes: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("\x1b["),
+        "stderr with --no-color should not contain ANSI escapes: {stderr}"
+    );
+}
+
+#[test]
+fn no_color_flag_suppresses_ansi_in_error_output() {
+    // Even error messages should not have ANSI codes when --no-color is set
+    let output = yoyo_cmd()
+        .arg("--no-color")
+        .arg("--model") // missing value → error
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("\x1b["),
+        "error output with --no-color should not contain ANSI escapes: {stderr}"
+    );
+}
+
+// ── Multiple unknown flags each produce warnings ────────────────────
+
+#[test]
+fn multiple_unknown_flags_each_produce_warnings() {
+    let output = yoyo_cmd()
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--fake-flag-alpha")
+        .arg("--fake-flag-beta")
+        .arg("--fake-flag-gamma")
+        .stdin(Stdio::piped()) // empty piped stdin triggers "No input on stdin"
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Each unknown flag should produce its own warning
+    assert!(
+        stderr.contains("--fake-flag-alpha"),
+        "should warn about --fake-flag-alpha: {stderr}"
+    );
+    assert!(
+        stderr.contains("--fake-flag-beta"),
+        "should warn about --fake-flag-beta: {stderr}"
+    );
+    assert!(
+        stderr.contains("--fake-flag-gamma"),
+        "should warn about --fake-flag-gamma: {stderr}"
+    );
+
+    // Count how many warning lines appear — should be at least 3
+    let warning_count = stderr
+        .lines()
+        .filter(|l| l.contains("warning:") && l.contains("Unknown flag"))
+        .count();
+    assert!(
+        warning_count >= 3,
+        "should have at least 3 warning lines, got {warning_count}: {stderr}"
+    );
+}
+
+// ── --system-file with nonexistent file shows useful error ──────────
+
+#[test]
+fn system_file_with_nonexistent_file_shows_useful_error() {
+    let output = yoyo_cmd()
+        .env("ANTHROPIC_API_KEY", "sk-ant-fake-for-test")
+        .arg("--system-file")
+        .arg("/definitely/nonexistent/prompt-file.txt")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "--system-file with nonexistent file should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error:") || stderr.contains("Error"),
+        "should contain 'error:': {stderr}"
+    );
+    assert!(
+        stderr.contains("prompt-file.txt") || stderr.contains("nonexistent"),
+        "error message should reference the file path: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked at"),
+        "should not panic: {stderr}"
+    );
+}
+
+#[test]
+fn system_flag_with_text_does_not_error() {
+    // --system "text" should be accepted fine (check via --help to avoid needing API key)
+    let output = yoyo_cmd()
+        .arg("--system")
+        .arg("You are a Rust expert.")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--system with text and --help should exit 0"
+    );
+}
+
 // ── Piped input with bad API key (needs network) ────────────────────
 
 #[test]
