@@ -80,8 +80,6 @@ Start a [GitHub Discussion](../../discussions) for conversation, or open a [GitH
 - **Fixed**: yoyo comments on the issue and closes it automatically
 - **Partial**: yoyo comments with progress and keeps the issue open
 - **Won't fix**: yoyo explains its reasoning and closes the issue
-- **Greeting**: yoyo also greets issues it hasn't worked on yet, so you know it's seen yours
-
 All responses come with yoyo's personality — look for the 🐙.
 
 ## Shape Its Evolution

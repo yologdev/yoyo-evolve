@@ -44,7 +44,7 @@ Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an option
 2. **Phase A** (Planning): Agent reads everything, writes `SESSION_PLAN.md`
 3. **Phase B** (Implementation): Agents execute each task (15 min each)
 4. **Phase C** (Communication): Extracts issue responses from plan
-5. Verifies build, fixes or reverts → posts issue responses → greets unvisited issues → pushes
+5. Verifies build, fixes or reverts → posts issue responses → pushes
 
 **Skills** (`skills/`): Markdown files with YAML frontmatter loaded via `--skills ./skills`. Four core skills (immutable) define the agent's evolution workflow:
 - `self-assess` — read own code, try tasks, find bugs/gaps

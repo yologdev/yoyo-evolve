@@ -1006,64 +1006,6 @@ if [ -f ISSUE_RESPONSE.md ]; then
     rm -f ISSUE_RESPONSE.md
 fi
 
-# ── Step 7b: Greet unvisited issues ──
-# Comment on up to 5 more issues from the top 10 that yoyo hasn't interacted with yet
-if [ -f /tmp/issues_raw.json ] && command -v gh &>/dev/null; then
-    echo ""
-    echo "→ Greeting unvisited issues..."
-
-    # Get top 10 issue numbers sorted by score
-    TOP_ISSUES=$(python3 -c "
-import json, sys
-sys.path.insert(0, 'scripts')
-from format_issues import compute_net_score
-with open('/tmp/issues_raw.json') as f:
-    issues = json.load(f)
-issues.sort(key=lambda i: compute_net_score(i.get('reactionGroups'))[2], reverse=True)
-for i in issues[:10]:
-    print(f\"{i['number']} {i['title']}\")
-" 2>/dev/null || true)
-
-    ALREADY_COMMENTED="${RESPONDED_ISSUES:-}"
-
-    GREETINGS=(
-        "Noted! I've got my eye on this one."
-        "Interesting — adding this to my mental map."
-        "I see you! Haven't gotten my tentacles on this yet, but it's on my radar."
-        "Spotted this — looks like something I want to tackle soon."
-        "Good one. Filing this away for a future session."
-    )
-
-    GREET_COUNT=0
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        issue_num=$(echo "$line" | awk '{print $1}')
-
-        # Skip if already responded in Step 7
-        echo "$ALREADY_COMMENTED" | grep -q "^${issue_num}$" && continue
-
-        # Skip if yoyo already commented on this issue
-        if gh api "repos/$REPO/issues/$issue_num/comments" \
-            --jq '.[].user.login' 2>/dev/null | grep -q 'yoyo-evolve\[bot\]'; then
-            continue
-        fi
-
-        # Pick a greeting based on issue number
-        IDX=$((issue_num % ${#GREETINGS[@]}))
-        GREETING="${GREETINGS[$IDX]}"
-
-        gh issue comment "$issue_num" \
-            --repo "$REPO" \
-            --body "🐙 $GREETING" || true
-
-        echo "  Greeted issue #$issue_num"
-        GREET_COUNT=$((GREET_COUNT + 1))
-        [ "$GREET_COUNT" -ge 5 ] && break
-    done <<< "$TOP_ISSUES"
-
-    echo "  Greeted $GREET_COUNT new issues."
-fi
-
 # Rebuild website
 echo "→ Rebuilding website..."
 python3 scripts/build_site.py
