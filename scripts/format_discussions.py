@@ -346,6 +346,7 @@ if __name__ == "__main__":
     try:
         day = int(sys.argv[2])
     except ValueError:
+        print(f"Warning: invalid DAY '{sys.argv[2]}', defaulting to 0", file=sys.stderr)
         day = 0
 
     bot_username = os.environ.get("BOT_USERNAME", "yoyo-evolve[bot]")

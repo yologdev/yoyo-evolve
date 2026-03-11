@@ -50,14 +50,18 @@ elif [ -f "./target/debug/yoyo" ]; then
     YOYO_BIN="./target/debug/yoyo"
 else
     echo "→ No binary found. Building..."
-    if cargo build --release --quiet 2>/dev/null; then
+    BUILD_STDERR=$(mktemp)
+    if cargo build --release --quiet 2>"$BUILD_STDERR"; then
         YOYO_BIN="./target/release/yoyo"
-    elif cargo build --quiet 2>/dev/null; then
+    elif cargo build --quiet 2>"$BUILD_STDERR"; then
         YOYO_BIN="./target/debug/yoyo"
     else
         echo "  FATAL: Cannot build yoyo."
+        cat "$BUILD_STDERR" | sed 's/^/    /'
+        rm -f "$BUILD_STDERR"
         exit 1
     fi
+    rm -f "$BUILD_STDERR"
 fi
 echo "→ Binary: $YOYO_BIN"
 echo ""
@@ -294,11 +298,13 @@ fi
 
 echo "→ Running social session..."
 AGENT_LOG=$(mktemp)
+set +o errexit
 ${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} "$YOYO_BIN" \
     --model "$MODEL" \
     --skills ./skills \
-    < "$PROMPT" 2>&1 | tee "$AGENT_LOG" || true
+    < "$PROMPT" 2>&1 | tee "$AGENT_LOG"
 AGENT_EXIT=${PIPESTATUS[0]}
+set -o errexit
 
 rm -f "$PROMPT"
 
