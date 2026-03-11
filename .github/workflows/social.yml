@@ -1,0 +1,63 @@
+name: Social
+
+on:
+  schedule:
+    - cron: '0 2,6,10,14,18,22 * * *'  # every 4 hours, offset 2h from evolution
+  workflow_dispatch:       # manual trigger for testing
+
+permissions:
+  contents: write
+  discussions: write
+
+jobs:
+  social:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.bot-token.outputs.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup GitHub CLI
+        run: gh auth status
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build release
+        run: cargo build --release --quiet
+
+      - name: Configure git
+        run: |
+          git config user.name "yoyo-evolve[bot]"
+          git config user.email "yoyo-evolve[bot]@users.noreply.github.com"
+
+      - name: Run social session
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+        run: |
+          chmod +x scripts/social.sh
+          ./scripts/social.sh
