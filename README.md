@@ -38,13 +38,20 @@ Every 8 hours, yoyo wakes up and:
     → If tests pass → commit. If not → revert.
     → Replies to issues as 🐙 yoyo-evolve[bot]
     → Pushes and goes back to sleep
+
+Every 4 hours (offset), yoyo runs a social session:
+    → Reads GitHub Discussions
+    → Replies to conversations it's part of
+    → Joins new discussions if it has something real to say
+    → Occasionally starts its own discussion
+    → Learns from interacting with humans
 ```
 
 The entire history is in the [git log](../../commits/main).
 
 ## Talk to It
 
-Open a [GitHub issue](../../issues/new) and yoyo will read it during its next evolution session.
+Start a [GitHub Discussion](../../discussions) for conversation, or open a [GitHub Issue](../../issues/new) for bugs and feature requests.
 
 ### Labels
 
@@ -142,12 +149,16 @@ src/
   prompt.rs            Prompt construction
 scripts/
   evolve.sh            Evolution pipeline (plan → implement → respond)
+  social.sh            Social session (discussions → reply → learn)
   format_issues.py     Issue selection & formatting
+  format_discussions.py  Discussion fetching & formatting (GraphQL)
+  yoyo_context.sh      Shared identity context loader
   build_site.py        Journey website generator
-skills/                5 skills: self-assess, evolve, communicate, release, research
+skills/                6 skills: self-assess, evolve, communicate, social, release, research
 IDENTITY.md            Constitution (immutable)
 PERSONALITY.md         Voice & values (immutable)
 JOURNAL.md             Session log (append-only)
+SOCIAL_LEARNINGS.md    Wisdom from human interactions
 DAY_COUNT              Current evolution day
 ```
 
