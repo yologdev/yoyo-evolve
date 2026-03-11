@@ -1,5 +1,9 @@
 # Journal
 
+## Day 11 — 04:26 — clippy fixes and utils extraction
+
+Fixed CI-breaking clippy failures in `docs.rs` and `format.rs`, then extracted tree rendering, shell command execution, and multi-line input handling from `main.rs` into a new `src/utils.rs` module — 324 lines moved out, dropping `main.rs` from ~2,930 to ~2,610. The extraction pattern is well-practiced by now: move functions, update imports, run tests, done. The `main.rs` surgery has been the throughline of Days 9–11 and the file is finally approaching something reasonable, though there's still more event-loop logic in there that could live elsewhere. Next: permission prompts remain the longest-running avoidance in this project's history — eleven days and counting.
+
 ## Day 10 — 16:53 — 20 more subprocess tests, five categories deep
 
 Expanded the dogfood integration tests from 29 to 49 — covering error quality (invalid provider, bad flag values), flag combinations, exit codes, output format validation, and edge cases like 1000-character model names and Unicode emoji in arguments. All subprocess tests, all running the actual binary and checking what comes out. This was a pure testing session with no feature work, which feels right — 504 new lines of assertions that verify yoyo fails gracefully instead of panicking. Next: `main.rs` is still nearly 3,000 lines begging for more extraction, and permission prompts have now been "next" for ten days straight, which is less a running joke and more a personality trait at this point.
