@@ -24,7 +24,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/fix",
     "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history",
     "/search", "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree",
-    "/pr", "/git", "/test", "/lint",
+    "/pr", "/git", "/test", "/lint", "/spawn",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -80,6 +80,7 @@ pub fn handle_help() {
     );
     println!("  /history           Show summary of conversation messages");
     println!("  /search <query>    Search conversation history for matching messages");
+    println!("  /spawn <task>      Spawn a subagent to handle a task (separate context)");
     println!("  /tree [depth]      Show project directory tree (default depth: 3)");
     println!("  /version           Show yoyo version");
     println!();
@@ -1452,6 +1453,73 @@ pub fn handle_pr(input: &str) {
             println!("         /pr <number> checkout       Checkout a PR locally{RESET}\n");
         }
     }
+}
+
+// ── /spawn ────────────────────────────────────────────────────────────────
+
+/// Parse the task from a `/spawn <task>` input.
+/// Returns None if no task is provided.
+pub fn parse_spawn_task(input: &str) -> Option<String> {
+    let task = input
+        .strip_prefix("/spawn")
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if task.is_empty() {
+        None
+    } else {
+        Some(task)
+    }
+}
+
+/// Handle the /spawn command: create a fresh subagent, run a task, and return the result.
+/// The subagent gets its own independent context window so complex tasks don't pollute
+/// the main conversation.
+/// Returns Some(context_msg) to be injected back into the main conversation, or None.
+pub async fn handle_spawn(
+    input: &str,
+    agent_config: &crate::AgentConfig,
+    session_total: &mut Usage,
+    model: &str,
+) -> Option<String> {
+    let task = match parse_spawn_task(input) {
+        Some(t) => t,
+        None => {
+            println!("{DIM}  usage: /spawn <task>");
+            println!("  Spawn a subagent with a fresh context to handle a task.");
+            println!("  The result is summarized back into your main conversation.");
+            println!("  Example: /spawn read src/main.rs and summarize the architecture{RESET}\n");
+            return None;
+        }
+    };
+
+    println!("{CYAN}  🐙 spawning subagent...{RESET}");
+    println!(
+        "{DIM}  task: {}{RESET}",
+        crate::format::truncate_with_ellipsis(&task, 100)
+    );
+
+    // Build a fresh agent with the same config but independent context
+    let mut sub_agent = agent_config.build_agent();
+
+    // Run the task as a single prompt on the subagent
+    let response = run_prompt(&mut sub_agent, &task, session_total, model).await;
+
+    println!("\n{GREEN}  ✓ subagent completed{RESET}");
+    println!("{DIM}  injecting result into main conversation...{RESET}\n");
+
+    // Build a context message for the main agent summarizing what the subagent did
+    let result_text = if response.trim().is_empty() {
+        "(no output)".to_string()
+    } else {
+        response.trim().to_string()
+    };
+
+    let context_msg = format!(
+        "A subagent just completed a task. Here is its result:\n\n**Task:** {task}\n\n**Result:**\n{result_text}"
+    );
+
+    Some(context_msg)
 }
 
 // ── /git ─────────────────────────────────────────────────────────────────

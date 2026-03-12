@@ -25,6 +25,7 @@
 //!   /git <subcmd>   Quick git: status, log, add, diff, branch, stash
 //!   /model <name>   Switch model mid-session
 //!   /search <query> Search conversation history
+//!   /spawn <task>   Spawn a subagent with fresh context
 //!   /tree [depth]   Show project directory tree
 //!   /test           Auto-detect and run project tests
 //!   /lint           Auto-detect and run project linter
@@ -235,7 +236,7 @@ pub struct AgentConfig {
 
 impl AgentConfig {
     /// Build a fresh Agent from this configuration.
-    fn build_agent(&self) -> Agent {
+    pub fn build_agent(&self) -> Agent {
         let base_url = self.base_url.as_deref();
         let mut agent = if self.provider == "anthropic" && base_url.is_none() {
             // Default Anthropic path — unchanged
@@ -494,7 +495,7 @@ mod tests {
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
             "/cost", "/docs", "/fix", "/init", "/status", "/tokens", "/save", "/load", "/diff",
             "/undo", "/health", "/retry", "/run", "/history", "/search", "/model", "/think",
-            "/version", "/tree", "/pr", "/git", "/test", "/lint",
+            "/version", "/tree", "/pr", "/git", "/test", "/lint", "/spawn",
         ];
         for cmd in &commands {
             assert!(
@@ -1530,5 +1531,57 @@ mod tests {
         let input_bare = "/docs";
         assert_eq!(input_bare, "/docs");
         assert!(!input_bare.starts_with("/docs "));
+    }
+
+    #[test]
+    fn test_spawn_command_recognized() {
+        assert!(!is_unknown_command("/spawn"));
+        assert!(!is_unknown_command("/spawn read src/main.rs and summarize"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/spawn"),
+            "/spawn should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_spawn_command_matching() {
+        // /spawn should match exact or with space separator, not /spawning
+        let spawn_matches = |s: &str| s == "/spawn" || s.starts_with("/spawn ");
+        assert!(spawn_matches("/spawn"));
+        assert!(spawn_matches("/spawn read file"));
+        assert!(spawn_matches("/spawn analyze the codebase"));
+        assert!(!spawn_matches("/spawning"));
+        assert!(!spawn_matches("/spawnpoint"));
+    }
+
+    #[test]
+    fn test_parse_spawn_task_with_task() {
+        use commands::parse_spawn_task;
+        let task = parse_spawn_task("/spawn read src/main.rs and summarize");
+        assert_eq!(task, Some("read src/main.rs and summarize".to_string()));
+    }
+
+    #[test]
+    fn test_parse_spawn_task_empty() {
+        use commands::parse_spawn_task;
+        let task = parse_spawn_task("/spawn");
+        assert_eq!(task, None);
+    }
+
+    #[test]
+    fn test_parse_spawn_task_whitespace_only() {
+        use commands::parse_spawn_task;
+        let task = parse_spawn_task("/spawn   ");
+        assert_eq!(task, None);
+    }
+
+    #[test]
+    fn test_parse_spawn_task_preserves_full_task() {
+        use commands::parse_spawn_task;
+        let task = parse_spawn_task("/spawn analyze src/ and list all public functions");
+        assert_eq!(
+            task,
+            Some("analyze src/ and list all public functions".to_string())
+        );
     }
 }

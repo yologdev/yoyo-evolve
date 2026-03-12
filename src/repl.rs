@@ -474,6 +474,21 @@ pub async fn run_repl(
                 commands::handle_git(input);
                 continue;
             }
+            s if s == "/spawn" || s.starts_with("/spawn ") => {
+                if let Some(context_msg) = commands::handle_spawn(
+                    input,
+                    agent_config,
+                    &mut session_total,
+                    &agent_config.model,
+                )
+                .await
+                {
+                    last_input = Some(context_msg.clone());
+                    run_prompt(agent, &context_msg, &mut session_total, &agent_config.model).await;
+                    auto_compact_if_needed(agent);
+                }
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

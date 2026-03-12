@@ -105,6 +105,24 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 /run git status
 ```
 
+## Subagent
+
+| Command | Description |
+|---------|-------------|
+| `/spawn <task>` | Spawn a subagent with a fresh context to handle a task |
+
+The `/spawn` command creates a fresh AI agent with its own independent context window, sends it your task, runs it to completion, and injects the result back into your main conversation.
+
+This is useful for tasks that would consume a lot of context in your main session — reading large files, multi-step analysis, exploring unfamiliar code — without polluting your primary conversation history.
+
+```
+/spawn read all files in src/ and summarize the architecture
+/spawn find all TODO comments in the codebase and list them
+/spawn analyze the test coverage and suggest gaps
+```
+
+The subagent has access to the same tools (bash, file operations, etc.) and uses the same model. Its token usage counts toward your session total, but its context is completely separate from your main conversation. When it finishes, a summary of the task and result is injected into your main conversation so you have awareness of what was done.
+
 ## Git
 
 | Command | Description |

@@ -363,7 +363,8 @@ fn help_output_lists_all_documented_repl_commands() {
     let expected_commands = [
         "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context", "/cost", "/diff",
         "/git", "/health", "/pr", "/history", "/search", "/init", "/load", "/model", "/retry",
-        "/run", "/save", "/status", "/test", "/think", "/tokens", "/tree", "/undo", "/version",
+        "/run", "/save", "/spawn", "/status", "/test", "/think", "/tokens", "/tree", "/undo",
+        "/version",
     ];
     for cmd in &expected_commands {
         assert!(

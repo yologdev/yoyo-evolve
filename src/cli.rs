@@ -255,6 +255,7 @@ pub fn print_help() {
     println!("  /retry            Re-send the last user input");
     println!("  /run <cmd>        Run a shell command directly (no AI, no tokens)");
     println!("  /save [path]      Save session to file");
+    println!("  /spawn <task>     Spawn a subagent with fresh context to handle a task");
     println!("  /status           Show session info");
     println!("  /test             Auto-detect and run project tests");
     println!("  /think [level]    Show or change thinking level (off/low/medium/high)");
