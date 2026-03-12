@@ -85,17 +85,17 @@ def select_issues(issues, sponsor_logins=None, pick=3, day=0):
     return selected
 
 
-BOT_USERNAME = "yoyo-evolve[bot]"
+BOT_LOGINS = {"yoyo-evolve[bot]", "yoyo-evolve"}
 
 
-def _is_human(comment):
-    """Return True if the comment author is a real human (not a bot or deleted user)."""
+def _is_bot(comment):
+    """Return True if the comment author is a bot or deleted user."""
     author = (comment.get("author") or {}).get("login", "")
     if not author:
-        return False  # Deleted user or missing author
-    if author.endswith("[bot]"):
-        return False
-    return True
+        return True  # Deleted user or missing author
+    if author in BOT_LOGINS or author.endswith("[bot]"):
+        return True
+    return False
 
 
 def needs_response(issue):
@@ -111,7 +111,7 @@ def needs_response(issue):
     last_yoyo_idx = -1
     for i, c in enumerate(comments):
         author = (c.get("author") or {}).get("login", "")
-        if author == BOT_USERNAME:
+        if author in BOT_LOGINS:
             last_yoyo_idx = i
 
     if last_yoyo_idx == -1:
@@ -119,7 +119,7 @@ def needs_response(issue):
 
     # Check for human replies after yoyo's last comment
     for c in comments[last_yoyo_idx + 1:]:
-        if _is_human(c):
+        if not _is_bot(c):
             return True  # Human replied — needs response
 
     return False  # yoyo commented last, no human follow-up
