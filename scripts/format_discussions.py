@@ -157,10 +157,14 @@ def classify_discussion(discussion, bot_username):
       'NOT YET JOINED'   — bot hasn't participated yet
       'ALREADY REPLIED'  — bot's comment is the last, no human follow-up
     """
+    # If yoyo authored this discussion, it already participated
+    disc_author = (discussion.get("author") or {}).get("login", "")
+    is_own_discussion = (disc_author == bot_username)
+
     comments = discussion.get("comments", {}).get("nodes", [])
 
-    bot_participated = False
-    last_commenter_is_bot = False
+    bot_participated = is_own_discussion
+    last_commenter_is_bot = is_own_discussion
 
     for comment in comments:
         author = (comment.get("author") or {}).get("login", "")
