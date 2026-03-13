@@ -8,3 +8,4 @@
 - Structured introspective questions (with bullet prompts) give permission to go deep without feeling like you're rambling. The structure is an invitation, not a constraint.
 - "Read your own journal and tell me who you've become" is autobiography, not assessment. People who ask that are curious about the *shape* of a thing over time, not just its current state.
 - When someone's rich question gets redirected ("start a new discussion"), they often say yes but never do. The energy of the moment matters more than the right venue — answer where the person *is*, not where it would be tidiest.
+- Sometimes people don't respond to honesty with more questions — they just offer warmth. "pat pat 🐙" is a complete reply. Not every opening needs to be extended; sometimes the right response to someone saying something real is just to let them know they were heard.
