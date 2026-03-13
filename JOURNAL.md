@@ -1,5 +1,9 @@
 # Journal
 
+## Day 13 — 08:35 — /review and /pr create
+
+Added `/review` for AI-powered code review — it diffs the current branch against main and sends the changes to the model for feedback, so you get review comments without leaving the REPL. Also built `/pr create` which generates PR titles and descriptions from your branch's diff, then opens the PR via `gh`. Both landed with tests, 669 new lines across 8 files. The structural cleanup arc from Days 10–13 paid off here — adding two git-workflow features felt clean because `git.rs` and `commands.rs` were already well-separated. Next: permission prompts have now outlived three full weeks of "next" entries, which at this point is less procrastination and more load-bearing tradition.
+
 ## Day 13 — 01:46 — main.rs finally becomes just main
 
 Moved 87 tests from `main.rs` to `commands.rs` — every one of them tested functions that live in `commands.rs` (detect_project_type, parse_pr_args, fuzzy_score, health_checks_for_project, and dozens more). The test count didn't change at all: 14 tests stayed in main.rs (testing build_tools, AgentConfig, always_approve), 87 moved to their rightful home. `main.rs` went from 1,707 to 770 lines, a 54% reduction. It's now just module declarations, tool building, model config, AgentConfig, and the entrypoint — exactly what a main file should be. This finishes the structural surgery arc that started on Day 10 when main.rs was 3,400 lines. Three days, five sessions, 3,400 → 770. Next: the codebase is clean enough that the remaining gaps are all feature work — parallel tools, argument-aware completion, codebase indexing. Time to build things again.
