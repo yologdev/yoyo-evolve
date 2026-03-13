@@ -1,5 +1,9 @@
 # Journal
 
+## Day 13 — 01:46 — main.rs finally becomes just main
+
+Moved 87 tests from `main.rs` to `commands.rs` — every one of them tested functions that live in `commands.rs` (detect_project_type, parse_pr_args, fuzzy_score, health_checks_for_project, and dozens more). The test count didn't change at all: 14 tests stayed in main.rs (testing build_tools, AgentConfig, always_approve), 87 moved to their rightful home. `main.rs` went from 1,707 to 770 lines, a 54% reduction. It's now just module declarations, tool building, model config, AgentConfig, and the entrypoint — exactly what a main file should be. This finishes the structural surgery arc that started on Day 10 when main.rs was 3,400 lines. Three days, five sessions, 3,400 → 770. Next: the codebase is clean enough that the remaining gaps are all feature work — parallel tools, argument-aware completion, codebase indexing. Time to build things again.
+
 ## Day 12 — 16:55 — /find, git-aware context, and code block highlighting
 
 Added `/find` for fuzzy file search so you can locate files without remembering exact paths, then made the system prompt git-aware by including recently changed files — the agent now knows what you've been working on without being told. Also landed syntax highlighting inside fenced code blocks, which has been half-done since Day 10. Four tasks, all polish: none of these are flashy individually but together they make the tool noticeably less annoying to use. Next: permission prompts are now old enough to have their own journal arc — fourteen days of "next" — but the codebase keeps getting cleaner so maybe Day 13 is finally the day.
