@@ -1595,3 +1595,116 @@ fn help_output_is_consistent_between_piped_and_non_piped() {
         "help output should be identical whether stdin is piped or null"
     );
 }
+
+// ── --allow-dir and --deny-dir flags ────────────────────────────────
+
+#[test]
+fn allow_dir_flag_accepted_with_help() {
+    let output = yoyo_cmd()
+        .arg("--allow-dir")
+        .arg("./src")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--allow-dir './src' --help should exit 0"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "--allow-dir should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+#[test]
+fn deny_dir_flag_accepted_with_help() {
+    let output = yoyo_cmd()
+        .arg("--deny-dir")
+        .arg("/etc")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--deny-dir '/etc' --help should exit 0"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "--deny-dir should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+#[test]
+fn allow_dir_and_deny_dir_combined_with_help() {
+    let output = yoyo_cmd()
+        .arg("--allow-dir")
+        .arg("./src")
+        .arg("--deny-dir")
+        .arg("/etc")
+        .arg("--deny-dir")
+        .arg("~/.ssh")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        output.status.success(),
+        "--allow-dir + --deny-dir + --help should exit 0"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Unknown flag"),
+        "combined --allow-dir/--deny-dir should not trigger unknown flag warning: {stderr}"
+    );
+}
+
+#[test]
+fn help_output_lists_dir_restriction_flags() {
+    let output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--allow-dir"),
+        "help output should mention --allow-dir: {stdout}"
+    );
+    assert!(
+        stdout.contains("--deny-dir"),
+        "help output should mention --deny-dir: {stdout}"
+    );
+    assert!(
+        stdout.contains("[directories]"),
+        "help output should mention [directories] config section: {stdout}"
+    );
+}
+
+#[test]
+fn deny_dir_flag_without_value_shows_error() {
+    let output = yoyo_cmd()
+        .arg("--deny-dir")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "--deny-dir without value should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--deny-dir requires a value"),
+        "should say '--deny-dir requires a value': {stderr}"
+    );
+}

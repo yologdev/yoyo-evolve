@@ -42,6 +42,120 @@ pub struct PermissionConfig {
     pub deny: Vec<String>,
 }
 
+/// Directory restriction configuration for file access security.
+/// Controls which directories yoyo's file tools (read_file, write_file, edit_file,
+/// list_files, search) can access. When configured, paths are canonicalized to prevent
+/// `../` traversal escapes.
+///
+/// Rules:
+/// - If `deny` is non-empty, any path under a denied directory is blocked.
+/// - If `allow` is non-empty, only paths under an allowed directory are permitted.
+/// - Deny overrides allow when both match.
+/// - Paths are resolved to absolute paths before checking.
+#[derive(Debug, Clone, Default)]
+pub struct DirectoryRestrictions {
+    /// Directories that are explicitly allowed. If non-empty, only these dirs are accessible.
+    pub allow: Vec<String>,
+    /// Directories that are explicitly denied. Always takes priority over allow.
+    pub deny: Vec<String>,
+}
+
+impl DirectoryRestrictions {
+    /// Returns true if no restrictions are configured.
+    pub fn is_empty(&self) -> bool {
+        self.allow.is_empty() && self.deny.is_empty()
+    }
+
+    /// Check whether a given file path is permitted under the current restrictions.
+    /// Returns `Ok(())` if the path is allowed, or `Err(reason)` if blocked.
+    ///
+    /// Path resolution:
+    /// - Absolute paths are used directly.
+    /// - Relative paths are resolved against the current working directory.
+    /// - Symlinks and `..` components are resolved via `std::fs::canonicalize`
+    ///   when the path exists, or by manual normalization when it doesn't.
+    pub fn check_path(&self, path: &str) -> Result<(), String> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let resolved = resolve_path(path);
+
+        // Deny always takes priority
+        for denied in &self.deny {
+            let denied_resolved = resolve_path(denied);
+            if path_is_under(&resolved, &denied_resolved) {
+                return Err(format!(
+                    "Access denied: '{}' is under restricted directory '{}'",
+                    path, denied
+                ));
+            }
+        }
+
+        // If allow list is set, path must be under at least one allowed directory
+        if !self.allow.is_empty() {
+            let allowed = self.allow.iter().any(|a| {
+                let a_resolved = resolve_path(a);
+                path_is_under(&resolved, &a_resolved)
+            });
+            if !allowed {
+                return Err(format!(
+                    "Access denied: '{}' is not under any allowed directory",
+                    path
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Resolve a path to an absolute, normalized form.
+/// Uses `canonicalize` for existing paths (resolves symlinks, `..`, etc.).
+/// Falls back to manual normalization for paths that don't exist yet.
+fn resolve_path(path: &str) -> String {
+    // Try canonicalize first (works for existing paths)
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return canonical.to_string_lossy().to_string();
+    }
+
+    // Manual normalization for non-existent paths
+    let p = std::path::Path::new(path);
+    let absolute = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+            .join(p)
+    };
+
+    // Normalize components: resolve `.` and `..`
+    let mut components = Vec::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => components.push(other),
+        }
+    }
+    let normalized: std::path::PathBuf = components.iter().collect();
+    normalized.to_string_lossy().to_string()
+}
+
+/// Check if `path` is under (or equal to) `dir`.
+/// Both should be absolute, normalized paths.
+fn path_is_under(path: &str, dir: &str) -> bool {
+    // Ensure dir ends with separator for prefix matching
+    let dir_with_sep = if dir.ends_with('/') {
+        dir.to_string()
+    } else {
+        format!("{}/", dir)
+    };
+    path == dir || path.starts_with(&dir_with_sep)
+}
+
 impl PermissionConfig {
     /// Check a command against deny patterns first, then allow patterns.
     /// Returns `Some(true)` if allowed, `Some(false)` if denied, `None` if no match (prompt user).
@@ -164,6 +278,37 @@ pub fn parse_permissions_from_config(content: &str) -> PermissionConfig {
     config
 }
 
+/// Parse a `[directories]` section from a TOML config file content.
+/// Looks for `allow = [...]` and `deny = [...]` lines under `[directories]`.
+pub fn parse_directories_from_config(content: &str) -> DirectoryRestrictions {
+    let mut config = DirectoryRestrictions::default();
+    let mut in_directories = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_directories = trimmed == "[directories]";
+            continue;
+        }
+        if !in_directories {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            match key {
+                "allow" => config.allow = parse_toml_array(value),
+                "deny" => config.deny = parse_toml_array(value),
+                _ => {}
+            }
+        }
+    }
+    config
+}
+
 /// Parsed CLI configuration.
 pub struct Config {
     pub model: String,
@@ -184,6 +329,7 @@ pub struct Config {
     pub openapi_specs: Vec<String>,
     pub auto_approve: bool,
     pub permissions: PermissionConfig,
+    pub dir_restrictions: DirectoryRestrictions,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -231,6 +377,8 @@ pub fn print_help() {
     println!("  --yes, -y         Auto-approve all tool executions (skip confirmation prompts)");
     println!("  --allow <pat>     Auto-approve bash commands matching glob pattern (repeatable)");
     println!("  --deny <pat>      Auto-deny bash commands matching glob pattern (repeatable)");
+    println!("  --allow-dir <d>   Restrict file access to this directory (repeatable)");
+    println!("  --deny-dir <d>    Block file access to this directory (repeatable)");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -296,6 +444,10 @@ pub fn print_help() {
     println!("  allow = [\"git *\", \"cargo *\"]");
     println!("  deny = [\"rm -rf *\"]");
     println!();
+    println!("  [directories]");
+    println!("  allow = [\"./src\", \"./tests\"]");
+    println!("  deny = [\"~/.ssh\", \"/etc\"]");
+    println!();
     println!("CLI flags override config file values.");
 }
 
@@ -358,6 +510,8 @@ const KNOWN_FLAGS: &[&str] = &[
     "--openapi",
     "--allow",
     "--deny",
+    "--allow-dir",
+    "--deny-dir",
     "--no-color",
     "--verbose",
     "-v",
@@ -646,6 +800,24 @@ fn load_permissions_from_config_file() -> PermissionConfig {
     PermissionConfig::default()
 }
 
+/// Load directory restriction config from config file.
+/// Returns a default (empty) DirectoryRestrictions if no config file or no [directories] section.
+fn load_directories_from_config_file() -> DirectoryRestrictions {
+    // Check project-level config first
+    for name in CONFIG_FILE_NAMES {
+        if let Ok(content) = std::fs::read_to_string(name) {
+            return parse_directories_from_config(&content);
+        }
+    }
+    // Check user-level config
+    if let Some(path) = user_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            return parse_directories_from_config(&content);
+        }
+    }
+    DirectoryRestrictions::default()
+}
+
 /// Parse CLI arguments into a Config, or exit with help/version.
 /// Returns None if --help or --version was handled (program should exit).
 pub fn parse_args(args: &[String]) -> Option<Config> {
@@ -683,6 +855,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "--openapi",
         "--allow",
         "--deny",
+        "--allow-dir",
+        "--deny-dir",
     ];
     for flag in &flags_needing_values {
         if let Some(pos) = args.iter().position(|a| a == flag) {
@@ -942,6 +1116,32 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         }
     };
 
+    // --allow-dir <dir> flags: collect all allowed directories (repeatable)
+    let cli_allow_dirs: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == "--allow-dir")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+
+    // --deny-dir <dir> flags: collect all denied directories (repeatable)
+    let cli_deny_dirs: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == "--deny-dir")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+
+    // Build directory restrictions: CLI flags override config file
+    let dir_restrictions = if cli_allow_dirs.is_empty() && cli_deny_dirs.is_empty() {
+        load_directories_from_config_file()
+    } else {
+        DirectoryRestrictions {
+            allow: cli_allow_dirs,
+            deny: cli_deny_dirs,
+        }
+    };
+
     // --mcp <command> flags: collect all MCP server commands (repeatable)
     let mcp_servers: Vec<String> = args
         .iter()
@@ -977,6 +1177,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         openapi_specs,
         auto_approve,
         permissions,
+        dir_restrictions,
     })
 }
 
@@ -1396,6 +1597,8 @@ thinking = "high"
             "--openapi",
             "--allow",
             "--deny",
+            "--allow-dir",
+            "--deny-dir",
         ];
         for flag in &flags_with_values {
             assert!(
@@ -1918,5 +2121,214 @@ key = "value"
                 );
             }
         }
+    }
+
+    // === Directory restrictions tests ===
+
+    #[test]
+    fn test_directory_restrictions_empty_allows_everything() {
+        let restrictions = DirectoryRestrictions::default();
+        assert!(restrictions.is_empty());
+        assert!(restrictions.check_path("/etc/passwd").is_ok());
+        assert!(restrictions.check_path("src/main.rs").is_ok());
+    }
+
+    #[test]
+    fn test_directory_restrictions_deny_blocks_path() {
+        let restrictions = DirectoryRestrictions {
+            allow: vec![],
+            deny: vec!["/etc".to_string()],
+        };
+        assert!(restrictions.check_path("/etc/passwd").is_err());
+        assert!(restrictions.check_path("/etc/shadow").is_err());
+        // Non-denied paths should be allowed
+        assert!(restrictions.check_path("/tmp/file.txt").is_ok());
+    }
+
+    #[test]
+    fn test_directory_restrictions_allow_restricts_to_listed() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let restrictions = DirectoryRestrictions {
+            allow: vec![format!("{}/src", cwd)],
+            deny: vec![],
+        };
+        // Paths under allowed dir should pass
+        assert!(restrictions
+            .check_path(&format!("{}/src/main.rs", cwd))
+            .is_ok());
+        // Paths outside allowed dirs should fail
+        assert!(restrictions.check_path("/tmp/file.txt").is_err());
+    }
+
+    #[test]
+    fn test_directory_restrictions_deny_overrides_allow() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let restrictions = DirectoryRestrictions {
+            allow: vec![cwd.clone()],
+            deny: vec![format!("{}/secrets", cwd)],
+        };
+        // Normal paths under allow should pass
+        assert!(restrictions
+            .check_path(&format!("{}/src/main.rs", cwd))
+            .is_ok());
+        // Denied paths should be blocked even though parent is allowed
+        assert!(restrictions
+            .check_path(&format!("{}/secrets/key.pem", cwd))
+            .is_err());
+    }
+
+    #[test]
+    fn test_directory_restrictions_parent_dir_escape_blocked() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let restrictions = DirectoryRestrictions {
+            allow: vec![format!("{}/src", cwd)],
+            deny: vec![],
+        };
+        // Attempting to escape via ../ should be caught after normalization
+        assert!(restrictions
+            .check_path(&format!("{}/src/../secrets/key.pem", cwd))
+            .is_err());
+    }
+
+    #[test]
+    fn test_directory_restrictions_relative_paths() {
+        // Relative paths should be resolved against CWD
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let restrictions = DirectoryRestrictions {
+            allow: vec![],
+            deny: vec![format!("{}/secrets", cwd)],
+        };
+        // "secrets/file.txt" resolves to CWD/secrets/file.txt which should be denied
+        assert!(restrictions.check_path("secrets/file.txt").is_err());
+        // "src/main.rs" should be fine (not under denied dir)
+        assert!(restrictions.check_path("src/main.rs").is_ok());
+    }
+
+    #[test]
+    fn test_directory_restrictions_exact_dir_match() {
+        let restrictions = DirectoryRestrictions {
+            allow: vec![],
+            deny: vec!["/etc".to_string()],
+        };
+        // The denied dir itself should match
+        assert!(restrictions.check_path("/etc").is_err());
+        // Paths under it should match
+        assert!(restrictions.check_path("/etc/passwd").is_err());
+        // Similar-prefix dirs should NOT match (e.g., /etcetc)
+        assert!(restrictions.check_path("/etcetc/file").is_ok());
+    }
+
+    #[test]
+    fn test_resolve_path_normalizes_parent_dir() {
+        let resolved = resolve_path("/tmp/a/../b");
+        assert_eq!(resolved, "/tmp/b");
+    }
+
+    #[test]
+    fn test_resolve_path_absolute() {
+        let resolved = resolve_path("/usr/bin/env");
+        assert!(resolved.starts_with('/'));
+        assert!(resolved.contains("usr"));
+    }
+
+    #[test]
+    fn test_path_is_under_basic() {
+        assert!(path_is_under("/etc/passwd", "/etc"));
+        assert!(path_is_under("/etc", "/etc"));
+        assert!(!path_is_under("/etcetc", "/etc"));
+        assert!(!path_is_under("/tmp/file", "/etc"));
+    }
+
+    #[test]
+    fn test_parse_directories_from_config() {
+        let content = r#"
+model = "claude-opus-4-6"
+
+[directories]
+allow = ["./src", "./tests"]
+deny = ["~/.ssh", "/etc"]
+"#;
+        let dirs = parse_directories_from_config(content);
+        assert_eq!(dirs.allow, vec!["./src", "./tests"]);
+        assert_eq!(dirs.deny, vec!["~/.ssh", "/etc"]);
+    }
+
+    #[test]
+    fn test_parse_directories_from_config_no_section() {
+        let content = r#"
+model = "claude-opus-4-6"
+"#;
+        let dirs = parse_directories_from_config(content);
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_directories_from_config_does_not_interfere_with_permissions() {
+        let content = r#"
+[permissions]
+allow = ["git *"]
+deny = ["rm -rf *"]
+
+[directories]
+deny = ["/etc"]
+"#;
+        let perms = parse_permissions_from_config(content);
+        assert_eq!(perms.allow, vec!["git *"]);
+        assert_eq!(perms.deny, vec!["rm -rf *"]);
+
+        let dirs = parse_directories_from_config(content);
+        assert!(dirs.allow.is_empty());
+        assert_eq!(dirs.deny, vec!["/etc"]);
+    }
+
+    #[test]
+    fn test_allow_dir_deny_dir_flags_parsing() {
+        let args = [
+            "yoyo".to_string(),
+            "--allow-dir".to_string(),
+            "./src".to_string(),
+            "--allow-dir".to_string(),
+            "./tests".to_string(),
+            "--deny-dir".to_string(),
+            "/etc".to_string(),
+        ];
+        let allow_dirs: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--allow-dir")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        let deny_dirs: Vec<String> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.as_str() == "--deny-dir")
+            .filter_map(|(i, _)| args.get(i + 1).cloned())
+            .collect();
+        assert_eq!(allow_dirs, vec!["./src", "./tests"]);
+        assert_eq!(deny_dirs, vec!["/etc"]);
+    }
+
+    #[test]
+    fn test_allow_dir_deny_dir_in_known_flags() {
+        assert!(
+            KNOWN_FLAGS.contains(&"--allow-dir"),
+            "--allow-dir should be in KNOWN_FLAGS"
+        );
+        assert!(
+            KNOWN_FLAGS.contains(&"--deny-dir"),
+            "--deny-dir should be in KNOWN_FLAGS"
+        );
     }
 }

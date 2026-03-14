@@ -243,6 +243,7 @@ pub async fn run_repl(
 
     let mut session_total = Usage::default();
     let mut last_input: Option<String> = None;
+    let mut bookmarks = commands::Bookmarks::new();
 
     loop {
         let prompt = if let Some(branch) = git_branch() {
@@ -404,6 +405,18 @@ pub async fn run_repl(
             }
             s if s.starts_with("/search ") => {
                 commands::handle_search(agent, input);
+                continue;
+            }
+            "/marks" => {
+                commands::handle_marks(&bookmarks);
+                continue;
+            }
+            s if s == "/mark" || s.starts_with("/mark ") => {
+                commands::handle_mark(agent, input, &mut bookmarks);
+                continue;
+            }
+            s if s == "/jump" || s.starts_with("/jump ") => {
+                commands::handle_jump(agent, input, &bookmarks);
                 continue;
             }
             "/config" => {

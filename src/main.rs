@@ -62,13 +62,72 @@ use yoagent::tools::search::SearchTool;
 use yoagent::types::AgentTool;
 use yoagent::*;
 
+/// A wrapper tool that checks directory restrictions before delegating to an inner tool.
+/// Intercepts the `"path"` parameter from tool arguments and validates it against
+/// the configured `DirectoryRestrictions`. If the path is blocked, the tool returns
+/// an error without executing the inner tool.
+struct GuardedTool {
+    inner: Box<dyn AgentTool>,
+    restrictions: cli::DirectoryRestrictions,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for GuardedTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        // Check the "path" parameter against directory restrictions
+        if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
+            if let Err(reason) = self.restrictions.check_path(path) {
+                return Err(yoagent::types::ToolError::Failed(reason));
+            }
+        }
+        self.inner.execute(params, ctx).await
+    }
+}
+
+/// Wrap a tool with directory restrictions if any are configured.
+fn maybe_guard(
+    tool: Box<dyn AgentTool>,
+    restrictions: &cli::DirectoryRestrictions,
+) -> Box<dyn AgentTool> {
+    if restrictions.is_empty() {
+        tool
+    } else {
+        Box::new(GuardedTool {
+            inner: tool,
+            restrictions: restrictions.clone(),
+        })
+    }
+}
+
 /// Build the tool set, optionally with a bash confirmation prompt.
 /// When `auto_approve` is false (default), bash commands require user approval.
 /// The "always" option sets a session-wide flag so subsequent commands are auto-approved.
 /// When `permissions` has patterns, matching commands are auto-approved or auto-denied.
+/// When `dir_restrictions` has rules, file tools check paths before executing.
 pub fn build_tools(
     auto_approve: bool,
     permissions: &cli::PermissionConfig,
+    dir_restrictions: &cli::DirectoryRestrictions,
 ) -> Vec<Box<dyn AgentTool>> {
     let bash = if auto_approve {
         BashTool::default()
@@ -126,11 +185,11 @@ pub fn build_tools(
     };
     vec![
         Box::new(bash),
-        Box::new(ReadFileTool::default()),
-        Box::new(WriteFileTool::new()),
-        Box::new(EditFileTool::new()),
-        Box::new(ListFilesTool::default()),
-        Box::new(SearchTool::default()),
+        maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
+        maybe_guard(Box::new(WriteFileTool::new()), dir_restrictions),
+        maybe_guard(Box::new(EditFileTool::new()), dir_restrictions),
+        maybe_guard(Box::new(ListFilesTool::default()), dir_restrictions),
+        maybe_guard(Box::new(SearchTool::default()), dir_restrictions),
     ]
 }
 
@@ -233,6 +292,7 @@ pub struct AgentConfig {
     pub max_turns: Option<usize>,
     pub auto_approve: bool,
     pub permissions: cli::PermissionConfig,
+    pub dir_restrictions: cli::DirectoryRestrictions,
 }
 
 impl AgentConfig {
@@ -247,7 +307,11 @@ impl AgentConfig {
                 .with_api_key(&self.api_key)
                 .with_thinking(self.thinking)
                 .with_skills(self.skills.clone())
-                .with_tools(build_tools(self.auto_approve, &self.permissions))
+                .with_tools(build_tools(
+                    self.auto_approve,
+                    &self.permissions,
+                    &self.dir_restrictions,
+                ))
         } else if self.provider == "google" {
             // Google uses its own provider
             let config = create_model_config(&self.provider, &self.model, base_url);
@@ -257,7 +321,11 @@ impl AgentConfig {
                 .with_api_key(&self.api_key)
                 .with_thinking(self.thinking)
                 .with_skills(self.skills.clone())
-                .with_tools(build_tools(self.auto_approve, &self.permissions))
+                .with_tools(build_tools(
+                    self.auto_approve,
+                    &self.permissions,
+                    &self.dir_restrictions,
+                ))
                 .with_model_config(config)
         } else {
             // All other providers use OpenAI-compatible API
@@ -268,7 +336,11 @@ impl AgentConfig {
                 .with_api_key(&self.api_key)
                 .with_thinking(self.thinking)
                 .with_skills(self.skills.clone())
-                .with_tools(build_tools(self.auto_approve, &self.permissions))
+                .with_tools(build_tools(
+                    self.auto_approve,
+                    &self.permissions,
+                    &self.dir_restrictions,
+                ))
                 .with_model_config(config)
         };
 
@@ -326,6 +398,7 @@ async fn main() {
         max_turns: config.max_turns,
         auto_approve,
         permissions: config.permissions,
+        dir_restrictions: config.dir_restrictions,
     };
 
     let mut agent = agent_config.build_agent();
@@ -572,8 +645,9 @@ mod tests {
     fn test_build_tools_returns_six_tools() {
         // build_tools should return 6 tools regardless of auto_approve
         let perms = cli::PermissionConfig::default();
-        let tools_approved = build_tools(true, &perms);
-        let tools_confirm = build_tools(false, &perms);
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools_approved = build_tools(true, &perms, &dirs);
+        let tools_confirm = build_tools(false, &perms, &dirs);
         assert_eq!(tools_approved.len(), 6);
         assert_eq!(tools_confirm.len(), 6);
     }
@@ -594,6 +668,7 @@ mod tests {
             max_turns: Some(10),
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, "test-key");
@@ -624,6 +699,7 @@ mod tests {
             max_turns: None,
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         let agent = config.build_agent();
         // Agent should have 6 tools (bash, read, write, edit, list, search)
@@ -647,6 +723,7 @@ mod tests {
             max_turns: Some(20),
             auto_approve: false,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -670,6 +747,7 @@ mod tests {
             max_turns: None,
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -692,6 +770,7 @@ mod tests {
             max_turns: None,
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -714,6 +793,7 @@ mod tests {
             max_turns: None,
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         let agent1 = config.build_agent();
         let agent2 = config.build_agent();
@@ -738,6 +818,7 @@ mod tests {
             max_turns: None,
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         assert_eq!(config.model, "claude-opus-4-6");
         config.model = "claude-haiku-35".to_string();
@@ -761,6 +842,7 @@ mod tests {
             max_turns: None,
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
         };
         assert_eq!(config.thinking, ThinkingLevel::Off);
         config.thinking = ThinkingLevel::High;

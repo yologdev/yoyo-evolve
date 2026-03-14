@@ -13,6 +13,7 @@ use crate::format::*;
 use crate::git::*;
 use crate::prompt::*;
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use yoagent::agent::Agent;
 use yoagent::context::{compact_messages, total_tokens, ContextConfig};
@@ -24,7 +25,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/find", "/fix",
     "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history",
     "/search", "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree",
-    "/pr", "/git", "/test", "/lint", "/spawn", "/review",
+    "/pr", "/git", "/test", "/lint", "/spawn", "/review", "/mark", "/jump", "/marks",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -81,6 +82,11 @@ pub fn handle_help() {
     );
     println!("  /history           Show summary of conversation messages");
     println!("  /search <query>    Search conversation history for matching messages");
+    println!("  /mark <name>       Bookmark current conversation state");
+    println!(
+        "  /jump <name>       Restore conversation to a bookmark (discards messages after it)"
+    );
+    println!("  /marks             List all saved bookmarks");
     println!("  /spawn <task>      Spawn a subagent to handle a task (separate context)");
     println!("  /review [path]     AI code review: staged changes (default) or a specific file");
     println!("  /tree [depth]      Show project directory tree (default depth: 3)");
@@ -1058,6 +1064,98 @@ pub fn handle_search(agent: &Agent, input: &str) {
         );
         for (idx, role, preview) in &results {
             println!("    {idx:>3}. [{role}] {preview}");
+        }
+        println!("{RESET}");
+    }
+}
+
+// ── /mark, /jump, /marks (bookmarks) ─────────────────────────────────────
+
+/// Storage for conversation bookmarks: named snapshots of the message list.
+pub type Bookmarks = HashMap<String, String>;
+
+/// Parse the bookmark name from `/mark <name>` input.
+/// Returns None if no name is provided.
+pub fn parse_bookmark_name(input: &str, prefix: &str) -> Option<String> {
+    let name = input.strip_prefix(prefix).unwrap_or("").trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// Handle `/mark <name>`: save the current conversation state as a named bookmark.
+pub fn handle_mark(agent: &Agent, input: &str, bookmarks: &mut Bookmarks) {
+    let name = match parse_bookmark_name(input, "/mark") {
+        Some(n) => n,
+        None => {
+            println!("{DIM}  usage: /mark <name>");
+            println!("  Save a bookmark at the current point in the conversation.");
+            println!("  Use /jump <name> to return to this point later.{RESET}\n");
+            return;
+        }
+    };
+
+    match agent.save_messages() {
+        Ok(json) => {
+            let msg_count = agent.messages().len();
+            let overwriting = bookmarks.contains_key(&name);
+            bookmarks.insert(name.clone(), json);
+            if overwriting {
+                println!("{GREEN}  ✓ bookmark '{name}' updated ({msg_count} messages){RESET}\n");
+            } else {
+                println!("{GREEN}  ✓ bookmark '{name}' saved ({msg_count} messages){RESET}\n");
+            }
+        }
+        Err(e) => eprintln!("{RED}  error saving bookmark: {e}{RESET}\n"),
+    }
+}
+
+/// Handle `/jump <name>`: restore conversation to a previously saved bookmark.
+pub fn handle_jump(agent: &mut Agent, input: &str, bookmarks: &Bookmarks) {
+    let name = match parse_bookmark_name(input, "/jump") {
+        Some(n) => n,
+        None => {
+            println!("{DIM}  usage: /jump <name>");
+            println!("  Restore the conversation to a previously saved bookmark.");
+            println!("  Messages added after the bookmark will be discarded.{RESET}\n");
+            return;
+        }
+    };
+
+    match bookmarks.get(&name) {
+        Some(json) => match agent.restore_messages(json) {
+            Ok(_) => {
+                let msg_count = agent.messages().len();
+                println!("{GREEN}  ✓ jumped to bookmark '{name}' ({msg_count} messages){RESET}\n");
+            }
+            Err(e) => eprintln!("{RED}  error restoring bookmark: {e}{RESET}\n"),
+        },
+        None => {
+            let available: Vec<&str> = bookmarks.keys().map(|k| k.as_str()).collect();
+            if available.is_empty() {
+                eprintln!("{RED}  bookmark '{name}' not found — no bookmarks saved yet.");
+                eprintln!("  Use /mark <name> to save one.{RESET}\n");
+            } else {
+                eprintln!("{RED}  bookmark '{name}' not found.");
+                eprintln!("{DIM}  available: {}{RESET}\n", available.join(", "));
+            }
+        }
+    }
+}
+
+/// Handle `/marks`: list all saved bookmarks.
+pub fn handle_marks(bookmarks: &Bookmarks) {
+    if bookmarks.is_empty() {
+        println!("{DIM}  (no bookmarks saved)");
+        println!("  Use /mark <name> to save a bookmark.{RESET}\n");
+    } else {
+        println!("{DIM}  Saved bookmarks:");
+        let mut names: Vec<&String> = bookmarks.keys().collect();
+        names.sort();
+        for name in names {
+            println!("    • {name}");
         }
         println!("{RESET}");
     }
@@ -2432,6 +2530,7 @@ mod tests {
             "/cost", "/docs", "/find", "/fix", "/init", "/status", "/tokens", "/save", "/load",
             "/diff", "/undo", "/health", "/retry", "/run", "/history", "/search", "/model",
             "/think", "/version", "/tree", "/pr", "/git", "/test", "/lint", "/spawn", "/review",
+            "/mark", "/jump", "/marks",
         ];
         for cmd in &commands {
             assert!(
@@ -3856,5 +3955,140 @@ mod tests {
         assert!(formatted.contains("+10"), "Should show insertions");
         // "-0" should not appear
         assert!(!formatted.contains("-0"), "Should not show zero deletions");
+    }
+
+    // ── bookmark (/mark, /jump, /marks) tests ────────────────────────────
+
+    #[test]
+    fn test_mark_command_recognized() {
+        assert!(!is_unknown_command("/mark"));
+        assert!(!is_unknown_command("/mark checkpoint"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/mark"),
+            "/mark should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_jump_command_recognized() {
+        assert!(!is_unknown_command("/jump"));
+        assert!(!is_unknown_command("/jump checkpoint"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/jump"),
+            "/jump should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_marks_command_recognized() {
+        assert!(!is_unknown_command("/marks"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/marks"),
+            "/marks should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_with_name() {
+        let name = parse_bookmark_name("/mark checkpoint", "/mark");
+        assert_eq!(name, Some("checkpoint".to_string()));
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_with_spaces() {
+        let name = parse_bookmark_name("/mark  my bookmark  ", "/mark");
+        assert_eq!(name, Some("my bookmark".to_string()));
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_empty() {
+        let name = parse_bookmark_name("/mark", "/mark");
+        assert_eq!(name, None);
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_whitespace_only() {
+        let name = parse_bookmark_name("/mark   ", "/mark");
+        assert_eq!(name, None);
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_for_jump() {
+        let name = parse_bookmark_name("/jump start", "/jump");
+        assert_eq!(name, Some("start".to_string()));
+    }
+
+    #[test]
+    fn test_bookmarks_create_and_list() {
+        let mut bookmarks = Bookmarks::new();
+        assert!(bookmarks.is_empty());
+
+        bookmarks.insert("start".to_string(), "[]".to_string());
+        assert_eq!(bookmarks.len(), 1);
+        assert!(bookmarks.contains_key("start"));
+    }
+
+    #[test]
+    fn test_bookmarks_overwrite_same_name() {
+        let mut bookmarks = Bookmarks::new();
+        bookmarks.insert("checkpoint".to_string(), "[1]".to_string());
+        bookmarks.insert("checkpoint".to_string(), "[1,2]".to_string());
+        // Should still have just one entry
+        assert_eq!(bookmarks.len(), 1);
+        assert_eq!(bookmarks.get("checkpoint").unwrap(), "[1,2]");
+    }
+
+    #[test]
+    fn test_bookmarks_nonexistent_returns_none() {
+        let bookmarks = Bookmarks::new();
+        assert!(!bookmarks.contains_key("nonexistent"));
+    }
+
+    #[test]
+    fn test_bookmarks_multiple_entries() {
+        let mut bookmarks = Bookmarks::new();
+        bookmarks.insert("start".to_string(), "[]".to_string());
+        bookmarks.insert("middle".to_string(), "[1]".to_string());
+        bookmarks.insert("end".to_string(), "[1,2,3]".to_string());
+        assert_eq!(bookmarks.len(), 3);
+        assert!(bookmarks.contains_key("start"));
+        assert!(bookmarks.contains_key("middle"));
+        assert!(bookmarks.contains_key("end"));
+    }
+
+    #[test]
+    fn test_handle_marks_empty_does_not_panic() {
+        let bookmarks = Bookmarks::new();
+        // Should not panic — just prints a message
+        handle_marks(&bookmarks);
+    }
+
+    #[test]
+    fn test_handle_marks_with_entries_does_not_panic() {
+        let mut bookmarks = Bookmarks::new();
+        bookmarks.insert("alpha".to_string(), "[]".to_string());
+        bookmarks.insert("beta".to_string(), "[]".to_string());
+        // Should not panic
+        handle_marks(&bookmarks);
+    }
+
+    #[test]
+    fn test_mark_command_matching() {
+        // /mark should match exact or with space, not /marker
+        let mark_matches = |s: &str| s == "/mark" || s.starts_with("/mark ");
+        assert!(mark_matches("/mark"));
+        assert!(mark_matches("/mark checkpoint"));
+        assert!(!mark_matches("/marker"));
+        assert!(!mark_matches("/marking"));
+    }
+
+    #[test]
+    fn test_jump_command_matching() {
+        // /jump should match exact or with space, not /jumper
+        let jump_matches = |s: &str| s == "/jump" || s.starts_with("/jump ");
+        assert!(jump_matches("/jump"));
+        assert!(jump_matches("/jump checkpoint"));
+        assert!(!jump_matches("/jumper"));
+        assert!(!jump_matches("/jumping"));
     }
 }

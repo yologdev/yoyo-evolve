@@ -18,6 +18,29 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 | `/retry` | Re-send your last input — useful when a response gets cut off or you want to try again |
 | `/history` | Show a summary of all messages in the conversation |
 | `/search <query>` | Search conversation history for messages containing the query (case-insensitive) |
+| `/mark <name>` | Bookmark the current conversation state |
+| `/jump <name>` | Restore conversation to a bookmark (discards messages after it) |
+| `/marks` | List all saved bookmarks |
+
+### Conversation bookmarks
+
+The `/mark` and `/jump` commands let you bookmark points in your conversation and return to them later. This is useful when exploring different approaches — bookmark a good state, try something, and jump back if it doesn't work out.
+
+```
+> /mark before-refactor
+  ✓ bookmark 'before-refactor' saved (12 messages)
+
+> ... try something risky ...
+
+> /jump before-refactor
+  ✓ jumped to bookmark 'before-refactor' (12 messages)
+
+> /marks
+  Saved bookmarks:
+    • before-refactor
+```
+
+Bookmarks are stored in memory for the current session. Overwriting a bookmark with the same name updates it. Jumping to a bookmark restores the conversation to exactly that point — any messages added after the bookmark are discarded.
 
 ## Model & Thinking
 
