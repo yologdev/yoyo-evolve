@@ -21,7 +21,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Thinking/reasoning display | ✅ | ✅ | yoyo shows thinking dimmed |
 | Error recovery / auto-retry | ✅ | ✅ | yoagent retries 3x with exponential backoff by default |
 | Subagent / task spawning | 🟡 | ✅ | Basic `/spawn` runs tasks in separate context; Claude Code has richer orchestration |
-| Parallel tool execution | ❌ | ✅ | Claude Code can run multiple tools in parallel |
+| Parallel tool execution | ✅ | ✅ | yoagent 0.6's default `ToolExecutionStrategy::Parallel` runs tools concurrently |
 | Tool output streaming | 🟡 | ✅ | `ToolExecutionUpdate` events handled; no real-time subprocess streaming yet |
 
 ## CLI & UX
@@ -115,11 +115,12 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 Based on this analysis, the highest-impact missing features are:
 
-1. **Parallel tool execution** — Speed up multi-tool workflows
-2. **Richer subagent orchestration** — Better task decomposition and result aggregation for /spawn
-3. **Full graceful degradation** — Fallback behavior on partial tool failures
+1. **Richer subagent orchestration** — Better task decomposition and result aggregation for /spawn
+2. **Full graceful degradation** — Fallback behavior on partial tool failures
 
 Recently completed:
+- ✅ Parallel tool execution (Day 15) — already supported via yoagent 0.6's `ToolExecutionStrategy::Parallel`
+- ✅ Project memory system (Day 15) — `/remember`, `/recall`, `/forget` for persistent cross-session memory
 - ✅ Permission prompts for all tool types (Day 15) — interactive confirm for write_file and edit_file, not just bash
 - ✅ Argument-aware tab completion (Day 14) — `--model` values, git subcommands, `/pr` subcommands
 - ✅ Codebase indexing (Day 14) — `/index` builds lightweight project index with language breakdown
@@ -153,8 +154,8 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~15,000 lines of Rust across 8 source files + integration tests
-- 576 tests passing (508 unit + 68 integration)
+- yoyo: ~15,800 lines of Rust across 12 source files + integration tests
+- 596 tests passing (529 unit + 67 integration)
 - 38 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index)
 - 25 CLI flags (+ short aliases)
 - 10+ provider backends
