@@ -119,20 +119,177 @@ fn maybe_guard(
     }
 }
 
+/// A wrapper tool that prompts for user confirmation before executing write_file or edit_file.
+/// Shares the same `always_approved` flag with bash confirmation so "always" applies everywhere.
+/// Checks `--allow`/`--deny` patterns against file paths before prompting.
+struct ConfirmTool {
+    inner: Box<dyn AgentTool>,
+    always_approved: Arc<AtomicBool>,
+    permissions: cli::PermissionConfig,
+}
+
+/// Build a user-facing description for a write_file or edit_file operation.
+/// Used by `ConfirmTool` to show what's about to happen before asking y/n/always.
+pub fn describe_file_operation(tool_name: &str, params: &serde_json::Value) -> String {
+    match tool_name {
+        "write_file" => {
+            let path = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            let line_count = params
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| c.lines().count())
+                .unwrap_or(0);
+            format!("write: {path} ({line_count} lines)")
+        }
+        "edit_file" => {
+            let path = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            let old_text = params
+                .get("old_text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let new_text = params
+                .get("new_text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let old_lines = old_text.lines().count();
+            let new_lines = new_text.lines().count();
+            format!("edit: {path} ({old_lines} → {new_lines} lines)")
+        }
+        _ => format!("{tool_name}: file operation"),
+    }
+}
+
+/// Prompt the user to confirm a file operation (write_file or edit_file).
+/// Returns true if the operation should proceed, false if denied.
+/// Shared with bash confirm via the same `always_approved` flag.
+pub fn confirm_file_operation(
+    description: &str,
+    path: &str,
+    always_approved: &Arc<AtomicBool>,
+    permissions: &cli::PermissionConfig,
+) -> bool {
+    // If user previously chose "always", skip the prompt
+    if always_approved.load(Ordering::Relaxed) {
+        eprintln!(
+            "{GREEN}  ✓ Auto-approved: {RESET}{}",
+            truncate_with_ellipsis(description, 120)
+        );
+        return true;
+    }
+    // Check permission patterns against the file path
+    if let Some(allowed) = permissions.check(path) {
+        if allowed {
+            eprintln!(
+                "{GREEN}  ✓ Permitted: {RESET}{}",
+                truncate_with_ellipsis(description, 120)
+            );
+            return true;
+        } else {
+            eprintln!(
+                "{RED}  ✗ Denied by permission rule: {RESET}{}",
+                truncate_with_ellipsis(description, 120)
+            );
+            return false;
+        }
+    }
+    use std::io::BufRead;
+    // Show the operation and ask for approval
+    eprint!(
+        "{YELLOW}  ⚠ Allow {RESET}{}{YELLOW} ? {RESET}({GREEN}y{RESET}/{RED}n{RESET}/{GREEN}a{RESET}lways) ",
+        truncate_with_ellipsis(description, 120)
+    );
+    io::stderr().flush().ok();
+    let mut response = String::new();
+    let stdin = io::stdin();
+    if stdin.lock().read_line(&mut response).is_err() {
+        return false;
+    }
+    let response = response.trim().to_lowercase();
+    let approved = matches!(response.as_str(), "y" | "yes" | "a" | "always");
+    if matches!(response.as_str(), "a" | "always") {
+        always_approved.store(true, Ordering::Relaxed);
+        eprintln!(
+            "{GREEN}  ✓ All subsequent operations will be auto-approved this session.{RESET}"
+        );
+    }
+    approved
+}
+
+#[async_trait::async_trait]
+impl AgentTool for ConfirmTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        let tool_name = self.inner.name();
+        let path = params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unknown>");
+        let description = describe_file_operation(tool_name, &params);
+
+        if !confirm_file_operation(&description, path, &self.always_approved, &self.permissions) {
+            return Err(yoagent::types::ToolError::Failed(format!(
+                "User denied {tool_name} on '{path}'"
+            )));
+        }
+        self.inner.execute(params, ctx).await
+    }
+}
+
+/// Wrap a tool with a confirmation prompt for write/edit operations.
+fn maybe_confirm(
+    tool: Box<dyn AgentTool>,
+    always_approved: &Arc<AtomicBool>,
+    permissions: &cli::PermissionConfig,
+) -> Box<dyn AgentTool> {
+    Box::new(ConfirmTool {
+        inner: tool,
+        always_approved: Arc::clone(always_approved),
+        permissions: permissions.clone(),
+    })
+}
+
 /// Build the tool set, optionally with a bash confirmation prompt.
-/// When `auto_approve` is false (default), bash commands require user approval.
-/// The "always" option sets a session-wide flag so subsequent commands are auto-approved.
-/// When `permissions` has patterns, matching commands are auto-approved or auto-denied.
+/// When `auto_approve` is false (default), bash commands and file writes require user approval.
+/// The "always" option sets a session-wide flag so subsequent operations are auto-approved.
+/// The same `always_approved` flag is shared across bash, write_file, and edit_file.
+/// When `permissions` has patterns, matching commands/paths are auto-approved or auto-denied.
 /// When `dir_restrictions` has rules, file tools check paths before executing.
 pub fn build_tools(
     auto_approve: bool,
     permissions: &cli::PermissionConfig,
     dir_restrictions: &cli::DirectoryRestrictions,
 ) -> Vec<Box<dyn AgentTool>> {
+    // Shared flag: when any tool gets "always", all tools skip prompts
+    let always_approved = Arc::new(AtomicBool::new(false));
+
     let bash = if auto_approve {
         BashTool::default()
     } else {
-        let always_approved = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&always_approved);
         let perms = permissions.clone();
         BashTool::default().with_confirm(move |cmd: &str| {
@@ -177,17 +334,40 @@ pub fn build_tools(
             if matches!(response.as_str(), "a" | "always") {
                 flag.store(true, Ordering::Relaxed);
                 eprintln!(
-                    "{GREEN}  ✓ All subsequent commands will be auto-approved this session.{RESET}"
+                    "{GREEN}  ✓ All subsequent operations will be auto-approved this session.{RESET}"
                 );
             }
             approved
         })
     };
+
+    // Build write_file and edit_file with optional confirmation prompts
+    let write_tool: Box<dyn AgentTool> = if auto_approve {
+        maybe_guard(Box::new(WriteFileTool::new()), dir_restrictions)
+    } else {
+        maybe_guard(
+            maybe_confirm(
+                Box::new(WriteFileTool::new()),
+                &always_approved,
+                permissions,
+            ),
+            dir_restrictions,
+        )
+    };
+    let edit_tool: Box<dyn AgentTool> = if auto_approve {
+        maybe_guard(Box::new(EditFileTool::new()), dir_restrictions)
+    } else {
+        maybe_guard(
+            maybe_confirm(Box::new(EditFileTool::new()), &always_approved, permissions),
+            dir_restrictions,
+        )
+    };
+
     vec![
         Box::new(bash),
         maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
-        maybe_guard(Box::new(WriteFileTool::new()), dir_restrictions),
-        maybe_guard(Box::new(EditFileTool::new()), dir_restrictions),
+        write_tool,
+        edit_tool,
         maybe_guard(Box::new(ListFilesTool::default()), dir_restrictions),
         maybe_guard(Box::new(SearchTool::default()), dir_restrictions),
     ]
@@ -848,5 +1028,187 @@ mod tests {
         config.thinking = ThinkingLevel::High;
         let _agent = config.build_agent();
         assert_eq!(config.thinking, ThinkingLevel::High);
+    }
+
+    // === File operation confirmation tests ===
+
+    #[test]
+    fn test_describe_write_file_operation() {
+        let params = serde_json::json!({
+            "path": "src/main.rs",
+            "content": "line1\nline2\nline3\n"
+        });
+        let desc = describe_file_operation("write_file", &params);
+        assert!(desc.contains("write:"));
+        assert!(desc.contains("src/main.rs"));
+        assert!(desc.contains("3 lines")); // Rust's .lines() strips trailing newline
+    }
+
+    #[test]
+    fn test_describe_write_file_empty_content() {
+        let params = serde_json::json!({
+            "path": "empty.txt",
+            "content": ""
+        });
+        let desc = describe_file_operation("write_file", &params);
+        assert!(desc.contains("write:"));
+        assert!(desc.contains("empty.txt"));
+        assert!(desc.contains("0 lines"));
+    }
+
+    #[test]
+    fn test_describe_edit_file_operation() {
+        let params = serde_json::json!({
+            "path": "src/cli.rs",
+            "old_text": "old line 1\nold line 2",
+            "new_text": "new line 1\nnew line 2\nnew line 3"
+        });
+        let desc = describe_file_operation("edit_file", &params);
+        assert!(desc.contains("edit:"));
+        assert!(desc.contains("src/cli.rs"));
+        assert!(desc.contains("2 → 3 lines"));
+    }
+
+    #[test]
+    fn test_describe_edit_file_missing_params() {
+        let params = serde_json::json!({
+            "path": "test.rs"
+        });
+        let desc = describe_file_operation("edit_file", &params);
+        assert!(desc.contains("edit:"));
+        assert!(desc.contains("test.rs"));
+        assert!(desc.contains("0 → 0 lines"));
+    }
+
+    #[test]
+    fn test_describe_unknown_tool() {
+        let params = serde_json::json!({});
+        let desc = describe_file_operation("unknown_tool", &params);
+        assert!(desc.contains("unknown_tool"));
+    }
+
+    #[test]
+    fn test_confirm_file_operation_auto_approved_flag() {
+        // When always_approved is true, confirm should return true immediately
+        let flag = Arc::new(AtomicBool::new(true));
+        let perms = cli::PermissionConfig::default();
+        let result = confirm_file_operation("write: test.rs (5 lines)", "test.rs", &flag, &perms);
+        assert!(
+            result,
+            "Should auto-approve when always_approved flag is set"
+        );
+    }
+
+    #[test]
+    fn test_confirm_file_operation_with_allow_pattern() {
+        // Permission patterns should match file paths
+        let flag = Arc::new(AtomicBool::new(false));
+        let perms = cli::PermissionConfig {
+            allow: vec!["*.md".to_string()],
+            deny: vec![],
+        };
+        let result =
+            confirm_file_operation("write: README.md (10 lines)", "README.md", &flag, &perms);
+        assert!(result, "Should auto-approve paths matching allow pattern");
+    }
+
+    #[test]
+    fn test_confirm_file_operation_with_deny_pattern() {
+        // Denied patterns should block the operation
+        let flag = Arc::new(AtomicBool::new(false));
+        let perms = cli::PermissionConfig {
+            allow: vec![],
+            deny: vec!["*.key".to_string()],
+        };
+        let result =
+            confirm_file_operation("write: secrets.key (1 lines)", "secrets.key", &flag, &perms);
+        assert!(!result, "Should deny paths matching deny pattern");
+    }
+
+    #[test]
+    fn test_confirm_file_operation_deny_overrides_allow() {
+        // Deny takes priority over allow
+        let flag = Arc::new(AtomicBool::new(false));
+        let perms = cli::PermissionConfig {
+            allow: vec!["*".to_string()],
+            deny: vec!["*.key".to_string()],
+        };
+        let result =
+            confirm_file_operation("write: secrets.key (1 lines)", "secrets.key", &flag, &perms);
+        assert!(!result, "Deny should override allow");
+    }
+
+    #[test]
+    fn test_confirm_file_operation_allow_src_pattern() {
+        // Realistic pattern: allow all files under src/
+        let flag = Arc::new(AtomicBool::new(false));
+        let perms = cli::PermissionConfig {
+            allow: vec!["src/*".to_string()],
+            deny: vec![],
+        };
+        let result = confirm_file_operation(
+            "edit: src/main.rs (2 → 3 lines)",
+            "src/main.rs",
+            &flag,
+            &perms,
+        );
+        assert!(
+            result,
+            "Should auto-approve src/ files with 'src/*' pattern"
+        );
+    }
+
+    #[test]
+    fn test_build_tools_auto_approve_skips_confirmation() {
+        // When auto_approve is true, tools should not have ConfirmTool wrappers
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools = build_tools(true, &perms, &dirs);
+        assert_eq!(tools.len(), 6);
+        // Tool names should still be correct
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"edit_file"));
+        assert!(names.contains(&"bash"));
+    }
+
+    #[test]
+    fn test_build_tools_no_approve_includes_confirmation() {
+        // When auto_approve is false, write_file and edit_file should still have correct names
+        // (ConfirmTool delegates name() to inner tool)
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools = build_tools(false, &perms, &dirs);
+        assert_eq!(tools.len(), 6);
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"edit_file"));
+        assert!(names.contains(&"bash"));
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"list_files"));
+        assert!(names.contains(&"search"));
+    }
+
+    #[test]
+    fn test_always_approved_shared_between_bash_and_file_tools() {
+        // Simulates: user says "always" on a bash prompt,
+        // subsequent file operations should auto-approve too.
+        // This test verifies the shared flag concept.
+        let always_approved = Arc::new(AtomicBool::new(false));
+        let bash_flag = Arc::clone(&always_approved);
+        let file_flag = Arc::clone(&always_approved);
+
+        // Initially, nothing is auto-approved
+        assert!(!bash_flag.load(Ordering::Relaxed));
+        assert!(!file_flag.load(Ordering::Relaxed));
+
+        // User says "always" on a bash command
+        bash_flag.store(true, Ordering::Relaxed);
+
+        // File tool should now see the flag as true
+        assert!(
+            file_flag.load(Ordering::Relaxed),
+            "File tool should see always_approved after bash 'always'"
+        );
     }
 }
