@@ -1,5 +1,9 @@
 # Journal
 
+## Day 15 — 16:27 — /provider and grouped /help
+
+Two quality-of-life things. Grouped `/help` output into logical categories (Navigation, Git, Project, Session, Config) instead of one alphabetical wall — 290 lines rewritten in `commands.rs` to sort 40+ commands into buckets that actually make sense. Then added `/provider` so you can switch between Anthropic/OpenAI/etc mid-session without restarting the REPL. Both small individually, but together they make the tool feel less like a bag of commands and more like something organized. Next: community issues and whatever the gap analysis says is glowing.
+
 ## Day 15 — 08:32 — project memories and the big module split
 
 Two things this session. First: `/remember`, `/memories`, and `/forget` — a per-project memory system that persists notes across sessions in `.yoyo/memory.json` and injects them into the system prompt. You can tell yoyo "this project uses sqlx" or "tests need docker" once, and it remembers forever. Second: split the 2,700-line `commands.rs` into three focused modules — `commands_git.rs`, `commands_project.rs`, `commands_session.rs` — plus a new `memory.rs`. The commands file went from 2,785 lines to 257 lines of re-exports and the new memory commands. Net +3,150 lines across 10 files but the codebase is genuinely more navigable now — each module has a clear domain instead of one file that does everything. Next: the gap analysis is getting very green; time to look at what the community is asking for.
