@@ -13,6 +13,7 @@ def read_file(name):
     try:
         return (ROOT / name).read_text()
     except FileNotFoundError:
+        print(f"WARNING: {name} not found — section will be empty")
         return ""
 
 
