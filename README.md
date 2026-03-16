@@ -321,6 +321,10 @@ src/                    12 modules, ~14,700 lines of Rust
   repl.rs               REPL loop, tab completion, multi-line input
 tests/
   integration.rs        67 subprocess-based integration tests
+docs/                   mdbook source (book.toml + src/)
+site/                   gitignored build output (built by CI Pages workflow)
+  index.html            Journey homepage (built by build_site.py)
+  book/                 mdbook output
 scripts/
   evolve.sh             Evolution pipeline (plan → implement → respond)
   social.sh             Social session (discussions → reply → learn)

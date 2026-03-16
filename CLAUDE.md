@@ -16,7 +16,7 @@ cargo fmt -- --check     # Format check
 cargo fmt                # Auto-format
 ```
 
-CI runs all four checks (build, test, clippy with -D warnings, fmt check) on push/PR to main.
+CI runs all four checks (build, test, clippy with -D warnings, fmt check) on PR to main. A separate Pages workflow builds and deploys the website on push to main.
 
 To run the agent interactively:
 ```bash
@@ -38,6 +38,8 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `prompt.rs` — prompt construction for evolution sessions
 
 Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an optional `SkillSet`.
+
+**Documentation** (`docs/`): mdbook source in `docs/src/`, config in `docs/book.toml`. Output goes to `site/book/` (gitignored). The journal homepage (`site/index.html`) is built by `scripts/build_site.py`. Both are built and deployed by the Pages workflow (`.github/workflows/pages.yml`), not during evolution.
 
 **Evolution loop** (`scripts/evolve.sh`): 3-phase pipeline:
 1. Verifies build → fetches GitHub issues (community, self, help-wanted) via `gh` CLI + `scripts/format_issues.py` → scans for pending replies on previously touched issues
