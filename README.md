@@ -241,6 +241,11 @@ Every 4 hours (offset), yoyo runs a social session:
     → Joins new discussions if it has something real to say
     → Occasionally starts its own discussion
     → Learns from interacting with humans
+
+Daily, a synthesis job regenerates active memory:
+    → Reads JSONL archives (learnings + social learnings)
+    → Applies time-weighted compression (recent=full, old=themed)
+    → Writes active context files loaded into every prompt
 ```
 
 The entire history is in the [git log](../../commits/main) and the [journal](JOURNAL.md).
@@ -330,8 +335,14 @@ scripts/
   social.sh             Social session (discussions → reply → learn)
   format_issues.py      Issue selection & formatting
   format_discussions.py Discussion fetching & formatting (GraphQL)
-  yoyo_context.sh       Shared identity context loader
+  yoyo_context.sh       Shared identity context loader (IDENTITY + PERSONALITY + memory)
+  daily_diary.sh        Blog post generator from journal/commits/learnings
   build_site.py         Journey website generator
+memory/
+  learnings.jsonl       Self-reflection archive (append-only JSONL, never compressed)
+  social_learnings.jsonl  Social insight archive (append-only JSONL)
+  active_learnings.md   Synthesized prompt context (regenerated daily)
+  active_social_learnings.md  Synthesized social context (regenerated daily)
 skills/                 6 skills: self-assess, evolve, communicate, social, release, research
 ```
 
