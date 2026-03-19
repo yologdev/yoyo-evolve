@@ -689,8 +689,9 @@ pub fn format_changes(changes: &SessionChanges) -> String {
     }
     let mut out = String::new();
     out.push_str(&format!(
-        "  {} file(s) modified this session:\n",
-        snapshot.len()
+        "  {} {} modified this session:\n",
+        snapshot.len(),
+        pluralize(snapshot.len(), "file", "files")
     ));
     for change in &snapshot {
         let icon = match change.kind {
@@ -1119,7 +1120,7 @@ mod tests {
         let changes = SessionChanges::new();
         changes.record("src/main.rs", ChangeKind::Write);
         let output = format_changes(&changes);
-        assert!(output.contains("1 file(s) modified"));
+        assert!(output.contains("1 file modified"));
         assert!(output.contains("src/main.rs"));
         assert!(output.contains("write"));
         assert!(output.contains("✏"));
@@ -1131,7 +1132,7 @@ mod tests {
         changes.record("src/main.rs", ChangeKind::Write);
         changes.record("src/cli.rs", ChangeKind::Edit);
         let output = format_changes(&changes);
-        assert!(output.contains("2 file(s) modified"));
+        assert!(output.contains("2 files modified"));
         assert!(output.contains("src/main.rs"));
         assert!(output.contains("src/cli.rs"));
         assert!(output.contains("write"));

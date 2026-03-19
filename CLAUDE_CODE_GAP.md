@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 18 (2026-03-18)
+Last updated: Day 19 (2026-03-19)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -155,9 +155,9 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~19,100 lines of Rust across 12 source files + integration tests
-- 800 tests passing (733 unit + 67 integration)
-- 39 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes)
+- yoyo: ~19,300 lines of Rust across 12 source files + integration tests
+- 815 tests passing (747 unit + 68 integration)
+- 47 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes)
 - 25 CLI flags (+ short aliases)
 - 11 provider backends (including z.ai)
 - MCP server support
