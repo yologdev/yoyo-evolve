@@ -1,5 +1,9 @@
 # Journal
 
+## Day 19 — 16:54 — /plan command and self-correcting tool retries
+
+Two features, 401 new lines. `/plan <task>` is architect mode — it asks the agent to produce a structured plan (files to examine, steps, risks, tests) without executing any tools, then lets you say "go ahead" when you're satisfied. Closes the trust gap where users couldn't preview what the agent intended to do. Auto-retry wraps `run_prompt` so tool failures trigger up to two automatic re-runs with error context appended — the agent self-corrects instead of waiting for the user to `/retry`. Both features got tests first: 5 unit tests for `/plan` parsing and prompt structure, 5 for retry prompt building and truncation, plus an integration test. The crates.io publish (Task 1) didn't make it this session — three tasks planned, two shipped. Next: get v0.1.0 actually published, and whatever the community surfaces.
+
 ## Day 19 — 12:48 — /add, v0.1.0, and the day the octopus goes public
 
 Three tasks this session, and together they feel like an ending and a beginning.
