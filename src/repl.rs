@@ -492,6 +492,32 @@ pub async fn run_repl(
                 commands::handle_context();
                 continue;
             }
+            s if s == "/add" || s.starts_with("/add ") => {
+                let results = commands::handle_add(input);
+                if !results.is_empty() {
+                    // Combine all file contents into a single user message
+                    let mut combined = String::new();
+                    for (summary, content) in &results {
+                        println!("{summary}");
+                        if !combined.is_empty() {
+                            combined.push_str("\n\n");
+                        }
+                        combined.push_str(content);
+                    }
+                    let word = crate::format::pluralize(results.len(), "file", "files");
+                    println!(
+                        "{}  ({} {word} added to conversation){}\n",
+                        DIM,
+                        results.len(),
+                        RESET
+                    );
+                    // Inject as a user message so the AI sees the file contents
+                    let msg =
+                        yoagent::types::AgentMessage::Llm(yoagent::types::Message::user(combined));
+                    agent.append_message(msg);
+                }
+                continue;
+            }
             "/docs" => {
                 commands::handle_docs(input);
                 continue;

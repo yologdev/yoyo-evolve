@@ -280,11 +280,46 @@ This is one of the most common workflows for developers using coding agents — 
 
 | Command | Description |
 |---------|-------------|
+| `/add <path>` | Add file contents into the conversation — the AI sees them immediately |
 | `/context` | Show which project context files are loaded (YOYO.md is primary; CLAUDE.md supported for compatibility) |
 | `/find <pattern>` | Fuzzy-search project files by name — respects `.gitignore`, ranked by relevance |
 | `/index` | Build a lightweight index of all project source files — shows path, line count, and first-line summary |
 | `/init` | Scan the project and generate a YOYO.md context file with detected build commands, key files, and project structure |
 | `/tree [depth]` | Show project directory tree (default depth: 3, respects `.gitignore`) |
+
+### `/add` — Inject file contents into conversation
+
+The `/add` command reads files and injects their contents directly into the conversation as a user message. The AI sees the file immediately without needing to call `read_file` — similar to Claude Code's `@file` feature.
+
+```
+/add src/main.rs
+  ✓ added src/main.rs (850 lines)
+  (1 file added to conversation)
+
+/add src/main.rs:1-50
+  ✓ added src/main.rs (lines 1-50) (50 lines)
+  (1 file added to conversation)
+
+/add src/*.rs
+  ✓ added src/cli.rs (400 lines)
+  ✓ added src/commands.rs (3000 lines)
+  ✓ added src/main.rs (850 lines)
+  (3 files added to conversation)
+
+/add Cargo.toml README.md
+  ✓ added Cargo.toml (28 lines)
+  ✓ added README.md (50 lines)
+  (2 files added to conversation)
+```
+
+Features:
+- **Line ranges** — `/add path:start-end` injects only the specified lines
+- **Glob patterns** — `/add src/*.rs` expands to all matching files
+- **Multiple files** — `/add file1 file2` adds both in one message
+- **Syntax highlighting** — content is wrapped in fenced code blocks with language detection
+- **No AI tokens used for reading** — the file is read locally and injected directly
+
+This is the fastest way to give the AI context about specific files without waiting for it to call tools.
 
 The `/find` command does fuzzy substring matching across all tracked files in your project (via `git ls-files`, falling back to a directory walk if not in a git repo). Results are ranked by relevance — filename matches score higher than directory matches, and matches at the start of the filename rank highest.
 

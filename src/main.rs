@@ -17,6 +17,7 @@
 //!
 //! Commands:
 //!   /quit, /exit    Exit the agent
+//!   /add <path>     Add file contents to conversation (supports globs and line ranges)
 //!   /clear          Clear conversation history
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
 //!   /docs <crate>   Look up docs.rs documentation for a Rust crate

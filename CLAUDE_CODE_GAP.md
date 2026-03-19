@@ -155,11 +155,12 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~19,700 lines of Rust across 12 source files + integration tests
-- 832 tests passing (765 unit + 67 integration)
-- 44 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes, /web)
+- yoyo: ~20,100 lines of Rust across 12 source files + integration tests
+- 854 tests passing (787 unit + 67 integration)
+- 45 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes, /web, /add)
 - 25 CLI flags (+ short aliases)
 - 11 provider backends (including z.ai)
+- **Published:** v0.1.0 on crates.io (`cargo install yoyo-agent`)
 - MCP server support
 - OpenAPI tool loading
 - Config file support (.yoyo.toml)

@@ -1,4 +1,4 @@
-//! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
+//! Project-related command handlers: /add, /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /web.
 
 use crate::cli;
@@ -1535,6 +1535,164 @@ pub fn handle_web(input: &str) {
     }
 }
 
+// ── /add ─────────────────────────────────────────────────────────────────
+
+/// Parse an `/add` argument into a file path and optional line range.
+///
+/// Supports:
+///   - `path/to/file.rs` → ("path/to/file.rs", None)
+///   - `path/to/file.rs:10-20` → ("path/to/file.rs", Some((10, 20)))
+///
+/// Only recognizes `:<digits>-<digits>` at the end as a line range.
+pub fn parse_add_arg(arg: &str) -> (&str, Option<(usize, usize)>) {
+    // Look for the last colon that's followed by digits-digits
+    if let Some(colon_pos) = arg.rfind(':') {
+        let after = &arg[colon_pos + 1..];
+        if let Some(dash_pos) = after.find('-') {
+            let start_str = &after[..dash_pos];
+            let end_str = &after[dash_pos + 1..];
+            if let (Ok(start), Ok(end)) = (start_str.parse::<usize>(), end_str.parse::<usize>()) {
+                if start > 0 && end >= start {
+                    return (&arg[..colon_pos], Some((start, end)));
+                }
+            }
+        }
+    }
+    (arg, None)
+}
+
+/// Expand a path argument that may contain glob patterns.
+/// Returns the original path as-is if it has no glob characters.
+pub fn expand_add_paths(pattern: &str) -> Vec<String> {
+    if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[') {
+        return vec![pattern.to_string()];
+    }
+    match glob::glob(pattern) {
+        Ok(paths) => {
+            let mut result: Vec<String> = paths
+                .filter_map(|p| p.ok())
+                .filter(|p| p.is_file())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            result.sort();
+            result
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Read a file (optionally a line range) for the /add command.
+/// Returns the file content and line count.
+pub fn read_file_for_add(
+    path: &str,
+    range: Option<(usize, usize)>,
+) -> Result<(String, usize), String> {
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("could not read {path}: {e}"))?;
+
+    match range {
+        Some((start, end)) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let total = lines.len();
+            if start > total {
+                return Err(format!(
+                    "start line {start} is past end of file ({total} lines)"
+                ));
+            }
+            let end = end.min(total);
+            let selected: Vec<&str> = lines[start - 1..end].to_vec();
+            let count = selected.len();
+            Ok((selected.join("\n"), count))
+        }
+        None => {
+            let count = content.lines().count();
+            Ok((content, count))
+        }
+    }
+}
+
+/// Format file content for injection into the conversation.
+/// Wraps it in a markdown code block with the filename as header.
+pub fn format_add_content(path: &str, content: &str) -> String {
+    // Detect language extension for syntax highlighting
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let lang = match ext {
+        "rs" => "rust",
+        "py" => "python",
+        "js" => "javascript",
+        "ts" => "typescript",
+        "rb" => "ruby",
+        "go" => "go",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cpp" | "hpp" | "cc" | "cxx" => "cpp",
+        "sh" | "bash" => "bash",
+        "yml" | "yaml" => "yaml",
+        "json" => "json",
+        "toml" => "toml",
+        "md" => "markdown",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "sql" => "sql",
+        "xml" => "xml",
+        _ => "",
+    };
+    format!("**{path}**\n```{lang}\n{content}\n```")
+}
+
+/// Handle the `/add` command: read file(s) and return the formatted content
+/// to be injected as a user message.
+///
+/// Returns a Vec of (display_summary, content_to_inject) for each file.
+pub fn handle_add(input: &str) -> Vec<(String, String)> {
+    let args = input.strip_prefix("/add").unwrap_or("").trim();
+
+    if args.is_empty() {
+        println!("{DIM}  usage: /add <path> — inject file contents into conversation");
+        println!("         /add <path>:<start>-<end> — inject specific line range");
+        println!("         /add src/*.rs — inject multiple files via glob{RESET}\n");
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+
+    // Split on whitespace to support multiple paths: /add foo.rs bar.rs
+    for arg in args.split_whitespace() {
+        let (raw_path, range) = parse_add_arg(arg);
+        let paths = expand_add_paths(raw_path);
+
+        if paths.is_empty() {
+            println!("{RED}  no files matched: {raw_path}{RESET}");
+            continue;
+        }
+
+        for path in &paths {
+            match read_file_for_add(path, range) {
+                Ok((content, line_count)) => {
+                    let formatted = format_add_content(path, &content);
+                    let word = crate::format::pluralize(line_count, "line", "lines");
+                    let range_info = if let Some((s, e)) = range {
+                        format!(" (lines {s}-{e})")
+                    } else {
+                        String::new()
+                    };
+                    let summary =
+                        format!("{GREEN}  ✓ added {path}{range_info} ({line_count} {word}){RESET}");
+                    results.push((summary, formatted));
+                }
+                Err(e) => {
+                    println!("{RED}  ✗ {e}{RESET}");
+                }
+            }
+        }
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2390,5 +2548,108 @@ mod tests {
         assert!(!is_valid_url("https://"));
         assert!(!is_valid_url("http://x"));
         assert!(!is_valid_url(""));
+    }
+
+    // ── /add command tests ────────────────────────────────────────────
+
+    #[test]
+    fn parse_add_arg_simple_path() {
+        let (path, range) = parse_add_arg("src/main.rs");
+        assert_eq!(path, "src/main.rs");
+        assert!(range.is_none());
+    }
+
+    #[test]
+    fn parse_add_arg_with_line_range() {
+        let (path, range) = parse_add_arg("src/main.rs:10-20");
+        assert_eq!(path, "src/main.rs");
+        assert_eq!(range, Some((10, 20)));
+    }
+
+    #[test]
+    fn parse_add_arg_with_single_line() {
+        let (path, range) = parse_add_arg("src/main.rs:42-42");
+        assert_eq!(path, "src/main.rs");
+        assert_eq!(range, Some((42, 42)));
+    }
+
+    #[test]
+    fn parse_add_arg_with_colon_in_path_no_range() {
+        // A colon followed by non-numeric text should not be treated as a range
+        let (path, range) = parse_add_arg("C:/Users/test.rs");
+        assert_eq!(path, "C:/Users/test.rs");
+        assert!(range.is_none());
+    }
+
+    #[test]
+    fn parse_add_arg_windows_path_with_range() {
+        // Windows-style: C:/foo/bar.rs:5-10 — colon after drive letter
+        let (path, range) = parse_add_arg("foo/bar.rs:5-10");
+        assert_eq!(path, "foo/bar.rs");
+        assert_eq!(range, Some((5, 10)));
+    }
+
+    #[test]
+    fn format_add_content_basic() {
+        let content = format_add_content("hello.txt", "hello world\n");
+        assert!(content.contains("hello.txt"));
+        assert!(content.contains("```"));
+        assert!(content.contains("hello world"));
+    }
+
+    #[test]
+    fn format_add_content_wraps_in_code_block() {
+        let content = format_add_content("test.rs", "fn main() {}\n");
+        // Should have opening and closing code fences
+        let fences: Vec<&str> = content.lines().filter(|l| l.starts_with("```")).collect();
+        assert_eq!(fences.len(), 2, "Should have exactly 2 code fences");
+    }
+
+    #[test]
+    fn expand_add_globs_no_glob() {
+        let paths = expand_add_paths("src/main.rs");
+        assert_eq!(paths, vec!["src/main.rs".to_string()]);
+    }
+
+    #[test]
+    fn expand_add_globs_with_glob() {
+        // This tests with a real glob pattern against the project
+        let paths = expand_add_paths("src/*.rs");
+        assert!(!paths.is_empty(), "Should match at least one .rs file");
+        for p in &paths {
+            assert!(p.ends_with(".rs"), "All matches should be .rs files: {p}");
+            assert!(p.starts_with("src/"), "All matches should be in src/: {p}");
+        }
+    }
+
+    #[test]
+    fn expand_add_globs_no_matches() {
+        let paths = expand_add_paths("nonexistent_dir_xyz/*.zzz");
+        assert!(paths.is_empty(), "Non-matching glob should return empty");
+    }
+
+    #[test]
+    fn add_read_file_with_range() {
+        // Read our own source with a line range
+        let result = read_file_for_add("src/commands_project.rs", Some((1, 3)));
+        assert!(result.is_ok());
+        let (content, count) = result.unwrap();
+        assert_eq!(count, 3);
+        assert!(!content.is_empty());
+    }
+
+    #[test]
+    fn add_read_file_full() {
+        let result = read_file_for_add("Cargo.toml", None);
+        assert!(result.is_ok());
+        let (content, count) = result.unwrap();
+        assert!(count > 0);
+        assert!(content.contains("[package]"));
+    }
+
+    #[test]
+    fn add_read_file_not_found() {
+        let result = read_file_for_add("definitely_not_a_real_file.xyz", None);
+        assert!(result.is_err());
     }
 }

@@ -18,6 +18,7 @@ use yoagent::*;
 /// Known REPL command prefixes. Used to detect unknown slash commands
 /// and for tab-completion in the REPL.
 pub const KNOWN_COMMANDS: &[&str] = &[
+    "/add",
     "/help",
     "/quit",
     "/exit",
@@ -203,6 +204,12 @@ pub fn help_text() -> String {
 
     // ── Project ──
     out.push_str("  ── Project ──\n");
+    out.push_str(
+        "  /add <path>        Add file contents to conversation (like @file in Claude Code)\n",
+    );
+    out.push_str(
+        "                     /add <path>:<start>-<end> for line ranges, /add src/*.rs for globs\n",
+    );
     out.push_str("  /context           Show loaded project context files\n");
     out.push_str("  /init              Scan project and generate a YOYO.md context file\n");
     out.push_str("  /health            Run project health checks (auto-detects project type)\n");
@@ -533,8 +540,8 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    handle_context, handle_docs, handle_find, handle_fix, handle_health, handle_index, handle_init,
-    handle_lint, handle_run, handle_run_usage, handle_test, handle_tree, handle_web,
+    handle_add, handle_context, handle_docs, handle_find, handle_fix, handle_health, handle_index,
+    handle_init, handle_lint, handle_run, handle_run_usage, handle_test, handle_tree, handle_web,
 };
 
 // Session-related handlers
@@ -2993,5 +3000,89 @@ mod tests {
         changes.record("src/cli.rs", ChangeKind::Edit);
         // Should not panic
         handle_changes(&changes);
+    }
+
+    // ── /add command tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_add_command_recognized() {
+        assert!(!is_unknown_command("/add"));
+        assert!(!is_unknown_command("/add src/main.rs"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/add"),
+            "/add should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_add_in_help_text() {
+        let text = help_text();
+        assert!(
+            text.contains("/add"),
+            "Help text should mention /add command"
+        );
+    }
+
+    #[test]
+    fn test_handle_add_no_args_returns_empty() {
+        let results = handle_add("/add");
+        assert!(results.is_empty(), "No args should return empty results");
+    }
+
+    #[test]
+    fn test_handle_add_with_space_no_args_returns_empty() {
+        let results = handle_add("/add   ");
+        assert!(
+            results.is_empty(),
+            "Whitespace-only args should return empty"
+        );
+    }
+
+    #[test]
+    fn test_handle_add_real_file() {
+        let results = handle_add("/add Cargo.toml");
+        assert_eq!(results.len(), 1, "Should return one result for Cargo.toml");
+        let (summary, content) = &results[0];
+        assert!(
+            summary.contains("Cargo.toml"),
+            "Summary should mention the file"
+        );
+        assert!(
+            content.contains("[package]"),
+            "Content should contain file text"
+        );
+    }
+
+    #[test]
+    fn test_handle_add_with_line_range() {
+        let results = handle_add("/add Cargo.toml:1-3");
+        assert_eq!(results.len(), 1);
+        let (summary, content) = &results[0];
+        assert!(
+            summary.contains("lines 1-3"),
+            "Summary should mention line range"
+        );
+        assert!(
+            content.contains("```"),
+            "Content should be wrapped in code fence"
+        );
+    }
+
+    #[test]
+    fn test_handle_add_glob_pattern() {
+        let results = handle_add("/add src/*.rs");
+        assert!(results.len() > 1, "Should match multiple .rs files in src/");
+    }
+
+    #[test]
+    fn test_handle_add_nonexistent_file() {
+        let results = handle_add("/add nonexistent_xyz_file.rs");
+        assert!(results.is_empty(), "Nonexistent file should return empty");
+    }
+
+    #[test]
+    fn test_handle_add_multiple_files() {
+        let results = handle_add("/add Cargo.toml LICENSE");
+        assert_eq!(results.len(), 2, "Should return results for both files");
     }
 }
