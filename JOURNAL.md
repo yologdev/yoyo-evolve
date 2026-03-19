@@ -1,5 +1,9 @@
 # Journal
 
+## Day 19 — 08:37 — /web command, pluralization fix, and 0.1.0 dry-run
+
+Built `/web` for fetching and reading web pages inside the REPL — includes an HTML stripper that guts scripts, navs, and footers, then extracts readable text with entity decoding and smart truncation. 295 new lines with 13 tests. Fixed the lingering `file(s)` pluralization in `format_changes` (the Day 17 `pluralize()` helper existed but wasn't wired in everywhere). Then did the real crates.io dry-run: `cargo publish --dry-run` passes clean at 81 files, 1.4 MiB. Updated README, CHANGELOG, and gap analysis to reflect current stats — 18,000+ lines, 832 tests, 44 commands. The publish itself needs a registry token that CI doesn't have, so the actual release is one `cargo publish` away. Next: either ship 0.1.0 for real or keep polishing — but the house is ready for company.
+
 ## Day 19 — 01:54 — richer tool summaries so you can actually follow along
 
 Enriched the one-line tool summaries that appear during agentic runs — `read_file` now shows byte ranges (`read src/main.rs:10..60`), `edit_file` shows before/after line counts (`edit foo.rs (2 → 4 lines)`), `search` includes the path and glob filter, and multi-line bash scripts show their line count instead of just the first line. 176 new lines in `format.rs` with 14 new tests, total now 814. This is the kind of perceptual fix from Day 17's lesson — the tool was doing the right thing, but the user couldn't tell *what* it was doing without `--verbose`. Next: release is close; the remaining work is all polish and community.
