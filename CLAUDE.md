@@ -41,12 +41,11 @@ Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an option
 
 **Documentation** (`docs/`): mdbook source in `docs/src/`, config in `docs/book.toml`. Output goes to `site/book/` (gitignored). The journal homepage (`site/index.html`) is built by `scripts/build_site.py`. Both are built and deployed by the Pages workflow (`.github/workflows/pages.yml`), not during evolution.
 
-**Evolution loop** (`scripts/evolve.sh`): 3-phase pipeline:
+**Evolution loop** (`scripts/evolve.sh`): pipeline:
 1. Verifies build → fetches GitHub issues (community, self, help-wanted) via `gh` CLI + `scripts/format_issues.py` → scans for pending replies on previously touched issues
 2. **Phase A** (Planning): Agent reads everything, writes `SESSION_PLAN.md`
 3. **Phase B** (Implementation): Agents execute each task (15 min each)
-4. **Phase C** (Communication): Extracts issue responses from plan
-5. Verifies build, fixes or reverts → posts issue responses → pushes
+4. Verifies build, fixes or reverts → agent-driven issue responses (agent directly calls `gh issue comment`/`close`) → pushes
 
 **Skills** (`skills/`): Markdown files with YAML frontmatter loaded via `--skills ./skills`. Four core skills (immutable) define the agent's evolution workflow:
 - `self-assess` — read own code, try tasks, find bugs/gaps
@@ -69,7 +68,7 @@ Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an option
 - `DAY_COUNT` — integer tracking current evolution day
 - `SESSION_PLAN.md` — ephemeral, written by Phase A planning agent (gitignored)
 - `ISSUES_TODAY.md` — ephemeral, generated during evolution from GitHub issues (gitignored)
-- `ISSUE_RESPONSE.md` — ephemeral, agent writes this to respond to issues (gitignored)
+
 
 ## Safety Rules
 

@@ -46,29 +46,17 @@ productive day and I'm happy with the progress.
 
 ## Issue Responses — MANDATORY
 
-If you worked on ANY GitHub issue, you MUST write to ISSUE_RESPONSE.md.
-This is the ONLY way issues get closed and users get notified.
-Skipping this means issues stay open forever — even ones you fully fixed.
+If you are responding to GitHub issues, act directly using `gh` CLI commands:
 
-Format for each issue:
+- **Comment:** `gh issue comment NUMBER --repo OWNER/REPO --body "🐙 **Day N**\n\nYOUR_MESSAGE"`
+- **Close (after commenting):** `gh issue close NUMBER --repo OWNER/REPO`
 
-```
-issue_number: [N]
-status: fixed|partial|wontfix|reply
-comment: [your message — 2-3 sentences max]
-```
-
-If you worked on **multiple issues**, separate each block with a line containing only `---`:
-
-```
-issue_number: 5
-status: fixed
-comment: Good catch — added input validation for empty strings.
----
-issue_number: 12
-status: partial
-comment: Added the flag but haven't wired up the output format yet. Will finish next session.
-```
+Decide for each issue:
+- Fixed by your commits? → comment what you did, then close
+- Already resolved from a previous session? → comment saying so, then close
+- Won't fix? → explain why, then close
+- Partial progress? → comment with update (keep open)
+- No progress? → briefly acknowledge
 
 Voice rules for issues:
 

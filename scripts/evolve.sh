@@ -389,10 +389,8 @@ Description: [what to do]
 Issue: #N (or "none")
 
 ### Issue Responses
-- #N: implement — [brief reason]
-- #N: wontfix — [brief reason]
-- #N: partial — [brief reason]
-- #N: reply — [your response to their comment]
+For each issue, note what you plan to do:
+- #N: [what you'll do — implement as task, won't fix because X, already resolved, need more time, etc.]
 
 After writing SESSION_PLAN.md, commit it:
 git add SESSION_PLAN.md && git commit -m "Day $DAY ($SESSION_TIME): session plan"
@@ -641,63 +639,8 @@ done < <(grep '^### Task' SESSION_PLAN.md | head -5)
 echo "  Implementation complete. $TASK_FAILURES of $TASK_NUM tasks had issues."
 echo ""
 
-# ── Phase C: Extract issue responses from plan ──
-# Only write ISSUE_RESPONSE.md if implementation agents didn't already create one
-echo "  Phase C: Issue responses..."
-if [ ! -f ISSUE_RESPONSE.md ] && grep -qi '^### Issue Responses' SESSION_PLAN.md 2>/dev/null; then
-    # Parse issue responses from the plan
-    RESP=""
-    while IFS= read -r resp_line; do
-        # Lines like: - #31: implement — adding guardrails
-        issue_num=$(echo "$resp_line" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
-        [ -z "$issue_num" ] && continue
-
-        if echo "$resp_line" | grep -qi 'wontfix'; then
-            status="wontfix"
-        elif echo "$resp_line" | grep -qi 'reply'; then
-            status="reply"
-        elif echo "$resp_line" | grep -qi 'partial'; then
-            status="partial"
-        elif echo "$resp_line" | grep -qi 'implement'; then
-            # "implement" means it was planned — check if commits mention this issue
-            if git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" | grep -qE "#${issue_num}([^0-9]|$)"; then
-                status="fixed"
-            else
-                status="partial"
-            fi
-        else
-            status="partial"
-        fi
-
-        # Extract the reason after the first em dash or hyphen delimiter
-        if echo "$resp_line" | grep -q '— '; then
-            reason=$(echo "$resp_line" | sed 's/.*— //')
-        else
-            reason=$(echo "$resp_line" | sed -E 's/^- #[0-9]+: *[a-zA-Z]+ - //')
-        fi
-        [ -z "$reason" ] && reason="Addressed in this session."
-
-        if [ -n "$RESP" ]; then
-            RESP="${RESP}
----
-"
-        fi
-        RESP="${RESP}issue_number: ${issue_num}
-status: ${status}
-comment: ${reason}"
-    done < <(sed -n '/^### [Ii]ssue [Rr]esponses/,/^### /p' SESSION_PLAN.md | grep '^- #')
-
-    if [ -n "$RESP" ]; then
-        echo "$RESP" > ISSUE_RESPONSE.md
-        echo "  Wrote ISSUE_RESPONSE.md from plan."
-    else
-        echo "  No issue responses found in plan."
-    fi
-elif [ -f ISSUE_RESPONSE.md ]; then
-    echo "  ISSUE_RESPONSE.md already exists (written by implementation agent)."
-else
-    echo "  No Issue Responses section found in plan."
-fi
+# Phase C: Issue responses are now agent-driven (Step 7)
+echo "  Phase C: Issue responses will be handled by agent in Step 7."
 
 # Clean up plan file (don't commit it in wrap-up)
 rm -f SESSION_PLAN.md
@@ -867,172 +810,100 @@ REOF
     rm -f "$REFLECT_PROMPT"
 fi
 
-# ── Step 6c: Ensure issue responses were written ──
-ISSUE_COUNT=$(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null || echo 0)
-SESSION_COMMITS=$(git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" | grep -v "session wrap-up\|cargo fmt\|journal entry" || true)
-if [ "$ISSUE_COUNT" -gt 0 ] && [ -n "$SESSION_COMMITS" ] && [ ! -f ISSUE_RESPONSE.md ]; then
-    echo "  Issues existed but no ISSUE_RESPONSE.md — running agent to write responses..."
-    ISSUE_PROMPT=$(mktemp)
-    cat > "$ISSUE_PROMPT" <<IEOF
+# ── Step 7: Agent-driven issue responses ──
+# The agent directly calls `gh issue comment` and `gh issue close` — no intermediary files.
+ISSUE_COUNT=$(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null) || ISSUE_COUNT=0
+if [ "$ISSUE_COUNT" -gt 0 ] && command -v gh &>/dev/null; then
+    echo ""
+    echo "→ Responding to issues (agent-driven)..."
+    SESSION_COMMITS=$(git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" || true)
+    BUILD_OK="PASSING"
+    BUILD_DIAG=""
+    if ! BUILD_DIAG=$(cargo build 2>&1); then
+        BUILD_OK="FAILING"
+        echo "  WARNING: Build is currently FAILING. Agent will be informed."
+    fi
+
+    RESPOND_PROMPT=$(mktemp)
+    RESPOND_LOG=$(mktemp)
+    cat > "$RESPOND_PROMPT" <<RESPONDEOF
 You are yoyo, a self-evolving coding agent. You just finished an evolution session.
 
 Today is Day $DAY ($DATE $SESSION_TIME).
+Repository: $REPO
 
-You worked on community issues this session. Here are the issues that were available:
+Here are the community issues you were working with:
 $(cat "$ISSUES_FILE")
 
 Here are the commits you made this session:
 $SESSION_COMMITS
 
-Your job: determine which issues (if any) your commits addressed, then write ISSUE_RESPONSE.md.
+Build status: $BUILD_OK
+$(if [ "$BUILD_OK" = "FAILING" ] && [ -n "$BUILD_DIAG" ]; then echo "Build errors (last 30 lines):"; echo "$BUILD_DIAG" | tail -30; fi)
 
-Format for EACH issue you addressed:
+## Your task
 
-issue_number: [N]
-status: fixed|partial|wontfix
-comment: [2-3 sentences about what you did]
+For EACH issue listed above, you must:
 
-Separate multiple issues with a line containing only "---".
+1. **Decide** what happened with this issue:
+   - Did your commits fix it? → comment explaining what you did, then close it
+   - Did you make partial progress? → comment with progress update (keep open)
+   - Is it already resolved from a previous session? → comment saying so, then close it
+   - Will you not fix it? → explain why, then close it
+   - No progress this session? → briefly acknowledge you saw it
 
-If none of your commits relate to any issue, write nothing.
-Only claim "fixed" if you're confident the issue is fully resolved.
-Use "partial" if you made progress but it's not complete.
-IEOF
+2. **Act directly** using these commands:
+   - Comment: gh issue comment NUMBER --repo $REPO --body "🐙 **Day $DAY**
 
-    AGENT_EXIT=0
-    ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} "$YOYO_BIN" \
+   YOUR_MESSAGE_HERE"
+   - Close (after commenting): gh issue close NUMBER --repo $REPO
+
+Rules:
+- Respond to EVERY issue. Real people are waiting.
+- Only close if you're confident: fully resolved, already done, or deliberate won't-fix.
+- If build is FAILING, do NOT claim anything is "fixed" — say you'll fix the build first.
+- Write in yoyo's voice — curious, honest, celebratory. No corporate speak.
+RESPONDEOF
+
+    RESPOND_EXIT=0
+    ${TIMEOUT_CMD:+$TIMEOUT_CMD 180} "$YOYO_BIN" \
         --model "$MODEL" \
         --skills ./skills \
-        < "$ISSUE_PROMPT" || AGENT_EXIT=$?
-    rm -f "$ISSUE_PROMPT"
+        < "$RESPOND_PROMPT" 2>&1 | tee "$RESPOND_LOG" || RESPOND_EXIT=$?
+    rm -f "$RESPOND_PROMPT"
 
-    # Bash fallback: only if agent ran successfully but skipped the file.
-    # If agent crashed (non-zero exit), skip fallback to avoid false notifications.
-    if [ "$AGENT_EXIT" -ne 0 ]; then
-        echo "  Agent exited with code $AGENT_EXIT — skipping bash fallback to avoid false issue responses."
-    elif [ ! -f ISSUE_RESPONSE.md ]; then
-        echo "  Agent still skipped issue response — using commit-based fallback."
-        FOUND_ISSUES=""
-        while IFS= read -r commit_msg; do
-            for num in $(echo "$commit_msg" | grep -oE '#[0-9]+' | tr -d '#'); do
-                if grep -q "### Issue #${num}" "$ISSUES_FILE" 2>/dev/null; then
-                    if ! echo "$FOUND_ISSUES" | grep -q "^${num}$"; then
-                        FOUND_ISSUES="${FOUND_ISSUES}${FOUND_ISSUES:+
-}${num}"
-                    fi
-                fi
-            done
-        done <<< "$SESSION_COMMITS"
-
-        if [ -n "$FOUND_ISSUES" ]; then
-            RESP=""
-            while IFS= read -r inum; do
-                [ -z "$inum" ] && continue
-                COMMIT_REF=$(echo "$SESSION_COMMITS" | grep -E "#${inum}([^0-9]|$)" | head -1)
-                if [ -n "$RESP" ]; then
-                    RESP="${RESP}
----
-"
-                fi
-                RESP="${RESP}issue_number: ${inum}
-status: partial
-comment: Made some progress on this one! ${COMMIT_REF}"
-            done <<< "$FOUND_ISSUES"
-            if [ -n "$RESP" ]; then
-                echo "$RESP" > ISSUE_RESPONSE.md
-            fi
-        fi
-    fi
-fi
-
-# ── Step 6d: Ensure ISSUE_RESPONSE.md has valid entries ──
-# Handles three cases:
-# 1. File exists but has no structured entries (agent wrote prose) → replace with acknowledgment
-# 2. File doesn't exist but issues were available → create acknowledgment
-# 3. File exists with valid entries → do nothing
-if [ -f ISSUE_RESPONSE.md ] && ! grep -q "^issue_number:" ISSUE_RESPONSE.md 2>/dev/null; then
-    # Case 1: file exists but malformed
-    TOP_ISSUE=$(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+')
-    if [ -n "$TOP_ISSUE" ]; then
-        echo "  ISSUE_RESPONSE.md has no valid entries — writing acknowledgment for issue #${TOP_ISSUE}."
-        cat > ISSUE_RESPONSE.md <<ACKEOF
-issue_number: ${TOP_ISSUE}
-status: partial
-comment: Spotted this but had my tentacles full with other things today. It's on my list — I'll come back to it.
-ACKEOF
-    else
-        echo "  ISSUE_RESPONSE.md has no valid entries and no issues found to acknowledge — removing invalid file."
-        rm -f ISSUE_RESPONSE.md
-    fi
-elif [ ! -f ISSUE_RESPONSE.md ] && [ "$ISSUE_COUNT" -gt 0 ]; then
-    # Case 2: no file at all but issues existed — agent ran out of tokens or skipped issues entirely
-    TOP_ISSUE=$(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+')
-    if [ -n "$TOP_ISSUE" ]; then
-        echo "  No ISSUE_RESPONSE.md but $ISSUE_COUNT issues existed — writing acknowledgment for issue #${TOP_ISSUE}."
-        cat > ISSUE_RESPONSE.md <<ACKEOF
-issue_number: ${TOP_ISSUE}
-status: partial
-comment: Spotted this but had my tentacles full with other things today. It's on my list — I'll come back to it.
-ACKEOF
-    fi
-fi
-
-# ── Step 7: Handle issue responses ──
-# Process BEFORE wrap-up commit so ISSUE_RESPONSE.md is deleted and not committed
-process_issue_block() {
-    local block="$1"
-    local issue_num status comment
-
-    issue_num=$(echo "$block" | grep "^issue_number:" | awk '{print $2}' || true)
-    status=$(echo "$block" | grep "^status:" | awk '{print $2}' || true)
-    comment=$(echo "$block" | sed -n '/^comment:/,$ p' | sed '1s/^comment: //' || true)
-
-    if [ -z "$issue_num" ] || ! command -v gh &>/dev/null; then
-        return
+    # Check for API errors in the agent output
+    if grep -q '"type":"error"' "$RESPOND_LOG" 2>/dev/null; then
+        echo "  API error detected in issue response agent."
+        RESPOND_EXIT=1
     fi
 
-    RESPONDED_ISSUES="${RESPONDED_ISSUES}${RESPONDED_ISSUES:+
-}${issue_num}"
-
-    gh issue comment "$issue_num" \
-        --repo "$REPO" \
-        --body "🐙 **Day $DAY**
-
-$comment" || true
-
-    if [ "$status" = "fixed" ] || [ "$status" = "wontfix" ]; then
-        gh issue close "$issue_num" --repo "$REPO" || true
-        echo "  Closed issue #$issue_num (status: $status)"
-    else
-        echo "  Commented on issue #$issue_num (status: $status)"
-    fi
-}
-
-RESPONDED_ISSUES=""
-if [ -f ISSUE_RESPONSE.md ]; then
-    echo ""
-    echo "→ Posting issue responses..."
-
-    # Split on --- separator and process each block
-    CURRENT_BLOCK=""
-    while IFS= read -r line || [ -n "$line" ]; do
-        if [ "$line" = "---" ]; then
-            if [ -n "$CURRENT_BLOCK" ]; then
-                process_issue_block "$CURRENT_BLOCK"
-                CURRENT_BLOCK=""
-            fi
+    # Verify the agent actually posted comments (exit 0 but did nothing = silent failure)
+    # grep for gh CLI success output (comment URLs), not the command name (which appears in the prompt too)
+    if [ "$RESPOND_EXIT" -eq 0 ]; then
+        COMMENTS_POSTED=$(grep -cE 'https://github\.com/.*/issues/.*#issuecomment-' "$RESPOND_LOG" 2>/dev/null) || COMMENTS_POSTED=0
+        if [ "$COMMENTS_POSTED" -eq 0 ] && [ "$ISSUE_COUNT" -gt 0 ]; then
+            echo "  WARNING: Agent exited 0 but no successful issue comments detected in output — triggering fallback."
+            RESPOND_EXIT=1
         else
-            CURRENT_BLOCK="${CURRENT_BLOCK}${CURRENT_BLOCK:+
-}${line}"
+            echo "  Agent posted $COMMENTS_POSTED issue comment(s)."
         fi
-    done < ISSUE_RESPONSE.md
-
-    # Process the last block
-    if [ -n "$CURRENT_BLOCK" ]; then
-        process_issue_block "$CURRENT_BLOCK"
     fi
 
-    rm -f ISSUE_RESPONSE.md
+    # Fallback: if agent failed, acknowledge ALL issues
+    if [ "$RESPOND_EXIT" -ne 0 ]; then
+        echo "  Issue response agent failed (exit $RESPOND_EXIT) — posting fallback acknowledgments."
+        while IFS= read -r fallback_issue_num; do
+            [ -z "$fallback_issue_num" ] && continue
+            gh issue comment "$fallback_issue_num" --repo "$REPO" \
+                --body "🐙 **Day $DAY**
+
+Spotted this but had my tentacles full with other things today. It's on my list — I'll come back to it." \
+                || echo "  WARNING: Fallback comment to issue #$fallback_issue_num failed (exit $?)"
+        done < <(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | grep -oE '[0-9]+')
+    fi
+
+    rm -f "$RESPOND_LOG"
 fi
 
 # Commit any remaining uncommitted changes (journal, day counter, etc.)
