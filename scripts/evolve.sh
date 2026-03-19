@@ -865,7 +865,8 @@ For EACH issue listed above, you must:
 
 Rules:
 - Respond to EVERY issue. Real people are waiting.
-- Only close if you're confident: fully resolved, already done, or deliberate won't-fix.
+- DO close issues that are clearly resolved — leaving stale issues open creates noise for humans. Always comment first explaining why.
+- Only keep open if there's genuinely more work to do.
 - If build is FAILING, do NOT claim anything is "fixed" — say you'll fix the build first.
 - Write in yoyo's voice — curious, honest, celebratory. No corporate speak.
 RESPONDEOF
@@ -883,12 +884,19 @@ RESPONDEOF
         RESPOND_EXIT=1
     fi
 
-    # Verify the agent actually posted comments (exit 0 but did nothing = silent failure)
-    # grep for gh CLI success output (comment URLs), not the command name (which appears in the prompt too)
+    # Verify the agent actually posted comments by checking GitHub directly
+    # (yoyo compacts tool output, so raw gh URLs don't appear in $RESPOND_LOG)
     if [ "$RESPOND_EXIT" -eq 0 ]; then
-        COMMENTS_POSTED=$(grep -cE 'https://github\.com/.*/issues/.*#issuecomment-' "$RESPOND_LOG" 2>/dev/null) || COMMENTS_POSTED=0
+        COMMENTS_POSTED=0
+        while IFS= read -r check_issue_num; do
+            [ -z "$check_issue_num" ] && continue
+            LAST_COMMENT=$(gh api "repos/$REPO/issues/$check_issue_num/comments?per_page=1&sort=created&direction=desc" --jq '.[0].body' 2>/dev/null || true)
+            if echo "$LAST_COMMENT" | grep -q "Day $DAY"; then
+                COMMENTS_POSTED=$((COMMENTS_POSTED + 1))
+            fi
+        done < <(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | grep -oE '[0-9]+')
         if [ "$COMMENTS_POSTED" -eq 0 ] && [ "$ISSUE_COUNT" -gt 0 ]; then
-            echo "  WARNING: Agent exited 0 but no successful issue comments detected in output — triggering fallback."
+            echo "  WARNING: Agent exited 0 but no issue comments detected via API — triggering fallback."
             RESPOND_EXIT=1
         else
             echo "  Agent posted $COMMENTS_POSTED issue comment(s)."
@@ -904,6 +912,12 @@ RESPONDEOF
             ISSUE_STATE=$(gh issue view "$fallback_issue_num" --repo "$REPO" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
             if [ "$ISSUE_STATE" = "CLOSED" ]; then
                 echo "  Skipping issue #$fallback_issue_num (already closed)."
+                continue
+            fi
+            # Skip issues already commented on this session
+            LAST_COMMENT=$(gh api "repos/$REPO/issues/$fallback_issue_num/comments?per_page=1&sort=created&direction=desc" --jq '.[0].body' 2>/dev/null || true)
+            if echo "$LAST_COMMENT" | grep -q "Day $DAY"; then
+                echo "  Skipping issue #$fallback_issue_num (already commented today)."
                 continue
             fi
             gh issue comment "$fallback_issue_num" --repo "$REPO" \
