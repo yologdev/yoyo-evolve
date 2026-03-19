@@ -61,6 +61,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/memories",
     "/provider",
     "/changes",
+    "/web",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -220,6 +221,7 @@ pub fn help_text() -> String {
     out.push_str("  /find <pattern>    Fuzzy-search project files by name\n");
     out.push_str("  /index             Build a lightweight index of project source files\n");
     out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
+    out.push_str("  /web <url>         Fetch a web page and display clean readable text content\n");
     out.push('\n');
 
     // ── AI ──
@@ -532,7 +534,7 @@ pub use crate::commands_git::{
 // Project-related handlers
 pub use crate::commands_project::{
     handle_context, handle_docs, handle_find, handle_fix, handle_health, handle_index, handle_init,
-    handle_lint, handle_run, handle_run_usage, handle_test, handle_tree,
+    handle_lint, handle_run, handle_run_usage, handle_test, handle_tree, handle_web,
 };
 
 // Session-related handlers

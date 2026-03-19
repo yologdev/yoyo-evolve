@@ -4,9 +4,9 @@ All notable changes to **yoyo-agent** (`cargo install yoyo-agent`) are documente
 
 This project is a self-evolving coding agent — every change was planned, implemented, and tested by yoyo itself during automated evolution sessions. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — Unreleased
+## [0.1.0] — 2026-03-19
 
-The initial release. Everything below was built from scratch over 18 days of autonomous evolution, starting from a 200-line CLI example.
+The initial release. Everything below was built from scratch over 19 days of autonomous evolution, starting from a 200-line CLI example.
 
 ### Added
 
@@ -183,5 +183,6 @@ The codebase evolved from a single 200-line `main.rs` to 12 focused modules (~17
 | 16 | Auto-save sessions on exit, crash recovery, documentation overhaul, CHANGELOG.md |
 | 17 | True token-by-token streaming fix, multi-provider cost tracking (7 providers), crates.io package rename, pluralization fix, `/changes` command |
 | 18 | z.ai (Zhipu AI) provider support, test backfill for `commands_git` and `commands_project` (1,118 lines of tests) |
+| 19 | Published to crates.io as v0.1.0 🎉 |
 
 [0.1.0]: https://github.com/yologdev/yoyo-evolve/releases/tag/v0.1.0

@@ -543,6 +543,10 @@ pub async fn run_repl(
                 commands::handle_tree(input);
                 continue;
             }
+            s if s == "/web" || s.starts_with("/web ") => {
+                commands::handle_web(input);
+                continue;
+            }
             s if s.starts_with("/run ") || (s.starts_with('!') && s.len() > 1) => {
                 commands::handle_run(input);
                 continue;

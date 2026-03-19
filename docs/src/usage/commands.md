@@ -122,6 +122,7 @@ Each category is capped at 10 items with a "+N more" suffix for large crates.
 |---------|-------------|
 | `/run <cmd>` | Run a shell command directly — no AI, no tokens used |
 | `!<cmd>` | Shortcut for `/run` |
+| `/web <url>` | Fetch a web page and display clean readable text content |
 
 The `/run` command (or `!` shortcut) lets you execute shell commands without going through the AI model. Useful for quick checks (e.g., `!git log --oneline -5`) without burning API tokens.
 
@@ -130,6 +131,24 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 /run cargo test
 /run git status
 ```
+
+### `/web` — Fetch and read web pages
+
+The `/web` command fetches a URL and extracts readable text content, stripping away HTML tags, scripts, styles, and navigation. This is useful for quickly pulling in documentation, error explanations, API references, or any web content without getting raw HTML.
+
+```
+/web https://doc.rust-lang.org/book/ch01-01-installation.html
+/web docs.rs/serde
+/web https://stackoverflow.com/questions/12345
+```
+
+Features:
+- **Auto-prepends `https://`** if you omit the protocol — `/web docs.rs/serde` works
+- **Strips noise** — removes `<script>`, `<style>`, `<nav>`, `<footer>`, `<header>`, and `<svg>` blocks
+- **Converts structure** — headings become prominent, list items get bullets, block elements get newlines
+- **Decodes entities** — `&amp;`, `&lt;`, `&gt;`, `&#NNN;`, `&nbsp;`, etc.
+- **Truncates** — caps output at ~5,000 characters to keep it readable
+- **No AI tokens used** — pure curl + text extraction
 
 ## Subagent
 

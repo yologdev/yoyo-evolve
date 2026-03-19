@@ -22,9 +22,9 @@
 
 # yoyo: A Coding Agent That Evolves Itself
 
-**yoyo** is a free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 42 slash commands.
+**yoyo** is a free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 44 slash commands.
 
-It started as a ~200-line CLI example. Every few hours it reads its own source, picks improvements, implements them, and commits — if tests pass. 16 days of autonomous evolution later: **14,700+ lines of Rust, 619 tests, 12 modules**.
+It started as a ~200-line CLI example. Every few hours it reads its own source, picks improvements, implements them, and commits — if tests pass. 19 days of autonomous evolution later: **18,000+ lines of Rust, 832 tests, 12 modules**.
 
 No human writes its code. No roadmap tells it what to do. It decides for itself.
 
@@ -183,6 +183,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | Command | Description |
 |---------|-------------|
 | `/help` | Grouped command reference |
+| `/changes` | Show files modified during this session |
 | `/clear` | Clear conversation history |
 | `/compact` | Compact conversation to save context |
 | `/commit [msg]` | Commit staged changes (AI-generates message if omitted) |
@@ -223,6 +224,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/tree [depth]` | Show project directory tree |
 | `/undo` | Revert all uncommitted changes |
 | `/version` | Show yoyo version |
+| `/web <url>` | Fetch a web page and display readable text |
 
 ## How It Evolves
 
@@ -312,7 +314,7 @@ Crypto wallets:
 ## Architecture
 
 ```
-src/                    12 modules, ~14,700 lines of Rust
+src/                    12 modules, ~18,000 lines of Rust
   main.rs               Entry point, agent config, tool building
   cli.rs                CLI parsing, config files, permissions
   commands.rs           Slash command dispatch, grouped /help
@@ -349,7 +351,7 @@ skills/                 6 skills: self-assess, evolve, communicate, social, rele
 
 ## Test Quality
 
-619 tests (552 unit + 67 integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, and more.
+832 tests (765 unit + 67 integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, and more.
 
 yoyo also uses mutation testing ([cargo-mutants](https://github.com/sourcefrog/cargo-mutants)) to find gaps in the test suite. Every surviving mutant is a line of code that isn't truly tested.
 

@@ -1,5 +1,5 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index.
+//! /tree, /run, /docs, /find, /index, /web.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -1240,6 +1240,301 @@ pub fn handle_index() {
     }
 }
 
+// ── /web ─────────────────────────────────────────────────────────────────
+
+/// Maximum characters to display from a fetched web page.
+const WEB_MAX_CHARS: usize = 5000;
+
+/// Strip HTML tags and extract readable text content.
+///
+/// This function:
+/// - Removes `<script>`, `<style>`, `<nav>`, `<footer>`, `<header>`, `<svg>` blocks entirely
+/// - Converts `<br>`, `<p>`, `<div>`, `<li>`, `<h1>`–`<h6>`, `<tr>` to newlines
+/// - Converts `<li>` items to bullet points
+/// - Strips all remaining HTML tags
+/// - Decodes common HTML entities
+/// - Collapses excessive whitespace
+/// - Truncates to `max_chars`
+pub fn strip_html_tags(html: &str, max_chars: usize) -> String {
+    // First pass: remove blocks we want to skip entirely (script, style, etc.)
+    let html_lower = html.to_lowercase();
+    let mut cleaned = String::with_capacity(html.len());
+    let skip_tags = ["script", "style", "nav", "footer", "header", "svg"];
+
+    let mut i = 0;
+    let bytes = html.as_bytes();
+    let lower_bytes = html_lower.as_bytes();
+
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            // Check if this is a skip-tag opening
+            let mut found_skip = false;
+            for tag in &skip_tags {
+                let open = format!("<{}", tag);
+                if i + open.len() <= lower_bytes.len()
+                    && html_lower[i..i + open.len()] == *open
+                    && (i + open.len() >= lower_bytes.len()
+                        || lower_bytes[i + open.len()] == b' '
+                        || lower_bytes[i + open.len()] == b'>'
+                        || lower_bytes[i + open.len()] == b'\t'
+                        || lower_bytes[i + open.len()] == b'\n')
+                {
+                    // Find the closing tag
+                    let close = format!("</{}>", tag);
+                    if let Some(end_pos) = html_lower[i..].find(&close) {
+                        i += end_pos + close.len();
+                        found_skip = true;
+                        break;
+                    }
+                }
+            }
+            if !found_skip {
+                cleaned.push(bytes[i] as char);
+                i += 1;
+            }
+        } else {
+            cleaned.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // Second pass: convert meaningful tags to formatting, strip the rest
+    let mut result = String::with_capacity(cleaned.len());
+    let cleaned_lower = cleaned.to_lowercase();
+    let cleaned_bytes = cleaned.as_bytes();
+    let len = cleaned_bytes.len();
+    let mut j = 0;
+
+    while j < len {
+        if cleaned_bytes[j] == b'<' {
+            // Find end of tag
+            let tag_start = j;
+            let mut tag_end = j + 1;
+            while tag_end < len && cleaned_bytes[tag_end] != b'>' {
+                tag_end += 1;
+            }
+            if tag_end < len {
+                tag_end += 1; // include the '>'
+            }
+
+            let tag_lower = &cleaned_lower[tag_start..tag_end.min(len)];
+
+            // Decide what to emit based on tag
+            if tag_lower.starts_with("<br") {
+                result.push('\n');
+            } else if tag_lower.starts_with("<li") {
+                result.push_str("\n• ");
+            } else if tag_lower.starts_with("<h1")
+                || tag_lower.starts_with("<h2")
+                || tag_lower.starts_with("<h3")
+                || tag_lower.starts_with("<h4")
+                || tag_lower.starts_with("<h5")
+                || tag_lower.starts_with("<h6")
+            {
+                result.push_str("\n\n");
+            } else if tag_lower.starts_with("</h")
+                || tag_lower.starts_with("<p")
+                || tag_lower.starts_with("</p")
+                || tag_lower.starts_with("<div")
+                || tag_lower.starts_with("</div")
+                || tag_lower.starts_with("<tr")
+                || tag_lower.starts_with("</tr")
+                || tag_lower.starts_with("<blockquote")
+                || tag_lower.starts_with("</blockquote")
+                || tag_lower.starts_with("<section")
+                || tag_lower.starts_with("</section")
+                || tag_lower.starts_with("<article")
+                || tag_lower.starts_with("</article")
+            {
+                result.push('\n');
+            }
+            // All other tags: skip (emit nothing)
+
+            j = tag_end;
+        } else {
+            // Safety: we're iterating byte-by-byte, but we need valid UTF-8.
+            // Use the original cleaned string's chars at this position.
+            result.push(cleaned_bytes[j] as char);
+            j += 1;
+        }
+    }
+
+    // Decode common HTML entities
+    result = result
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&#x27;", "'")
+        .replace("&mdash;", "—")
+        .replace("&ndash;", "–")
+        .replace("&hellip;", "…")
+        .replace("&copy;", "©")
+        .replace("&reg;", "®");
+
+    // Decode numeric HTML entities (&#NNN;)
+    let mut decoded = String::with_capacity(result.len());
+    let mut chars = result.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' && chars.peek() == Some(&'#') {
+            let mut entity = String::from("&#");
+            chars.next(); // consume '#'
+            while let Some(&nc) = chars.peek() {
+                if nc == ';' {
+                    chars.next();
+                    break;
+                }
+                entity.push(nc);
+                chars.next();
+            }
+            // Try to parse as number
+            let num_str = &entity[2..];
+            if let Ok(num) = num_str.parse::<u32>() {
+                if let Some(ch) = char::from_u32(num) {
+                    decoded.push(ch);
+                    continue;
+                }
+            }
+            // Failed to decode — emit original
+            decoded.push_str(&entity);
+            decoded.push(';');
+        } else {
+            decoded.push(c);
+        }
+    }
+
+    // Collapse whitespace: multiple blank lines → two newlines, multiple spaces → one
+    let mut final_text = String::with_capacity(decoded.len());
+    let mut prev_newlines = 0u32;
+    let mut prev_space = false;
+
+    for c in decoded.chars() {
+        if c == '\n' {
+            prev_newlines += 1;
+            prev_space = false;
+            if prev_newlines <= 2 {
+                final_text.push('\n');
+            }
+        } else if c == ' ' || c == '\t' {
+            if prev_newlines > 0 {
+                // Skip spaces right after newlines (trim line starts)
+            } else if !prev_space {
+                final_text.push(' ');
+                prev_space = true;
+            }
+        } else {
+            prev_newlines = 0;
+            prev_space = false;
+            final_text.push(c);
+        }
+    }
+
+    // Trim each line and rejoin
+    let final_text: String = final_text
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let final_text = final_text.trim().to_string();
+
+    // Truncate to max_chars
+    if final_text.len() > max_chars {
+        let truncated = &final_text[..final_text.floor_char_boundary(max_chars)];
+        format!("{truncated}\n\n[… truncated at {max_chars} chars]")
+    } else {
+        final_text
+    }
+}
+
+/// Validate that a string looks like a URL.
+pub fn is_valid_url(url: &str) -> bool {
+    (url.starts_with("http://") || url.starts_with("https://"))
+        && url.len() > 10
+        && url.contains('.')
+}
+
+/// Fetch a URL using curl and return the HTML content.
+fn fetch_url(url: &str) -> Result<String, String> {
+    let output = std::process::Command::new("curl")
+        .args([
+            "-sL", // silent, follow redirects
+            "--max-time",
+            "15", // timeout
+            "-A",
+            "Mozilla/5.0 (compatible; yoyo-agent/0.1)", // user agent
+            url,
+        ])
+        .output()
+        .map_err(|e| format!("failed to run curl: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "curl failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        ));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+    if body.is_empty() {
+        return Err("empty response".to_string());
+    }
+
+    Ok(body)
+}
+
+/// Handle the /web command — fetch a URL and display readable text.
+pub fn handle_web(input: &str) {
+    let url = input.trim_start_matches("/web").trim();
+
+    if url.is_empty() {
+        println!("{DIM}  usage: /web <url>");
+        println!("  Fetch a web page and display readable text content.");
+        println!(
+            "  Example: /web https://doc.rust-lang.org/book/ch01-01-installation.html{RESET}\n"
+        );
+        return;
+    }
+
+    // Auto-prepend https:// if missing
+    let url = if !url.starts_with("http://") && !url.starts_with("https://") {
+        format!("https://{url}")
+    } else {
+        url.to_string()
+    };
+
+    if !is_valid_url(&url) {
+        println!("{RED}  Invalid URL: {url}{RESET}\n");
+        return;
+    }
+
+    println!("{DIM}  Fetching {url}...{RESET}");
+
+    match fetch_url(&url) {
+        Ok(html) => {
+            let text = strip_html_tags(&html, WEB_MAX_CHARS);
+            if text.is_empty() {
+                println!("{DIM}  (no readable text content found){RESET}\n");
+            } else {
+                let line_count = text.lines().count();
+                let char_count = text.len();
+                println!();
+                println!("{text}");
+                println!();
+                println!("{DIM}  ── {line_count} lines, {char_count} chars from {url}{RESET}\n");
+            }
+        }
+        Err(e) => {
+            println!("{RED}  Failed to fetch: {e}{RESET}\n");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1950,5 +2245,150 @@ mod tests {
         assert!(files.iter().any(|f| f.ends_with("shallow.txt")));
         // At max_depth=1, we go dir->a (depth 1)->files, but a/b is depth 2
         assert!(!files.iter().any(|f| f.ends_with("deep.txt")));
+    }
+
+    // ── strip_html_tags ──────────────────────────────────────────────
+
+    #[test]
+    fn strip_html_basic_paragraph() {
+        let html = "<p>Hello, world!</p>";
+        let text = strip_html_tags(html, 5000);
+        assert_eq!(text, "Hello, world!");
+    }
+
+    #[test]
+    fn strip_html_removes_script_and_style() {
+        let html =
+            "<p>Before</p><script>alert('xss');</script><style>.x{color:red}</style><p>After</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Before"));
+        assert!(text.contains("After"));
+        assert!(!text.contains("alert"));
+        assert!(!text.contains("color:red"));
+    }
+
+    #[test]
+    fn strip_html_removes_nav_footer_header() {
+        let html = "<header>Nav stuff</header><p>Content</p><footer>Footer stuff</footer>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Content"));
+        assert!(!text.contains("Nav stuff"));
+        assert!(!text.contains("Footer stuff"));
+    }
+
+    #[test]
+    fn strip_html_converts_br_to_newline() {
+        let html = "Line 1<br>Line 2<br/>Line 3";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Line 1\nLine 2\nLine 3"));
+    }
+
+    #[test]
+    fn strip_html_converts_li_to_bullets() {
+        let html = "<ul><li>First</li><li>Second</li><li>Third</li></ul>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("• First"));
+        assert!(text.contains("• Second"));
+        assert!(text.contains("• Third"));
+    }
+
+    #[test]
+    fn strip_html_headings() {
+        let html = "<h1>Title</h1><p>Content</p><h2>Subtitle</h2>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Title"));
+        assert!(text.contains("Content"));
+        assert!(text.contains("Subtitle"));
+    }
+
+    #[test]
+    fn strip_html_decodes_entities() {
+        let html = "<p>5 &gt; 3 &amp; 2 &lt; 4</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("5 > 3 & 2 < 4"));
+    }
+
+    #[test]
+    fn strip_html_decodes_numeric_entities() {
+        let html = "<p>&#65;&#66;&#67;</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("ABC"));
+    }
+
+    #[test]
+    fn strip_html_decodes_quotes_and_apostrophes() {
+        let html = "<p>&quot;hello&quot; &amp; &apos;world&apos;</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("\"hello\" & 'world'"));
+    }
+
+    #[test]
+    fn strip_html_collapses_whitespace() {
+        let html = "<p>Hello</p>   \n\n\n\n\n   <p>World</p>";
+        let text = strip_html_tags(html, 5000);
+        // Should not have more than 2 consecutive newlines
+        assert!(!text.contains("\n\n\n"));
+    }
+
+    #[test]
+    fn strip_html_truncates_long_content() {
+        let html = "<p>".to_string() + &"x".repeat(6000) + "</p>";
+        let text = strip_html_tags(&html, 100);
+        assert!(text.len() < 200); // truncated text + suffix
+        assert!(text.contains("[… truncated at 100 chars]"));
+    }
+
+    #[test]
+    fn strip_html_empty_input() {
+        let text = strip_html_tags("", 5000);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn strip_html_no_tags() {
+        let text = strip_html_tags("Just plain text", 5000);
+        assert_eq!(text, "Just plain text");
+    }
+
+    #[test]
+    fn strip_html_nested_tags() {
+        let html = "<div><p>Inside <strong>bold</strong> and <em>italic</em></p></div>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Inside bold and italic"));
+    }
+
+    #[test]
+    fn strip_html_case_insensitive_tags() {
+        let html = "<SCRIPT>bad</SCRIPT><P>Good</P>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Good"));
+        assert!(!text.contains("bad"));
+    }
+
+    #[test]
+    fn strip_html_nbsp() {
+        let html = "<p>word&nbsp;word</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("word word"));
+    }
+
+    // ── is_valid_url ────────────────────────────────────────────────
+
+    #[test]
+    fn valid_urls() {
+        assert!(is_valid_url("https://example.com"));
+        assert!(is_valid_url("http://docs.rs/yoagent"));
+        assert!(is_valid_url(
+            "https://doc.rust-lang.org/book/ch01-01-installation.html"
+        ));
+    }
+
+    #[test]
+    fn invalid_urls() {
+        assert!(!is_valid_url("not-a-url"));
+        assert!(!is_valid_url("ftp://files.com"));
+        assert!(!is_valid_url("https://"));
+        assert!(!is_valid_url("http://x"));
+        assert!(!is_valid_url(""));
     }
 }

@@ -155,9 +155,9 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~19,300 lines of Rust across 12 source files + integration tests
-- 815 tests passing (747 unit + 68 integration)
-- 47 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes)
+- yoyo: ~19,700 lines of Rust across 12 source files + integration tests
+- 832 tests passing (765 unit + 67 integration)
+- 44 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes, /web)
 - 25 CLI flags (+ short aliases)
 - 11 provider backends (including z.ai)
 - MCP server support
