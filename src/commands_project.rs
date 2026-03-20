@@ -2874,4 +2874,244 @@ mod tests {
             "Should mention verification"
         );
     }
+
+    // ── is_image_extension ────────────────────────────────────────────
+
+    #[test]
+    fn is_image_extension_supported_formats() {
+        assert!(is_image_extension("photo.png"));
+        assert!(is_image_extension("photo.jpg"));
+        assert!(is_image_extension("photo.jpeg"));
+        assert!(is_image_extension("photo.gif"));
+        assert!(is_image_extension("photo.webp"));
+        assert!(is_image_extension("photo.bmp"));
+    }
+
+    #[test]
+    fn is_image_extension_case_insensitive() {
+        assert!(is_image_extension("photo.PNG"));
+        assert!(is_image_extension("image.Jpg"));
+        assert!(is_image_extension("banner.JPEG"));
+        assert!(is_image_extension("icon.GIF"));
+        assert!(is_image_extension("pic.WeBp"));
+        assert!(is_image_extension("scan.BMP"));
+    }
+
+    #[test]
+    fn is_image_extension_non_image_files() {
+        assert!(!is_image_extension("main.rs"));
+        assert!(!is_image_extension("notes.txt"));
+        assert!(!is_image_extension("README.md"));
+        assert!(!is_image_extension("config.json"));
+        assert!(!is_image_extension("Cargo.toml"));
+        assert!(!is_image_extension("archive.zip"));
+    }
+
+    #[test]
+    fn is_image_extension_no_extension() {
+        assert!(!is_image_extension("Makefile"));
+        assert!(!is_image_extension(""));
+    }
+
+    #[test]
+    fn is_image_extension_with_full_paths() {
+        assert!(is_image_extension("src/assets/logo.png"));
+        assert!(is_image_extension("/home/user/photos/vacation.jpg"));
+        assert!(is_image_extension("../../images/banner.webp"));
+        assert!(!is_image_extension("src/main.rs"));
+    }
+
+    // ── mime_type_for_extension ───────────────────────────────────────
+
+    #[test]
+    fn mime_type_png() {
+        assert_eq!(mime_type_for_extension("png"), "image/png");
+    }
+
+    #[test]
+    fn mime_type_jpg_and_jpeg() {
+        assert_eq!(mime_type_for_extension("jpg"), "image/jpeg");
+        assert_eq!(mime_type_for_extension("jpeg"), "image/jpeg");
+    }
+
+    #[test]
+    fn mime_type_gif() {
+        assert_eq!(mime_type_for_extension("gif"), "image/gif");
+    }
+
+    #[test]
+    fn mime_type_webp() {
+        assert_eq!(mime_type_for_extension("webp"), "image/webp");
+    }
+
+    #[test]
+    fn mime_type_bmp() {
+        assert_eq!(mime_type_for_extension("bmp"), "image/bmp");
+    }
+
+    #[test]
+    fn mime_type_unknown_extension() {
+        assert_eq!(mime_type_for_extension("zip"), "application/octet-stream");
+        assert_eq!(mime_type_for_extension("rs"), "application/octet-stream");
+        assert_eq!(mime_type_for_extension(""), "application/octet-stream");
+    }
+
+    #[test]
+    fn mime_type_case_insensitive() {
+        assert_eq!(mime_type_for_extension("PNG"), "image/png");
+        assert_eq!(mime_type_for_extension("Jpg"), "image/jpeg");
+        assert_eq!(mime_type_for_extension("GIF"), "image/gif");
+    }
+
+    // ── AddResult ─────────────────────────────────────────────────────
+
+    #[test]
+    fn add_result_text_fields_accessible() {
+        let result = AddResult::Text {
+            summary: "added foo.rs".to_string(),
+            content: "fn main() {}".to_string(),
+        };
+        match &result {
+            AddResult::Text { summary, content } => {
+                assert_eq!(summary, "added foo.rs");
+                assert_eq!(content, "fn main() {}");
+            }
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn add_result_image_fields_accessible() {
+        let result = AddResult::Image {
+            summary: "added logo.png".to_string(),
+            data: "base64data".to_string(),
+            mime_type: "image/png".to_string(),
+        };
+        match &result {
+            AddResult::Image {
+                summary,
+                data,
+                mime_type,
+            } => {
+                assert_eq!(summary, "added logo.png");
+                assert_eq!(data, "base64data");
+                assert_eq!(mime_type, "image/png");
+            }
+            _ => panic!("expected Image variant"),
+        }
+    }
+
+    #[test]
+    fn add_result_partial_eq() {
+        let a = AddResult::Text {
+            summary: "s".to_string(),
+            content: "c".to_string(),
+        };
+        let b = AddResult::Text {
+            summary: "s".to_string(),
+            content: "c".to_string(),
+        };
+        let c = AddResult::Text {
+            summary: "different".to_string(),
+            content: "c".to_string(),
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        let img1 = AddResult::Image {
+            summary: "s".to_string(),
+            data: "d".to_string(),
+            mime_type: "image/png".to_string(),
+        };
+        let img2 = AddResult::Image {
+            summary: "s".to_string(),
+            data: "d".to_string(),
+            mime_type: "image/png".to_string(),
+        };
+        assert_eq!(img1, img2);
+
+        // Text != Image even with same summary
+        assert_ne!(a, img1);
+    }
+
+    // ── read_image_for_add ────────────────────────────────────────────
+
+    #[test]
+    fn read_image_for_add_valid_png() {
+        let dir = TempDir::new().unwrap();
+        let png_path = dir.path().join("test.png");
+
+        // Minimal valid PNG: 8-byte signature + IHDR chunk (25 bytes) + IEND chunk (12 bytes)
+        #[rustfmt::skip]
+        let png_bytes: Vec<u8> = vec![
+            // PNG signature
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            // IHDR chunk: length=13
+            0x00, 0x00, 0x00, 0x0D,
+            // "IHDR"
+            0x49, 0x48, 0x44, 0x52,
+            // width=1, height=1
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x01,
+            // bit depth=8, color type=2 (RGB), compression=0, filter=0, interlace=0
+            0x08, 0x02, 0x00, 0x00, 0x00,
+            // IHDR CRC (precalculated for this exact IHDR)
+            0x90, 0x77, 0x53, 0xDE,
+            // IEND chunk: length=0
+            0x00, 0x00, 0x00, 0x00,
+            // "IEND"
+            0x49, 0x45, 0x4E, 0x44,
+            // IEND CRC
+            0xAE, 0x42, 0x60, 0x82,
+        ];
+        fs::write(&png_path, &png_bytes).unwrap();
+
+        let path_str = png_path.to_str().unwrap();
+        let result = read_image_for_add(path_str);
+        assert!(result.is_ok(), "should succeed reading a valid PNG file");
+
+        let (data, mime_type) = result.unwrap();
+        assert!(!data.is_empty(), "base64 data should be non-empty");
+        assert_eq!(mime_type, "image/png");
+
+        // Verify the base64 decodes back to the original bytes
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&data)
+            .expect("should be valid base64");
+        assert_eq!(decoded, png_bytes);
+    }
+
+    #[test]
+    fn read_image_for_add_nonexistent_file() {
+        let result = read_image_for_add("/tmp/definitely_does_not_exist_yoyo_test.png");
+        assert!(result.is_err(), "should fail for nonexistent file");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("failed to read"),
+            "error should mention failure: {err}"
+        );
+    }
+
+    #[test]
+    fn read_image_for_add_jpg_mime_type() {
+        let dir = TempDir::new().unwrap();
+        let jpg_path = dir.path().join("photo.jpg");
+        // Just some bytes — we're testing MIME detection, not image validity
+        fs::write(&jpg_path, b"fake jpg content").unwrap();
+
+        let (data, mime_type) = read_image_for_add(jpg_path.to_str().unwrap()).unwrap();
+        assert!(!data.is_empty());
+        assert_eq!(mime_type, "image/jpeg");
+    }
+
+    #[test]
+    fn read_image_for_add_webp_mime_type() {
+        let dir = TempDir::new().unwrap();
+        let webp_path = dir.path().join("image.webp");
+        fs::write(&webp_path, b"fake webp content").unwrap();
+
+        let (_, mime_type) = read_image_for_add(webp_path.to_str().unwrap()).unwrap();
+        assert_eq!(mime_type, "image/webp");
+    }
 }
