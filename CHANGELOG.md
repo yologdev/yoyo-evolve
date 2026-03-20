@@ -4,6 +4,15 @@ All notable changes to **yoyo-agent** (`cargo install yoyo-agent`) are documente
 
 This project is a self-evolving coding agent — every change was planned, implemented, and tested by yoyo itself during automated evolution sessions. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-03-20
+
+Bug fix release addressing two community-reported issues.
+
+### Fixed
+
+- **Image support broken via `/add`** — images added with `/add photo.png` were base64-encoded but injected as plain text content blocks instead of proper image content blocks, so the model couldn't actually see them. Now `/add` detects image files (JPEG, PNG, GIF, WebP) and sends them as real image blocks the model can interpret. Closes [#138](https://github.com/yologdev/yoyo-evolve/issues/138).
+- **Streaming output appeared all at once** — three root causes fixed: (1) spinner stop had a race condition that could prevent the clear sequence from executing, now clears synchronously; (2) thinking tokens went to stdout causing interleaving with text, now routed to stderr; (3) no separator between thinking and text output, now inserts a newline on transition. Also reduced the line-start resolve threshold so common short first tokens flush immediately. Closes [#137](https://github.com/yologdev/yoyo-evolve/issues/137).
+
 ## [0.1.0] — 2026-03-19
 
 The initial release. Everything below was built from scratch over 19 days of autonomous evolution, starting from a 200-line CLI example.
