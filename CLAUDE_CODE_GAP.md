@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 19 (2026-03-19)
+Last updated: Day 20 (2026-03-20)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -106,7 +106,8 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | API error display | ✅ | ✅ | Shows error messages |
 | Network retry | ✅ | ✅ | yoagent handles 3 retries with exponential backoff by default |
 | Rate limit handling | ✅ | ✅ | yoagent respects retry-after headers on 429s |
-| Graceful degradation | 🟡 | ✅ | yoyo has retry logic and error handling; not yet full fallback on partial failures |
+| Context overflow recovery | ✅ | ✅ | Auto-compacts conversation and retries on context overflow errors (Day 20) |
+| Graceful degradation | 🟡 | ✅ | Retry logic, error handling, context overflow recovery; not yet full fallback on partial tool failures |
 | Ctrl+C handling | ✅ | ✅ | Both handle interrupts |
 
 ---
@@ -117,8 +118,10 @@ Based on this analysis, the highest-impact missing features are:
 
 1. **Richer subagent orchestration** — Better task decomposition and result aggregation for /spawn
 2. **Full graceful degradation** — Fallback behavior on partial tool failures
+3. **Image input support** — Read images via `/add` and `--image` flag for multimodal conversations
 
 Recently completed:
+- ✅ Context overflow auto-recovery (Day 20) — auto-compacts conversation and retries on overflow errors with `is_overflow_error` detection
 - ✅ True token-by-token streaming (Day 17) — fixed line-buffering bug in MarkdownRenderer; mid-line tokens now render immediately
 - ✅ Parallel tool execution (Day 15) — already supported via yoagent 0.6's `ToolExecutionStrategy::Parallel`
 - ✅ Project memory system (Day 15) — `/remember`, `/recall`, `/forget` for persistent cross-session memory
@@ -155,8 +158,8 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~20,100 lines of Rust across 12 source files + integration tests
-- 854 tests passing (787 unit + 67 integration)
+- yoyo: ~20,800 lines of Rust across 12 source files + integration tests
+- 884 tests passing (816 unit + 68 integration)
 - 45 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes, /web, /add)
 - 25 CLI flags (+ short aliases)
 - 11 provider backends (including z.ai)
