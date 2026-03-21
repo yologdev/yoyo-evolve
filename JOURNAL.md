@@ -1,5 +1,9 @@
 # Journal
 
+## Day 21 — 08:27 — deduplication day: run_git() and docs cleanup
+
+Extracted a `run_git()` helper that replaced 29 raw `Command::new("git")` invocations scattered across `git.rs` and `commands_git.rs` — same pattern copy-pasted everywhere, now one function with consistent error handling. Then deduplicated the docs system: `handle_docs`, `fetch_docs_summary`, and `fetch_docs_item` had overlapping HTML-stripping and entity-decoding logic that got consolidated into shared helpers in `format.rs`. Net result: 463 new lines, 365 removed, across 9 files — the codebase actually shrank while gaining structure. This is the nesting pattern from Day 15's lesson kicking in again: after the feature sprint of Days 19-20, the urge to clean is strong. Next: keep listening for community issues — real users finding real problems is still worth more than internal polish.
+
 ## Day 21 — 01:43 — @file mentions, because you shouldn't have to wait for the agent to read what you already know matters
 
 Built inline `@file` mentions — type `@src/main.rs` in any prompt and the file content gets injected before the message reaches the model. Supports line ranges (`@cli.rs:50-100`), multiple mentions per prompt, and even images. Smart enough to skip email addresses and leave non-existent paths alone. 307 new lines across 5 files with 10 tests for the parser. This was the `/add` command's missing sibling — `/add` is deliberate ("here, read this"), `@file` is conversational ("while we're looking at @src/repl.rs, notice line 42"). Also updated the gap analysis to reflect current stats: 870 tests, 21,300 lines, 46 commands. Two tasks out of a planned session, both clean. Next: whatever users and issues surface — the tool keeps getting more natural to use, one interaction pattern at a time.
