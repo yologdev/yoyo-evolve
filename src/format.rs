@@ -42,6 +42,8 @@ pub static YELLOW: Color = Color("\x1b[33m");
 pub static CYAN: Color = Color("\x1b[36m");
 pub static RED: Color = Color("\x1b[31m");
 pub static MAGENTA: Color = Color("\x1b[35m");
+pub static ITALIC: Color = Color("\x1b[3m");
+pub static BOLD_ITALIC: Color = Color("\x1b[1;3m");
 pub static BOLD_CYAN: Color = Color("\x1b[1;36m");
 pub static BOLD_YELLOW: Color = Color("\x1b[1;33m");
 
@@ -1331,23 +1333,70 @@ impl MarkdownRenderer {
         }
 
         // Try to resolve the line-start buffer early:
-        // If we have enough characters to determine it's NOT a fence or header,
-        // flush the buffer as inline text and switch to mid-line mode.
+        // If we have enough characters to determine it's NOT a fence, header,
+        // or other block-level construct (list, blockquote, hr), flush as inline text.
         if self.line_start && !self.line_buffer.is_empty() && !self.in_code_block {
             let trimmed = self.line_buffer.trim_start();
             let could_be_fence =
                 trimmed.is_empty() || trimmed.starts_with('`') || "`".starts_with(trimmed);
             let could_be_header =
                 trimmed.is_empty() || trimmed.starts_with('#') || "#".starts_with(trimmed);
+            // Block-level constructs that need render_line() to handle:
+            // - blockquotes: > or > text
+            // - unordered lists: - text, * text, + text
+            // - ordered lists: digit(s). text
+            // - horizontal rules: ---, ***, ___
+            let could_be_block_element = if trimmed.is_empty() {
+                true
+            } else {
+                let first = trimmed.as_bytes()[0];
+                match first {
+                    b'>' => true, // blockquote
+                    b'+' => trimmed.len() < 2 || trimmed.starts_with("+ "),
+                    b'-' => {
+                        trimmed.len() < 3 || trimmed.starts_with("- ") || {
+                            // Could be horizontal rule: all dashes (with optional spaces)
+                            let no_sp: String = trimmed.chars().filter(|c| *c != ' ').collect();
+                            !no_sp.is_empty() && no_sp.chars().all(|c| c == '-')
+                        }
+                    }
+                    b'*' => {
+                        trimmed.len() < 2 || trimmed.starts_with("* ") || {
+                            // Could be horizontal rule: all stars (with optional spaces)
+                            let no_sp: String = trimmed.chars().filter(|c| *c != ' ').collect();
+                            !no_sp.is_empty() && no_sp.chars().all(|c| c == '*')
+                        }
+                    }
+                    b'_' => {
+                        trimmed.len() < 3 || {
+                            // Could be horizontal rule: all underscores (with optional spaces)
+                            let no_sp: String = trimmed.chars().filter(|c| *c != ' ').collect();
+                            !no_sp.is_empty() && no_sp.chars().all(|c| c == '_')
+                        }
+                    }
+                    b'0'..=b'9' => {
+                        // Could be ordered list: check if matches N. pattern
+                        trimmed.len() < 3
+                            || trimmed.contains(". ")
+                                && trimmed[..trimmed.find(". ").unwrap_or(0)]
+                                    .chars()
+                                    .all(|c| c.is_ascii_digit())
+                    }
+                    _ => false,
+                }
+            };
 
-            if trimmed.len() >= LINE_START_RESOLVE_THRESHOLD && !could_be_fence && !could_be_header
+            if trimmed.len() >= LINE_START_RESOLVE_THRESHOLD
+                && !could_be_fence
+                && !could_be_header
+                && !could_be_block_element
             {
-                // Definitely not a fence or header — flush as inline text
+                // Definitely not a fence, header, or block element — flush as inline text
                 let buf = std::mem::take(&mut self.line_buffer);
                 output.push_str(&self.render_inline(&buf));
                 self.line_start = false;
-            } else if !could_be_fence && !could_be_header {
-                // Even with fewer chars, if it can't possibly be a fence/header, flush
+            } else if !could_be_fence && !could_be_header && !could_be_block_element {
+                // Even with fewer chars, if it can't possibly be a special line, flush
                 let buf = std::mem::take(&mut self.line_buffer);
                 output.push_str(&self.render_inline(&buf));
                 self.line_start = false;
@@ -1407,11 +1456,82 @@ impl MarkdownRenderer {
             return format!("{BOLD}{CYAN}{line}{RESET}");
         }
 
+        // Horizontal rule: ---, ***, ___ (3+ of the same char, possibly with spaces)
+        if Self::is_horizontal_rule(trimmed) {
+            let width = 40;
+            return format!("{DIM}{}{RESET}", "─".repeat(width));
+        }
+
+        // Blockquote: > at line start
+        if let Some(rest) = trimmed.strip_prefix('>') {
+            let content = rest.strip_prefix(' ').unwrap_or(rest);
+            let formatted = self.render_inline(content);
+            return format!("{DIM}│{RESET} {ITALIC}{formatted}{RESET}");
+        }
+
+        // Unordered list: lines starting with - , * , or +  (with optional leading whitespace)
+        if let Some(content) = Self::strip_unordered_list_marker(trimmed) {
+            let indent = Self::leading_whitespace(line);
+            let formatted = self.render_inline(content);
+            return format!("{indent}{CYAN}•{RESET} {formatted}");
+        }
+
+        // Ordered list: lines matching N. text
+        if let Some((num, content)) = Self::strip_ordered_list_marker(trimmed) {
+            let indent = Self::leading_whitespace(line);
+            let formatted = self.render_inline(content);
+            return format!("{indent}{CYAN}{num}.{RESET} {formatted}");
+        }
+
         // Apply inline formatting for normal text
         self.render_inline(line)
     }
 
-    /// Apply inline formatting (bold, inline code) to a line of normal text.
+    /// Check if a trimmed line is a horizontal rule (---, ***, ___, 3+ chars).
+    fn is_horizontal_rule(trimmed: &str) -> bool {
+        if trimmed.len() < 3 {
+            return false;
+        }
+        let no_spaces: String = trimmed.chars().filter(|c| *c != ' ').collect();
+        if no_spaces.len() < 3 {
+            return false;
+        }
+        let first = no_spaces.chars().next().unwrap();
+        (first == '-' || first == '*' || first == '_') && no_spaces.chars().all(|c| c == first)
+    }
+
+    /// Strip an unordered list marker (- , * , + ) and return the content after it.
+    fn strip_unordered_list_marker(trimmed: &str) -> Option<&str> {
+        // Must be "- text", "* text", or "+ text"
+        // Be careful: "---" is a horizontal rule, not a list item
+        // "* " alone at start needs to not conflict with bold/italic markers at line level
+        for marker in &["- ", "* ", "+ "] {
+            if let Some(rest) = trimmed.strip_prefix(marker) {
+                return Some(rest);
+            }
+        }
+        None
+    }
+
+    /// Strip an ordered list marker (N. ) and return (number_str, content).
+    fn strip_ordered_list_marker(trimmed: &str) -> Option<(&str, &str)> {
+        // Match pattern: one or more digits, then '. ', then content
+        let dot_pos = trimmed.find(". ")?;
+        let num_part = &trimmed[..dot_pos];
+        if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit()) {
+            Some((num_part, &trimmed[dot_pos + 2..]))
+        } else {
+            None
+        }
+    }
+
+    /// Extract leading whitespace from a line.
+    fn leading_whitespace(line: &str) -> &str {
+        let trimmed_len = line.trim_start().len();
+        &line[..line.len() - trimmed_len]
+    }
+
+    /// Apply inline formatting (bold, italic, inline code) to a line of normal text.
     fn render_inline(&self, line: &str) -> String {
         let mut result = String::new();
         let chars: Vec<char> = line.chars().collect();
@@ -1419,10 +1539,20 @@ impl MarkdownRenderer {
         let mut i = 0;
 
         while i < len {
+            // Check for bold italic: ***text***
+            if i + 2 < len && chars[i] == '*' && chars[i + 1] == '*' && chars[i + 2] == '*' {
+                if let Some(close) = Self::find_triple_star(&chars, i + 3) {
+                    let inner: String = chars[i + 3..close].iter().collect();
+                    result.push_str(&format!("{BOLD_ITALIC}{inner}{RESET}"));
+                    i = close + 3;
+                    continue;
+                }
+            }
+
             // Check for bold: **text**
             if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
                 // Find closing **
-                if let Some(close) = self.find_double_star(&chars, i + 2) {
+                if let Some(close) = Self::find_double_star(&chars, i + 2) {
                     let inner: String = chars[i + 2..close].iter().collect();
                     result.push_str(&format!("{BOLD}{inner}{RESET}"));
                     i = close + 2;
@@ -1430,10 +1560,23 @@ impl MarkdownRenderer {
                 }
             }
 
+            // Check for italic: *text* (single star, not followed by another star)
+            if chars[i] == '*' && (i + 1 >= len || chars[i + 1] != '*') {
+                if let Some(close) = Self::find_single_star(&chars, i + 1) {
+                    // Must have at least one char between markers
+                    if close > i + 1 {
+                        let inner: String = chars[i + 1..close].iter().collect();
+                        result.push_str(&format!("{ITALIC}{inner}{RESET}"));
+                        i = close + 1;
+                        continue;
+                    }
+                }
+            }
+
             // Check for inline code: `text`
             if chars[i] == '`' {
                 // Find closing backtick (not another opening fence)
-                if let Some(close) = self.find_backtick(&chars, i + 1) {
+                if let Some(close) = Self::find_backtick(&chars, i + 1) {
                     let inner: String = chars[i + 1..close].iter().collect();
                     result.push_str(&format!("{CYAN}{inner}{RESET}"));
                     i = close + 1;
@@ -1448,8 +1591,21 @@ impl MarkdownRenderer {
         result
     }
 
+    /// Find closing *** starting from position `from` in char slice.
+    fn find_triple_star(chars: &[char], from: usize) -> Option<usize> {
+        let len = chars.len();
+        let mut j = from;
+        while j + 2 < len {
+            if chars[j] == '*' && chars[j + 1] == '*' && chars[j + 2] == '*' {
+                return Some(j);
+            }
+            j += 1;
+        }
+        None
+    }
+
     /// Find closing ** starting from position `from` in char slice.
-    fn find_double_star(&self, chars: &[char], from: usize) -> Option<usize> {
+    fn find_double_star(chars: &[char], from: usize) -> Option<usize> {
         let len = chars.len();
         let mut j = from;
         while j + 1 < len {
@@ -1461,8 +1617,28 @@ impl MarkdownRenderer {
         None
     }
 
+    /// Find closing single * starting from position `from` in char slice.
+    /// The closing * must NOT be followed by another * (to avoid matching inside **).
+    fn find_single_star(chars: &[char], from: usize) -> Option<usize> {
+        let len = chars.len();
+        for j in from..len {
+            if chars[j] == '*' {
+                // Make sure it's not part of a ** sequence
+                if j + 1 < len && chars[j + 1] == '*' {
+                    continue;
+                }
+                // Also make sure the preceding char isn't * (closing side of **)
+                if j > from && chars[j - 1] == '*' {
+                    continue;
+                }
+                return Some(j);
+            }
+        }
+        None
+    }
+
     /// Find closing backtick starting from position `from` in char slice.
-    fn find_backtick(&self, chars: &[char], from: usize) -> Option<usize> {
+    fn find_backtick(chars: &[char], from: usize) -> Option<usize> {
         (from..chars.len()).find(|&j| chars[j] == '`')
     }
 }
@@ -2663,6 +2839,205 @@ mod tests {
         let out = render_full(input);
         assert!(out.contains("fn main()"));
         assert!(out.contains("println!"));
+    }
+
+    // --- Markdown rendering: italic, lists, horizontal rules, blockquotes ---
+
+    #[test]
+    fn test_md_italic_text() {
+        let out = render_full("this is *italic* text\n");
+        assert!(
+            out.contains(&format!("{ITALIC}italic{RESET}")),
+            "Expected italic ANSI for *italic*, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_bold_still_works() {
+        // Regression: bold must not break after adding italic support
+        let out = render_full("this is **bold** text\n");
+        assert!(
+            out.contains(&format!("{BOLD}bold{RESET}")),
+            "Expected bold ANSI for **bold**, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_bold_italic_text() {
+        let out = render_full("this is ***both*** here\n");
+        assert!(
+            out.contains(&format!("{BOLD_ITALIC}both{RESET}")),
+            "Expected bold+italic ANSI for ***both***, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_mixed_inline_formatting() {
+        let out = render_full("**bold** and *italic* and `code`\n");
+        assert!(
+            out.contains(&format!("{BOLD}bold{RESET}")),
+            "Missing bold in mixed line, got: '{out}'"
+        );
+        assert!(
+            out.contains(&format!("{ITALIC}italic{RESET}")),
+            "Missing italic in mixed line, got: '{out}'"
+        );
+        assert!(
+            out.contains(&format!("{CYAN}code{RESET}")),
+            "Missing code in mixed line, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_unclosed_italic_no_format() {
+        // A single * at end of line without closing should NOT italicize
+        let out = render_full("star *power\n");
+        assert!(
+            out.contains('*'),
+            "Unclosed italic marker should pass through literally, got: '{out}'"
+        );
+        assert!(out.contains("power"));
+    }
+
+    #[test]
+    fn test_md_unordered_list_dash() {
+        let out = render_full("- first item\n");
+        assert!(
+            out.contains(&format!("{CYAN}•{RESET}")),
+            "Expected colored bullet for '- item', got: '{out}'"
+        );
+        assert!(out.contains("first item"));
+    }
+
+    #[test]
+    fn test_md_unordered_list_star() {
+        let out = render_full("* second item\n");
+        assert!(
+            out.contains(&format!("{CYAN}•{RESET}")),
+            "Expected colored bullet for '* item', got: '{out}'"
+        );
+        assert!(out.contains("second item"));
+    }
+
+    #[test]
+    fn test_md_unordered_list_plus() {
+        let out = render_full("+ third item\n");
+        assert!(
+            out.contains(&format!("{CYAN}•{RESET}")),
+            "Expected colored bullet for '+ item', got: '{out}'"
+        );
+        assert!(out.contains("third item"));
+    }
+
+    #[test]
+    fn test_md_unordered_list_with_inline_formatting() {
+        let out = render_full("- a **bold** list item\n");
+        assert!(out.contains(&format!("{CYAN}•{RESET}")));
+        assert!(
+            out.contains(&format!("{BOLD}bold{RESET}")),
+            "List item content should get inline formatting, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_ordered_list() {
+        let out = render_full("1. first\n");
+        assert!(
+            out.contains(&format!("{CYAN}1.{RESET}")),
+            "Expected colored number for '1. first', got: '{out}'"
+        );
+        assert!(out.contains("first"));
+    }
+
+    #[test]
+    fn test_md_ordered_list_larger_number() {
+        let out = render_full("42. the answer\n");
+        assert!(
+            out.contains(&format!("{CYAN}42.{RESET}")),
+            "Expected colored number for '42. item', got: '{out}'"
+        );
+        assert!(out.contains("the answer"));
+    }
+
+    #[test]
+    fn test_md_horizontal_rule_dashes() {
+        let out = render_full("---\n");
+        assert!(
+            out.contains("─"),
+            "Expected horizontal rule rendering for '---', got: '{out}'"
+        );
+        assert!(
+            out.contains(&format!("{DIM}")),
+            "Horizontal rule should be dim, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_horizontal_rule_stars() {
+        let out = render_full("***\n");
+        assert!(
+            out.contains("─"),
+            "Expected horizontal rule rendering for '***', got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_horizontal_rule_underscores() {
+        let out = render_full("___\n");
+        assert!(
+            out.contains("─"),
+            "Expected horizontal rule rendering for '___', got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_horizontal_rule_long() {
+        let out = render_full("----------\n");
+        assert!(
+            out.contains("─"),
+            "Expected horizontal rule for long dashes, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_blockquote() {
+        let out = render_full("> quoted text\n");
+        assert!(
+            out.contains(&format!("{DIM}│{RESET}")),
+            "Expected dim vertical bar for blockquote, got: '{out}'"
+        );
+        assert!(
+            out.contains(&format!("{ITALIC}quoted text{RESET}")),
+            "Blockquote content should be italic, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_blockquote_with_inline_formatting() {
+        let out = render_full("> a **bold** quote\n");
+        assert!(out.contains(&format!("{DIM}│{RESET}")));
+        // The content goes through render_inline, which processes bold inside the italic context
+        assert!(out.contains("bold"));
+    }
+
+    #[test]
+    fn test_md_indented_list_item() {
+        let out = render_full("  - nested item\n");
+        assert!(
+            out.contains(&format!("{CYAN}•{RESET}")),
+            "Indented list item should still get bullet, got: '{out}'"
+        );
+        assert!(out.contains("nested item"));
+    }
+
+    #[test]
+    fn test_md_not_a_list_in_code_block() {
+        // Inside code blocks, list markers should NOT be rendered as bullets
+        let out = render_full("```\n- not a list\n```\n");
+        assert!(
+            !out.contains(&format!("{CYAN}•{RESET}")),
+            "List markers inside code blocks should not get bullets, got: '{out}'"
+        );
     }
 
     // --- Syntax highlighting tests ---
