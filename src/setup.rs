@@ -293,7 +293,6 @@ pub fn run_setup_wizard() -> Option<WizardResult> {
 
 /// Check whether we should offer the setup wizard.
 /// Returns true when there's no API key from any source and no config file.
-#[allow(dead_code)]
 pub fn needs_setup(provider: &str) -> bool {
     // Check if config file exists
     if std::path::Path::new(".yoyo.toml").exists() {

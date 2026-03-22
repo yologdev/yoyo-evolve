@@ -685,6 +685,25 @@ async fn main() {
         dir_restrictions: config.dir_restrictions,
     };
 
+    // Interactive setup wizard: if no config file or API key is detected,
+    // walk the user through first-run onboarding before building the agent.
+    if is_interactive && setup::needs_setup(&agent_config.provider) {
+        if let Some(result) = setup::run_setup_wizard() {
+            // Override config with wizard results
+            agent_config.provider = result.provider.clone();
+            agent_config.api_key = result.api_key.clone();
+            agent_config.model = result.model;
+            // Set the env var so the provider builder picks it up
+            if let Some(env_var) = cli::provider_api_key_env(&result.provider) {
+                std::env::set_var(env_var, &result.api_key);
+            }
+        } else {
+            // User cancelled — show the static welcome screen and exit
+            cli::print_welcome();
+            return;
+        }
+    }
+
     let mut agent = agent_config.build_agent();
 
     // Connect to MCP servers (--mcp flags)

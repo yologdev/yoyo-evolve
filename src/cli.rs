@@ -895,7 +895,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     warn_unknown_flags(args, &flags_needing_values);
 
     // Parse --provider flag (CLI > config file > default "anthropic")
-    let mut provider = args
+    let provider = args
         .iter()
         .position(|a| a == "--provider")
         .and_then(|i| args.get(i + 1))
@@ -903,9 +903,6 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         .or_else(|| file_config.get("provider").cloned())
         .unwrap_or_else(|| "anthropic".into())
         .to_lowercase();
-
-    // Track whether the setup wizard overrides provider/model
-    let mut wizard_override: Option<(String, String)> = None;
 
     // Validate provider name
     if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
@@ -996,16 +993,9 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                                 if provider == "ollama" || provider == "custom" {
                                     "not-needed".to_string()
                                 } else if std::io::stdin().is_terminal() && prompt_arg.is_none() {
-                                    // Interactive REPL with no API key: run setup wizard
-                                    if let Some(result) = crate::setup::run_setup_wizard() {
-                                        // Wizard succeeded — stash results for override below
-                                        wizard_override = Some((result.provider, result.model));
-                                        result.api_key
-                                    } else {
-                                        // Wizard cancelled — show static welcome and exit
-                                        print_welcome();
-                                        std::process::exit(0);
-                                    }
+                                    // Interactive REPL with no API key: needs_setup() will
+                                    // be checked in main() and the wizard run there
+                                    String::new()
                                 } else {
                                     // Piped/single-shot mode: terse error for scripts
                                     let env_hint = provider_env_var.unwrap_or("ANTHROPIC_API_KEY");
@@ -1023,22 +1013,13 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         }
     };
 
-    // Apply wizard overrides if the setup wizard was used
-    let wizard_model = if let Some((wiz_provider, wiz_model)) = wizard_override {
-        provider = wiz_provider;
-        Some(wiz_model)
-    } else {
-        None
-    };
-
-    let model = wizard_model.unwrap_or_else(|| {
-        args.iter()
-            .position(|a| a == "--model")
-            .and_then(|i| args.get(i + 1))
-            .cloned()
-            .or_else(|| file_config.get("model").cloned())
-            .unwrap_or_else(|| default_model_for_provider(&provider))
-    });
+    let model = args
+        .iter()
+        .position(|a| a == "--model")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .or_else(|| file_config.get("model").cloned())
+        .unwrap_or_else(|| default_model_for_provider(&provider));
 
     let skill_dirs: Vec<String> = args
         .iter()

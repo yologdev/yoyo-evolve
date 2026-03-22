@@ -1890,3 +1890,139 @@ fn startup_time_is_under_500ms() {
         elapsed.as_millis()
     );
 }
+
+// ── Setup wizard wiring (Issue #157) ────────────────────────────────
+
+#[test]
+fn wizard_does_not_trigger_in_piped_mode() {
+    // Piped stdin is non-interactive — wizard should NOT run.
+    // With no API key and piped stdin, we should get a terse error, not wizard output.
+    let output = yoyo_cmd()
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "piped mode with no API key should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should see the error message, not wizard prompts
+    assert!(
+        stderr.contains("No API key found") || stderr.contains("No input on stdin"),
+        "piped mode should show error, not wizard: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("Step 1"),
+        "wizard step 1 should not appear in piped mode: {stdout}"
+    );
+}
+
+#[test]
+fn wizard_does_not_trigger_when_api_key_env_set() {
+    // With an API key set, needs_setup() returns false — no wizard.
+    // Use piped stdin so the process doesn't hang waiting for REPL input.
+    let output = yoyo_cmd()
+        .env("ANTHROPIC_API_KEY", "sk-ant-fake-test-key")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should NOT see wizard prompts
+    assert!(
+        !stdout.contains("Step 1"),
+        "wizard should not appear when API key is set: {stdout}"
+    );
+    assert!(
+        !stderr.contains("Step 1"),
+        "wizard should not appear on stderr when API key is set: {stderr}"
+    );
+}
+
+#[test]
+fn wizard_does_not_trigger_when_config_file_exists() {
+    // Create a temp directory with a .yoyo.toml config file.
+    // Run yoyo from that directory — needs_setup() should return false.
+    let dir = std::env::temp_dir().join("yoyo_test_wizard_config");
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(
+        dir.join(".yoyo.toml"),
+        "provider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\n",
+    )
+    .expect("failed to write .yoyo.toml");
+
+    let output = yoyo_cmd()
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The wizard should not appear — config file exists
+    assert!(
+        !stdout.contains("Step 1"),
+        "wizard should not appear when .yoyo.toml exists: {stdout}"
+    );
+    assert!(
+        !stderr.contains("Welcome to yoyo! 🐙"),
+        "wizard welcome should not appear when .yoyo.toml exists: {stderr}"
+    );
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn wizard_does_not_trigger_with_prompt_flag() {
+    // --prompt / -p is single-shot mode (non-interactive), wizard should not run.
+    // Without an API key, should get a terse error.
+    let output = yoyo_cmd()
+        .arg("-p")
+        .arg("hello")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(
+        !output.status.success(),
+        "-p with no API key should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No API key found"),
+        "-p mode should show API key error, not wizard: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("Step 1"),
+        "wizard should not appear with -p flag: {stdout}"
+    );
+}
+
+#[test]
+fn wizard_does_not_trigger_for_ollama_provider() {
+    // Ollama doesn't need an API key — needs_setup() returns false for it.
+    // Use piped stdin so the process exits quickly.
+    let output = yoyo_cmd()
+        .arg("--provider")
+        .arg("ollama")
+        .stdin(Stdio::piped())
+        .output()
+        .expect("failed to run yoyo");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Wizard should not appear for ollama
+    assert!(
+        !stdout.contains("Step 1"),
+        "wizard should not appear for ollama provider: {stdout}"
+    );
+    assert!(
+        !stderr.contains("Welcome to yoyo! 🐙"),
+        "wizard welcome should not appear for ollama: {stderr}"
+    );
+}
