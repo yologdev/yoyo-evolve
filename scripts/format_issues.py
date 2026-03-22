@@ -197,6 +197,19 @@ def format_issues(issues, sponsor_logins=None, pick=3, day=0):
             body = body[:500] + "\n[... truncated]"
         if body:
             lines.append(body)
+        # Include recent comments for context (last 3, truncated)
+        comments = issue.get("comments", [])
+        if comments:
+            recent = comments[-3:]
+            lines.append("")
+            lines.append("**Recent comments:**")
+            for c in recent:
+                c_author = (c.get("author") or {}).get("login", "unknown")
+                c_body = c.get("body", "").strip()
+                c_body = sanitize_content(c_body, boundary_begin, boundary_end)
+                if len(c_body) > 200:
+                    c_body = c_body[:200] + "..."
+                lines.append(f"  - @{c_author}: {c_body}")
         lines.append(boundary_end)
         lines.append("")
         lines.append("---")

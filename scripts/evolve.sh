@@ -865,6 +865,7 @@ For EACH issue listed above, you must:
 
 Rules:
 - Respond to EVERY issue. Real people are waiting.
+- Comment on each issue EXACTLY ONCE. Never post a second comment on the same issue in the same session.
 - DO close issues that are clearly resolved — leaving stale issues open creates noise for humans. Always comment first explaining why.
 - Only keep open if there's genuinely more work to do.
 - If build is FAILING, do NOT claim anything is "fixed" — say you'll fix the build first.
