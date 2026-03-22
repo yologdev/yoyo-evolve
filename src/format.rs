@@ -1,7 +1,9 @@
 //! Formatting helpers: ANSI colors, cost, duration, tokens, context bar, truncation.
 
 use std::io::{self, Write};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
+use yoagent::types::{Content, ToolResult};
 
 // --- Color support with NO_COLOR and --no-color ---
 
@@ -2029,6 +2031,227 @@ impl Drop for Spinner {
     fn drop(&mut self) {
         let _ = self.cancel.send(true);
         // Clear the spinner line synchronously on drop too
+        eprint!("\r\x1b[K");
+        let _ = io::stderr().flush();
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
+}
+
+// --- Live tool progress display ---
+
+/// Format a live progress line for a running tool.
+///
+/// Shows spinner frame, tool name, elapsed time, and optional line count.
+/// Example: `  ⠹ bash ⏱ 12s` or `  ⠹ bash ⏱ 1m 5s (142 lines)`
+pub fn format_tool_progress(
+    tool_name: &str,
+    elapsed: Duration,
+    tick: usize,
+    line_count: Option<usize>,
+) -> String {
+    let frame = spinner_frame(tick);
+    let time_str = format_duration_live(elapsed);
+    let lines_str = match line_count {
+        Some(n) if n > 0 => {
+            let word = pluralize(n, "line", "lines");
+            format!(" ({n} {word})")
+        }
+        _ => String::new(),
+    };
+    format!("{DIM}  {frame} {tool_name} ⏱ {time_str}{lines_str}{RESET}")
+}
+
+/// Format elapsed duration for live display (compact, human-friendly).
+///
+/// - Under 60s: `5s`
+/// - 60s+: `1m 5s`
+/// - 60m+: `1h 2m`
+pub fn format_duration_live(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        let m = secs / 60;
+        let s = secs % 60;
+        if s == 0 {
+            format!("{m}m")
+        } else {
+            format!("{m}m {s}s")
+        }
+    } else {
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        if m == 0 {
+            format!("{h}h")
+        } else {
+            format!("{h}h {m}m")
+        }
+    }
+}
+
+/// Format the last N lines of partial output for live display.
+///
+/// Returns dimmed, indented lines showing the tail of tool output.
+/// Used to give users a preview of what a running command is producing.
+/// Empty input returns empty string.
+pub fn format_partial_tail(output: &str, max_lines: usize) -> String {
+    if output.is_empty() || max_lines == 0 {
+        return String::new();
+    }
+    let lines: Vec<&str> = output.lines().collect();
+    let total = lines.len();
+    let start = total.saturating_sub(max_lines);
+    let tail: Vec<&str> = lines[start..].to_vec();
+
+    let mut result = String::new();
+    if start > 0 {
+        let skipped = start;
+        let word = pluralize(skipped, "line", "lines");
+        result.push_str(&format!("{DIM}    ┆ ... {skipped} {word} above{RESET}\n"));
+    }
+    for line in tail {
+        let truncated = truncate_with_ellipsis(line, 120);
+        result.push_str(&format!("{DIM}    ┆ {truncated}{RESET}\n"));
+    }
+    // Remove trailing newline
+    if result.ends_with('\n') {
+        result.pop();
+    }
+    result
+}
+
+/// Count the number of lines in a tool result's text content.
+pub fn count_result_lines(result: &ToolResult) -> usize {
+    result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            Content::Text { text } => Some(text.lines().count()),
+            _ => None,
+        })
+        .sum()
+}
+
+/// Extract all text content from a ToolResult as a single string.
+pub fn extract_result_text(result: &ToolResult) -> String {
+    result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            Content::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// State tracker for a currently-running tool, used by the event loop
+/// to display live progress updates.
+#[allow(dead_code)]
+pub struct ActiveToolState {
+    pub tool_name: String,
+    pub start: Instant,
+    pub line_count: usize,
+    pub last_output: String,
+}
+
+impl ActiveToolState {
+    /// Create a new state tracker for a tool.
+    #[allow(dead_code)]
+    pub fn new(tool_name: String) -> Self {
+        Self {
+            tool_name,
+            start: Instant::now(),
+            line_count: 0,
+            last_output: String::new(),
+        }
+    }
+
+    /// Update with partial output from a ToolExecutionUpdate event.
+    #[allow(dead_code)]
+    pub fn update_partial(&mut self, text: &str) {
+        self.line_count = text.lines().count();
+        self.last_output = text.to_string();
+    }
+}
+
+/// A handle to a running tool-progress timer task.
+/// Shows `  ⠹ bash ⏱ 12s` on stderr, updating every second.
+/// Dropping or calling `stop()` cancels it and clears the line.
+pub struct ToolProgressTimer {
+    cancel: tokio::sync::watch::Sender<bool>,
+    line_count: Arc<std::sync::atomic::AtomicUsize>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ToolProgressTimer {
+    /// Start a timer that shows elapsed time for a tool on stderr.
+    /// Updates every second with the current line count.
+    pub fn start(tool_name: String) -> Self {
+        let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+        let line_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let line_count_clone = Arc::clone(&line_count);
+        let handle = tokio::spawn(async move {
+            let start = Instant::now();
+            let mut tick: usize = 0;
+            // Wait 2 seconds before showing the timer — short commands
+            // finish fast and don't need a progress display.
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                _ = cancel_rx.changed() => {
+                    return;
+                }
+            }
+            loop {
+                if *cancel_rx.borrow() {
+                    eprint!("\r\x1b[K");
+                    let _ = io::stderr().flush();
+                    break;
+                }
+                let elapsed = start.elapsed();
+                let lc = line_count_clone.load(std::sync::atomic::Ordering::Relaxed);
+                let lc_opt = if lc > 0 { Some(lc) } else { None };
+                let progress = format_tool_progress(&tool_name, elapsed, tick, lc_opt);
+                eprint!("\r\x1b[K{progress}");
+                let _ = io::stderr().flush();
+                tick = tick.wrapping_add(1);
+
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                    _ = cancel_rx.changed() => {
+                        eprint!("\r\x1b[K");
+                        let _ = io::stderr().flush();
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            cancel: cancel_tx,
+            line_count,
+            handle: Some(handle),
+        }
+    }
+
+    /// Update the line count shown in the timer display.
+    pub fn set_line_count(&self, count: usize) {
+        self.line_count
+            .store(count, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Stop the timer and clear its output.
+    pub fn stop(self) {
+        let _ = self.cancel.send(true);
+        eprint!("\r\x1b[K");
+        let _ = io::stderr().flush();
+    }
+}
+
+impl Drop for ToolProgressTimer {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(true);
         eprint!("\r\x1b[K");
         let _ = io::stderr().flush();
         if let Some(handle) = self.handle.take() {
@@ -4880,5 +5103,165 @@ mod tests {
             r.line_buffer.is_empty(),
             "Mid-line fast path should not use line_buffer"
         );
+    }
+
+    // --- Live tool progress formatting tests ---
+
+    #[test]
+    fn test_format_duration_live_seconds() {
+        assert_eq!(format_duration_live(Duration::from_secs(0)), "0s");
+        assert_eq!(format_duration_live(Duration::from_secs(5)), "5s");
+        assert_eq!(format_duration_live(Duration::from_secs(59)), "59s");
+    }
+
+    #[test]
+    fn test_format_duration_live_minutes() {
+        assert_eq!(format_duration_live(Duration::from_secs(60)), "1m");
+        assert_eq!(format_duration_live(Duration::from_secs(65)), "1m 5s");
+        assert_eq!(format_duration_live(Duration::from_secs(120)), "2m");
+        assert_eq!(format_duration_live(Duration::from_secs(3599)), "59m 59s");
+    }
+
+    #[test]
+    fn test_format_duration_live_hours() {
+        assert_eq!(format_duration_live(Duration::from_secs(3600)), "1h");
+        assert_eq!(format_duration_live(Duration::from_secs(3660)), "1h 1m");
+        assert_eq!(format_duration_live(Duration::from_secs(7200)), "2h");
+    }
+
+    #[test]
+    fn test_format_tool_progress_no_lines() {
+        let output = format_tool_progress("bash", Duration::from_secs(5), 0, None);
+        assert!(output.contains("bash"), "should contain tool name");
+        assert!(output.contains("⏱"), "should contain timer emoji");
+        assert!(output.contains("5s"), "should contain elapsed time");
+        // Should contain spinner frame
+        assert!(
+            output.contains('⠋'),
+            "should contain spinner frame for tick 0"
+        );
+    }
+
+    #[test]
+    fn test_format_tool_progress_with_lines() {
+        let output = format_tool_progress("bash", Duration::from_secs(12), 3, Some(142));
+        assert!(output.contains("bash"), "should contain tool name");
+        assert!(output.contains("12s"), "should contain elapsed time");
+        assert!(output.contains("142 lines"), "should contain line count");
+    }
+
+    #[test]
+    fn test_format_tool_progress_single_line() {
+        let output = format_tool_progress("bash", Duration::from_secs(1), 0, Some(1));
+        assert!(output.contains("1 line"), "should use singular 'line'");
+        assert!(!output.contains("1 lines"), "should not use plural for 1");
+    }
+
+    #[test]
+    fn test_format_tool_progress_zero_lines_hidden() {
+        let output = format_tool_progress("bash", Duration::from_secs(3), 0, Some(0));
+        assert!(!output.contains("line"), "zero lines should be hidden");
+    }
+
+    #[test]
+    fn test_format_partial_tail_empty() {
+        assert_eq!(format_partial_tail("", 3), "");
+    }
+
+    #[test]
+    fn test_format_partial_tail_zero_lines() {
+        assert_eq!(format_partial_tail("hello\nworld", 0), "");
+    }
+
+    #[test]
+    fn test_format_partial_tail_fewer_lines_than_max() {
+        let output = format_partial_tail("line1\nline2", 5);
+        assert!(output.contains("line1"), "should show all lines");
+        assert!(output.contains("line2"), "should show all lines");
+        assert!(
+            !output.contains("above"),
+            "should not show 'above' indicator"
+        );
+    }
+
+    #[test]
+    fn test_format_partial_tail_more_lines_than_max() {
+        let output = format_partial_tail("line1\nline2\nline3\nline4\nline5", 2);
+        assert!(!output.contains("line1"), "should not show early lines");
+        assert!(!output.contains("line2"), "should not show early lines");
+        assert!(!output.contains("line3"), "should not show line3");
+        assert!(output.contains("line4"), "should show tail lines");
+        assert!(output.contains("line5"), "should show tail lines");
+        assert!(output.contains("3 lines above"), "should show skip count");
+    }
+
+    #[test]
+    fn test_format_partial_tail_uses_pipe_indent() {
+        let output = format_partial_tail("hello", 1);
+        assert!(
+            output.contains("┆"),
+            "should use dotted pipe for indentation"
+        );
+    }
+
+    #[test]
+    fn test_count_result_lines() {
+        let result = ToolResult {
+            content: vec![Content::Text {
+                text: "line1\nline2\nline3".to_string(),
+            }],
+            details: serde_json::Value::Null,
+        };
+        assert_eq!(count_result_lines(&result), 3);
+    }
+
+    #[test]
+    fn test_count_result_lines_empty() {
+        let result = ToolResult {
+            content: vec![],
+            details: serde_json::Value::Null,
+        };
+        assert_eq!(count_result_lines(&result), 0);
+    }
+
+    #[test]
+    fn test_extract_result_text() {
+        let result = ToolResult {
+            content: vec![
+                Content::Text {
+                    text: "hello".to_string(),
+                },
+                Content::Text {
+                    text: "world".to_string(),
+                },
+            ],
+            details: serde_json::Value::Null,
+        };
+        assert_eq!(extract_result_text(&result), "hello\nworld");
+    }
+
+    #[test]
+    fn test_extract_result_text_empty() {
+        let result = ToolResult {
+            content: vec![],
+            details: serde_json::Value::Null,
+        };
+        assert_eq!(extract_result_text(&result), "");
+    }
+
+    #[test]
+    fn test_active_tool_state_new() {
+        let state = ActiveToolState::new("bash".to_string());
+        assert_eq!(state.tool_name, "bash");
+        assert_eq!(state.line_count, 0);
+        assert!(state.last_output.is_empty());
+    }
+
+    #[test]
+    fn test_active_tool_state_update_partial() {
+        let mut state = ActiveToolState::new("bash".to_string());
+        state.update_partial("line1\nline2\nline3");
+        assert_eq!(state.line_count, 3);
+        assert_eq!(state.last_output, "line1\nline2\nline3");
     }
 }

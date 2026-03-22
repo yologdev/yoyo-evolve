@@ -612,6 +612,9 @@ async fn handle_prompt_events(
     let mut md_renderer = MarkdownRenderer::new();
     let mut spinner: Option<Spinner> = Some(Spinner::start());
 
+    // Live progress timers for long-running tools (bash)
+    let mut tool_progress_timers: HashMap<String, ToolProgressTimer> = HashMap::new();
+
     // Tool batch tracking for group summaries
     let mut batch_count: usize = 0;
     let mut batch_succeeded: usize = 0;
@@ -686,8 +689,19 @@ async fn handle_prompt_events(
                             }
                         }
                         io::stdout().flush().ok();
+
+                        // Start live progress timer for bash commands
+                        // (shows elapsed time while command runs)
+                        if tool_name == "bash" {
+                            let timer = ToolProgressTimer::start(tool_name.clone());
+                            tool_progress_timers.insert(tool_call_id.clone(), timer);
+                        }
                     }
                     AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, .. } => {
+                        // Stop any live progress timer for this tool
+                        if let Some(timer) = tool_progress_timers.remove(&tool_call_id) {
+                            timer.stop();
+                        }
                         let duration = tool_timers
                             .remove(&tool_call_id)
                             .map(|start| format_duration(start.elapsed()));
@@ -723,11 +737,24 @@ async fn handle_prompt_events(
                             }
                         }
                     }
-                    AgentEvent::ToolExecutionUpdate { partial_result, .. } => {
-                        let preview = tool_result_preview(&partial_result, 500);
-                        if !preview.is_empty() {
-                            print!("{DIM}{preview}{RESET}");
-                            io::stdout().flush().ok();
+                    AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
+                        // Update line count on the progress timer if active
+                        let line_count = count_result_lines(&partial_result);
+                        if let Some(timer) = tool_progress_timers.get(&tool_call_id) {
+                            timer.set_line_count(line_count);
+                        }
+
+                        // Show the last few lines of partial output (dimmed, updating)
+                        let text = extract_result_text(&partial_result);
+                        if !text.is_empty() {
+                            let tail = format_partial_tail(&text, 3);
+                            if !tail.is_empty() {
+                                // Clear previous partial output lines, then show new tail
+                                // Move cursor up for each line we previously wrote, then clear
+                                println!();
+                                println!("{tail}");
+                                io::stdout().flush().ok();
+                            }
                         }
                     }
                     AgentEvent::MessageUpdate {
