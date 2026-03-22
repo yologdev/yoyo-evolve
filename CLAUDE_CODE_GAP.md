@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 21 (2026-03-21)
+Last updated: Day 22 (2026-03-22)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -49,6 +49,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Edit diff display | ✅ | ✅ | Colored inline diffs for `edit_file` tool output — red/green removed/added lines (Day 14) |
 | Inline @file mentions | ✅ | ✅ | `@path` in prompts expands to file contents; supports line ranges `@file:10-20` and images (Day 21) |
 | Conversation bookmarks | ✅ | ❌ | `/mark`, `/jump`, `/marks` — name points in conversation and jump back (Day 14) |
+| First-run onboarding | ✅ | ✅ | Detects first run, shows welcome message, guides API key and model configuration (Day 22) |
 
 ## Context Management
 
@@ -123,19 +124,19 @@ Based on this analysis, the highest-impact missing features are:
 3. **Real-time subprocess streaming** — Stream bash tool output as it runs, not after completion
 
 Recently completed:
+- ✅ First-run welcome & guided setup (Day 22) — detects first run, shows welcome message, guides API key and model config
+- ✅ `/diff` visual enhancement (Day 22) — inline colored patches with +/- line highlighting in diff output
 - ✅ Inline @file mentions (Day 21) — `@path` in prompts expands to file contents; supports line ranges and images
 - ✅ Context overflow auto-recovery (Day 20) — auto-compacts conversation and retries on overflow errors
 - ✅ Image input support (v0.1.1) — `/add` reads images as base64; `--image` flag; auto-detects png/jpg/gif/webp/bmp
 - ✅ True token-by-token streaming (Day 17) — fixed line-buffering bug; mid-line tokens now render immediately
 - ✅ Parallel tool execution (Day 15) — supported via yoagent 0.6's `ToolExecutionStrategy::Parallel`
-- ✅ Permission prompts for all tool types (Day 15) — interactive confirm for write_file and edit_file, not just bash
-- ✅ Argument-aware tab completion (Day 14) — `--model` values, git subcommands, `/pr` subcommands
 
 ## Stats
 
-- yoyo: ~22,990 lines of Rust across 12 source files + integration tests
-- 948 tests passing (876 unit + 72 integration)
-- 47 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes, /web, /add, /plan, /run, /tree, /memories)
+- yoyo: ~21,993 lines of Rust across 13 source files + integration tests
+- 1,003 tests passing (928 unit + 75 integration)
+- 48 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index, /changes, /web, /add, /plan, /run, /tree, /memories, /export)
 - 26 CLI flags (+ short aliases)
 - 12 provider backends (including z.ai, cerebras, custom)
 - **Published:** v0.1.1 on crates.io (`cargo install yoyo-agent`)
@@ -154,3 +155,5 @@ Recently completed:
 - Inline @file mentions with line ranges and image support
 - Image input support (base64 encoding for png/jpg/gif/webp/bmp)
 - Context overflow auto-recovery
+- First-run welcome & guided setup
+- Inline colored diff patches
