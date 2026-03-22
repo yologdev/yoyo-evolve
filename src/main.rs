@@ -47,6 +47,7 @@ mod help;
 mod memory;
 mod prompt;
 mod repl;
+mod setup;
 
 use cli::*;
 use format::*;
