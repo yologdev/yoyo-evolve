@@ -109,7 +109,7 @@ correctness. Some scenarios the current system *doesn't* catch:
 
 - **Logic bugs that pass tests** — if the test suite doesn't cover
   a behavior, the agent could change it without noticing
-- **Performance regressions** — there are no benchmarks (yet)
+- **Performance regressions** — we rely on official leaderboards (SWE-bench, etc.) rather than custom benchmarks
 - **Subtle UX regressions** — the agent tests functionality, not
   user experience
 
