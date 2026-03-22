@@ -216,24 +216,12 @@ pub fn handle_diff() {
                 }
             }
 
-            // Show the full diff
+            // Show the full diff with colored patches
             let full_diff = run_git(&["diff"]).unwrap_or_default();
 
             if !full_diff.trim().is_empty() {
                 println!("\n{DIM}  ── Full diff ──{RESET}");
-                for line in full_diff.lines() {
-                    if line.starts_with('+') && !line.starts_with("+++") {
-                        println!("{GREEN}{line}{RESET}");
-                    } else if line.starts_with('-') && !line.starts_with("---") {
-                        println!("{RED}{line}{RESET}");
-                    } else if line.starts_with("@@") {
-                        println!("{CYAN}{line}{RESET}");
-                    } else if line.starts_with("diff ") || line.starts_with("index ") {
-                        println!("{BOLD}{line}{RESET}");
-                    } else {
-                        println!("{DIM}{line}{RESET}");
-                    }
-                }
+                print!("{}", colorize_diff(&full_diff));
                 println!();
             }
         }

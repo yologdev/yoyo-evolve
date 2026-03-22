@@ -109,6 +109,40 @@ pub fn generate_commit_message(diff: &str) -> String {
     format!("{prefix}({scope}): {summary}")
 }
 
+/// Apply ANSI colors to a unified diff string, line by line.
+///
+/// - Lines starting with `+` (but not `+++`): green (additions)
+/// - Lines starting with `-` (but not `---`): red (deletions)
+/// - Lines starting with `@@`: cyan (hunk headers)
+/// - Lines starting with `diff --git`, `---`, `+++`: bold (file headers)
+/// - All other lines: unchanged
+pub fn colorize_diff(diff: &str) -> String {
+    if diff.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::with_capacity(diff.len() * 2);
+    for line in diff.lines() {
+        if line.starts_with("diff --git") || line.starts_with("---") || line.starts_with("+++") {
+            result.push_str(&format!("{BOLD}{line}{RESET}\n"));
+        } else if line.starts_with("@@") {
+            result.push_str(&format!("{CYAN}{line}{RESET}\n"));
+        } else if line.starts_with('+') {
+            result.push_str(&format!("{GREEN}{line}{RESET}\n"));
+        } else if line.starts_with('-') {
+            result.push_str(&format!("{RED}{line}{RESET}\n"));
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    // Remove trailing newline if the original didn't end with one
+    if !diff.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+    result
+}
+
 /// Represents a parsed `/git` subcommand.
 #[derive(Debug, PartialEq)]
 pub enum GitSubcommand {
@@ -742,5 +776,80 @@ diff --git a/src/old.rs b/src/old.rs
         let response = "TITLE: \n---\nbody here";
         let result = parse_pr_description(response);
         assert!(result.is_none(), "Should fail with empty title");
+    }
+
+    // ── colorize_diff tests ──────────────────────────────────────────────
+
+    #[test]
+    fn colorize_diff_green_for_additions() {
+        let diff = "+added line\n context\n";
+        let result = colorize_diff(diff);
+        assert!(
+            result.contains("\x1b[32m+added line\x1b[0m"),
+            "Addition lines should be green: {result}"
+        );
+    }
+
+    #[test]
+    fn colorize_diff_red_for_deletions() {
+        let diff = "-removed line\n context\n";
+        let result = colorize_diff(diff);
+        assert!(
+            result.contains("\x1b[31m-removed line\x1b[0m"),
+            "Deletion lines should be red: {result}"
+        );
+    }
+
+    #[test]
+    fn colorize_diff_cyan_for_hunk_headers() {
+        let diff = "@@ -1,3 +1,4 @@\n context\n";
+        let result = colorize_diff(diff);
+        assert!(
+            result.contains("\x1b[36m@@ -1,3 +1,4 @@\x1b[0m"),
+            "Hunk headers should be cyan: {result}"
+        );
+    }
+
+    #[test]
+    fn colorize_diff_bold_for_file_headers() {
+        let diff = "diff --git a/foo.rs b/foo.rs\n--- a/foo.rs\n+++ b/foo.rs\n";
+        let result = colorize_diff(diff);
+        assert!(
+            result.contains("\x1b[1mdiff --git a/foo.rs b/foo.rs\x1b[0m"),
+            "diff --git lines should be bold: {result}"
+        );
+        assert!(
+            result.contains("\x1b[1m--- a/foo.rs\x1b[0m"),
+            "--- lines should be bold: {result}"
+        );
+        assert!(
+            result.contains("\x1b[1m+++ b/foo.rs\x1b[0m"),
+            "+++ lines should be bold: {result}"
+        );
+    }
+
+    #[test]
+    fn colorize_diff_context_lines_unchanged() {
+        let diff = " context line\nanother context\n";
+        let result = colorize_diff(diff);
+        assert!(
+            result.contains(" context line\n"),
+            "Context lines should be unchanged: {result}"
+        );
+        assert!(
+            result.contains("another context\n"),
+            "Context lines should be unchanged: {result}"
+        );
+        // Should NOT contain any ANSI codes on context lines
+        assert!(
+            !result.contains("\x1b[32m context line"),
+            "Context lines should not be colored"
+        );
+    }
+
+    #[test]
+    fn colorize_diff_empty_input() {
+        let result = colorize_diff("");
+        assert_eq!(result, "", "Empty input should return empty output");
     }
 }
