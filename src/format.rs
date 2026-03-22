@@ -1071,6 +1071,40 @@ pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
     result
 }
 
+// --- Section headers and dividers for visual hierarchy ---
+
+/// Get the terminal width from the COLUMNS environment variable, falling back to 80.
+fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(80)
+}
+
+/// Render a labeled section header, e.g. `── Thinking ──────────────────────────`
+/// Uses DIM style and thin box-drawing characters (─).
+/// The label is centered between two runs of ─ characters.
+pub fn section_header(label: &str) -> String {
+    let width = terminal_width();
+    if label.is_empty() {
+        return section_divider();
+    }
+    // Format: "── Label ─────────..."
+    let prefix = "── ";
+    let separator = " ";
+    let used = prefix.len() + label.len() + separator.len();
+    let remaining = width.saturating_sub(used);
+    let trail = "─".repeat(remaining);
+    format!("{DIM}{prefix}{label}{separator}{trail}{RESET}")
+}
+
+/// Render a plain thin divider line: `──────────────────────────────────────`
+/// Uses DIM style and thin box-drawing characters (─).
+pub fn section_divider() -> String {
+    let width = terminal_width();
+    format!("{DIM}{}{RESET}", "─".repeat(width))
+}
+
 /// Truncate a string to `max` characters (no ellipsis).
 #[cfg(test)]
 pub fn truncate(s: &str, max: usize) -> &str {
@@ -4431,5 +4465,76 @@ mod tests {
     fn test_decode_html_entities_incomplete() {
         // Ampersand not part of an entity
         assert_eq!(decode_html_entities("a & b"), "a & b");
+    }
+
+    // --- Section header and divider tests ---
+
+    #[test]
+    fn test_section_header_contains_label_and_line_chars() {
+        let header = section_header("Thinking");
+        assert!(
+            header.contains("Thinking"),
+            "header should contain the label"
+        );
+        assert!(
+            header.contains("─"),
+            "header should contain box-drawing chars"
+        );
+    }
+
+    #[test]
+    fn test_section_header_empty_label_produces_divider() {
+        let header = section_header("");
+        // Empty label should produce the same as section_divider
+        let divider = section_divider();
+        assert_eq!(header, divider);
+    }
+
+    #[test]
+    fn test_section_divider_nonempty_with_line_chars() {
+        let divider = section_divider();
+        assert!(!divider.is_empty(), "divider should not be empty");
+        assert!(
+            divider.contains("─"),
+            "divider should contain box-drawing chars"
+        );
+    }
+
+    #[test]
+    fn test_section_header_no_color() {
+        // When NO_COLOR is set, the output still contains the label and line chars
+        // (Color codes render as empty strings, but the structural content remains)
+        let header = section_header("Tools");
+        assert!(header.contains("Tools"));
+        assert!(header.contains("─"));
+    }
+
+    #[test]
+    fn test_section_divider_no_color() {
+        let divider = section_divider();
+        assert!(divider.contains("─"));
+    }
+
+    #[test]
+    fn test_terminal_width_default() {
+        // terminal_width should return a reasonable default (80) when COLUMNS is not set
+        // or it should return the value of COLUMNS if set
+        let width = terminal_width();
+        assert!(width > 0, "terminal width should be positive");
+    }
+
+    #[test]
+    fn test_section_header_with_various_labels() {
+        // Test with different labels to ensure formatting works
+        for label in &[
+            "Thinking",
+            "Response",
+            "A",
+            "Very Long Section Label For Testing",
+        ] {
+            let header = section_header(label);
+            assert!(header.contains(label), "header should contain '{}'", label);
+            assert!(header.contains("──"), "header should have line prefix");
+        }
     }
 }

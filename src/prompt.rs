@@ -637,6 +637,7 @@ async fn handle_prompt_events(
                         // Stop spinner on first activity
                         if let Some(s) = spinner.take() { s.stop(); }
                         if in_text {
+                            // Add a visual gap when transitioning from text to tools
                             println!();
                             in_text = false;
                         }
@@ -706,10 +707,11 @@ async fn handle_prompt_events(
                     } => {
                         // Stop spinner on first text
                         if let Some(s) = spinner.take() { s.stop(); }
-                        // Transition from thinking to text: add a newline separator
+                        // Transition from thinking to text: add a divider
                         // so text doesn't appear glued to the last thinking output
                         if in_thinking {
                             eprintln!();
+                            eprintln!("{}", section_divider());
                             let _ = io::stderr().flush();
                             in_thinking = false;
                         }
@@ -730,7 +732,11 @@ async fn handle_prompt_events(
                     } => {
                         // Stop spinner on first thinking output
                         if let Some(s) = spinner.take() { s.stop(); }
-                        in_thinking = true;
+                        if !in_thinking {
+                            // Print thinking section header on first thinking token
+                            eprintln!("\n{}", section_header("Thinking"));
+                            in_thinking = true;
+                        }
                         // Render thinking to stderr (dimmed) so it doesn't
                         // interleave with stdout text output
                         eprint!("{DIM}{delta}{RESET}");
