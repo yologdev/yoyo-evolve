@@ -142,15 +142,18 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
             "/extract <symbol> <source_file> <target_file> — Move a symbol between files\n\n\
              Usage:\n\
              \x20 /extract <symbol> <source> <target>    Move a top-level item to another file\n\n\
-             Finds and moves a function, struct, enum, impl, or trait from the source\n\
-             file to the target file. Includes doc comments and attributes.\n\
+             Finds and moves a function, struct, enum, impl, trait, type alias, const,\n\
+             or static from the source file to the target file.\n\
+             Includes doc comments and attributes.\n\
              Uses brace-depth tracking to detect the full block.\n\
              Shows a preview and asks for confirmation before moving.\n\
              Creates the target file if it doesn't exist.\n\n\
              Examples:\n\
              \x20 /extract my_func src/lib.rs src/utils.rs\n\
              \x20 /extract MyStruct src/main.rs src/types.rs\n\
-             \x20 /extract MyTrait src/old.rs src/new.rs",
+             \x20 /extract MyTrait src/old.rs src/new.rs\n\
+             \x20 /extract MyResult src/lib.rs src/errors.rs\n\
+             \x20 /extract MAX_SIZE src/config.rs src/constants.rs",
         ),
         "fix" => Some(
             "/fix — Auto-fix build/lint errors\n\n\
@@ -569,7 +572,7 @@ pub fn help_text() -> String {
     out.push_str("  /find <pattern>    Fuzzy-search project files by name\n");
     out.push_str("  /grep <pattern> [path] Search file contents directly (no AI, instant)\n");
     out.push_str("  /rename <old> <new> Cross-file symbol renaming with word boundaries\n");
-    out.push_str("  /extract <sym> <src> <dst> Move a function/struct/impl to another file\n");
+    out.push_str("  /extract <sym> <src> <dst> Move a symbol (fn/struct/enum/type/const/...) to another file\n");
     out.push_str("  /index             Build a lightweight index of project source files\n");
     out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
     out.push_str("  /web <url>         Fetch a web page and display clean readable text content\n");

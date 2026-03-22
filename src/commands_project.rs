@@ -2186,7 +2186,7 @@ pub fn parse_extract_args(input: &str) -> Option<(String, String, String)> {
     }
 }
 
-/// Find a top-level symbol block (fn, pub fn, struct, enum, impl, trait) in source text.
+/// Find a top-level symbol block (fn, struct, enum, impl, trait, type, const, static) in source text.
 /// Returns `(start_line_0indexed, end_line_0indexed, block_text)` where the range
 /// is inclusive on both ends.
 ///
@@ -2197,13 +2197,17 @@ pub fn find_symbol_block(source: &str, symbol: &str) -> Option<(usize, usize, St
     let lines: Vec<&str> = source.lines().collect();
 
     // Build patterns to match: fn symbol, pub fn symbol, struct symbol, enum symbol,
-    // impl symbol, trait symbol, pub struct symbol, etc.
+    // impl symbol, trait symbol, type symbol, const symbol, static symbol, etc.
     let keyword_patterns: Vec<String> = vec![
         format!("fn {symbol}"),
         format!("struct {symbol}"),
         format!("enum {symbol}"),
         format!("impl {symbol}"),
         format!("trait {symbol}"),
+        format!("type {symbol}"),
+        format!("const {symbol}"),
+        format!("static mut {symbol}"),
+        format!("static {symbol}"),
     ];
 
     // Find the line containing the symbol declaration
@@ -2338,7 +2342,10 @@ pub fn extract_symbol(
         || block_text.trim_start().starts_with("pub(")
         || block_text.contains(&format!("pub struct {symbol}"))
         || block_text.contains(&format!("pub enum {symbol}"))
-        || block_text.contains(&format!("pub trait {symbol}"));
+        || block_text.contains(&format!("pub trait {symbol}"))
+        || block_text.contains(&format!("pub type {symbol}"))
+        || block_text.contains(&format!("pub const {symbol}"))
+        || block_text.contains(&format!("pub static {symbol}"));
 
     // Remove the block from source
     let source_lines: Vec<&str> = source_content.lines().collect();
@@ -2398,13 +2405,15 @@ pub fn handle_extract(input: &str) {
         Some(args) => args,
         None => {
             println!("{DIM}  usage: /extract <symbol> <source_file> <target_file>");
-            println!("  Move a function, struct, enum, impl, or trait from one file to another.");
+            println!("  Move a function, struct, enum, impl, trait, type alias, const, or static from one file to another.");
             println!("  Shows a preview of the block to be moved and asks for confirmation.");
             println!();
             println!("  Examples:");
             println!("    /extract my_func src/lib.rs src/utils.rs");
             println!("    /extract MyStruct src/main.rs src/types.rs");
-            println!("    /extract MyTrait src/old.rs src/new.rs{RESET}\n");
+            println!("    /extract MyTrait src/old.rs src/new.rs");
+            println!("    /extract MyResult src/lib.rs src/errors.rs");
+            println!("    /extract MAX_SIZE src/config.rs src/constants.rs{RESET}\n");
             return;
         }
     };
@@ -4838,5 +4847,167 @@ mod tests {
             KNOWN_COMMANDS.contains(&"/extract"),
             "/extract should be in KNOWN_COMMANDS"
         );
+    }
+
+    // ── /extract: find_symbol_block — type alias, const, static ─────
+
+    #[test]
+    fn find_symbol_block_type_alias() {
+        let source = "pub type Result<T> = std::result::Result<T, MyError>;\n\nfn other() {}\n";
+        let result = find_symbol_block(source, "Result");
+        assert!(result.is_some());
+        let (start, end, block) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 0);
+        assert!(block.contains("pub type Result<T>"));
+    }
+
+    #[test]
+    fn find_symbol_block_type_alias_simple() {
+        let source = "type Callback = fn(u32) -> bool;\n";
+        let result = find_symbol_block(source, "Callback");
+        assert!(result.is_some());
+        let (start, end, block) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 0);
+        assert!(block.contains("type Callback"));
+    }
+
+    #[test]
+    fn find_symbol_block_const() {
+        let source = "pub const MAX_SIZE: usize = 1024;\n\nfn other() {}\n";
+        let result = find_symbol_block(source, "MAX_SIZE");
+        assert!(result.is_some());
+        let (start, end, block) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 0);
+        assert!(block.contains("pub const MAX_SIZE"));
+    }
+
+    #[test]
+    fn find_symbol_block_const_with_doc() {
+        let source = "/// The maximum buffer size.\nconst BUFFER_SIZE: usize = 512;\n";
+        let result = find_symbol_block(source, "BUFFER_SIZE");
+        assert!(result.is_some());
+        let (start, end, block) = result.unwrap();
+        assert_eq!(start, 0); // doc comment included
+        assert_eq!(end, 1);
+        assert!(block.contains("/// The maximum buffer size."));
+        assert!(block.contains("const BUFFER_SIZE"));
+    }
+
+    #[test]
+    fn find_symbol_block_static() {
+        let source = "static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);\n";
+        let result = find_symbol_block(source, "COUNTER");
+        assert!(result.is_some());
+        let (_, _, block) = result.unwrap();
+        assert!(block.contains("static COUNTER"));
+    }
+
+    #[test]
+    fn find_symbol_block_static_mut() {
+        let source = "static mut GLOBAL: u32 = 0;\n\nfn other() {}\n";
+        let result = find_symbol_block(source, "GLOBAL");
+        assert!(result.is_some());
+        let (_, _, block) = result.unwrap();
+        assert!(block.contains("static mut GLOBAL"));
+    }
+
+    #[test]
+    fn find_symbol_block_pub_const_crate() {
+        let source = "pub(crate) const INTERNAL_LIMIT: u32 = 100;\n";
+        let result = find_symbol_block(source, "INTERNAL_LIMIT");
+        assert!(result.is_some());
+        let (_, _, block) = result.unwrap();
+        assert!(block.contains("pub(crate) const INTERNAL_LIMIT"));
+    }
+
+    #[test]
+    fn find_symbol_block_const_multiline() {
+        let source = "const ITEMS: &[&str] = &[\n    \"alpha\",\n    \"beta\",\n];\n";
+        let result = find_symbol_block(source, "ITEMS");
+        assert!(result.is_some());
+        let (start, end, block) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 3);
+        assert!(block.contains("const ITEMS"));
+        assert!(block.contains("\"beta\""));
+    }
+
+    // ── /extract: extract_symbol with new types ─────────────────────
+
+    #[test]
+    fn extract_symbol_moves_type_alias() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source.rs");
+        let target = dir.path().join("target.rs");
+
+        fs::write(
+            &source,
+            "pub type MyResult<T> = Result<T, MyError>;\n\nfn keep() {}\n",
+        )
+        .unwrap();
+        fs::write(&target, "// types\n").unwrap();
+
+        let result = extract_symbol(
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            "MyResult",
+        );
+        assert!(result.is_ok());
+
+        let source_after = fs::read_to_string(&source).unwrap();
+        assert!(!source_after.contains("type MyResult"));
+        assert!(source_after.contains("fn keep()"));
+
+        let target_after = fs::read_to_string(&target).unwrap();
+        assert!(target_after.contains("pub type MyResult<T>"));
+    }
+
+    #[test]
+    fn extract_symbol_moves_const() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source.rs");
+        let target = dir.path().join("target.rs");
+
+        fs::write(&source, "pub const LIMIT: usize = 42;\n\nfn keep() {}\n").unwrap();
+        fs::write(&target, "").unwrap();
+
+        let result = extract_symbol(source.to_str().unwrap(), target.to_str().unwrap(), "LIMIT");
+        assert!(result.is_ok());
+
+        let source_after = fs::read_to_string(&source).unwrap();
+        assert!(!source_after.contains("const LIMIT"));
+
+        let target_after = fs::read_to_string(&target).unwrap();
+        assert!(target_after.contains("pub const LIMIT: usize = 42;"));
+    }
+
+    #[test]
+    fn extract_symbol_moves_static() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source.rs");
+        let target = dir.path().join("target.rs");
+
+        fs::write(
+            &source,
+            "pub static INSTANCE: &str = \"hello\";\n\nfn keep() {}\n",
+        )
+        .unwrap();
+        fs::write(&target, "").unwrap();
+
+        let result = extract_symbol(
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            "INSTANCE",
+        );
+        assert!(result.is_ok());
+
+        let source_after = fs::read_to_string(&source).unwrap();
+        assert!(!source_after.contains("static INSTANCE"));
+
+        let target_after = fs::read_to_string(&target).unwrap();
+        assert!(target_after.contains("pub static INSTANCE"));
     }
 }

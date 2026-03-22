@@ -345,7 +345,7 @@ This is one of the most common workflows for developers using coding agents — 
 | Command | Description |
 |---------|-------------|
 | `/rename <old> <new>` | Cross-file symbol renaming with word-boundary matching |
-| `/extract <symbol> <source> <target>` | Move a function, struct, enum, impl, or trait from one file to another |
+| `/extract <symbol> <source> <target>` | Move a symbol (fn, struct, enum, trait, type, const, static) between files |
 
 ### `/rename` — Cross-file symbol renaming
 
@@ -358,12 +358,14 @@ The `/rename` command does a smart find-and-replace across all git-tracked files
 
 ### `/extract` — Move symbols between files
 
-The `/extract` command moves a top-level item (function, struct, enum, impl, trait) from one file to another. It uses brace-depth tracking to find the full block, including doc comments and attributes above the declaration.
+The `/extract` command moves a top-level item (function, struct, enum, impl, trait, type alias, const, or static) from one file to another. It uses brace-depth tracking to find the full block, including doc comments and attributes above the declaration.
 
 ```
 /extract my_func src/lib.rs src/utils.rs
 /extract MyStruct src/main.rs src/types.rs
 /extract MyTrait src/old.rs src/new.rs
+/extract MyResult src/lib.rs src/errors.rs
+/extract MAX_SIZE src/config.rs src/constants.rs
 ```
 
 The command shows a preview of the block to be moved and asks for confirmation before making changes. If the target file doesn't exist, it's created. If the symbol is public, yoyo notes that you may need to add a `use` import in the source file.
