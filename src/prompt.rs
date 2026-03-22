@@ -612,6 +612,16 @@ async fn handle_prompt_events(
     let mut md_renderer = MarkdownRenderer::new();
     let mut spinner: Option<Spinner> = Some(Spinner::start());
 
+    // Tool batch tracking for group summaries
+    let mut batch_count: usize = 0;
+    let mut batch_succeeded: usize = 0;
+    let mut batch_failed: usize = 0;
+    let mut batch_start: Option<Instant> = None;
+
+    // Turn tracking for boundary markers
+    let mut turn_number: usize = 0;
+    let mut had_text = false; // whether we've seen text output in this prompt
+
     loop {
         tokio::select! {
             event = rx.recv() => {
@@ -636,11 +646,26 @@ async fn handle_prompt_events(
                         }
                         // Stop spinner on first activity
                         if let Some(s) = spinner.take() { s.stop(); }
+
+                        // Show turn boundary when transitioning from text to a new tool batch
                         if in_text {
-                            // Add a visual gap when transitioning from text to tools
                             println!();
                             in_text = false;
                         }
+
+                        // New batch starting (first tool after text or start)
+                        if batch_count == 0 {
+                            if batch_start.is_none() {
+                                batch_start = Some(Instant::now());
+                            }
+                            // Show turn boundary if we've had text before (multi-turn)
+                            if had_text {
+                                turn_number += 1;
+                                println!("{}", turn_boundary(turn_number));
+                            }
+                        }
+
+                        batch_count += 1;
                         tool_timers.insert(tool_call_id.clone(), Instant::now());
                         let summary = format_tool_summary(&tool_name, &args);
                         print!("{YELLOW}  ▶ {summary}{RESET}");
@@ -648,7 +673,7 @@ async fn handle_prompt_events(
                             println!();
                             let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
                             for line in args_str.lines() {
-                                println!("{DIM}    {line}{RESET}");
+                                println!("{DIM}    │ {line}{RESET}");
                             }
                         } else if tool_name == "edit_file" {
                             // Show colored diff for edit_file when not in verbose mode
@@ -670,10 +695,12 @@ async fn handle_prompt_events(
                             .map(|d| format!(" {DIM}({d}){RESET}"))
                             .unwrap_or_default();
                         if is_error {
+                            batch_failed += 1;
                             println!(" {RED}✗{RESET}{dur_str}");
                             let preview = tool_result_preview(&result, 200);
                             if !preview.is_empty() {
-                                println!("{DIM}    {preview}{RESET}");
+                                // Indent error output under the tool header
+                                println!("{}", indent_tool_output(&preview));
                             }
                             // Track the last tool error for /retry context
                             let error_text = tool_result_preview(&result, 200);
@@ -684,12 +711,14 @@ async fn handle_prompt_events(
                             }
                         } else {
                             // Successful tool clears the last error
+                            batch_succeeded += 1;
                             last_tool_error = None;
                             println!(" {GREEN}✓{RESET}{dur_str}");
                             if is_verbose() {
                                 let preview = tool_result_preview(&result, 200);
                                 if !preview.is_empty() {
-                                    println!("{DIM}    {preview}{RESET}");
+                                    // Indent verbose output under the tool header
+                                    println!("{}", indent_tool_output(&preview));
                                 }
                             }
                         }
@@ -715,9 +744,29 @@ async fn handle_prompt_events(
                             let _ = io::stderr().flush();
                             in_thinking = false;
                         }
+
+                        // Print batch summary if we just finished a tool batch
+                        if batch_count > 0 {
+                            let batch_duration = batch_start
+                                .map(|s| s.elapsed())
+                                .unwrap_or_default();
+                            let summary = format_tool_batch_summary(
+                                batch_count, batch_succeeded, batch_failed, batch_duration,
+                            );
+                            if !summary.is_empty() {
+                                println!("{summary}");
+                            }
+                            // Reset batch tracking
+                            batch_count = 0;
+                            batch_succeeded = 0;
+                            batch_failed = 0;
+                            batch_start = None;
+                        }
+
                         if !in_text {
                             println!();
                             in_text = true;
+                            had_text = true;
                         }
                         collected_text.push_str(&delta);
                         let rendered = md_renderer.render_delta(&delta);
@@ -745,6 +794,24 @@ async fn handle_prompt_events(
                     AgentEvent::AgentEnd { messages } => {
                         // Stop spinner if still running
                         if let Some(s) = spinner.take() { s.stop(); }
+
+                        // Print batch summary if tools were the last thing before end
+                        if batch_count > 0 {
+                            let batch_duration = batch_start
+                                .map(|s| s.elapsed())
+                                .unwrap_or_default();
+                            let summary = format_tool_batch_summary(
+                                batch_count, batch_succeeded, batch_failed, batch_duration,
+                            );
+                            if !summary.is_empty() {
+                                println!("{summary}");
+                            }
+                            batch_count = 0;
+                            batch_succeeded = 0;
+                            batch_failed = 0;
+                            batch_start = None;
+                        }
+
                         for msg in &messages {
                             if let AgentMessage::Llm(Message::Assistant { usage: msg_usage, stop_reason, error_message, .. }) = msg {
                                 usage.input += msg_usage.input;

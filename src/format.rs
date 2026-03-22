@@ -1081,6 +1081,63 @@ fn terminal_width() -> usize {
         .unwrap_or(80)
 }
 
+/// Format a summary line for a batch of tool executions within a single turn.
+///
+/// Example output: `  3 tools completed in 1.2s (3 ✓, 0 ✗)`
+/// When all succeed: `  3 tools completed in 1.2s (3 ✓)`
+/// When some fail: `  3 tools completed in 1.2s (2 ✓, 1 ✗)`
+/// Single tool batches return empty (not worth summarizing).
+pub fn format_tool_batch_summary(
+    total: usize,
+    succeeded: usize,
+    failed: usize,
+    total_duration: std::time::Duration,
+) -> String {
+    if total <= 1 {
+        return String::new();
+    }
+    let dur = format_duration(total_duration);
+    let tool_word = pluralize(total, "tool", "tools");
+    let status = if failed == 0 {
+        format!("{succeeded} {GREEN}✓{RESET}")
+    } else {
+        format!("{succeeded} {GREEN}✓{RESET}, {failed} {RED}✗{RESET}")
+    };
+    format!("{DIM}  {total} {tool_word} completed in {dur}{RESET} ({status})")
+}
+
+/// Indent multi-line tool output under its tool header.
+///
+/// Each line of output gets a `    │ ` prefix for visual nesting.
+/// Single-line output is returned as-is with the prefix.
+/// Empty input returns empty string.
+pub fn indent_tool_output(output: &str) -> String {
+    if output.is_empty() {
+        return String::new();
+    }
+    output
+        .lines()
+        .map(|line| format!("{DIM}    │ {RESET}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Render a turn boundary marker between agent turns.
+///
+/// Shows a subtle visual separator so users can distinguish
+/// when the agent starts a new reasoning/action cycle.
+/// Example: `  ╭─ Turn 3 ──────────────────────────╮`
+pub fn turn_boundary(turn_number: usize) -> String {
+    let width = terminal_width();
+    let label = format!(" Turn {turn_number} ");
+    let prefix = "  ╭─";
+    let suffix = "╮";
+    let used = prefix.len() + label.len() + suffix.len();
+    let fill = width.saturating_sub(used);
+    let trail = "─".repeat(fill);
+    format!("{DIM}{prefix}{label}{trail}{suffix}{RESET}")
+}
+
 /// Render a labeled section header, e.g. `── Thinking ──────────────────────────`
 /// Uses DIM style and thin box-drawing characters (─).
 /// The label is centered between two runs of ─ characters.
@@ -1943,6 +2000,7 @@ impl Drop for Spinner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_truncate_short_string() {
@@ -4536,5 +4594,108 @@ mod tests {
             assert!(header.contains(label), "header should contain '{}'", label);
             assert!(header.contains("──"), "header should have line prefix");
         }
+    }
+
+    // ── tool batch summary tests ──────────────────────────────────
+
+    #[test]
+    fn test_tool_batch_summary_single_tool_returns_empty() {
+        let result = format_tool_batch_summary(1, 1, 0, Duration::from_millis(500));
+        assert!(
+            result.is_empty(),
+            "single tool batch should not produce summary"
+        );
+    }
+
+    #[test]
+    fn test_tool_batch_summary_zero_tools_returns_empty() {
+        let result = format_tool_batch_summary(0, 0, 0, Duration::from_millis(0));
+        assert!(result.is_empty(), "zero tools should not produce summary");
+    }
+
+    #[test]
+    fn test_tool_batch_summary_all_succeed() {
+        let result = format_tool_batch_summary(3, 3, 0, Duration::from_millis(1200));
+        assert!(result.contains("3 tools"), "should show tool count");
+        assert!(result.contains("1.2s"), "should show duration");
+        assert!(result.contains("3"), "should show success count");
+        assert!(result.contains("✓"), "should show success marker");
+        // When all succeed, no failure count shown
+        assert!(
+            !result.contains("✗"),
+            "should not show failure marker when all succeed"
+        );
+    }
+
+    #[test]
+    fn test_tool_batch_summary_with_failures() {
+        let result = format_tool_batch_summary(4, 3, 1, Duration::from_millis(2500));
+        assert!(result.contains("4 tools"), "should show total count");
+        assert!(result.contains("2.5s"), "should show duration");
+        assert!(result.contains("3"), "should show success count");
+        assert!(result.contains("✓"), "should show success marker");
+        assert!(result.contains("1"), "should show failure count");
+        assert!(result.contains("✗"), "should show failure marker");
+    }
+
+    #[test]
+    fn test_tool_batch_summary_two_tools_plural() {
+        let result = format_tool_batch_summary(2, 2, 0, Duration::from_millis(800));
+        assert!(result.contains("2 tools"), "should pluralize 'tools'");
+        assert!(result.contains("800ms"), "should show ms for sub-second");
+    }
+
+    // ── indent tool output tests ──────────────────────────────────
+
+    #[test]
+    fn test_indent_tool_output_empty() {
+        assert_eq!(indent_tool_output(""), "");
+    }
+
+    #[test]
+    fn test_indent_tool_output_single_line() {
+        let result = indent_tool_output("hello world");
+        assert!(result.contains("│"), "should have indent marker");
+        assert!(result.contains("hello world"), "should preserve content");
+    }
+
+    #[test]
+    fn test_indent_tool_output_multiline() {
+        let result = indent_tool_output("line 1\nline 2\nline 3");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 3, "should preserve line count");
+        for line in &lines {
+            assert!(line.contains("│"), "each line should have indent marker");
+        }
+        assert!(lines[0].contains("line 1"));
+        assert!(lines[1].contains("line 2"));
+        assert!(lines[2].contains("line 3"));
+    }
+
+    // ── turn boundary tests ──────────────────────────────────
+
+    #[test]
+    fn test_turn_boundary_contains_number() {
+        let result = turn_boundary(1);
+        assert!(result.contains("Turn 1"), "should show turn number");
+        assert!(result.contains("╭"), "should have box-drawing start");
+        assert!(result.contains("╮"), "should have box-drawing end");
+    }
+
+    #[test]
+    fn test_turn_boundary_different_numbers() {
+        for n in [1, 5, 10, 99] {
+            let result = turn_boundary(n);
+            assert!(
+                result.contains(&format!("Turn {n}")),
+                "should contain Turn {n}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_turn_boundary_has_fill_characters() {
+        let result = turn_boundary(1);
+        assert!(result.contains("─"), "should have fill characters");
     }
 }

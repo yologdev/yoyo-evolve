@@ -456,7 +456,7 @@ pub use crate::commands_project::{
 pub use crate::commands_session::{
     auto_compact_if_needed, auto_save_on_exit, clear_confirmation_message, handle_compact,
     handle_export, handle_history, handle_jump, handle_load, handle_mark, handle_marks,
-    handle_save, handle_search, handle_spawn, last_session_exists, Bookmarks,
+    handle_save, handle_search, handle_spawn, last_session_exists, Bookmarks, SpawnTracker,
 };
 
 // Memory-related handlers
@@ -565,7 +565,7 @@ mod tests {
         run_shell_command, scan_important_dirs, scan_important_files, test_command_for_project,
         IndexEntry, ProjectType,
     };
-    use crate::commands_session::{parse_bookmark_name, parse_spawn_task};
+    use crate::commands_session::{parse_bookmark_name, parse_spawn_args, parse_spawn_task};
     use crate::memory::{
         format_memories_for_prompt, load_memories_from, MemoryEntry, ProjectMemory,
     };
@@ -1590,6 +1590,29 @@ mod tests {
             task,
             Some("analyze src/ and list all public functions".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_spawn_args_basic() {
+        let args = parse_spawn_args("/spawn do something");
+        assert!(args.is_some());
+        let args = args.unwrap();
+        assert_eq!(args.task, "do something");
+        assert!(args.output_path.is_none());
+    }
+
+    #[test]
+    fn test_parse_spawn_args_with_output() {
+        let args = parse_spawn_args("/spawn -o out.md write a summary");
+        assert!(args.is_some());
+        let args = args.unwrap();
+        assert_eq!(args.task, "write a summary");
+        assert_eq!(args.output_path, Some("out.md".to_string()));
+    }
+
+    #[test]
+    fn test_parse_spawn_args_status() {
+        assert!(parse_spawn_args("/spawn status").is_none());
     }
 
     #[test]

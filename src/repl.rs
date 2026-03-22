@@ -269,6 +269,7 @@ pub async fn run_repl(
     let mut last_error: Option<String> = None;
     let mut bookmarks = commands::Bookmarks::new();
     let session_changes = SessionChanges::new();
+    let spawn_tracker = commands::SpawnTracker::new();
 
     loop {
         let prompt = if let Some(branch) = git_branch() {
@@ -636,6 +637,8 @@ pub async fn run_repl(
                     agent_config,
                     &mut session_total,
                     &agent_config.model,
+                    agent.messages(),
+                    &spawn_tracker,
                 )
                 .await
                 {
