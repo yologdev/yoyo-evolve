@@ -84,6 +84,147 @@ impl SessionChanges {
     }
 }
 
+/// A snapshot of file state before a single agent turn.
+///
+/// Stores the original content of files that existed before the turn,
+/// and tracks paths of files that were newly created during the turn.
+/// Used by `/undo` to revert only the most recent turn's changes.
+#[derive(Debug, Clone)]
+pub struct TurnSnapshot {
+    /// Files that existed before the turn: path → original content.
+    pub originals: HashMap<String, String>,
+    /// Files that were created during the turn (didn't exist before).
+    pub created: Vec<String>,
+}
+
+impl TurnSnapshot {
+    /// Create a new empty snapshot.
+    pub fn new() -> Self {
+        Self {
+            originals: HashMap::new(),
+            created: Vec::new(),
+        }
+    }
+
+    /// Snapshot the current content of a file. If the file exists, stores its
+    /// content in `originals`. Does nothing if already snapshotted.
+    pub fn snapshot_file(&mut self, path: &str) {
+        if self.originals.contains_key(path) {
+            return; // Already snapshotted
+        }
+        if let Ok(content) = std::fs::read_to_string(path) {
+            self.originals.insert(path.to_string(), content);
+        }
+        // If file doesn't exist, we'll track it as created when we see it appear
+    }
+
+    /// Record a file as newly created during this turn.
+    /// Only records if not already in originals (i.e., it truly didn't exist before).
+    pub fn record_created(&mut self, path: &str) {
+        if !self.originals.contains_key(path) && !self.created.contains(&path.to_string()) {
+            self.created.push(path.to_string());
+        }
+    }
+
+    /// Return the number of files affected (modified + created).
+    #[allow(dead_code)]
+    pub fn file_count(&self) -> usize {
+        self.originals.len() + self.created.len()
+    }
+
+    /// Return true if no files were affected.
+    pub fn is_empty(&self) -> bool {
+        self.originals.is_empty() && self.created.is_empty()
+    }
+
+    /// Restore all files to their pre-turn state:
+    /// - Overwrite modified files with their original content
+    /// - Delete files that were created during the turn
+    ///
+    /// Returns a list of actions taken (for display).
+    pub fn restore(&self) -> Vec<String> {
+        let mut actions = Vec::new();
+
+        // Restore modified files
+        for (path, content) in &self.originals {
+            if std::fs::write(path, content).is_ok() {
+                actions.push(format!("restored {path}"));
+            } else {
+                actions.push(format!("failed to restore {path}"));
+            }
+        }
+
+        // Delete newly created files
+        for path in &self.created {
+            if std::fs::remove_file(path).is_ok() {
+                actions.push(format!("deleted {path}"));
+            } else {
+                actions.push(format!("failed to delete {path}"));
+            }
+        }
+
+        actions
+    }
+}
+
+/// A stack of turn snapshots for multi-level undo.
+///
+/// Each completed agent turn pushes a snapshot. `/undo` pops the most recent.
+/// `/undo N` pops the last N turns.
+#[derive(Debug, Clone)]
+pub struct TurnHistory {
+    turns: Vec<TurnSnapshot>,
+}
+
+impl TurnHistory {
+    /// Create a new empty history.
+    pub fn new() -> Self {
+        Self { turns: Vec::new() }
+    }
+
+    /// Push a completed turn's snapshot onto the stack.
+    /// Skips empty snapshots (turns that didn't modify any files).
+    pub fn push(&mut self, snapshot: TurnSnapshot) {
+        if !snapshot.is_empty() {
+            self.turns.push(snapshot);
+        }
+    }
+
+    /// Pop the most recent turn snapshot.
+    #[allow(dead_code)]
+    pub fn pop(&mut self) -> Option<TurnSnapshot> {
+        self.turns.pop()
+    }
+
+    /// Return the number of undoable turns.
+    pub fn len(&self) -> usize {
+        self.turns.len()
+    }
+
+    /// Return true if there are no undoable turns.
+    pub fn is_empty(&self) -> bool {
+        self.turns.is_empty()
+    }
+
+    /// Undo the last N turns by popping and restoring each.
+    /// Returns a list of all actions taken.
+    pub fn undo_last(&mut self, n: usize) -> Vec<String> {
+        let mut all_actions = Vec::new();
+        let count = n.min(self.turns.len());
+        for _ in 0..count {
+            if let Some(snapshot) = self.turns.pop() {
+                all_actions.extend(snapshot.restore());
+            }
+        }
+        all_actions
+    }
+
+    /// Clear the entire history (used after /clear or /undo --all).
+    pub fn clear(&mut self) {
+        self.turns.clear();
+    }
+}
+
 /// Outcome of a prompt execution, including the text response and any tool error.
 #[derive(Debug, Clone, Default)]
 pub struct PromptOutcome {
@@ -1901,5 +2042,221 @@ mod tests {
         } else {
             panic!("expected Llm(User) message");
         }
+    }
+
+    // ── TurnSnapshot tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_turn_snapshot_new_is_empty() {
+        let snap = TurnSnapshot::new();
+        assert!(snap.is_empty());
+        assert_eq!(snap.file_count(), 0);
+    }
+
+    #[test]
+    fn test_turn_snapshot_save_and_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        std::fs::write(&path, "original content").unwrap();
+        let path_str = path.to_str().unwrap();
+
+        let mut snap = TurnSnapshot::new();
+        snap.snapshot_file(path_str);
+
+        assert!(!snap.is_empty());
+        assert_eq!(snap.file_count(), 1);
+        assert_eq!(snap.originals.get(path_str).unwrap(), "original content");
+
+        // Simulate agent modifying the file
+        std::fs::write(&path, "modified content").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "modified content");
+
+        // Restore should revert to original
+        let actions = snap.restore();
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].contains("restored"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original content");
+    }
+
+    #[test]
+    fn test_turn_snapshot_created_files_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new_file.txt");
+        let path_str = path.to_str().unwrap();
+
+        let mut snap = TurnSnapshot::new();
+        // File doesn't exist yet — record as created
+        snap.record_created(path_str);
+
+        assert!(!snap.is_empty());
+        assert_eq!(snap.file_count(), 1);
+
+        // Simulate agent creating the file
+        std::fs::write(&path, "new content").unwrap();
+        assert!(path.exists());
+
+        // Restore should delete it
+        let actions = snap.restore();
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].contains("deleted"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_turn_snapshot_no_duplicate_snapshots() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        std::fs::write(&path, "v1").unwrap();
+        let path_str = path.to_str().unwrap();
+
+        let mut snap = TurnSnapshot::new();
+        snap.snapshot_file(path_str);
+
+        // Modify file, then snapshot again — should keep original
+        std::fs::write(&path, "v2").unwrap();
+        snap.snapshot_file(path_str);
+
+        assert_eq!(snap.originals.get(path_str).unwrap(), "v1");
+    }
+
+    #[test]
+    fn test_turn_snapshot_nonexistent_file() {
+        let mut snap = TurnSnapshot::new();
+        snap.snapshot_file("/nonexistent/path/to/file.txt");
+        // Should not add to originals since file doesn't exist
+        assert!(snap.originals.is_empty());
+    }
+
+    #[test]
+    fn test_turn_snapshot_created_not_duplicated() {
+        let mut snap = TurnSnapshot::new();
+        snap.record_created("new.txt");
+        snap.record_created("new.txt");
+        assert_eq!(snap.created.len(), 1);
+    }
+
+    #[test]
+    fn test_turn_snapshot_created_ignores_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        std::fs::write(&path, "content").unwrap();
+        let path_str = path.to_str().unwrap();
+
+        let mut snap = TurnSnapshot::new();
+        snap.snapshot_file(path_str);
+        // Should not add to created since it was already snapshotted
+        snap.record_created(path_str);
+        assert!(snap.created.is_empty());
+    }
+
+    // ── TurnHistory tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_turn_history_new_is_empty() {
+        let hist = TurnHistory::new();
+        assert!(hist.is_empty());
+        assert_eq!(hist.len(), 0);
+    }
+
+    #[test]
+    fn test_turn_history_push_pop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "original").unwrap();
+
+        let mut hist = TurnHistory::new();
+
+        let mut snap = TurnSnapshot::new();
+        snap.snapshot_file(path.to_str().unwrap());
+        hist.push(snap);
+
+        assert_eq!(hist.len(), 1);
+
+        let popped = hist.pop();
+        assert!(popped.is_some());
+        assert_eq!(hist.len(), 0);
+    }
+
+    #[test]
+    fn test_turn_history_skips_empty_snapshots() {
+        let mut hist = TurnHistory::new();
+        hist.push(TurnSnapshot::new()); // empty — should be skipped
+        assert!(hist.is_empty());
+    }
+
+    #[test]
+    fn test_turn_history_undo_last_n() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Turn 1: modify a.txt
+        let path_a = dir.path().join("a.txt");
+        std::fs::write(&path_a, "a_original").unwrap();
+        let mut snap1 = TurnSnapshot::new();
+        snap1.snapshot_file(path_a.to_str().unwrap());
+
+        // Turn 2: modify b.txt
+        let path_b = dir.path().join("b.txt");
+        std::fs::write(&path_b, "b_original").unwrap();
+        let mut snap2 = TurnSnapshot::new();
+        snap2.snapshot_file(path_b.to_str().unwrap());
+
+        let mut hist = TurnHistory::new();
+        hist.push(snap1);
+        hist.push(snap2);
+        assert_eq!(hist.len(), 2);
+
+        // Simulate modifications
+        std::fs::write(&path_a, "a_modified").unwrap();
+        std::fs::write(&path_b, "b_modified").unwrap();
+
+        // Undo last 1 — only b.txt should be restored
+        let actions = hist.undo_last(1);
+        assert!(!actions.is_empty());
+        assert_eq!(std::fs::read_to_string(&path_b).unwrap(), "b_original");
+        assert_eq!(std::fs::read_to_string(&path_a).unwrap(), "a_modified");
+        assert_eq!(hist.len(), 1);
+
+        // Undo last 1 — now a.txt should be restored
+        let actions = hist.undo_last(1);
+        assert!(!actions.is_empty());
+        assert_eq!(std::fs::read_to_string(&path_a).unwrap(), "a_original");
+        assert!(hist.is_empty());
+    }
+
+    #[test]
+    fn test_turn_history_undo_more_than_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.txt");
+        std::fs::write(&path, "orig").unwrap();
+
+        let mut snap = TurnSnapshot::new();
+        snap.snapshot_file(path.to_str().unwrap());
+
+        let mut hist = TurnHistory::new();
+        hist.push(snap);
+
+        // Undo 5 when only 1 exists — should undo 1 without panic
+        std::fs::write(&path, "changed").unwrap();
+        let actions = hist.undo_last(5);
+        assert!(!actions.is_empty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "orig");
+        assert!(hist.is_empty());
+    }
+
+    #[test]
+    fn test_turn_history_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.txt");
+        std::fs::write(&path, "content").unwrap();
+
+        let mut snap = TurnSnapshot::new();
+        snap.snapshot_file(path.to_str().unwrap());
+
+        let mut hist = TurnHistory::new();
+        hist.push(snap);
+        assert_eq!(hist.len(), 1);
+
+        hist.clear();
+        assert!(hist.is_empty());
     }
 }

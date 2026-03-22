@@ -231,7 +231,87 @@ pub fn handle_diff() {
 
 // ── /undo ────────────────────────────────────────────────────────────────
 
-pub fn handle_undo() {
+/// Handle `/undo` with per-turn granularity.
+///
+/// - `/undo` — undo the last agent turn (restore files to pre-turn state)
+/// - `/undo N` — undo the last N turns
+/// - `/undo --all` — nuclear option: revert ALL uncommitted changes (old behavior)
+pub fn handle_undo(input: &str, history: &mut crate::prompt::TurnHistory) {
+    let arg = input.strip_prefix("/undo").unwrap_or("").trim();
+
+    // Nuclear fallback: /undo --all
+    if arg == "--all" {
+        handle_undo_all(history);
+        return;
+    }
+
+    // Parse optional count: /undo N
+    let count: usize = if arg.is_empty() {
+        1
+    } else if let Ok(n) = arg.parse::<usize>() {
+        if n == 0 {
+            println!("{DIM}  (nothing to undo — count is 0){RESET}\n");
+            return;
+        }
+        n
+    } else {
+        println!("{DIM}  usage: /undo [N] or /undo --all{RESET}\n");
+        return;
+    };
+
+    if history.is_empty() {
+        // Fallback: check if there are uncommitted changes we could undo with --all
+        let has_diff = !run_git(&["diff", "--stat"])
+            .unwrap_or_default()
+            .trim()
+            .is_empty();
+        let has_untracked = !run_git(&["ls-files", "--others", "--exclude-standard"])
+            .unwrap_or_default()
+            .trim()
+            .is_empty();
+
+        if has_diff || has_untracked {
+            println!("{DIM}  no turn history available, but there are uncommitted changes.{RESET}");
+            println!("{DIM}  use /undo --all to revert everything (nuclear option){RESET}\n");
+        } else {
+            println!("{DIM}  (nothing to undo — no turn history){RESET}\n");
+        }
+        return;
+    }
+
+    let available = history.len();
+    let actual = count.min(available);
+    let word = crate::format::pluralize(actual, "turn", "turns");
+
+    // Show what will be undone
+    println!("{DIM}  undoing last {actual} {word}...{RESET}");
+
+    let actions = history.undo_last(actual);
+    for action in &actions {
+        println!("{DIM}    {action}{RESET}");
+    }
+
+    if actions.is_empty() {
+        println!("{DIM}  (no files were modified in those turns){RESET}\n");
+    } else {
+        let file_word = crate::format::pluralize(actions.len(), "file", "files");
+        println!(
+            "{GREEN}  ✓ undid {actual} {word} ({} {file_word} affected){RESET}\n",
+            actions.len()
+        );
+    }
+
+    if count > available {
+        println!(
+            "{DIM}  (only {available} {} available, undid all){RESET}\n",
+            crate::format::pluralize(available, "turn was", "turns were")
+        );
+    }
+}
+
+/// Nuclear undo: revert ALL uncommitted changes (old behavior).
+/// Clears turn history as well.
+fn handle_undo_all(history: &mut crate::prompt::TurnHistory) {
     let diff_stat = run_git(&["diff", "--stat"]).unwrap_or_default();
     let untracked_text =
         run_git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
@@ -266,6 +346,9 @@ pub fn handle_undo() {
         }
         println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
     }
+
+    // Clear turn history since everything is now reverted
+    history.clear();
 }
 
 // ── /commit ──────────────────────────────────────────────────────────────

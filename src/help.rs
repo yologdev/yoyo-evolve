@@ -123,6 +123,21 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /grep \"fn main\" src/\n\
              \x20 /grep -s MyStruct src/lib.rs",
         ),
+        "rename" => Some(
+            "/rename <old_name> <new_name> — Cross-file symbol renaming\n\n\
+             Usage:\n\
+             \x20 /rename <old> <new>    Rename all word-boundary matches across files\n\n\
+             Smart find-and-replace that respects word boundaries:\n\
+             renaming 'foo' won't change 'foobar' or 'my_foo'.\n\
+             Shows a preview of all matches with file:line context,\n\
+             then asks for confirmation before applying.\n\n\
+             Works on all files tracked by git. Skips binary files.\n\
+             Changes are undoable with /undo.\n\n\
+             Examples:\n\
+             \x20 /rename my_func new_func\n\
+             \x20 /rename OldStruct NewStruct\n\
+             \x20 /rename CONFIG_KEY NEW_KEY",
+        ),
         "fix" => Some(
             "/fix — Auto-fix build/lint errors\n\n\
              Runs the project's build and lint checks, captures any errors,\n\
@@ -185,9 +200,18 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Works in any git repository.",
         ),
         "undo" => Some(
-            "/undo — Revert all uncommitted changes\n\n\
-             Runs `git checkout -- .` to discard all unstaged changes.\n\
-             ⚠️  This is destructive and cannot be undone.",
+            "/undo [N] — Undo the last agent turn's file changes\n\n\
+             Usage:\n\
+             \x20 /undo              Undo the last turn (restore modified files)\n\
+             \x20 /undo N            Undo the last N turns\n\
+             \x20 /undo --all        Revert ALL uncommitted changes (nuclear option)\n\n\
+             Per-turn undo restores files to their state before the agent modified\n\
+             them and deletes any files the agent created. Each agent turn is tracked\n\
+             as a separate snapshot so you can undo precisely.\n\n\
+             Examples:\n\
+             \x20 /undo              Undo just the last thing the agent did\n\
+             \x20 /undo 3            Undo the last 3 agent turns\n\
+             \x20 /undo --all        Git checkout everything (old behavior)",
         ),
         "health" => Some(
             "/health — Run project health checks\n\n\
@@ -494,7 +518,7 @@ pub fn help_text() -> String {
     out.push_str("  ── Git ──\n");
     out.push_str("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash\n");
     out.push_str("  /diff              Show file summary, change stats, and full diff\n");
-    out.push_str("  /undo              Revert all uncommitted changes (git checkout)\n");
+    out.push_str("  /undo [N|--all]    Undo last turn's changes (or all uncommitted)\n");
     out.push_str("  /commit [msg]      Commit staged changes (AI-generates message if no msg)\n");
     out.push_str("  /pr [number]       List open PRs, view, diff, comment, or checkout a PR\n");
     out.push_str(
@@ -530,6 +554,7 @@ pub fn help_text() -> String {
     out.push_str("  /docs <crate> [item] Look up docs.rs documentation for a Rust crate\n");
     out.push_str("  /find <pattern>    Fuzzy-search project files by name\n");
     out.push_str("  /grep <pattern> [path] Search file contents directly (no AI, instant)\n");
+    out.push_str("  /rename <old> <new> Cross-file symbol renaming with word boundaries\n");
     out.push_str("  /index             Build a lightweight index of project source files\n");
     out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
     out.push_str("  /web <url>         Fetch a web page and display clean readable text content\n");

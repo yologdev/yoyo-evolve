@@ -269,6 +269,7 @@ pub async fn run_repl(
     let mut last_error: Option<String> = None;
     let mut bookmarks = commands::Bookmarks::new();
     let session_changes = SessionChanges::new();
+    let mut turn_history = TurnHistory::new();
     let spawn_tracker = commands::SpawnTracker::new();
 
     loop {
@@ -354,12 +355,14 @@ pub async fn run_repl(
                 }
                 *agent = agent_config.build_agent();
                 session_changes.clear();
+                turn_history.clear();
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
             }
             "/clear!" => {
                 *agent = agent_config.build_agent();
                 session_changes.clear();
+                turn_history.clear();
                 println!("{DIM}  (conversation force-cleared){RESET}\n");
                 continue;
             }
@@ -438,8 +441,8 @@ pub async fn run_repl(
                 commands::handle_diff();
                 continue;
             }
-            "/undo" => {
-                commands::handle_undo();
+            s if s == "/undo" || s.starts_with("/undo ") => {
+                commands::handle_undo(s, &mut turn_history);
                 continue;
             }
             "/health" => {
@@ -580,6 +583,10 @@ pub async fn run_repl(
                 commands::handle_init();
                 continue;
             }
+            s if s == "/rename" || s.starts_with("/rename ") => {
+                commands::handle_rename(input);
+                continue;
+            }
             s if s == "/remember" || s.starts_with("/remember ") => {
                 commands::handle_remember(input);
                 continue;
@@ -685,6 +692,23 @@ pub async fn run_repl(
 
         last_input = Some(input.to_string());
 
+        // Snapshot files before the agent turn for per-turn undo
+        let changes_before: Vec<String> = session_changes
+            .snapshot()
+            .iter()
+            .map(|c| c.path.clone())
+            .collect();
+        let mut turn_snap = TurnSnapshot::new();
+        for path in &changes_before {
+            turn_snap.snapshot_file(path);
+        }
+        // Also snapshot any files in the git working tree diff
+        if let Ok(diff_files) = crate::git::run_git(&["diff", "--name-only"]) {
+            for f in diff_files.lines().filter(|l| !l.is_empty()) {
+                turn_snap.snapshot_file(f);
+            }
+        }
+
         // Expand @file mentions (e.g. "explain @src/main.rs") into file content
         let (cleaned_text, file_results) = commands::expand_file_mentions(input);
 
@@ -728,6 +752,33 @@ pub async fn run_repl(
             .await
         };
         last_error = outcome.last_tool_error;
+
+        // After the turn, find newly modified files and update the snapshot
+        let changes_after: Vec<String> = session_changes
+            .snapshot()
+            .iter()
+            .map(|c| c.path.clone())
+            .collect();
+        for path in &changes_after {
+            if !changes_before.contains(path) {
+                // This file was touched for the first time in this turn
+                if turn_snap.originals.contains_key(path.as_str()) {
+                    // Already snapshotted (e.g., was in git diff) — keep the original
+                } else if std::path::Path::new(path).exists() {
+                    // File was created during this turn
+                    turn_snap.record_created(path);
+                }
+            }
+        }
+        // Also check for new files from git that weren't in session_changes
+        if let Ok(diff_files) = crate::git::run_git(&["diff", "--name-only"]) {
+            for f in diff_files.lines().filter(|l| !l.is_empty()) {
+                if !turn_snap.originals.contains_key(f) {
+                    turn_snap.snapshot_file(f);
+                }
+            }
+        }
+        turn_history.push(turn_snap);
 
         // Auto-compact when context window is getting full
         auto_compact_if_needed(agent);
