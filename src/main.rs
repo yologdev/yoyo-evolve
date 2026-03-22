@@ -56,13 +56,14 @@ use prompt::*;
 use std::io::{self, IsTerminal, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use yoagent::agent::Agent;
 use yoagent::context::ExecutionLimits;
 use yoagent::openapi::{OpenApiConfig, OperationFilter};
 use yoagent::provider::{
     AnthropicProvider, GoogleProvider, ModelConfig, OpenAiCompat, OpenAiCompatProvider,
 };
-use yoagent::tools::bash::BashTool;
+use yoagent::tools::bash::ConfirmFn;
 use yoagent::tools::edit::EditFileTool;
 use yoagent::tools::file::{ReadFileTool, WriteFileTool};
 use yoagent::tools::list::ListFilesTool;
@@ -338,6 +339,284 @@ fn maybe_confirm(
     })
 }
 
+// ---------------------------------------------------------------------------
+// StreamingBashTool — real-time subprocess output via on_update callbacks
+// ---------------------------------------------------------------------------
+
+/// Execute shell commands with real-time streaming output.
+///
+/// Unlike the upstream `BashTool` which waits for the process to finish before
+/// returning output, `StreamingBashTool` reads stdout/stderr line-by-line and
+/// calls `ctx.on_update()` periodically so the UI can display partial output
+/// as the command runs. This is the difference between staring at a blank screen
+/// during `cargo build` and watching compilation progress live.
+///
+/// Streaming updates are sent every `update_interval` or every `lines_per_update`
+/// lines, whichever comes first.
+pub struct StreamingBashTool {
+    /// Working directory for commands
+    pub cwd: Option<String>,
+    /// Max execution time per command
+    pub timeout: Duration,
+    /// Max output bytes to capture (prevents OOM on huge outputs)
+    pub max_output_bytes: usize,
+    /// Commands/patterns that are always blocked (e.g., "rm -rf /")
+    pub deny_patterns: Vec<String>,
+    /// Optional callback for confirming dangerous commands
+    pub confirm_fn: Option<ConfirmFn>,
+    /// How often to emit streaming updates
+    pub update_interval: Duration,
+    /// Emit an update after this many new lines (even if interval hasn't elapsed)
+    pub lines_per_update: usize,
+}
+
+impl Default for StreamingBashTool {
+    fn default() -> Self {
+        Self {
+            cwd: None,
+            timeout: Duration::from_secs(120),
+            max_output_bytes: 256 * 1024, // 256KB
+            deny_patterns: vec![
+                "rm -rf /".into(),
+                "rm -rf /*".into(),
+                "mkfs".into(),
+                "dd if=".into(),
+                ":(){:|:&};:".into(), // fork bomb
+            ],
+            confirm_fn: None,
+            update_interval: Duration::from_millis(500),
+            lines_per_update: 20,
+        }
+    }
+}
+
+impl StreamingBashTool {
+    pub fn with_confirm(mut self, f: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.confirm_fn = Some(Box::new(f));
+        self
+    }
+}
+
+/// Emit a streaming update with the accumulated output so far.
+fn emit_update(ctx: &yoagent::types::ToolContext, output: &str) {
+    if let Some(ref on_update) = ctx.on_update {
+        on_update(yoagent::types::ToolResult {
+            content: vec![yoagent::types::Content::Text {
+                text: output.to_string(),
+            }],
+            details: serde_json::json!({"streaming": true}),
+        });
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentTool for StreamingBashTool {
+    fn name(&self) -> &str {
+        "bash"
+    }
+
+    fn label(&self) -> &str {
+        "Execute Command"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a bash command and return stdout/stderr. Use for running scripts, installing packages, checking system state, etc."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The bash command to execute"
+                }
+            },
+            "required": ["command"]
+        })
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        use tokio::io::AsyncBufReadExt;
+        use yoagent::types::{Content, ToolError, ToolResult as TR};
+
+        let cancel = ctx.cancel.clone();
+        let command = params["command"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArgs("missing 'command' parameter".into()))?;
+
+        // Check deny patterns
+        for pattern in &self.deny_patterns {
+            if command.contains(pattern.as_str()) {
+                return Err(ToolError::Failed(format!(
+                    "Command blocked by safety policy: contains '{}'. This pattern is denied for safety.",
+                    pattern
+                )));
+            }
+        }
+
+        // Check confirmation callback
+        if let Some(ref confirm) = self.confirm_fn {
+            if !confirm(command) {
+                return Err(ToolError::Failed(
+                    "Command was not confirmed by the user.".into(),
+                ));
+            }
+        }
+
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-c").arg(command);
+
+        if let Some(ref cwd) = self.cwd {
+            cmd.current_dir(cwd);
+        }
+
+        // Pipe stdout/stderr for line-by-line reading
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        let timeout = self.timeout;
+        let max_bytes = self.max_output_bytes;
+        let update_interval = self.update_interval;
+        let lines_per_update = self.lines_per_update;
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| ToolError::Failed(format!("Failed to spawn: {e}")))?;
+
+        // Take stdout/stderr handles
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        let accumulated = Arc::new(tokio::sync::Mutex::new(String::new()));
+        let truncated = Arc::new(AtomicBool::new(false));
+
+        // Spawn a task to read stdout + stderr lines and accumulate them
+        let acc_clone = Arc::clone(&accumulated);
+        let trunc_clone = Arc::clone(&truncated);
+        let cancel_clone = cancel.clone();
+        let ctx_clone = ctx.clone();
+
+        let reader_handle = tokio::spawn(async move {
+            let stdout_reader = stdout.map(tokio::io::BufReader::new);
+            let stderr_reader = stderr.map(tokio::io::BufReader::new);
+
+            let mut stdout_lines = stdout_reader.map(|r| r.lines());
+            let mut stderr_lines = stderr_reader.map(|r| r.lines());
+
+            let mut lines_since_update: usize = 0;
+            let mut last_update = tokio::time::Instant::now();
+            let mut stdout_done = stdout_lines.is_none();
+            let mut stderr_done = stderr_lines.is_none();
+
+            loop {
+                if cancel_clone.is_cancelled() {
+                    break;
+                }
+                if stdout_done && stderr_done {
+                    break;
+                }
+
+                // Read one line from whichever stream has data
+                let line = tokio::select! {
+                    biased;
+                    result = async {
+                        match stdout_lines.as_mut() {
+                            Some(lines) => lines.next_line().await,
+                            None => std::future::pending().await,
+                        }
+                    }, if !stdout_done => {
+                        match result {
+                            Ok(Some(line)) => Some(line),
+                            Ok(None) => { stdout_done = true; None }
+                            Err(_) => { stdout_done = true; None }
+                        }
+                    }
+                    result = async {
+                        match stderr_lines.as_mut() {
+                            Some(lines) => lines.next_line().await,
+                            None => std::future::pending().await,
+                        }
+                    }, if !stderr_done => {
+                        match result {
+                            Ok(Some(line)) => Some(line),
+                            Ok(None) => { stderr_done = true; None }
+                            Err(_) => { stderr_done = true; None }
+                        }
+                    }
+                };
+
+                if let Some(line) = line {
+                    let mut acc = acc_clone.lock().await;
+                    if acc.len() < max_bytes {
+                        if !acc.is_empty() {
+                            acc.push('\n');
+                        }
+                        acc.push_str(&line);
+                        if acc.len() > max_bytes {
+                            acc.truncate(max_bytes);
+                            acc.push_str("\n... (output truncated)");
+                            trunc_clone.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    lines_since_update += 1;
+                    drop(acc);
+
+                    // Emit update if interval elapsed or enough lines accumulated
+                    let elapsed = last_update.elapsed();
+                    if elapsed >= update_interval || lines_since_update >= lines_per_update {
+                        let snapshot = acc_clone.lock().await.clone();
+                        emit_update(&ctx_clone, &snapshot);
+                        lines_since_update = 0;
+                        last_update = tokio::time::Instant::now();
+                    }
+                }
+            }
+        });
+
+        // Wait for the process with timeout and cancellation
+        let exit_status = tokio::select! {
+            _ = cancel.cancelled() => {
+                // Kill the child process on cancellation
+                let _ = child.kill().await;
+                reader_handle.abort();
+                return Err(yoagent::types::ToolError::Cancelled);
+            }
+            _ = tokio::time::sleep(timeout) => {
+                let _ = child.kill().await;
+                reader_handle.abort();
+                return Err(ToolError::Failed(format!(
+                    "Command timed out after {}s",
+                    timeout.as_secs()
+                )));
+            }
+            status = child.wait() => {
+                status.map_err(|e| ToolError::Failed(format!("Failed to wait: {e}")))?
+            }
+        };
+
+        // Wait for the reader to finish consuming remaining buffered output
+        let _ = tokio::time::timeout(Duration::from_secs(2), reader_handle).await;
+
+        let exit_code = exit_status.code().unwrap_or(-1);
+        let output = accumulated.lock().await.clone();
+
+        // One final update with the complete output
+        emit_update(&ctx, &output);
+
+        let formatted = format!("Exit code: {exit_code}\n{output}");
+
+        Ok(TR {
+            content: vec![Content::Text { text: formatted }],
+            details: serde_json::json!({ "exit_code": exit_code, "success": exit_code == 0 }),
+        })
+    }
+}
+
 /// Build the tool set, optionally with a bash confirmation prompt.
 /// When `auto_approve` is false (default), bash commands and file writes require user approval.
 /// The "always" option sets a session-wide flag so subsequent operations are auto-approved.
@@ -353,11 +632,11 @@ pub fn build_tools(
     let always_approved = Arc::new(AtomicBool::new(false));
 
     let bash = if auto_approve {
-        BashTool::default()
+        StreamingBashTool::default()
     } else {
         let flag = Arc::clone(&always_approved);
         let perms = permissions.clone();
-        BashTool::default().with_confirm(move |cmd: &str| {
+        StreamingBashTool::default().with_confirm(move |cmd: &str| {
             // If user previously chose "always", skip the prompt
             if flag.load(Ordering::Relaxed) {
                 eprintln!(
@@ -693,6 +972,9 @@ async fn main() {
             agent_config.provider = result.provider.clone();
             agent_config.api_key = result.api_key.clone();
             agent_config.model = result.model;
+            if result.base_url.is_some() {
+                agent_config.base_url = result.base_url;
+            }
             // Set the env var so the provider builder picks it up
             if let Some(env_var) = cli::provider_api_key_env(&result.provider) {
                 std::env::set_var(env_var, &result.api_key);
@@ -1578,5 +1860,214 @@ mod tests {
         // Should not panic — the OpenAI-compat path handles anthropic + base_url
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // StreamingBashTool tests
+    // -----------------------------------------------------------------------
+
+    /// Create a ToolContext for testing, with an optional on_update callback
+    /// that collects partial results.
+    fn test_tool_context(
+        updates: Option<Arc<tokio::sync::Mutex<Vec<yoagent::types::ToolResult>>>>,
+    ) -> yoagent::types::ToolContext {
+        let on_update: Option<yoagent::types::ToolUpdateFn> = updates.map(|u| {
+            Arc::new(move |result: yoagent::types::ToolResult| {
+                // Use try_lock to avoid blocking in sync callback
+                if let Ok(mut guard) = u.try_lock() {
+                    guard.push(result);
+                }
+            }) as yoagent::types::ToolUpdateFn
+        });
+        yoagent::types::ToolContext {
+            tool_call_id: "test-id".to_string(),
+            tool_name: "bash".to_string(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            on_update,
+            on_progress: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_deny_patterns() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "rm -rf /"});
+        let result = tool.execute(params, ctx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("blocked by safety policy"),
+            "Expected deny pattern error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_deny_pattern_fork_bomb() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": ":(){:|:&};:"});
+        let result = tool.execute(params, ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("blocked by safety policy"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_confirm_rejection() {
+        let tool = StreamingBashTool::default().with_confirm(|_cmd: &str| false);
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "echo hello"});
+        let result = tool.execute(params, ctx).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("not confirmed"),
+            "Expected confirmation rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_confirm_approval() {
+        let tool = StreamingBashTool::default().with_confirm(|_cmd: &str| true);
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "echo approved"});
+        let result = tool.execute(params, ctx).await;
+        assert!(result.is_ok());
+        let text = &result.unwrap().content[0];
+        match text {
+            yoagent::types::Content::Text { text } => {
+                assert!(text.contains("approved"));
+                assert!(text.contains("Exit code: 0"));
+            }
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_basic_execution() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "echo hello world"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        match &result.content[0] {
+            yoagent::types::Content::Text { text } => {
+                assert!(text.contains("hello world"));
+                assert!(text.contains("Exit code: 0"));
+            }
+            _ => panic!("Expected text content"),
+        }
+        assert_eq!(result.details["exit_code"], 0);
+        assert_eq!(result.details["success"], true);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_captures_exit_code() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "exit 42"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        assert_eq!(result.details["exit_code"], 42);
+        assert_eq!(result.details["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_timeout() {
+        let tool = StreamingBashTool {
+            timeout: Duration::from_millis(200),
+            ..Default::default()
+        };
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "sleep 30"});
+        let result = tool.execute(params, ctx).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("timed out"),
+            "Expected timeout error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_output_truncation() {
+        let tool = StreamingBashTool {
+            max_output_bytes: 100,
+            ..Default::default()
+        };
+        let ctx = test_tool_context(None);
+        // Generate output longer than 100 bytes
+        let params = serde_json::json!({"command": "for i in $(seq 1 100); do echo \"line number $i of the output\"; done"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        match &result.content[0] {
+            yoagent::types::Content::Text { text } => {
+                // The accumulated output should have been truncated
+                // Total text = "Exit code: 0\n" + accumulated (which was truncated to ~100 bytes)
+                assert!(
+                    text.contains("truncated") || text.len() < 500,
+                    "Output should be truncated or short, got {} bytes",
+                    text.len()
+                );
+            }
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_emits_updates() {
+        let updates = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let tool = StreamingBashTool {
+            lines_per_update: 1,
+            update_interval: Duration::from_millis(10),
+            ..Default::default()
+        };
+        let ctx = test_tool_context(Some(Arc::clone(&updates)));
+        // Generate multi-line output with small delays to allow update emission
+        let params = serde_json::json!({
+            "command": "for i in 1 2 3 4 5; do echo line$i; sleep 0.02; done"
+        });
+        let result = tool.execute(params, ctx).await.unwrap();
+        assert!(result.details["success"] == true);
+
+        let collected = updates.lock().await;
+        // Should have emitted at least one streaming update
+        assert!(
+            !collected.is_empty(),
+            "Expected at least one streaming update, got none"
+        );
+        // The final update (or a late one) should contain multiple lines
+        let last = &collected[collected.len() - 1];
+        match &last.content[0] {
+            yoagent::types::Content::Text { text } => {
+                assert!(
+                    text.contains("line"),
+                    "Update should contain partial output"
+                );
+            }
+            _ => panic!("Expected text content in update"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_missing_command_param() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({});
+        let result = tool.execute(params, ctx).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_captures_stderr() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "echo err_output >&2"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        match &result.content[0] {
+            yoagent::types::Content::Text { text } => {
+                assert!(text.contains("err_output"), "Should capture stderr: {text}");
+            }
+            _ => panic!("Expected text content"),
+        }
     }
 }
