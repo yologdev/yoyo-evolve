@@ -2,6 +2,7 @@
 
 use crate::format::*;
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use yoagent::skills::SkillSet;
 use yoagent::ThinkingLevel;
 
@@ -991,7 +992,12 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                                 // For local/ollama providers, API key is optional
                                 if provider == "ollama" || provider == "custom" {
                                     "not-needed".to_string()
+                                } else if std::io::stdin().is_terminal() && prompt_arg.is_none() {
+                                    // Interactive REPL with no API key: friendly welcome
+                                    print_welcome();
+                                    std::process::exit(0);
                                 } else {
+                                    // Piped/single-shot mode: terse error for scripts
                                     let env_hint = provider_env_var.unwrap_or("ANTHROPIC_API_KEY");
                                     eprintln!("{RED}error:{RESET} No API key found.");
                                     eprintln!(
@@ -1246,6 +1252,42 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
         "anthropic" => Some("ANTHROPIC_API_KEY"),
         _ => None,
     }
+}
+
+/// Build the welcome message text for first-run users.
+/// Returned as a string so it can be tested without capturing stdout.
+pub fn get_welcome_text() -> String {
+    format!(
+        r#"
+  {BOLD}Welcome to yoyo! 🐙{RESET}
+
+  {BOLD}Quick setup:{RESET}
+
+  1. Get an API key from {CYAN}https://console.anthropic.com{RESET}
+  2. Set it:
+     {DIM}export ANTHROPIC_API_KEY=sk-ant-...{RESET}
+  3. Run {BOLD}yoyo{RESET} again — you're in!
+
+  {BOLD}Other providers:{RESET}
+  Use {CYAN}--provider{RESET} to switch backends:
+     openai, google, ollama (local), deepseek, groq, and more.
+  Example: {DIM}yoyo --provider ollama --model llama3.2{RESET}
+
+  {BOLD}Persistent config:{RESET}
+  Create a {CYAN}.yoyo.toml{RESET} file in your project or home directory:
+     {DIM}api_key = "sk-ant-..."{RESET}
+     {DIM}model = "claude-sonnet-4-20250514"{RESET}
+     {DIM}provider = "anthropic"{RESET}
+
+  Run {CYAN}yoyo --help{RESET} for all options.
+"#
+    )
+}
+
+/// Print a friendly welcome message for first-run users who haven't configured an API key.
+/// This replaces the terse error when running interactively (REPL mode) without setup.
+pub fn print_welcome() {
+    print!("{}", get_welcome_text());
 }
 
 /// Get well-known model names for a provider (for diagnostic suggestions).
@@ -2419,6 +2461,61 @@ deny = ["/etc"]
         assert!(
             KNOWN_FLAGS.contains(&"--deny-dir"),
             "--deny-dir should be in KNOWN_FLAGS"
+        );
+    }
+
+    #[test]
+    fn test_print_welcome_contains_key_phrases() {
+        let welcome = get_welcome_text();
+        assert!(
+            welcome.contains("API key") || welcome.contains("api_key"),
+            "welcome should mention API key"
+        );
+        assert!(
+            welcome.contains("ANTHROPIC_API_KEY"),
+            "welcome should mention ANTHROPIC_API_KEY env var"
+        );
+        assert!(
+            welcome.contains("ollama"),
+            "welcome should mention ollama for local usage"
+        );
+        assert!(
+            welcome.contains(".yoyo.toml"),
+            "welcome should mention .yoyo.toml config file"
+        );
+        assert!(welcome.contains("--help"), "welcome should mention --help");
+        assert!(
+            welcome.contains("Welcome to yoyo"),
+            "welcome should have greeting"
+        );
+    }
+
+    #[test]
+    fn test_print_welcome_mentions_setup_steps() {
+        let welcome = get_welcome_text();
+        assert!(welcome.contains("1."), "welcome should have step 1");
+        assert!(welcome.contains("2."), "welcome should have step 2");
+        assert!(welcome.contains("3."), "welcome should have step 3");
+        assert!(
+            welcome.contains("console.anthropic.com"),
+            "welcome should link to Anthropic console"
+        );
+    }
+
+    #[test]
+    fn test_print_welcome_mentions_other_providers() {
+        let welcome = get_welcome_text();
+        assert!(
+            welcome.contains("--provider"),
+            "welcome should mention --provider flag"
+        );
+        assert!(
+            welcome.contains("openai"),
+            "welcome should mention openai provider"
+        );
+        assert!(
+            welcome.contains("google"),
+            "welcome should mention google provider"
         );
     }
 }

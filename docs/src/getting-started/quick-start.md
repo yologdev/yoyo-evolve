@@ -4,14 +4,19 @@ Once installed, start yoyo:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-cargo run
+yoyo
 ```
 
 Or pass the API key directly:
 
 ```bash
-cargo run -- --api-key sk-ant-...
+yoyo --api-key sk-ant-...
 ```
+
+> **First time?** If you run `yoyo` without an API key, you'll see a friendly
+> welcome screen with setup instructions — no cryptic error messages. It walks
+> you through getting an API key, setting environment variables, and configuring
+> `.yoyo.toml` for persistent settings.
 
 You'll see a banner like this:
 
