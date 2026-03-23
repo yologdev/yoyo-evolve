@@ -153,8 +153,30 @@ elif [ "$MONTHLY_DOLLARS" -gt 0 ] 2>/dev/null; then
 else
     echo "→ Sponsors: none (3 runs/day)"
 fi
+# One-time credits only trigger accelerated runs if the sponsor has open issues
 if [ "$HAS_ONETIME_CREDITS" = "true" ]; then
-    echo "→ One-time sponsors with remaining credits detected."
+    SPONSOR_HAS_ISSUES="false"
+    while IFS= read -r credit_login; do
+        [ -z "$credit_login" ] && continue
+        OPEN_COUNT=$(gh issue list --repo "$REPO" --state open --search "author:$credit_login" --limit 1 --json number --jq 'length' 2>/dev/null || echo 0)
+        if [ "$OPEN_COUNT" -gt 0 ]; then
+            SPONSOR_HAS_ISSUES="true"
+            echo "→ One-time sponsor @$credit_login has open issues — credits active."
+            break
+        fi
+    done < <(python3 -c "
+import json
+try:
+    credits = json.load(open('$CREDITS_FILE'))
+    for login, info in credits.items():
+        if info.get('used_runs', 0) < info.get('total_cents', 0) // 100:
+            print(login)
+except: pass
+" 2>/dev/null)
+    if [ "$SPONSOR_HAS_ISSUES" = "false" ]; then
+        echo "→ One-time sponsors have credits but no open issues — saving credits."
+        HAS_ONETIME_CREDITS="false"
+    fi
 fi
 
 # Run-frequency gate.
