@@ -447,6 +447,8 @@ pub fn print_help() {
     println!("  max_tokens = 4096");
     println!("  max_turns = 20");
     println!("  api_key = \"sk-ant-...\"");
+    println!("  system_prompt = \"You are a Rust expert...\"");
+    println!("  system_file = \"prompts/agent.txt\"   # relative to config file dir");
     println!();
     println!("  [permissions]");
     println!("  allow = [\"git *\", \"cargo *\"]");
@@ -457,6 +459,7 @@ pub fn print_help() {
     println!("  deny = [\"~/.ssh\", \"/etc\"]");
     println!();
     println!("CLI flags override config file values.");
+    println!("Priority for system prompt: --system-file > --system > system_file > system_prompt > default");
 }
 
 pub fn print_banner() {
@@ -773,6 +776,34 @@ pub fn parse_config_file(content: &str) -> HashMap<String, String> {
     map
 }
 
+/// Find the parent directory of the first config file found.
+/// Returns `None` if no config file exists.
+fn find_config_dir() -> Option<std::path::PathBuf> {
+    for name in CONFIG_FILE_NAMES {
+        let path = std::path::Path::new(name);
+        if path.exists() {
+            return path
+                .parent()
+                .map(|p| {
+                    if p.as_os_str().is_empty() {
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    } else {
+                        p.to_path_buf()
+                    }
+                })
+                .or_else(|| {
+                    Some(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
+                });
+        }
+    }
+    if let Some(path) = user_config_path() {
+        if path.exists() {
+            return path.parent().map(|p| p.to_path_buf());
+        }
+    }
+    None
+}
+
 /// Load config from file, checking project-level then user-level paths.
 /// Returns an empty map if no config file is found.
 fn load_config_file() -> HashMap<String, String> {
@@ -827,6 +858,52 @@ fn load_directories_from_config_file() -> DirectoryRestrictions {
         }
     }
     DirectoryRestrictions::default()
+}
+
+/// Resolve the system prompt from CLI flags and config file values.
+///
+/// Priority (highest to lowest):
+/// 1. `cli_system_file` — content from `--system-file` flag
+/// 2. `cli_system` — text from `--system` flag
+/// 3. `config_system_file` — file path from `system_file` config key (resolved relative to `config_dir`)
+/// 4. `config_system_prompt` — inline text from `system_prompt` config key
+/// 5. Default `SYSTEM_PROMPT`
+///
+/// Returns `Ok(prompt_text)` on success, or `Err(message)` if a referenced file can't be read.
+pub fn resolve_system_prompt(
+    cli_system: Option<&str>,
+    cli_system_file_content: Option<&str>,
+    config: &HashMap<String, String>,
+    config_dir: Option<&std::path::Path>,
+) -> Result<String, String> {
+    // CLI flags take top priority
+    if let Some(content) = cli_system_file_content {
+        return Ok(content.to_string());
+    }
+    if let Some(text) = cli_system {
+        return Ok(text.to_string());
+    }
+
+    // Config file fallback: system_file > system_prompt
+    if let Some(config_file_val) = config.get("system_file") {
+        let base = config_dir.unwrap_or_else(|| std::path::Path::new("."));
+        let resolved_path = base.join(config_file_val);
+        match std::fs::read_to_string(&resolved_path) {
+            Ok(content) => return Ok(content),
+            Err(e) => {
+                return Err(format!(
+                    "Failed to read system_file '{}' from config: {e}",
+                    resolved_path.display()
+                ));
+            }
+        }
+    }
+
+    if let Some(text) = config.get("system_prompt") {
+        return Ok(text.clone());
+    }
+
+    Ok(SYSTEM_PROMPT.to_string())
 }
 
 /// Parse CLI arguments into a Config, or exit with help/version.
@@ -1041,6 +1118,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     };
 
     // Custom system prompt: --system "text" or --system-file path
+    // Priority: --system-file CLI > --system CLI > system_file config > system_prompt config > default
     let custom_system = args
         .iter()
         .position(|a| a == "--system")
@@ -1058,10 +1136,17 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
             })
         });
 
-    // --system-file takes precedence over --system, both override default
-    let mut system_prompt = system_from_file
-        .or(custom_system)
-        .unwrap_or_else(|| SYSTEM_PROMPT.to_string());
+    let config_dir = find_config_dir();
+    let mut system_prompt = resolve_system_prompt(
+        custom_system.as_deref(),
+        system_from_file.as_deref(),
+        &file_config,
+        config_dir.as_deref(),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{RED}error:{RESET} {e}");
+        std::process::exit(1);
+    });
 
     // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt
     if let Some(project_context) = load_project_context() {
@@ -2517,5 +2602,122 @@ deny = ["/etc"]
             welcome.contains("google"),
             "welcome should mention google provider"
         );
+    }
+
+    #[test]
+    fn test_config_system_prompt_key() {
+        let config_content = r#"
+model = "claude-sonnet-4-20250514"
+system_prompt = "You are a Rust expert."
+"#;
+        let config = parse_config_file(config_content);
+        assert_eq!(
+            config.get("system_prompt"),
+            Some(&"You are a Rust expert.".to_string())
+        );
+
+        // resolve_system_prompt should pick it up when no CLI flags are set
+        let result = resolve_system_prompt(None, None, &config, None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "You are a Rust expert.");
+    }
+
+    #[test]
+    fn test_config_system_file_key() {
+        // Create a temp file to act as the system prompt file
+        let tmp_dir = std::env::temp_dir().join("yoyo_test_system_file");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let prompt_file = tmp_dir.join("custom_prompt.txt");
+        std::fs::write(&prompt_file, "You are a helpful coding bot.").unwrap();
+
+        let config_content = "system_file = \"custom_prompt.txt\"".to_string();
+        let config = parse_config_file(&config_content);
+        assert_eq!(
+            config.get("system_file"),
+            Some(&"custom_prompt.txt".to_string())
+        );
+
+        // resolve_system_prompt should read the file relative to config_dir
+        let result = resolve_system_prompt(None, None, &config, Some(tmp_dir.as_path()));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "You are a helpful coding bot.");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_cli_system_overrides_config() {
+        let config_content = r#"
+system_prompt = "From config file"
+"#;
+        let config = parse_config_file(config_content);
+
+        // CLI --system should override config system_prompt
+        let result = resolve_system_prompt(Some("From CLI flag"), None, &config, None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "From CLI flag");
+
+        // CLI --system-file content should override both
+        let result = resolve_system_prompt(
+            Some("From CLI flag"),
+            Some("From system file CLI"),
+            &config,
+            None,
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "From system file CLI");
+
+        // system_file in config should override system_prompt in config
+        let tmp_dir = std::env::temp_dir().join("yoyo_test_override");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let prompt_file = tmp_dir.join("override.txt");
+        std::fs::write(&prompt_file, "From config system_file").unwrap();
+
+        let mut config_with_both = config.clone();
+        config_with_both.insert("system_file".to_string(), "override.txt".to_string());
+
+        let result = resolve_system_prompt(None, None, &config_with_both, Some(tmp_dir.as_path()));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "From config system_file");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_config_system_file_missing() {
+        let config_content = r#"
+system_file = "nonexistent_prompt.txt"
+"#;
+        let config = parse_config_file(config_content);
+
+        let tmp_dir = std::env::temp_dir().join("yoyo_test_missing");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+
+        // Should return an error for missing file
+        let result = resolve_system_prompt(None, None, &config, Some(tmp_dir.as_path()));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Failed to read system_file"),
+            "Error should mention failed read: {err}"
+        );
+        assert!(
+            err.contains("nonexistent_prompt.txt"),
+            "Error should mention the file name: {err}"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_resolve_system_prompt_default() {
+        // With no CLI flags and no config keys, should return default SYSTEM_PROMPT
+        let config: HashMap<String, String> = HashMap::new();
+        let result = resolve_system_prompt(None, None, &config, None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), SYSTEM_PROMPT);
     }
 }
