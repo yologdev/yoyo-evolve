@@ -54,6 +54,18 @@ Custom system prompts are useful for:
 - **Team defaults** — commit `.yoyo.toml` with `system_prompt` or `system_file` so every developer gets the same agent persona
 - **Persona tuning** — make the agent more or less verbose, formal, etc.
 
+## Automatic project context
+
+In addition to the system prompt, yoyo automatically injects project context when available:
+
+- **Project instructions** — from `YOYO.md` (primary), `CLAUDE.md` (compatibility alias), or `.yoyo/instructions.md`
+- **Project file listing** — from `git ls-files` (up to 200 files)
+- **Recently changed files** — from `git log` (up to 20 files)
+- **Git status** — current branch, count of uncommitted and staged changes
+- **Project memories** — from `memory/` files if present
+
+Use `/context` to see which project context files are loaded.
+
 ## Example prompt file
 
 ```text

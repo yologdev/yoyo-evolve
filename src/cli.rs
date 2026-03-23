@@ -583,6 +583,41 @@ pub fn get_project_file_listing() -> Option<String> {
     Some(listing)
 }
 
+/// Get a brief git status summary for system prompt injection.
+/// Returns None if not in a git repo or git is unavailable.
+pub fn get_git_status_context() -> Option<String> {
+    let branch = crate::git::git_branch()?;
+
+    let uncommitted = crate::git::run_git(&["status", "--porcelain"])
+        .ok()
+        .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+        .unwrap_or(0);
+
+    let staged = crate::git::run_git(&["diff", "--cached", "--name-only"])
+        .ok()
+        .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+        .unwrap_or(0);
+
+    let mut result = String::from("## Git Status\n\n");
+    result.push_str(&format!("Branch: {branch}\n"));
+    if uncommitted > 0 {
+        result.push_str(&format!(
+            "Uncommitted changes: {} file{}\n",
+            uncommitted,
+            if uncommitted == 1 { "" } else { "s" }
+        ));
+    }
+    if staged > 0 {
+        result.push_str(&format!(
+            "Staged: {} file{}\n",
+            staged,
+            if staged == 1 { "" } else { "s" }
+        ));
+    }
+
+    Some(result)
+}
+
 /// Get the most recently changed files from git log, deduplicated.
 /// Returns up to `max_files` unique file paths that were modified in recent commits.
 /// Returns None if not in a git repo or git is unavailable.
@@ -657,6 +692,18 @@ pub fn load_project_context() -> Option<String> {
         context.push_str(&recent_files.join("\n"));
     }
 
+    // Append git status if available
+    let git_branch_name = if let Some(git_status) = get_git_status_context() {
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        let branch = crate::git::git_branch();
+        context.push_str(&git_status);
+        branch
+    } else {
+        None
+    };
+
     // Append project memories if available
     let memory = crate::memory::load_memories();
     if let Some(memories_section) = crate::memory::format_memories_for_prompt(&memory) {
@@ -674,6 +721,9 @@ pub fn load_project_context() -> Option<String> {
         }
         if context.contains("## Recently Changed Files") {
             eprintln!("{DIM}  context: recently changed files{RESET}");
+        }
+        if let Some(branch) = &git_branch_name {
+            eprintln!("{DIM}  context: git status (branch: {branch}){RESET}");
         }
         if !memory.entries.is_empty() {
             eprintln!(
@@ -2305,6 +2355,53 @@ key = "value"
                 assert!(
                     context.contains("## Recently Changed Files"),
                     "Context should contain Recently Changed Files section"
+                );
+            }
+        }
+    }
+
+    // === Git status context tests ===
+
+    #[test]
+    fn test_get_git_status_context_in_repo() {
+        // We're running inside a git repo, so this should return Some
+        let result = get_git_status_context();
+        assert!(result.is_some(), "Should return Some when in a git repo");
+        assert!(
+            result.as_ref().unwrap().contains("Branch:"),
+            "Should contain 'Branch:' label"
+        );
+    }
+
+    #[test]
+    fn test_get_git_status_context_contains_branch() {
+        let result = get_git_status_context().expect("Should be in a git repo");
+        // Get the actual branch name to verify it's in the output
+        let branch = crate::git::git_branch().expect("Should get branch name");
+        assert!(
+            result.contains(&format!("Branch: {branch}")),
+            "Should contain actual branch name: {branch}"
+        );
+    }
+
+    #[test]
+    fn test_git_status_context_format() {
+        let result = get_git_status_context().expect("Should be in a git repo");
+        assert!(
+            result.starts_with("## Git Status\n\n"),
+            "Should start with '## Git Status' header"
+        );
+    }
+
+    #[test]
+    fn test_load_project_context_includes_git_status() {
+        // In a git repo, load_project_context should include git status
+        let result = load_project_context();
+        if let Some(context) = &result {
+            if get_git_status_context().is_some() {
+                assert!(
+                    context.contains("## Git Status"),
+                    "Context should contain Git Status section"
                 );
             }
         }
