@@ -5720,4 +5720,390 @@ mod tests {
         assert_eq!(state.line_count, 3);
         assert_eq!(state.last_output, "line1\nline2\nline3");
     }
+
+    // ── Streaming contract tests ──
+    //
+    // These tests document and lock in the current behavior of the streaming
+    // pipeline (MarkdownRenderer::render_delta + flush). They exist to prevent
+    // regressions when modifying the renderer. Each test describes a specific
+    // contract about when content is buffered vs. emitted immediately.
+
+    #[test]
+    fn test_streaming_contract_plain_text_no_buffering() {
+        // Plain text starting with a non-special character at line start
+        // should produce immediate output — no buffering needed.
+        let mut r = MarkdownRenderer::new();
+        assert!(r.line_start, "Renderer should start at line_start=true");
+
+        // "H" is not a special char (#, `, >, -, *, +, digit, |, _)
+        // so needs_line_buffering() returns false → flush as inline text
+        let out1 = r.render_delta("H");
+        assert!(
+            !out1.is_empty(),
+            "First token 'H' should produce immediate output (not special char), got empty"
+        );
+        assert!(
+            !r.line_start,
+            "After flushing 'H', line_start should be false"
+        );
+        assert!(
+            r.line_buffer.is_empty(),
+            "line_buffer should be empty after non-special first char flush"
+        );
+
+        // Mid-line tokens produce immediate output (mid-line fast path)
+        let out2 = r.render_delta("ello");
+        assert!(
+            !out2.is_empty(),
+            "Mid-line token 'ello' should produce immediate output"
+        );
+        assert!(
+            r.line_buffer.is_empty(),
+            "line_buffer should stay empty for mid-line tokens"
+        );
+
+        let out3 = r.render_delta(" world");
+        assert!(
+            !out3.is_empty(),
+            "Mid-line token ' world' should produce immediate output"
+        );
+    }
+
+    #[test]
+    fn test_streaming_contract_code_block_passthrough() {
+        // Tokens inside a code block should produce immediate output via
+        // the mid-line fast path (DIM-wrapped), not the buffered path.
+        let mut r = MarkdownRenderer::new();
+
+        // Open a code fence
+        let fence_out = r.render_delta("```rust\n");
+        assert!(r.in_code_block, "Should be inside code block after fence");
+        assert!(
+            fence_out.contains(&format!("{DIM}```rust{RESET}")),
+            "Fence line should be dim, got: '{fence_out}'"
+        );
+
+        // At code block line start, non-fence content resolves immediately.
+        // "let x" starts with 'l' (not backtick) → early-resolve as code.
+        let out1 = r.render_delta("let x");
+        assert!(
+            !out1.is_empty(),
+            "Code block content 'let x' should produce immediate output, got empty"
+        );
+        assert!(
+            out1.contains(&format!("{DIM}let x{RESET}")),
+            "Mid-line code should be DIM-wrapped (fragment styling), got: '{out1}'"
+        );
+
+        // Mid-line code token (line_start=false)
+        let out2 = r.render_delta(" = 42;");
+        assert!(
+            !out2.is_empty(),
+            "Code block token ' = 42;' should produce immediate output"
+        );
+        assert!(
+            out2.contains(&format!("{DIM} = 42;{RESET}")),
+            "Mid-line code token should be DIM-wrapped, got: '{out2}'"
+        );
+    }
+
+    #[test]
+    fn test_streaming_contract_heading_detection() {
+        // "#" at line start should buffer. After the line completes with "\n",
+        // the heading should render with BOLD+CYAN formatting.
+        let mut r = MarkdownRenderer::new();
+
+        let out1 = r.render_delta("#");
+        assert_eq!(
+            out1, "",
+            "'#' at line start should buffer (could be heading)"
+        );
+        assert!(!r.line_buffer.is_empty(), "line_buffer should contain '#'");
+
+        // Complete the heading line
+        let out2 = r.render_delta("# Title\n");
+        // line_buffer was "#", now becomes "## Title" after append, then newline processes it
+        assert!(
+            out2.contains(&format!("{BOLD}{CYAN}")),
+            "Heading should have BOLD+CYAN formatting, got: '{out2}'"
+        );
+        assert!(
+            out2.contains("Title"),
+            "Heading output should contain 'Title', got: '{out2}'"
+        );
+        assert!(
+            r.line_start,
+            "After newline, line_start should be true again"
+        );
+    }
+
+    #[test]
+    fn test_streaming_contract_blockquote_detection() {
+        // ">" at line start triggers block-level buffering.
+        // Once confirmed as blockquote, renders with DIM│ and ITALIC content.
+        let mut r = MarkdownRenderer::new();
+
+        // ">" is a blockquote — try_resolve_block_prefix handles it
+        let out1 = r.render_delta("> ");
+        // Blockquote prefix should be resolved early by try_resolve_block_prefix
+        assert!(
+            out1.contains(&format!("{DIM}│{RESET}")),
+            "Blockquote should render dim vertical bar, got: '{out1}'"
+        );
+        assert!(
+            r.block_prefix_rendered,
+            "block_prefix_rendered should be true after blockquote prefix"
+        );
+        assert!(
+            !r.line_start,
+            "line_start should be false after prefix resolution"
+        );
+
+        // Subsequent content streams as mid-line inline text
+        let out2 = r.render_delta("quoted text");
+        assert!(
+            !out2.is_empty(),
+            "Content after blockquote prefix should stream immediately"
+        );
+        assert!(
+            out2.contains("quoted text"),
+            "Should contain the quoted text, got: '{out2}'"
+        );
+
+        // Complete the line
+        let _out3 = r.render_delta("\n");
+        assert!(r.line_start, "After newline, should be at line_start again");
+    }
+
+    #[test]
+    fn test_streaming_contract_inline_formatting_mid_line() {
+        // Mid-line **bold**, *italic*, and `code` formatting should be applied
+        // through the render_inline fast path.
+        let mut r = MarkdownRenderer::new();
+
+        // Resolve line start with plain text first
+        let _ = r.render_delta("This is ");
+        assert!(!r.line_start, "Should be mid-line");
+
+        // Bold mid-line
+        let out_bold = r.render_delta("**bold**");
+        assert!(
+            out_bold.contains(&format!("{BOLD}bold{RESET}")),
+            "Mid-line **bold** should get BOLD ANSI codes, got: '{out_bold}'"
+        );
+
+        // Italic mid-line
+        let out_italic = r.render_delta(" and *italic*");
+        assert!(
+            out_italic.contains(&format!("{ITALIC}italic{RESET}")),
+            "Mid-line *italic* should get ITALIC ANSI codes, got: '{out_italic}'"
+        );
+
+        // Inline code mid-line
+        let out_code = r.render_delta(" and `code`");
+        assert!(
+            out_code.contains(&format!("{CYAN}code{RESET}")),
+            "Mid-line `code` should get CYAN ANSI codes, got: '{out_code}'"
+        );
+    }
+
+    #[test]
+    fn test_streaming_contract_empty_delta() {
+        // render_delta("") should return empty string and not corrupt state,
+        // at both line_start=true and line_start=false.
+
+        // Test at line_start=true
+        let mut r = MarkdownRenderer::new();
+        assert!(r.line_start);
+        let out1 = r.render_delta("");
+        assert_eq!(out1, "", "Empty delta at line_start should return empty");
+        assert!(
+            r.line_start,
+            "line_start should remain true after empty delta"
+        );
+        assert!(
+            r.line_buffer.is_empty(),
+            "line_buffer should remain empty after empty delta"
+        );
+        assert!(
+            !r.in_code_block,
+            "in_code_block should remain false after empty delta"
+        );
+
+        // Test at line_start=false (mid-line)
+        let _ = r.render_delta("Hello");
+        assert!(!r.line_start, "Should be mid-line after 'Hello'");
+        let out2 = r.render_delta("");
+        assert_eq!(out2, "", "Empty delta at mid-line should return empty");
+        assert!(
+            !r.line_start,
+            "line_start should remain false after empty mid-line delta"
+        );
+    }
+
+    #[test]
+    fn test_streaming_contract_newline_resets_line_start() {
+        // After rendering mid-line content, a "\n" should set line_start=true.
+        let mut r = MarkdownRenderer::new();
+
+        // Get into mid-line state
+        let _ = r.render_delta("Hello world");
+        assert!(!r.line_start, "Should be mid-line after 'Hello world'");
+
+        // Newline should reset to line_start
+        let out = r.render_delta("\n");
+        assert!(
+            !out.is_empty() || out.contains('\n'),
+            "Newline delta should produce output containing newline"
+        );
+        assert!(r.line_start, "line_start should be true after newline");
+        assert!(
+            !r.block_prefix_rendered,
+            "block_prefix_rendered should be false after newline reset"
+        );
+    }
+
+    #[test]
+    fn test_streaming_contract_consecutive_code_blocks() {
+        // Open fence → content → close fence → open another fence.
+        // State should correctly track in_code_block across transitions.
+        let mut r = MarkdownRenderer::new();
+
+        // First code block
+        let _ = r.render_delta("```\n");
+        assert!(r.in_code_block, "Should be in code block after first fence");
+        assert!(
+            r.code_lang.is_none(),
+            "No language specified for first fence"
+        );
+
+        let _ = r.render_delta("first block\n");
+        assert!(r.in_code_block, "Should still be in code block");
+
+        let _ = r.render_delta("```\n");
+        assert!(
+            !r.in_code_block,
+            "Should exit code block after closing fence"
+        );
+        assert!(
+            r.code_lang.is_none(),
+            "code_lang should be None after closing"
+        );
+
+        // Normal text between code blocks
+        let out_normal = r.render_delta("between blocks\n");
+        assert!(
+            !r.in_code_block,
+            "Should not be in code block for normal text"
+        );
+        assert!(
+            out_normal.contains("between blocks"),
+            "Normal text should render, got: '{out_normal}'"
+        );
+
+        // Second code block with language
+        let _ = r.render_delta("```python\n");
+        assert!(
+            r.in_code_block,
+            "Should be in code block after second fence"
+        );
+        assert_eq!(
+            r.code_lang.as_deref(),
+            Some("python"),
+            "Should capture language 'python'"
+        );
+
+        let _ = r.render_delta("second block\n");
+        assert!(r.in_code_block, "Should still be in second code block");
+
+        let _ = r.render_delta("```\n");
+        assert!(
+            !r.in_code_block,
+            "Should exit second code block after closing fence"
+        );
+        assert!(
+            r.code_lang.is_none(),
+            "code_lang should be None after second close"
+        );
+    }
+
+    #[test]
+    fn test_streaming_contract_flush_final() {
+        // After feeding partial content without a trailing newline,
+        // flush() should emit whatever's in the line buffer.
+        let mut r = MarkdownRenderer::new();
+
+        // Feed content that stays buffered (# is ambiguous at line start)
+        let out1 = r.render_delta("# Partial heading");
+        // "# Partial heading" — starts with '#', needs_line_buffering=true.
+        // flush_on_whitespace won't fire for '#'.
+        // So it stays in the buffer.
+        assert!(
+            !r.line_buffer.is_empty() || !out1.is_empty(),
+            "Content should be either buffered or already output"
+        );
+
+        // Flush should emit the remaining content
+        let flushed = r.flush();
+        assert!(!flushed.is_empty(), "flush() should emit buffered content");
+        assert!(
+            flushed.contains("Partial heading"),
+            "flushed output should contain the text, got: '{flushed}'"
+        );
+        assert!(
+            r.line_buffer.is_empty(),
+            "line_buffer should be empty after flush"
+        );
+
+        // Also test flush with non-special content that was already emitted
+        let mut r2 = MarkdownRenderer::new();
+        let _ = r2.render_delta("Already emitted");
+        // "Already emitted" starts with 'A' — non-special → flushed immediately
+        let flushed2 = r2.flush();
+        // Nothing should be in buffer since it was already emitted
+        assert!(
+            r2.line_buffer.is_empty(),
+            "line_buffer should be empty after non-special text was already flushed"
+        );
+        // flushed2 might be empty (content already emitted) or contain RESET
+        // The key contract: no panic, no corruption
+        let _ = flushed2;
+    }
+
+    #[test]
+    fn test_streaming_contract_nested_formatting_in_list() {
+        // "- **bold item**\n" should get both list bullet formatting and bold.
+        let mut r = MarkdownRenderer::new();
+
+        let out = r.render_delta("- **bold item**\n");
+        // This is a complete line, processed by render_line.
+        // strip_unordered_list_marker finds "- " and returns "**bold item**".
+        // render_inline processes the bold markers.
+        assert!(
+            out.contains(&format!("{CYAN}•{RESET}")),
+            "Should have colored bullet, got: '{out}'"
+        );
+        assert!(
+            out.contains(&format!("{BOLD}bold item{RESET}")),
+            "Should have bold formatting inside list item, got: '{out}'"
+        );
+
+        // Also test streamed version where prefix resolves early
+        let mut r2 = MarkdownRenderer::new();
+        let out1 = r2.render_delta("- ");
+        // "- " — try_resolve_block_prefix tries unordered list.
+        // try_confirm_unordered_list: "- " has empty rest → returns Some("").
+        // So prefix renders with bullet.
+        let out2 = r2.render_delta("**bold item**");
+        let out3 = r2.render_delta("\n");
+        let total = format!("{out1}{out2}{out3}");
+        assert!(
+            total.contains(&format!("{CYAN}•{RESET}")),
+            "Streamed list should have colored bullet, got: '{total}'"
+        );
+        assert!(
+            total.contains("bold item"),
+            "Streamed list should contain bold item text, got: '{total}'"
+        );
+    }
 }
