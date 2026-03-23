@@ -1574,7 +1574,16 @@ impl MarkdownRenderer {
             b'>' => true, // blockquote — always a block element
             b'+' => trimmed.len() < 2 || trimmed.starts_with("+ "),
             b'-' => {
-                trimmed.len() < 3 || trimmed.starts_with("- ") || {
+                // Quick disambiguation: "-" followed by a non-space, non-dash char
+                // can't be a list item ("- ") or horizontal rule ("---").
+                // "-based", "-flag" → flush immediately. "- item", "--" → keep buffering.
+                if trimmed.len() >= 2 {
+                    let second = trimmed.as_bytes()[1];
+                    if second != b' ' && second != b'-' {
+                        return false;
+                    }
+                }
+                trimmed.len() < 2 || trimmed.starts_with("- ") || {
                     let no_sp: String = trimmed.chars().filter(|c| *c != ' ').collect();
                     !no_sp.is_empty() && no_sp.chars().all(|c| c == '-')
                 }
@@ -1592,6 +1601,19 @@ impl MarkdownRenderer {
                 }
             }
             b'0'..=b'9' => {
+                // Quick disambiguation: if we have at least 2 chars and the first
+                // non-digit char isn't '.' or ')', it can't be a numbered list —
+                // flush immediately. "2nd", "3rd", "100ms" → flush.
+                // "1.", "1)", "12" (all digits) → keep buffering.
+                if trimmed.len() >= 2 {
+                    if let Some(pos) = trimmed.bytes().position(|b| !b.is_ascii_digit()) {
+                        let non_digit = trimmed.as_bytes()[pos];
+                        if non_digit != b'.' && non_digit != b')' {
+                            return false; // Not a numbered list pattern
+                        }
+                    }
+                    // All digits so far, or digit(s) followed by ./), keep buffering
+                }
                 trimmed.len() < 3
                     || trimmed.contains(". ")
                         && trimmed[..trimmed.find(". ").unwrap_or(0)]
@@ -5341,6 +5363,186 @@ mod tests {
     //
     // Total per-token latency: <0.2ms for first token, <0.05ms for subsequent
     // The bottleneck is always the network/API, not the renderer.
+
+    // --- Digit-word and dash-word early flush tests (issue #147) ---
+
+    #[test]
+    fn test_streaming_digit_nonlist_flushes_early() {
+        // "2n" at line start — digit followed by a letter can't be a numbered list.
+        // Should flush on the 2nd char since 'n' isn't '.' or ')'.
+        let mut r = MarkdownRenderer::new();
+        let out1 = r.render_delta("2n");
+        // "2n" should flush immediately — not a numbered list pattern
+        assert!(
+            !out1.is_empty(),
+            "Digit followed by letter should flush immediately, got empty"
+        );
+        // Subsequent token is mid-line, should be immediate
+        let out2 = r.render_delta("d");
+        assert!(
+            !out2.is_empty(),
+            "Mid-line token after digit-word flush should be immediate, got empty"
+        );
+    }
+
+    #[test]
+    fn test_streaming_dash_nonlist_flushes_early() {
+        // "-b" at line start — dash followed by a non-space, non-dash char
+        // can't be a list item or horizontal rule. Should flush immediately.
+        let mut r = MarkdownRenderer::new();
+        let out1 = r.render_delta("-b");
+        assert!(
+            !out1.is_empty(),
+            "Dash followed by letter should flush immediately, got empty"
+        );
+        // Subsequent token is mid-line
+        let out2 = r.render_delta("ased");
+        assert!(
+            !out2.is_empty(),
+            "Mid-line token after dash-word flush should be immediate, got empty"
+        );
+    }
+
+    #[test]
+    fn test_streaming_numbered_list_still_buffers() {
+        // "1." at line start — could be a numbered list, must keep buffering.
+        let mut r = MarkdownRenderer::new();
+        let out1 = r.render_delta("1.");
+        // "1." — digit followed by '.', still ambiguous (could be "1. item")
+        assert!(
+            out1.is_empty(),
+            "Digit-dot should still buffer (potential numbered list), got: '{out1}'"
+        );
+        // "1. " confirms it's a list — should resolve via try_resolve_block_prefix
+        let out2 = r.render_delta(" item");
+        assert!(
+            !out2.is_empty(),
+            "Numbered list '1. item' should eventually produce output, got empty"
+        );
+    }
+
+    #[test]
+    fn test_streaming_dash_list_still_buffers() {
+        // "- " at line start is a list item — should buffer correctly.
+        let mut r = MarkdownRenderer::new();
+        let out1 = r.render_delta("- ");
+        // "- " is a confirmed unordered list item
+        // try_resolve_block_prefix should handle it
+        // Whether it's empty or not depends on whether prefix resolves at "- "
+        // The key: subsequent content should stream
+        let out2 = r.render_delta("item");
+        let total = format!("{out1}{out2}");
+        assert!(
+            total.contains("item"),
+            "Dash list '- item' should produce output, got: '{total}'"
+        );
+    }
+
+    #[test]
+    fn test_streaming_dash_hr_still_buffers() {
+        // "---" should still buffer as a potential horizontal rule.
+        let mut r = MarkdownRenderer::new();
+        let out1 = r.render_delta("-");
+        assert!(
+            out1.is_empty(),
+            "Single dash should buffer (ambiguous), got: '{out1}'"
+        );
+        let out2 = r.render_delta("-");
+        assert!(
+            out2.is_empty(),
+            "Double dash should buffer (potential HR), got: '{out2}'"
+        );
+        let out3 = r.render_delta("-");
+        // "---" is a horizontal rule, should still be buffered/handled correctly
+        assert!(
+            out3.is_empty(),
+            "Triple dash should still buffer as HR, got: '{out3}'"
+        );
+    }
+
+    #[test]
+    fn test_streaming_mid_line_always_immediate() {
+        // Once line_start is false, ALL tokens should be immediate regardless of content.
+        let mut r = MarkdownRenderer::new();
+        let _ = r.render_delta("Hello ");
+        assert!(!r.line_start, "Should be mid-line after 'Hello '");
+
+        // Tokens that would trigger buffering at line start should be immediate mid-line
+        for token in &["-", "1.", "```", "#", ">", "---"] {
+            let out = r.render_delta(token);
+            assert!(
+                !out.is_empty(),
+                "Mid-line token '{token}' should produce immediate output, got empty"
+            );
+        }
+    }
+
+    #[test]
+    fn test_streaming_fence_still_buffers() {
+        // "```" at line start should still buffer as a code fence.
+        let mut r = MarkdownRenderer::new();
+        let out1 = r.render_delta("`");
+        assert!(
+            out1.is_empty(),
+            "Single backtick should buffer, got: '{out1}'"
+        );
+        let out2 = r.render_delta("``");
+        // Now buffer is "```" — still buffering as potential fence
+        assert!(
+            out2.is_empty(),
+            "Triple backtick without newline should still buffer, got: '{out2}'"
+        );
+        // A newline confirms the fence
+        let out3 = r.render_delta("\n");
+        assert!(
+            r.in_code_block,
+            "Code fence should be detected after newline"
+        );
+        assert!(
+            !out3.is_empty(),
+            "Fence line should produce output on newline"
+        );
+    }
+
+    #[test]
+    fn test_streaming_plain_text_immediate() {
+        // "Hello" at line start — first char 'H' is not special, should flush immediately.
+        let mut r = MarkdownRenderer::new();
+        let out = r.render_delta("H");
+        assert!(
+            !out.is_empty(),
+            "Non-special char 'H' at line start should flush immediately, got empty"
+        );
+    }
+
+    #[test]
+    fn test_streaming_digit_paren_still_buffers() {
+        // "1)" at line start — digit followed by ')', could be a numbered list variant.
+        let mut r = MarkdownRenderer::new();
+        let out = r.render_delta("1)");
+        assert!(
+            out.is_empty(),
+            "Digit-paren should still buffer (potential list), got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_streaming_multi_digit_nonlist_flushes() {
+        // "100m" — multi-digit number followed by letter, not a list.
+        let mut r = MarkdownRenderer::new();
+        let out1 = r.render_delta("10");
+        // "10" — all digits, could still be "10. " — should buffer
+        assert!(
+            out1.is_empty(),
+            "All-digit '10' should buffer (could be list number), got: '{out1}'"
+        );
+        let out2 = r.render_delta("0m");
+        // "100m" — the 'm' disambiguates: not a list number
+        assert!(
+            !out2.is_empty(),
+            "'100m' should flush — letter after digits means not a list, got empty"
+        );
+    }
 
     #[test]
     fn test_md_render_delta_latency_budget_mid_line() {
