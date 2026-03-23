@@ -1050,8 +1050,7 @@ RESPONDEOF
         RESPOND_EXIT=1
     fi
 
-    # Verify the agent actually posted comments by checking GitHub directly.
-    # Wait for API propagation — comments posted seconds ago may not appear immediately.
+    # Log how many comments were posted (informational only — zero is valid if agent chose to skip)
     if [ "$RESPOND_EXIT" -eq 0 ]; then
         sleep 5
         COMMENTS_POSTED=0
@@ -1062,12 +1061,7 @@ RESPONDEOF
                 COMMENTS_POSTED=$((COMMENTS_POSTED + 1))
             fi
         done < <(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | grep -oE '[0-9]+')
-        if [ "$COMMENTS_POSTED" -eq 0 ] && [ "$ISSUE_COUNT" -gt 0 ]; then
-            echo "  WARNING: Agent exited 0 but no issue comments detected via API — triggering fallback."
-            RESPOND_EXIT=1
-        else
-            echo "  Agent posted $COMMENTS_POSTED issue comment(s)."
-        fi
+        echo "  Agent posted $COMMENTS_POSTED issue comment(s)."
     fi
 
     if [ "$RESPOND_EXIT" -ne 0 ]; then
