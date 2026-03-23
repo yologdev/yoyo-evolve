@@ -447,6 +447,8 @@ pub fn print_help() {
     println!("  max_tokens = 4096");
     println!("  max_turns = 20");
     println!("  api_key = \"sk-ant-...\"");
+    println!("  system_prompt = \"You are a Go expert\"");
+    println!("  system_file = \"prompts/system.txt\"");
     println!();
     println!("  [permissions]");
     println!("  allow = [\"git *\", \"cargo *\"]");
@@ -773,6 +775,47 @@ pub fn parse_config_file(content: &str) -> HashMap<String, String> {
     map
 }
 
+/// Resolve the system prompt using the precedence chain:
+/// CLI --system-file > CLI --system > config system_file > config system_prompt > default SYSTEM_PROMPT
+///
+/// `cli_system_file_content` is already-read file content from `--system-file`.
+/// `cli_system` is the raw text from `--system`.
+/// `config_system_file` is the path from config `system_file` key (will be read here).
+/// `config_system_prompt` is the text from config `system_prompt` key.
+pub fn resolve_system_prompt(
+    cli_system_file_content: Option<String>,
+    cli_system: Option<String>,
+    config_system_file: Option<String>,
+    config_system_prompt: Option<String>,
+) -> String {
+    // CLI --system-file wins over everything
+    if let Some(content) = cli_system_file_content {
+        return content;
+    }
+    // CLI --system wins over config
+    if let Some(text) = cli_system {
+        return text;
+    }
+    // Config system_file wins over config system_prompt
+    if let Some(path) = config_system_file {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => return content,
+            Err(e) => {
+                eprintln!(
+                    "{RED}error:{RESET} Failed to read system_file '{path}' from config: {e}"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+    // Config system_prompt
+    if let Some(text) = config_system_prompt {
+        return text;
+    }
+    // Default
+    SYSTEM_PROMPT.to_string()
+}
+
 /// Load config from file, checking project-level then user-level paths.
 /// Returns an empty map if no config file is found.
 fn load_config_file() -> HashMap<String, String> {
@@ -1058,10 +1101,13 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
             })
         });
 
-    // --system-file takes precedence over --system, both override default
-    let mut system_prompt = system_from_file
-        .or(custom_system)
-        .unwrap_or_else(|| SYSTEM_PROMPT.to_string());
+    // Precedence: CLI --system-file > CLI --system > config system_file > config system_prompt > default
+    let mut system_prompt = resolve_system_prompt(
+        system_from_file,
+        custom_system,
+        file_config.get("system_file").cloned(),
+        file_config.get("system_prompt").cloned(),
+    );
 
     // Append project context (YOYO.md, .yoyo/instructions.md) to system prompt
     if let Some(project_context) = load_project_context() {
@@ -2517,5 +2563,123 @@ deny = ["/etc"]
             welcome.contains("google"),
             "welcome should mention google provider"
         );
+    }
+
+    // ── system_prompt / system_file config key tests ─────────────────────
+
+    #[test]
+    fn test_config_system_prompt_key() {
+        // Config with system_prompt should be used when no CLI flag is passed
+        let content = r#"
+model = "claude-opus-4-6"
+system_prompt = "You are a Go expert"
+"#;
+        let config = parse_config_file(content);
+        assert_eq!(config.get("system_prompt").unwrap(), "You are a Go expert");
+
+        // resolve_system_prompt should use the config value when no CLI args
+        let result = resolve_system_prompt(None, None, None, Some("You are a Go expert".into()));
+        assert_eq!(result, "You are a Go expert");
+    }
+
+    #[test]
+    fn test_config_system_file_key() {
+        // Config with system_file should read from that file path
+        let content = "system_file = \"prompt.txt\"";
+        let config = parse_config_file(content);
+        assert_eq!(config.get("system_file").unwrap(), "prompt.txt");
+
+        // Create a temp file and verify resolve_system_prompt reads it
+        let dir = std::env::temp_dir().join("yoyo_test_system_file");
+        let _ = std::fs::create_dir_all(&dir);
+        let prompt_path = dir.join("test_prompt.txt");
+        std::fs::write(&prompt_path, "You are a Python expert").unwrap();
+
+        let result = resolve_system_prompt(
+            None,
+            None,
+            Some(prompt_path.to_string_lossy().into_owned()),
+            None,
+        );
+        assert_eq!(result, "You are a Python expert");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_system_file_overrides_system_prompt() {
+        // When both are present in config, system_file wins
+        let dir = std::env::temp_dir().join("yoyo_test_sf_override");
+        let _ = std::fs::create_dir_all(&dir);
+        let prompt_path = dir.join("override_prompt.txt");
+        std::fs::write(&prompt_path, "From file").unwrap();
+
+        let result = resolve_system_prompt(
+            None,
+            None,
+            Some(prompt_path.to_string_lossy().into_owned()),
+            Some("From config key".into()),
+        );
+        assert_eq!(result, "From file");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_cli_system_overrides_config() {
+        // CLI --system should override config file system_prompt
+        let result = resolve_system_prompt(
+            None,
+            Some("CLI system prompt".into()),
+            None,
+            Some("Config system prompt".into()),
+        );
+        assert_eq!(result, "CLI system prompt");
+    }
+
+    #[test]
+    fn test_cli_system_file_overrides_config() {
+        // CLI --system-file content should override config file system_file
+        let dir = std::env::temp_dir().join("yoyo_test_cli_sf_override");
+        let _ = std::fs::create_dir_all(&dir);
+        let config_path = dir.join("config_prompt.txt");
+        std::fs::write(&config_path, "Config file content").unwrap();
+
+        let result = resolve_system_prompt(
+            Some("CLI file content".into()),
+            None,
+            Some(config_path.to_string_lossy().into_owned()),
+            Some("Config prompt text".into()),
+        );
+        assert_eq!(result, "CLI file content");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_system_prompt_default() {
+        // When nothing is provided, default SYSTEM_PROMPT is used
+        let result = resolve_system_prompt(None, None, None, None);
+        assert_eq!(result, SYSTEM_PROMPT);
+    }
+
+    #[test]
+    fn test_cli_system_overrides_config_system_file() {
+        // CLI --system should also override config system_file
+        let dir = std::env::temp_dir().join("yoyo_test_cli_sys_vs_config_file");
+        let _ = std::fs::create_dir_all(&dir);
+        let config_path = dir.join("config_prompt.txt");
+        std::fs::write(&config_path, "Config file content").unwrap();
+
+        let result = resolve_system_prompt(
+            None,
+            Some("CLI text wins".into()),
+            Some(config_path.to_string_lossy().into_owned()),
+            None,
+        );
+        assert_eq!(result, "CLI text wins");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
