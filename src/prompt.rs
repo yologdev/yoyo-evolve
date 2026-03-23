@@ -233,10 +233,6 @@ pub struct PromptOutcome {
     /// The last tool error encountered during this prompt turn, if any.
     /// Tool errors are from `ToolExecutionEnd` events where `is_error` is true.
     pub last_tool_error: Option<String>,
-    /// Whether this prompt triggered an auto-compact due to context overflow.
-    /// Callers can use this to inform users or adjust behavior.
-    #[allow(dead_code)]
-    pub was_overflow: bool,
 }
 
 /// Build a retry prompt that includes error context from a previous failed attempt.
@@ -1116,7 +1112,6 @@ pub async fn run_prompt_with_changes(
     let mut total_usage = Usage::default();
     let mut collected_text = String::new();
     let mut last_tool_error: Option<String> = None;
-    let mut did_overflow_compact = false;
 
     // Save message state before the first attempt so we can restore on retry
     let saved_state = agent.save_messages().ok();
@@ -1195,8 +1190,6 @@ pub async fn run_prompt_with_changes(
                     );
                 }
 
-                did_overflow_compact = true;
-
                 // Retry with the compacted context
                 let retry_input = build_overflow_retry_prompt(input);
                 match run_prompt_once(agent, &retry_input, changes, model).await {
@@ -1244,7 +1237,6 @@ pub async fn run_prompt_with_changes(
     PromptOutcome {
         text: collected_text,
         last_tool_error,
-        was_overflow: did_overflow_compact,
     }
 }
 
@@ -1391,7 +1383,6 @@ pub async fn run_prompt_with_content_and_changes(
     PromptOutcome {
         text: collected_text,
         last_tool_error,
-        was_overflow: false,
     }
 }
 
@@ -1414,6 +1405,193 @@ pub fn format_changes(changes: &SessionChanges) -> String {
             ChangeKind::Edit => "🔧",
         };
         out.push_str(&format!("    {icon} {} ({})\n", change.path, change.kind));
+    }
+    out
+}
+
+// ── Audit log ────────────────────────────────────────────────────────────
+
+/// Default path for the audit log file.
+#[allow(dead_code)]
+pub const AUDIT_LOG_PATH: &str = ".yoyo/audit.jsonl";
+
+/// Append a single audit log entry to the JSONL audit file.
+/// Best-effort: prints a dim warning on failure but never panics.
+#[allow(dead_code)]
+pub fn append_audit_log(
+    tool_name: &str,
+    args: &serde_json::Value,
+    success: bool,
+    duration_ms: u64,
+) {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write as _;
+    use std::path::Path;
+
+    let dir = Path::new(AUDIT_LOG_PATH).parent().unwrap_or(Path::new("."));
+    if let Err(e) = fs::create_dir_all(dir) {
+        eprintln!("{DIM}  warning: could not create audit log directory: {e}{RESET}");
+        return;
+    }
+
+    let ts = chrono_now_iso();
+    let entry = serde_json::json!({
+        "ts": ts,
+        "tool": tool_name,
+        "args": args,
+        "success": success,
+        "duration_ms": duration_ms,
+    });
+
+    let mut line = match serde_json::to_string(&entry) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{DIM}  warning: could not serialize audit entry: {e}{RESET}");
+            return;
+        }
+    };
+    line.push('\n');
+
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(AUDIT_LOG_PATH)
+    {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(line.as_bytes()) {
+                eprintln!("{DIM}  warning: could not write audit log: {e}{RESET}");
+            }
+        }
+        Err(e) => {
+            eprintln!("{DIM}  warning: could not open audit log: {e}{RESET}");
+        }
+    }
+}
+
+/// Generate an ISO 8601 timestamp for the current moment (UTC).
+#[allow(dead_code)]
+fn chrono_now_iso() -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // Simple UTC timestamp: compute year-month-day hour:min:sec
+    // Using a minimal approach without a chrono dependency
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Days since epoch to date (simplified Gregorian calendar)
+    let (year, month, day) = days_to_date(days);
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
+}
+
+/// Convert days since Unix epoch (1970-01-01) to (year, month, day).
+#[allow(dead_code)]
+fn days_to_date(mut days: u64) -> (u64, u64, u64) {
+    // Algorithm: count years, then months, then remaining days
+    let mut year = 1970;
+    loop {
+        let days_in_year = if is_leap(year) { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+    let month_days = if is_leap(year) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut month = 1u64;
+    for &md in &month_days {
+        if days < md {
+            break;
+        }
+        days -= md;
+        month += 1;
+    }
+    (year, month, days + 1)
+}
+
+#[allow(dead_code)]
+fn is_leap(y: u64) -> bool {
+    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+}
+
+/// An audit log entry as parsed from the JSONL file.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct AuditEntry {
+    pub ts: String,
+    pub tool: String,
+    pub args: serde_json::Value,
+    pub success: bool,
+    pub duration_ms: u64,
+}
+
+/// Parse audit log entries from the JSONL file.
+/// Returns the last `n` entries (most recent last).
+#[allow(dead_code)]
+pub fn read_audit_log(n: usize) -> Vec<AuditEntry> {
+    let content = match std::fs::read_to_string(AUDIT_LOG_PATH) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
+    let start = if lines.len() > n { lines.len() - n } else { 0 };
+    lines[start..]
+        .iter()
+        .filter_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            Some(AuditEntry {
+                ts: v.get("ts")?.as_str()?.to_string(),
+                tool: v.get("tool")?.as_str()?.to_string(),
+                args: v.get("args").cloned().unwrap_or(serde_json::Value::Null),
+                success: v.get("success")?.as_bool()?,
+                duration_ms: v.get("duration_ms")?.as_u64()?,
+            })
+        })
+        .collect()
+}
+
+/// Format audit log entries for display.
+#[allow(dead_code)]
+pub fn format_audit_entries(entries: &[AuditEntry]) -> String {
+    if entries.is_empty() {
+        return format!(
+            "{DIM}  No audit log entries found.\n  \
+             Enable with --audit-log or audit_log = true in .yoyo.toml{RESET}\n"
+        );
+    }
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{DIM}  Last {} audit log {}:{RESET}\n",
+        entries.len(),
+        pluralize(entries.len(), "entry", "entries")
+    ));
+    for entry in entries {
+        let icon = if entry.success {
+            format!("{GREEN}✓{RESET}")
+        } else {
+            format!("{RED}✗{RESET}")
+        };
+        let summary = format_tool_summary(&entry.tool, &entry.args);
+        let dur = format_duration(Duration::from_millis(entry.duration_ms));
+        // Show time portion of the timestamp
+        let time = entry
+            .ts
+            .split('T')
+            .nth(1)
+            .unwrap_or(&entry.ts)
+            .trim_end_matches('Z');
+        out.push_str(&format!(
+            "    {icon} {DIM}{time}{RESET} {summary} {DIM}({dur}){RESET}\n"
+        ));
     }
     out
 }

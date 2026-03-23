@@ -408,6 +408,14 @@ pub fn handle_config(
         "    verbose:    {}",
         if is_verbose() { "on" } else { "off" }
     );
+    println!(
+        "    audit_log:  {}",
+        if crate::cli::is_audit_log() {
+            "on"
+        } else {
+            "off"
+        }
+    );
     if let Some(branch) = git_branch() {
         println!("    git:        {branch}");
     }

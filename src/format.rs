@@ -6106,4 +6106,313 @@ mod tests {
             "Streamed list should contain bold item text, got: '{total}'"
         );
     }
+
+    // ── Streaming contract tests: observation-first ──────────────────────
+    //
+    // These tests trace through the actual render_delta → render_delta_buffered
+    // → needs_line_buffering → try_resolve_block_prefix code path and assert
+    // what the renderer *actually does*, not what we think it should do.
+
+    #[test]
+    fn test_streaming_plain_text_not_at_line_start() {
+        // Contract: when line_start=false, render_delta takes the mid-line fast
+        // path (line ~1407) and returns text immediately via render_inline.
+        let mut r = MarkdownRenderer::new();
+
+        // Get into mid-line state with a non-special char
+        let _ = r.render_delta("X");
+        assert!(!r.line_start, "Should be mid-line after first token");
+
+        // Feed "Hello" mid-line: !line_start → not in_code_block → no '\n'
+        // → render_inline("Hello") → returns "Hello"
+        let out = r.render_delta("Hello");
+        assert_eq!(
+            out, "Hello",
+            "Mid-line plain text should pass through render_inline immediately"
+        );
+        assert!(
+            r.line_buffer.is_empty(),
+            "Mid-line fast path should not touch line_buffer"
+        );
+        assert!(!r.line_start, "Should remain mid-line");
+    }
+
+    #[test]
+    fn test_streaming_digit_word_flushes_on_non_list_char() {
+        // Contract: at line start, a digit buffers (could be "1. list").
+        // Once a non-digit char that isn't '.' or ')' arrives, needs_line_buffering
+        // returns false and the buffer flushes as inline text.
+        let mut r = MarkdownRenderer::new();
+
+        // Step 1: Feed "2" at line start.
+        // render_delta_buffered: buffer="2", needs_line_buffering checks digit arm:
+        //   trimmed.len()=1 < 2, so skip quick disambiguation.
+        //   Then: trimmed.len() < 3 → true → returns true (keep buffering).
+        // try_resolve_block_prefix: no match for digit without ". " → empty.
+        // flush_on_whitespace: "2" doesn't end with whitespace → empty.
+        let out1 = r.render_delta("2");
+        assert!(
+            out1.is_empty(),
+            "'2' at line start should buffer (could be numbered list), got: '{out1}'"
+        );
+        assert_eq!(r.line_buffer, "2", "line_buffer should contain '2'");
+
+        // Step 2: Feed "n". Buffer becomes "2n".
+        // needs_line_buffering: digit arm, len>=2, position finds pos=1 (byte 'n'),
+        //   'n' != '.' && 'n' != ')' → return false.
+        // Buffer flushes: render_inline("2n") → "2n", line_start=false.
+        let out2 = r.render_delta("n");
+        assert!(
+            !out2.is_empty(),
+            "'2n' should flush — 'n' disambiguates as non-list"
+        );
+        assert!(
+            out2.contains("2n"),
+            "Flushed output should contain '2n', got: '{out2}'"
+        );
+        assert!(!r.line_start, "After flush, should be mid-line");
+        assert!(
+            r.line_buffer.is_empty(),
+            "line_buffer should be empty after flush"
+        );
+
+        // Step 3: Feed "d". Now mid-line fast path.
+        let out3 = r.render_delta("d");
+        assert_eq!(out3, "d", "Mid-line 'd' should render immediately");
+    }
+
+    #[test]
+    fn test_streaming_dash_word_flushes_on_non_list_char() {
+        // Contract: "-" at line start buffers (could be "- list" or "---" HR).
+        // "-b" triggers the quick disambiguation: second byte 'b' != ' ' && != '-'
+        // → needs_line_buffering returns false → buffer flushes.
+        let mut r = MarkdownRenderer::new();
+
+        // Step 1: Feed "-" at line start.
+        // needs_line_buffering: dash arm, len=1 < 2, skip quick disambig.
+        //   trimmed.len() < 2 → true → keep buffering.
+        let out1 = r.render_delta("-");
+        assert!(
+            out1.is_empty(),
+            "'-' at line start should buffer (ambiguous), got: '{out1}'"
+        );
+        assert_eq!(r.line_buffer, "-");
+
+        // Step 2: Feed "b". Buffer becomes "-b".
+        // needs_line_buffering: dash arm, len=2 >= 2, second=b'b',
+        //   b'b' != b' ' && b'b' != b'-' → return false.
+        // Buffer flushes as inline text.
+        let out2 = r.render_delta("b");
+        assert!(
+            !out2.is_empty(),
+            "'-b' should flush — 'b' disambiguates as non-list/HR"
+        );
+        assert!(
+            out2.contains("-b"),
+            "Flushed output should contain '-b', got: '{out2}'"
+        );
+        assert!(!r.line_start, "After flush, should be mid-line");
+    }
+
+    #[test]
+    fn test_streaming_list_item_buffers_then_resolves() {
+        // Contract: "- " at line start → needs_line_buffering=true,
+        // try_resolve_block_prefix → try_confirm_unordered_list("- ") returns None
+        // because rest is empty (could still be "- - -" horizontal rule).
+        // The list only confirms when a non-dash, non-space char appears after "- ".
+        let mut r = MarkdownRenderer::new();
+
+        // Feed "- " at line start.
+        // needs_line_buffering: dash arm, len=2, second=' ', so no early return.
+        //   trimmed.starts_with("- ") → true → returns true.
+        // try_resolve_block_prefix: try_confirm_unordered_list("- "):
+        //   strip_prefix("- ") → rest="", !rest.is_empty()=false → return None.
+        // So prefix is NOT resolved yet (could be "- - -" HR).
+        // flush_on_whitespace: first char '-' → returns empty.
+        let out1 = r.render_delta("- ");
+        assert!(
+            out1.is_empty(),
+            "'- ' alone should stay buffered (ambiguous with HR), got: '{out1}'"
+        );
+        assert_eq!(r.line_buffer, "- ", "line_buffer should contain '- '");
+        assert!(
+            r.line_start,
+            "line_start should still be true (not resolved)"
+        );
+
+        // Feed "item" — buffer becomes "- item".
+        // needs_line_buffering: dash arm, len>=2, second=' ', doesn't early-return.
+        //   trimmed.starts_with("- ") → true → returns true.
+        // try_resolve_block_prefix → try_confirm_unordered_list("- item"):
+        //   strip_prefix("- ") → rest="item", !rest.is_empty()=true,
+        //   rest.chars().any(|c| c != '-' && c != ' ') → 'i' qualifies → returns Some("item").
+        // Renders bullet prefix + content, sets line_start=false, block_prefix_rendered=true.
+        let out2 = r.render_delta("item");
+        assert!(
+            out2.contains(&format!("{CYAN}•{RESET}")),
+            "Bullet prefix should render when content confirms list item, got: '{out2}'"
+        );
+        assert!(
+            out2.contains("item"),
+            "List content should be rendered, got: '{out2}'"
+        );
+        assert!(
+            !r.line_start,
+            "line_start should be false after prefix resolution"
+        );
+        assert!(
+            r.block_prefix_rendered,
+            "block_prefix_rendered should be true"
+        );
+    }
+
+    #[test]
+    fn test_streaming_code_fence_buffers() {
+        // Contract: backticks at line start always buffer because could_be_fence
+        // stays true. They're never resolved by try_resolve_block_prefix (which
+        // only handles >, lists). They stay in the buffer until a newline arrives.
+        let mut r = MarkdownRenderer::new();
+
+        // Feed "`": buffer="`"
+        // needs_line_buffering: could_be_fence = starts_with('`') → true
+        let out1 = r.render_delta("`");
+        assert!(out1.is_empty(), "Single '`' should buffer, got: '{out1}'");
+        assert_eq!(r.line_buffer, "`");
+
+        // Feed "`": buffer="``"
+        // needs_line_buffering: starts_with('`') → true
+        let out2 = r.render_delta("`");
+        assert!(out2.is_empty(), "'``' should still buffer, got: '{out2}'");
+        assert_eq!(r.line_buffer, "``");
+
+        // Feed "`": buffer="```"
+        // needs_line_buffering: starts_with('`') → true
+        // try_resolve_block_prefix: no handler for '`' → empty
+        // flush_on_whitespace: first char '`' → returns empty
+        let out3 = r.render_delta("`");
+        assert!(
+            out3.is_empty(),
+            "'```' should still buffer (fence awaiting newline), got: '{out3}'"
+        );
+        assert_eq!(r.line_buffer, "```");
+        assert!(
+            !r.in_code_block,
+            "Should not be in code block yet (no newline)"
+        );
+    }
+
+    #[test]
+    fn test_streaming_header_resolves() {
+        // Contract: "#" at line start buffers (could_be_header=true).
+        // "# " also stays buffered — try_resolve_block_prefix doesn't handle '#',
+        // and flush_on_whitespace skips '#'. The heading only renders when a
+        // complete line arrives (newline triggers render_line which detects '#').
+        let mut r = MarkdownRenderer::new();
+
+        // Feed "# ": buffer = "# "
+        // needs_line_buffering: could_be_header = starts_with('#') → true
+        // try_resolve_block_prefix: first='#', no match → empty
+        // flush_on_whitespace: first char '#' → returns empty
+        let out1 = r.render_delta("# ");
+        assert!(
+            out1.is_empty(),
+            "'# ' should stay buffered (header not resolved until newline), got: '{out1}'"
+        );
+        assert_eq!(r.line_buffer, "# ");
+
+        // Feed "Title\n" — buffer becomes "# Title\n"
+        // render_delta_buffered: finds newline, line = "# Title"
+        // render_line: trimmed starts with '#' → BOLD+CYAN formatting
+        let out2 = r.render_delta("Title\n");
+        assert!(
+            out2.contains(&format!("{BOLD}{CYAN}")),
+            "Heading should have BOLD+CYAN formatting, got: '{out2}'"
+        );
+        assert!(
+            out2.contains("Title"),
+            "Heading output should contain 'Title', got: '{out2}'"
+        );
+        assert!(r.line_start, "After newline, line_start should be true");
+    }
+
+    #[test]
+    fn test_streaming_inside_code_block_immediate() {
+        // Contract: after entering a code block via "```\n", subsequent text at
+        // line start goes through the code-block early-resolve path (line ~1533).
+        // If the content can't be a closing fence (doesn't start with '`'), it
+        // flushes immediately as DIM-wrapped code.
+        let mut r = MarkdownRenderer::new();
+
+        // Open code block
+        let _ = r.render_delta("```\n");
+        assert!(r.in_code_block, "Should be in code block after '```\\n'");
+        assert!(r.line_start, "Should be at line_start after newline");
+
+        // Feed "x" at line start inside code block.
+        // render_delta_buffered: buffer="x", no newline.
+        // Code block early-resolve (line ~1533): in_code_block=true, line_start=true.
+        //   leading_spaces=0, trimmed="x", could_be_fence: 'x' != '`', "`".starts_with("x")=false → false.
+        //   Not a fence → flush: render_code_inline("x") = "{DIM}x{RESET}", line_start=false.
+        let out1 = r.render_delta("x");
+        assert!(
+            !out1.is_empty(),
+            "Code block content 'x' should resolve immediately (not a fence), got empty"
+        );
+        assert!(
+            out1.contains(&format!("{DIM}x{RESET}")),
+            "Code content should be DIM-wrapped, got: '{out1}'"
+        );
+        assert!(!r.line_start, "Should be mid-line after early code resolve");
+
+        // Feed " = 42" mid-line inside code block.
+        // render_delta: !line_start, in_code_block, no '\n' → render_code_inline(" = 42")
+        let out2 = r.render_delta(" = 42");
+        assert!(
+            out2.contains(&format!("{DIM} = 42{RESET}")),
+            "Mid-line code should be DIM-wrapped, got: '{out2}'"
+        );
+    }
+
+    #[test]
+    fn test_streaming_blockquote_recognized() {
+        // Contract: ">" at line start → needs_line_buffering returns true,
+        // try_resolve_block_prefix detects blockquote, renders DIM│ ITALIC prefix,
+        // sets line_start=false and block_prefix_rendered=true.
+        let mut r = MarkdownRenderer::new();
+
+        // Feed "> " at line start.
+        // needs_line_buffering: first='>' → true
+        // try_resolve_block_prefix: first='>' → blockquote path:
+        //   strip '>' → " ", strip ' ' → "" (rest is empty)
+        //   prefix_output = "{DIM}│{RESET} {ITALIC}", rest_output = ""
+        //   line_start=false, block_prefix_rendered=true
+        let out = r.render_delta("> ");
+        assert!(
+            out.contains(&format!("{DIM}│{RESET}")),
+            "Blockquote should render dim vertical bar, got: '{out}'"
+        );
+        assert!(
+            out.contains(&format!("{ITALIC}")),
+            "Blockquote should include ITALIC for content, got: '{out}'"
+        );
+        assert!(
+            !r.line_start,
+            "line_start should be false after blockquote prefix"
+        );
+        assert!(
+            r.block_prefix_rendered,
+            "block_prefix_rendered should be true"
+        );
+
+        // Subsequent content streams via mid-line fast path
+        let out2 = r.render_delta("quoted");
+        assert!(
+            !out2.is_empty(),
+            "Content after blockquote prefix should stream immediately"
+        );
+        assert!(
+            out2.contains("quoted"),
+            "Should contain 'quoted', got: '{out2}'"
+        );
+    }
 }

@@ -334,6 +334,7 @@ pub struct Config {
     pub auto_approve: bool,
     pub permissions: PermissionConfig,
     pub dir_restrictions: DirectoryRestrictions,
+    pub audit_log: bool,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -347,6 +348,19 @@ pub fn enable_verbose() {
 /// Check if verbose output is enabled.
 pub fn is_verbose() -> bool {
     *VERBOSE.get_or_init(|| false)
+}
+
+/// Whether audit logging is enabled. Set once at startup.
+static AUDIT_LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Enable audit logging.
+pub fn enable_audit_log() {
+    let _ = AUDIT_LOG.set(true);
+}
+
+/// Check if audit logging is enabled.
+pub fn is_audit_log() -> bool {
+    *AUDIT_LOG.get_or_init(|| false)
 }
 
 /// Project context file names, checked in order. YOYO.md is the canonical name;
@@ -383,6 +397,7 @@ pub fn print_help() {
     println!("  --deny <pat>      Auto-deny bash commands matching glob pattern (repeatable)");
     println!("  --allow-dir <d>   Restrict file access to this directory (repeatable)");
     println!("  --deny-dir <d>    Block file access to this directory (repeatable)");
+    println!("  --audit-log       Enable tool execution audit log (.yoyo/audit.jsonl)");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -422,6 +437,7 @@ pub fn print_help() {
     println!("  /tokens           Show token usage and context window");
     println!("  /tree [depth]     Show project directory tree (default depth: 3)");
     println!("  /undo             Revert all uncommitted changes (git checkout)");
+    println!("  /audit [n]        Show recent audit log entries (default: last 10)");
     println!("  /version          Show yoyo version");
     println!();
     println!("Environment:");
@@ -446,6 +462,7 @@ pub fn print_help() {
     println!("  thinking = \"medium\"");
     println!("  max_tokens = 4096");
     println!("  max_turns = 20");
+    println!("  audit_log = true");
     println!("  api_key = \"sk-ant-...\"");
     println!("  system_prompt = \"You are a Go expert\"");
     println!("  system_file = \"prompts/system.txt\"");
@@ -523,6 +540,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--allow-dir",
     "--deny-dir",
     "--image",
+    "--audit-log",
     "--no-color",
     "--verbose",
     "-v",
@@ -1187,6 +1205,9 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 
     let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
 
+    let audit_log = args.iter().any(|a| a == "--audit-log")
+        || file_config.get("audit_log").is_some_and(|v| v == "true");
+
     let auto_approve = args.iter().any(|a| a == "--yes" || a == "-y");
 
     // --allow <pattern> flags: collect all allow patterns (repeatable)
@@ -1279,6 +1300,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         auto_approve,
         permissions,
         dir_restrictions,
+        audit_log,
     })
 }
 
