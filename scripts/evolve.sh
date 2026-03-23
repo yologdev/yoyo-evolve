@@ -1,6 +1,7 @@
 #!/bin/bash
-# scripts/evolve.sh — One evolution cycle. Run every 4 hours via GitHub Actions or manually.
-# Bonus runs (hours 4, 12, 20) exit early if no GitHub Sponsors.
+# scripts/evolve.sh — One evolution cycle. Cron fires hourly; gap-based gate controls frequency.
+# Tier 0 ($0/mo): 8h gap (~3/day) | Tier 1 ($10+/mo): 6h (~4/day) | Tier 2 ($50+/mo): 4h (~6/day)
+# One-time sponsors ($1 = 1 run) get accelerated runs that bypass the gap.
 #
 # Usage:
 #   ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
@@ -10,7 +11,7 @@
 #   REPO               — GitHub repo (default: yologdev/yoyo-evolve)
 #   MODEL              — LLM model (default: claude-opus-4-6)
 #   TIMEOUT            — Planning phase time budget in seconds (default: 1200)
-#   FORCE_RUN          — Set to "true" to bypass the bonus-run gate
+#   FORCE_RUN          — Set to "true" to bypass the run-frequency gate
 
 set -euo pipefail
 
@@ -37,14 +38,14 @@ echo "Model: $MODEL"
 echo "Plan timeout: ${TIMEOUT}s | Impl timeout: 900s/task"
 echo ""
 
-# ── Step 0: Fetch sponsors & bonus-run gate ──
+# ── Step 0: Fetch sponsors & run-frequency gate ──
 # Two sponsor models:
-#   Monthly ($X/mo) → tier-based run frequency (3/4/6 runs per day)
+#   Monthly ($X/mo) → tier-based run frequency (gap between runs)
 #   One-time ($X)   → each $1 = 1 accelerated run (credits tracked in sponsors/credits.json)
 #
-# Tier 0 ($0/mo):   3 runs/day (hours 0, 8, 16)
-# Tier 1 ($10+/mo): 4 runs/day (hours 0, 8, 12, 16)
-# Tier 2 ($50+/mo): 6 runs/day (all hours)
+# Tier 0 ($0/mo):   8h gap (~3 runs/day)
+# Tier 1 ($10+/mo): 6h gap (~4 runs/day)
+# Tier 2 ($50+/mo): 4h gap (~6 runs/day)
 SPONSORS_FILE="/tmp/sponsor_logins.json"
 CREDITS_FILE="sponsors/credits.json"
 SPONSOR_TIER=0
@@ -156,48 +157,47 @@ if [ "$HAS_ONETIME_CREDITS" = "true" ]; then
     echo "→ One-time sponsors with remaining credits detected."
 fi
 
-# Bonus-run gate based on sponsor tier.
-# Cron fires every hour. Base slots: 0, 8, 16.
-# GitHub Actions delays can shift start times by 30-90 min, so we use ±1 hour ranges.
-# Tier 0 ($0/mo):   run at 7-9, 15-17, 23-1  → 3 runs/day
-# Tier 1 ($10+/mo): also 11-13               → 4 runs/day
-# Tier 2 ($50+/mo): also 3-5, 19-21          → 6 runs/day
-# One-time credits: override skip if sponsor has open issues
-CURRENT_HOUR=$((10#$(date +%H)))
+# Run-frequency gate.
+# Cron fires every hour. Decide whether to run based on:
+#   1. One-time sponsor credits → always run (accelerated)
+#   2. Gap since last non-accelerated run → run if ≥ threshold
+# Gap thresholds by tier:
+#   Tier 0 ($0/mo):   8h → ~3 runs/day
+#   Tier 1 ($10+/mo): 6h → ~4 runs/day
+#   Tier 2 ($50+/mo): 4h → ~6 runs/day
+MIN_GAP_SECS=$((8 * 3600))
+if [ "$SPONSOR_TIER" -ge 2 ] 2>/dev/null; then
+    MIN_GAP_SECS=$((4 * 3600))
+elif [ "$SPONSOR_TIER" -ge 1 ] 2>/dev/null; then
+    MIN_GAP_SECS=$((6 * 3600))
+fi
+
+# Check last non-accelerated run (filter out [accelerated] wrap-up commits)
+LAST_SCHEDULED_EPOCH=$(git log --format="%ct %s" --grep="session wrap-up" -20 2>/dev/null \
+    | { grep -v "\[accelerated\]" || true; } | head -1 | awk '{print $1}')
+LAST_SCHEDULED_EPOCH="${LAST_SCHEDULED_EPOCH:-0}"
+NOW_EPOCH=$(date +%s)
+ELAPSED=$((NOW_EPOCH - LAST_SCHEDULED_EPOCH))
+
 SKIP_RUN="false"
-IS_BASE_SLOT="false"
+IS_ACCELERATED="false"
 
-# Base slots: hours 23, 0, 1, 7, 8, 9, 15, 16, 17
-case "$CURRENT_HOUR" in
-    23|0|1|7|8|9|15|16|17)
-        IS_BASE_SLOT="true"
-        ;;
-    11|12|13)
-        [ "$SPONSOR_TIER" -lt 1 ] 2>/dev/null && SKIP_RUN="true"
-        ;;
-    3|4|5|19|20|21)
-        [ "$SPONSOR_TIER" -lt 2 ] 2>/dev/null && SKIP_RUN="true"
-        ;;
-    *)
-        SKIP_RUN="true"
-        ;;
-esac
-
-# One-time sponsors with credits override the skip
-if [ "$SKIP_RUN" = "true" ] && [ "$HAS_ONETIME_CREDITS" = "true" ]; then
-    echo "  One-time sponsor credits available — overriding skip."
-    SKIP_RUN="false"
+if [ "$HAS_ONETIME_CREDITS" != "true" ] && [ "$ELAPSED" -lt "$MIN_GAP_SECS" ]; then
+    SKIP_RUN="true"
+    ELAPSED_H=$((ELAPSED / 3600))
+    MIN_GAP_H=$((MIN_GAP_SECS / 3600))
+    echo "  Last scheduled run ${ELAPSED_H}h ago — need ${MIN_GAP_H}h gap (tier $SPONSOR_TIER)."
 fi
 
 if [ "$SKIP_RUN" = "true" ] && [ "${FORCE_RUN:-}" != "true" ]; then
-    echo "  Bonus slot (hour $CURRENT_HOUR) — tier $SPONSOR_TIER. Skipping."
     echo "  Set FORCE_RUN=true to override."
     exit 0
 fi
 
 # Consume one-time sponsor credits for this run
+ACCELERATED_BY=""
 if [ "$HAS_ONETIME_CREDITS" = "true" ]; then
-    python3 <<'PYEOF'
+    ACCELERATED_BY=$(python3 <<'PYEOF'
 import json, os
 from datetime import datetime, timezone
 CREDITS_FILE = "sponsors/credits.json"
@@ -206,15 +206,25 @@ try:
 except (json.JSONDecodeError, FileNotFoundError):
     credits = {}
 today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+consumed_login = ""
 for login, info in credits.items():
     max_runs = info.get('total_cents', 0) // 100
     if info.get('used_runs', 0) < max_runs:
         info['used_runs'] = info.get('used_runs', 0) + 1
         info['last_used'] = today
+        consumed_login = login
         break  # consume one credit per run
-json.dump(credits, open(CREDITS_FILE, 'w'), indent=2)
+if consumed_login:
+    json.dump(credits, open(CREDITS_FILE, 'w'), indent=2)
+print(consumed_login)
 PYEOF
-    echo "  Consumed one-time sponsor credit."
+    ) || true
+    if [ -n "$ACCELERATED_BY" ]; then
+        IS_ACCELERATED="true"
+        echo "  Consumed one-time sponsor credit (from @$ACCELERATED_BY) — accelerated run."
+    else
+        echo "  WARNING: No credits remaining to consume. Running as scheduled."
+    fi
 fi
 echo ""
 
@@ -833,7 +843,9 @@ Today is Day $DAY ($DATE $SESSION_TIME).
 $YOYO_CONTEXT
 
 This session's commits: $COMMITS
-
+${ACCELERATED_BY:+
+This was an ACCELERATED run funded by @$ACCELERATED_BY (one-time sponsor). Thank them in your journal entry!
+}
 Read JOURNAL.md to see your previous entries and match the voice/style.
 Then read the communicate skill for formatting rules.
 
@@ -927,6 +939,23 @@ fi
 # The agent directly calls `gh issue comment` and `gh issue close` — no intermediary files.
 ISSUE_COUNT=$(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null) || ISSUE_COUNT=0
 if [ "$ISSUE_COUNT" -gt 0 ] && command -v gh &>/dev/null; then
+    # Pre-filter: find issues already commented on today (cross-session dedup)
+    SKIP_COUNT=0
+    ALREADY_RESPONDED=""
+    while IFS= read -r check_num; do
+        [ -z "$check_num" ] && continue
+        LAST_COMMENT=$(gh api "repos/$REPO/issues/$check_num/comments?per_page=1&sort=created&direction=desc" --jq '.[0].body' 2>/dev/null || true)
+        if echo "$LAST_COMMENT" | grep -q "Day $DAY"; then
+            SKIP_COUNT=$((SKIP_COUNT + 1))
+            ALREADY_RESPONDED="${ALREADY_RESPONDED} #${check_num}"
+        fi
+    done < <(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | grep -oE '[0-9]+')
+    ISSUE_COUNT=$((ISSUE_COUNT - SKIP_COUNT))
+    if [ "$SKIP_COUNT" -gt 0 ]; then
+        echo "  Already responded today:${ALREADY_RESPONDED}"
+    fi
+fi
+if [ "$ISSUE_COUNT" -gt 0 ] && command -v gh &>/dev/null; then
     echo ""
     echo "→ Responding to issues (agent-driven)..."
     SESSION_COMMITS=$(git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" || true)
@@ -972,7 +1001,8 @@ For EACH issue listed above, you must:
    - Close (after commenting): gh issue close NUMBER --repo $REPO
 
 Rules:
-- Respond to EVERY issue. Real people are waiting.
+${ALREADY_RESPONDED:+- SKIP these issues (already responded today):${ALREADY_RESPONDED}. Do NOT comment on them again.
+}- Respond to every OTHER issue. Real people are waiting.
 - Comment on each issue EXACTLY ONCE. Never post a second comment on the same issue in the same session.
 - DO close issues that are clearly resolved — leaving stale issues open creates noise for humans. Always comment first explaining why.
 - Only keep open if there's genuinely more work to do.
@@ -1046,7 +1076,11 @@ fi
 # Commit any remaining uncommitted changes (journal, day counter, etc.)
 git add -A
 if ! git diff --cached --quiet; then
-    git commit -m "Day $DAY ($SESSION_TIME): session wrap-up"
+    if [ "$IS_ACCELERATED" = "true" ]; then
+        git commit -m "Day $DAY ($SESSION_TIME): session wrap-up [accelerated]"
+    else
+        git commit -m "Day $DAY ($SESSION_TIME): session wrap-up"
+    fi
     echo "  Committed session wrap-up."
 else
     echo "  No uncommitted changes remaining."

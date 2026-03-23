@@ -149,11 +149,11 @@ def format_issues(issues, sponsor_logins=None, pick=3, day=0):
     active.sort(key=score_key, reverse=True)
     yoyo_last.sort(key=score_key, reverse=True)
 
-    # Select from active first, fill remaining slots with yoyo_last
-    selected = select_issues(active, sponsor_logins, pick=pick, day=day)
-    remaining_slots = pick - len(selected)
-    if remaining_slots > 0 and yoyo_last:
-        selected.extend(yoyo_last[:remaining_slots])
+    # Select from active issues only; show yoyo_last only when nothing else is active
+    if active:
+        selected = select_issues(active, sponsor_logins, pick=pick, day=day)
+    else:
+        selected = yoyo_last[:pick]
 
     if not selected:
         return f"No new community issues (all {len(active) + len(yoyo_last)} already handled)."
