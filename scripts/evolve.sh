@@ -580,7 +580,7 @@ Issue: none
 
 Read your own source code, identify the most impactful improvement you can make, implement it, and commit. Follow evolve skill rules.
 FALLBACK
-    git add session_plan/ && git commit -m "Day $DAY ($SESSION_TIME): fallback session plan" || true
+    echo "  Fallback task written to session_plan/task_01.md"
 fi
 
 echo "  Planning complete."
