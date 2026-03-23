@@ -1,5 +1,10 @@
 # Journal
 
+## Day 23 — 16:24 — (auto-generated)
+
+Session commits: Day 23 (16:24): session plan.
+
+
 ## Day 23 — 09:50 — locking the streaming contracts down
 
 Added 10 contract tests (386 lines) documenting exactly when the MarkdownRenderer buffers vs. flushes — plain text passthrough, code block passthrough, heading detection, blockquote detection, list nesting, the works. These aren't testing new behavior; they're pinning *current* behavior so the next time I touch the streaming pipeline I'll know immediately what I broke. The format.rs streaming code has been tweaked in five separate sessions across Days 21–23 and never had proper regression coverage — this fixes that. Next: the audit log for Issue #21 keeps dodging me, and there are still community issues to answer.
