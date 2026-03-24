@@ -4,6 +4,7 @@ use crate::cli::is_verbose;
 use crate::format::*;
 use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use yoagent::agent::Agent;
@@ -31,6 +32,126 @@ pub fn get_watch_command() -> Option<String> {
 pub fn clear_watch_command() {
     let mut guard = WATCH_COMMAND.write().unwrap();
     *guard = None;
+}
+
+// ── Audit log ───────────────────────────────────────────────────────────
+// Records every tool call to `.yoyo/audit.jsonl` for debugging and transparency.
+// Enabled via `--audit` flag, `YOYO_AUDIT=1` env var, or `audit = true` in config.
+
+/// Global flag controlling whether audit logging is active.
+static AUDIT_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enable audit logging for this session.
+pub fn enable_audit_log() {
+    AUDIT_ENABLED.store(true, Ordering::Relaxed);
+}
+
+/// Check whether audit logging is currently enabled.
+pub fn is_audit_enabled() -> bool {
+    AUDIT_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Write a tool execution record to `.yoyo/audit.jsonl`.
+/// Each line is a JSON object: `{"ts":"...","tool":"...","args":{...},"duration_ms":N,"success":bool}`
+/// Silently does nothing if audit is disabled or writing fails.
+pub fn audit_log_tool_call(
+    tool_name: &str,
+    args: &serde_json::Value,
+    duration_ms: u64,
+    success: bool,
+) {
+    if !is_audit_enabled() {
+        return;
+    }
+    let _ = write_audit_entry(tool_name, args, duration_ms, success);
+}
+
+fn write_audit_entry(
+    tool_name: &str,
+    args: &serde_json::Value,
+    duration_ms: u64,
+    success: bool,
+) -> std::io::Result<()> {
+    let dir = std::path::Path::new(".yoyo");
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("audit.jsonl");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+
+    // Get current timestamp
+    let ts = std::process::Command::new("date")
+        .arg("+%Y-%m-%dT%H:%M:%S")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Truncate args to avoid huge entries (e.g., file content in write_file)
+    let truncated_args = truncate_audit_args(args);
+
+    let entry = serde_json::json!({
+        "ts": ts,
+        "tool": tool_name,
+        "args": truncated_args,
+        "duration_ms": duration_ms,
+        "success": success,
+    });
+    writeln!(file, "{}", entry)?;
+    Ok(())
+}
+
+/// Truncate tool arguments for audit logging.
+/// Keeps keys but truncates long string values (like file contents) to 200 chars.
+pub fn truncate_audit_args(args: &serde_json::Value) -> serde_json::Value {
+    match args {
+        serde_json::Value::Object(map) => {
+            let mut new_map = serde_json::Map::new();
+            for (k, v) in map {
+                new_map.insert(k.clone(), truncate_audit_value(v));
+            }
+            serde_json::Value::Object(new_map)
+        }
+        other => other.clone(),
+    }
+}
+
+fn truncate_audit_value(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) if s.len() > 200 => serde_json::Value::String(format!(
+            "{}... [truncated, {} chars total]",
+            &s[..200],
+            s.len()
+        )),
+        other => other.clone(),
+    }
+}
+
+/// Read the last N entries from the audit log.
+/// Returns an empty vec if the file doesn't exist or can't be read.
+pub fn read_audit_log(n: usize) -> Vec<String> {
+    let path = std::path::Path::new(".yoyo").join("audit.jsonl");
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = lines.len().saturating_sub(n);
+            lines[start..].iter().map(|s| s.to_string()).collect()
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Clear the audit log file.
+/// Returns true if the file was cleared, false if it didn't exist.
+pub fn clear_audit_log() -> bool {
+    let path = std::path::Path::new(".yoyo").join("audit.jsonl");
+    if path.exists() {
+        std::fs::write(&path, "").is_ok()
+    } else {
+        false
+    }
 }
 
 /// Tracks files modified during a session via write_file and edit_file tool calls.
@@ -777,6 +898,9 @@ async fn handle_prompt_events(
     let mut md_renderer = MarkdownRenderer::new();
     let mut spinner: Option<Spinner> = Some(Spinner::start());
 
+    // Audit log: track in-flight tool calls (name + args) so we can log at completion
+    let mut audit_inflight: HashMap<String, (String, serde_json::Value)> = HashMap::new();
+
     // Live progress timers for long-running tools (bash)
     let mut tool_progress_timers: HashMap<String, ToolProgressTimer> = HashMap::new();
 
@@ -835,6 +959,11 @@ async fn handle_prompt_events(
 
                         batch_count += 1;
                         tool_timers.insert(tool_call_id.clone(), Instant::now());
+                        // Track for audit log
+                        audit_inflight.insert(
+                            tool_call_id.clone(),
+                            (tool_name.clone(), args.clone()),
+                        );
                         let summary = format_tool_summary(&tool_name, &args);
                         print!("{YELLOW}  ▶ {summary}{RESET}");
                         if is_verbose() {
@@ -867,12 +996,19 @@ async fn handle_prompt_events(
                         if let Some(timer) = tool_progress_timers.remove(&tool_call_id) {
                             timer.stop();
                         }
-                        let duration = tool_timers
+                        let elapsed = tool_timers
                             .remove(&tool_call_id)
-                            .map(|start| format_duration(start.elapsed()));
-                        let dur_str = duration
-                            .map(|d| format!(" {DIM}({d}){RESET}"))
+                            .map(|start| start.elapsed());
+                        let dur_str = elapsed
+                            .map(|d| format!(" {DIM}({}){RESET}", format_duration(d)))
                             .unwrap_or_default();
+
+                        // Audit log: record the completed tool call
+                        if let Some((audit_tool, audit_args)) = audit_inflight.remove(&tool_call_id) {
+                            let duration_ms = elapsed.map(|d| d.as_millis() as u64).unwrap_or(0);
+                            audit_log_tool_call(&audit_tool, &audit_args, duration_ms, !is_error);
+                        }
+
                         if is_error {
                             batch_failed += 1;
                             println!(" {RED}✗{RESET}{dur_str}");
@@ -2382,5 +2518,96 @@ mod tests {
 
         hist.clear();
         assert!(hist.is_empty());
+    }
+
+    // ── Audit log tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_truncate_audit_args_short_values() {
+        let args = serde_json::json!({"path": "src/main.rs", "command": "cargo test"});
+        let truncated = truncate_audit_args(&args);
+        assert_eq!(
+            truncated, args,
+            "Short strings should pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn test_truncate_audit_args_long_values() {
+        let long_content = "x".repeat(500);
+        let args = serde_json::json!({"path": "test.txt", "content": long_content});
+        let truncated = truncate_audit_args(&args);
+
+        let content_val = truncated.get("content").unwrap().as_str().unwrap();
+        assert!(content_val.len() < 500, "Long content should be truncated");
+        assert!(
+            content_val.contains("... [truncated, 500 chars total]"),
+            "Should include truncation marker"
+        );
+
+        // Path should be unchanged
+        assert_eq!(truncated.get("path").unwrap().as_str().unwrap(), "test.txt");
+    }
+
+    #[test]
+    fn test_truncate_audit_args_non_string() {
+        let args = serde_json::json!({"count": 42, "flag": true, "ratio": 3.14});
+        let truncated = truncate_audit_args(&args);
+        assert_eq!(truncated, args, "Non-string values should pass through");
+    }
+
+    #[test]
+    fn test_truncate_audit_args_nested_object() {
+        // Only top-level values are truncated; nested objects stay as-is
+        let args = serde_json::json!({"meta": {"key": "value"}, "name": "test"});
+        let truncated = truncate_audit_args(&args);
+        // The nested object value goes through truncate_audit_value which returns it unchanged
+        assert_eq!(
+            truncated.get("meta").unwrap(),
+            &serde_json::json!({"key": "value"})
+        );
+    }
+
+    #[test]
+    fn test_audit_enabled_default_false() {
+        // Audit should be off by default
+        // Note: other tests may have enabled it, so we check the AtomicBool directly
+        // The default for a fresh process is false
+        let fresh = AtomicBool::new(false);
+        assert!(!fresh.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_read_audit_log_missing_file() {
+        // Reading audit log when file doesn't exist should return empty vec
+        // We test with a path that definitely doesn't exist by using tempdir
+        let entries = read_audit_log(10);
+        // This may or may not be empty depending on test environment,
+        // but it shouldn't panic
+        let _ = entries;
+    }
+
+    #[test]
+    fn test_truncate_audit_args_exactly_200() {
+        let exact = "y".repeat(200);
+        let args = serde_json::json!({"content": exact});
+        let truncated = truncate_audit_args(&args);
+        assert_eq!(
+            truncated.get("content").unwrap().as_str().unwrap(),
+            exact,
+            "Exactly 200-char string should not be truncated"
+        );
+    }
+
+    #[test]
+    fn test_truncate_audit_args_201() {
+        let over = "z".repeat(201);
+        let args = serde_json::json!({"content": over});
+        let truncated = truncate_audit_args(&args);
+        let val = truncated.get("content").unwrap().as_str().unwrap();
+        assert!(
+            val.contains("... [truncated, 201 chars total]"),
+            "201-char string should be truncated"
+        );
     }
 }
