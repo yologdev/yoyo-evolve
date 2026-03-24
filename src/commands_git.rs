@@ -162,30 +162,189 @@ pub fn format_diff_stat(summary: &DiffStatSummary) -> String {
     output
 }
 
-pub fn handle_diff() {
+/// Parsed options for the `/diff` command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiffOptions {
+    pub staged_only: bool,
+    pub name_only: bool,
+    pub file: Option<String>,
+}
+
+/// Parse `/diff` arguments into structured options.
+///
+/// Supports:
+/// - `/diff` — all changes (default)
+/// - `/diff --staged` or `/diff --cached` — staged only
+/// - `/diff --name-only` — filenames only
+/// - `/diff <file>` — diff for a specific file
+/// - Combined: `/diff --staged --name-only src/main.rs`
+pub fn parse_diff_args(input: &str) -> DiffOptions {
+    let rest = input.strip_prefix("/diff").unwrap_or("").trim();
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let mut staged_only = false;
+    let mut name_only = false;
+    let mut file = None;
+
+    for part in parts {
+        match part {
+            "--staged" | "--cached" => staged_only = true,
+            "--name-only" => name_only = true,
+            _ => file = Some(part.to_string()),
+        }
+    }
+
+    DiffOptions {
+        staged_only,
+        name_only,
+        file,
+    }
+}
+
+pub fn handle_diff(input: &str) {
+    let opts = parse_diff_args(input);
+
     // Check if we're in a git repo
     match run_git(&["status", "--short"]) {
         Ok(status) if status.is_empty() => {
             println!("{DIM}  (no uncommitted changes){RESET}\n");
         }
-        Ok(status) => {
-            // Get the stat summary
-            let stat_text = run_git(&["diff", "--stat"]).unwrap_or_default();
+        Ok(_status) => {
+            // ── Name-only mode: just list changed filenames ──────────
+            if opts.name_only {
+                let mut args = vec!["diff", "--name-only"];
+                if opts.staged_only {
+                    args.push("--cached");
+                }
+                let file_ref;
+                if let Some(ref f) = opts.file {
+                    args.push("--");
+                    file_ref = f.as_str();
+                    args.push(file_ref);
+                }
+                let names = run_git(&args).unwrap_or_default();
+                // If not staged-only, also grab staged names
+                if !opts.staged_only {
+                    let mut staged_args = vec!["diff", "--name-only", "--cached"];
+                    let staged_file_ref;
+                    if let Some(ref f) = opts.file {
+                        staged_args.push("--");
+                        staged_file_ref = f.as_str();
+                        staged_args.push(staged_file_ref);
+                    }
+                    let staged_names = run_git(&staged_args).unwrap_or_default();
+                    // Combine and deduplicate
+                    let mut all_files: Vec<&str> = names
+                        .lines()
+                        .chain(staged_names.lines())
+                        .filter(|l| !l.trim().is_empty())
+                        .collect();
+                    all_files.sort();
+                    all_files.dedup();
+                    if all_files.is_empty() {
+                        println!("{DIM}  (no changed files){RESET}\n");
+                    } else {
+                        println!("{DIM}  Changed files:{RESET}");
+                        for f in &all_files {
+                            println!("    {f}");
+                        }
+                        println!();
+                    }
+                } else if names.trim().is_empty() {
+                    println!("{DIM}  (no staged files){RESET}\n");
+                } else {
+                    println!("{DIM}  Staged files:{RESET}");
+                    for f in names.lines().filter(|l| !l.trim().is_empty()) {
+                        println!("    {f}");
+                    }
+                    println!();
+                }
+                return;
+            }
 
-            // Also include staged changes in stat
+            // ── Staged-only mode ────────────────────────────────────
+            if opts.staged_only {
+                let mut stat_args = vec!["diff", "--cached", "--stat"];
+                let stat_file_ref;
+                if let Some(ref f) = opts.file {
+                    stat_args.push("--");
+                    stat_file_ref = f.as_str();
+                    stat_args.push(stat_file_ref);
+                }
+                let stat_text = run_git(&stat_args).unwrap_or_default();
+
+                if stat_text.trim().is_empty() {
+                    println!("{DIM}  (no staged changes){RESET}\n");
+                    return;
+                }
+
+                let summary = parse_diff_stat(&stat_text);
+                let formatted = format_diff_stat(&summary);
+                if !formatted.is_empty() {
+                    print!("{formatted}");
+                }
+
+                // Full staged diff
+                let mut diff_args = vec!["diff", "--cached"];
+                let diff_file_ref;
+                if let Some(ref f) = opts.file {
+                    diff_args.push("--");
+                    diff_file_ref = f.as_str();
+                    diff_args.push(diff_file_ref);
+                }
+                let full_diff = run_git(&diff_args).unwrap_or_default();
+                if !full_diff.trim().is_empty() {
+                    println!("\n{DIM}  ── Staged diff ──{RESET}");
+                    print!("{}", colorize_diff(&full_diff));
+                    println!();
+                }
+                return;
+            }
+
+            // ── File-specific mode (unstaged + staged) ──────────────
+            if let Some(ref file) = opts.file {
+                let stat_text =
+                    run_git(&["diff", "--stat", "--", file.as_str()]).unwrap_or_default();
+                let staged_stat_text =
+                    run_git(&["diff", "--cached", "--stat", "--", file.as_str()])
+                        .unwrap_or_default();
+
+                let combined_stat = combine_stats(&stat_text, &staged_stat_text);
+                if combined_stat.trim().is_empty() {
+                    println!("{DIM}  (no changes for {file}){RESET}\n");
+                    return;
+                }
+
+                let summary = parse_diff_stat(&combined_stat);
+                let formatted = format_diff_stat(&summary);
+                if !formatted.is_empty() {
+                    print!("{formatted}");
+                }
+
+                let full_diff = run_git(&["diff", "--", file.as_str()]).unwrap_or_default();
+                let staged_diff =
+                    run_git(&["diff", "--cached", "--", file.as_str()]).unwrap_or_default();
+                let combined_diff = combine_stats(&full_diff, &staged_diff);
+                if !combined_diff.trim().is_empty() {
+                    println!("\n{DIM}  ── Diff for {file} ──{RESET}");
+                    print!("{}", colorize_diff(&combined_diff));
+                    println!();
+                }
+                return;
+            }
+
+            // ── Default: show all changes (original behavior) ───────
+            let stat_text = run_git(&["diff", "--stat"]).unwrap_or_default();
             let staged_stat_text = run_git(&["diff", "--cached", "--stat"]).unwrap_or_default();
 
             // Show file status list
             println!("{DIM}  Changes:");
-            for line in status.lines() {
+            for line in _status.lines() {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
-                // Color by status code
                 let (color, rest) = if trimmed.len() >= 2 {
-                    let code = &trimmed[..2];
-                    match code.chars().next().unwrap_or(' ') {
+                    match trimmed.chars().next().unwrap_or(' ') {
                         'M' | 'A' | 'R' => (format!("{GREEN}"), trimmed),
                         'D' => (format!("{RED}"), trimmed),
                         '?' => (format!("{YELLOW}"), trimmed),
@@ -198,16 +357,7 @@ pub fn handle_diff() {
             }
             println!("{RESET}");
 
-            // Parse and display stat summary
-            let combined_stat =
-                if !staged_stat_text.trim().is_empty() && !stat_text.trim().is_empty() {
-                    format!("{}\n{}", staged_stat_text, stat_text)
-                } else if !staged_stat_text.trim().is_empty() {
-                    staged_stat_text
-                } else {
-                    stat_text
-                };
-
+            let combined_stat = combine_stats(&stat_text, &staged_stat_text);
             if !combined_stat.trim().is_empty() {
                 let summary = parse_diff_stat(&combined_stat);
                 let formatted = format_diff_stat(&summary);
@@ -216,9 +366,7 @@ pub fn handle_diff() {
                 }
             }
 
-            // Show the full diff with colored patches
             let full_diff = run_git(&["diff"]).unwrap_or_default();
-
             if !full_diff.trim().is_empty() {
                 println!("\n{DIM}  ── Full diff ──{RESET}");
                 print!("{}", colorize_diff(&full_diff));
@@ -226,6 +374,17 @@ pub fn handle_diff() {
             }
         }
         _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+    }
+}
+
+/// Combine two stat/diff outputs, deduplicating if both are present.
+fn combine_stats(a: &str, b: &str) -> String {
+    if !a.trim().is_empty() && !b.trim().is_empty() {
+        format!("{}\n{}", a, b)
+    } else if !b.trim().is_empty() {
+        b.to_string()
+    } else {
+        a.to_string()
     }
 }
 
@@ -1207,5 +1366,63 @@ mod tests {
         assert!(formatted.contains("Cargo.toml"));
         // Should contain "2 files changed"
         assert!(formatted.contains("2 files changed"));
+    }
+
+    // ── parse_diff_args tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_diff_args_empty() {
+        let opts = parse_diff_args("/diff");
+        assert!(!opts.staged_only);
+        assert!(!opts.name_only);
+        assert_eq!(opts.file, None);
+    }
+
+    #[test]
+    fn test_parse_diff_args_staged() {
+        let opts = parse_diff_args("/diff --staged");
+        assert!(opts.staged_only);
+        assert!(!opts.name_only);
+        assert_eq!(opts.file, None);
+    }
+
+    #[test]
+    fn test_parse_diff_args_cached() {
+        let opts = parse_diff_args("/diff --cached");
+        assert!(opts.staged_only, "--cached should be an alias for --staged");
+        assert!(!opts.name_only);
+        assert_eq!(opts.file, None);
+    }
+
+    #[test]
+    fn test_parse_diff_args_name_only() {
+        let opts = parse_diff_args("/diff --name-only");
+        assert!(!opts.staged_only);
+        assert!(opts.name_only);
+        assert_eq!(opts.file, None);
+    }
+
+    #[test]
+    fn test_parse_diff_args_file() {
+        let opts = parse_diff_args("/diff src/main.rs");
+        assert!(!opts.staged_only);
+        assert!(!opts.name_only);
+        assert_eq!(opts.file, Some("src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn test_parse_diff_args_staged_and_file() {
+        let opts = parse_diff_args("/diff --staged src/main.rs");
+        assert!(opts.staged_only);
+        assert!(!opts.name_only);
+        assert_eq!(opts.file, Some("src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn test_parse_diff_args_all_flags() {
+        let opts = parse_diff_args("/diff --staged --name-only src/main.rs");
+        assert!(opts.staged_only);
+        assert!(opts.name_only);
+        assert_eq!(opts.file, Some("src/main.rs".to_string()));
     }
 }

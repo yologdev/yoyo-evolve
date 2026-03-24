@@ -269,9 +269,15 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /load my-debug-session.json",
         ),
         "diff" => Some(
-            "/diff — Show file summary, change stats, and full diff\n\n\
-             Displays a summary of uncommitted changes: files modified,\n\
-             lines added/removed, and the full git diff output.\n\
+            "/diff [options] [file] — Show git changes\n\n\
+             Usage:\n\
+             \x20 /diff                    Show all uncommitted changes\n\
+             \x20 /diff --staged           Show only staged changes\n\
+             \x20 /diff --name-only        List changed filenames only\n\
+             \x20 /diff src/main.rs        Show changes for a specific file\n\
+             \x20 /diff --staged main.rs   Staged changes for a specific file\n\n\
+             Aliases: --staged, --cached\n\n\
+             Displays file summary, change stats, and colored diff output.\n\
              Works in any git repository.",
         ),
         "undo" => Some(
@@ -632,7 +638,7 @@ pub fn help_text() -> String {
     // ── Git ──
     out.push_str("  ── Git ──\n");
     out.push_str("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash\n");
-    out.push_str("  /diff              Show file summary, change stats, and full diff\n");
+    out.push_str("  /diff [opts] [file] Show git changes (--staged, --name-only, file filter)\n");
     out.push_str("  /undo [N|--all]    Undo last turn's changes (or all uncommitted)\n");
     out.push_str("  /commit [msg]      Commit staged changes (AI-generates message if no msg)\n");
     out.push_str("  /pr [number]       List open PRs, view, diff, comment, or checkout a PR\n");
@@ -987,6 +993,23 @@ mod tests {
         assert!(
             !candidates.contains(&"add".to_string()),
             "Should not include 'add' for prefix 'co'"
+        );
+    }
+
+    #[test]
+    fn test_diff_help_mentions_staged() {
+        let help = command_help("diff").expect("diff should have help text");
+        assert!(
+            help.contains("--staged"),
+            "diff help should mention --staged"
+        );
+        assert!(
+            help.contains("--name-only"),
+            "diff help should mention --name-only"
+        );
+        assert!(
+            help.contains("--cached"),
+            "diff help should mention --cached alias"
         );
     }
 }

@@ -444,8 +444,8 @@ pub async fn run_repl(
                 print!("{result}");
                 continue;
             }
-            "/diff" => {
-                commands::handle_diff();
+            s if s == "/diff" || s.starts_with("/diff ") => {
+                commands::handle_diff(s);
                 continue;
             }
             s if s == "/undo" || s.starts_with("/undo ") => {

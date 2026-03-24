@@ -113,6 +113,9 @@ pub const UNDO_OPTIONS: &[&str] = &["--all"];
 /// Refactor subcommand names for `/refactor <Tab>` completion.
 pub const REFACTOR_SUBCOMMANDS: &[&str] = &["rename", "extract", "move"];
 
+/// Diff flag names for `/diff <Tab>` completion.
+pub const DIFF_FLAGS: &[&str] = &["--staged", "--cached", "--name-only"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -123,6 +126,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/model" => filter_candidates(KNOWN_MODELS, &partial_lower),
         "/think" => filter_candidates(THINKING_LEVELS, &partial_lower),
         "/git" => filter_candidates(GIT_SUBCOMMANDS, &partial_lower),
+        "/diff" => filter_candidates(DIFF_FLAGS, &partial_lower),
         "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
         "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
         "/save" | "/load" => list_json_files(partial_arg),
