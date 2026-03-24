@@ -21,6 +21,7 @@ use yoagent::*;
 /// and for tab-completion in the REPL.
 pub const KNOWN_COMMANDS: &[&str] = &[
     "/add",
+    "/apply",
     "/help",
     "/quit",
     "/exit",
@@ -76,6 +77,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/refactor",
     "/watch",
     "/ast",
+    "/stash",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -129,6 +131,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/refactor" => filter_candidates(REFACTOR_SUBCOMMANDS, &partial_lower),
         "/watch" => filter_candidates(crate::commands_project::WATCH_SUBCOMMANDS, &partial_lower),
         "/ast" => filter_candidates(crate::commands_project::AST_GREP_FLAGS, &partial_lower),
+        "/apply" => filter_candidates(crate::commands_project::APPLY_FLAGS, &partial_lower),
         _ => Vec::new(),
     }
 }
@@ -464,17 +467,19 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    expand_file_mentions, handle_add, handle_ast_grep, handle_context, handle_docs, handle_doctor,
-    handle_extract, handle_find, handle_fix, handle_grep, handle_health, handle_index, handle_init,
-    handle_lint, handle_move, handle_plan, handle_refactor, handle_rename, handle_run,
-    handle_run_usage, handle_test, handle_tree, handle_watch, handle_web, AddResult,
+    expand_file_mentions, handle_add, handle_apply, handle_ast_grep, handle_context, handle_docs,
+    handle_doctor, handle_extract, handle_find, handle_fix, handle_grep, handle_health,
+    handle_index, handle_init, handle_lint, handle_move, handle_plan, handle_refactor,
+    handle_rename, handle_run, handle_run_usage, handle_test, handle_tree, handle_watch,
+    handle_web, AddResult,
 };
 
 // Session-related handlers
 pub use crate::commands_session::{
     auto_compact_if_needed, auto_save_on_exit, clear_confirmation_message, handle_compact,
     handle_export, handle_history, handle_jump, handle_load, handle_mark, handle_marks,
-    handle_save, handle_search, handle_spawn, last_session_exists, Bookmarks, SpawnTracker,
+    handle_save, handle_search, handle_spawn, handle_stash, last_session_exists, Bookmarks,
+    SpawnTracker,
 };
 
 // Memory-related handlers

@@ -439,6 +439,11 @@ pub async fn run_repl(
                 commands::handle_load(agent, input);
                 continue;
             }
+            s if s == "/stash" || s.starts_with("/stash ") => {
+                let result = commands::handle_stash(agent, s);
+                print!("{result}");
+                continue;
+            }
             "/diff" => {
                 commands::handle_diff();
                 continue;
@@ -646,6 +651,10 @@ pub async fn run_repl(
             }
             s if s == "/ast" || s.starts_with("/ast ") => {
                 commands::handle_ast_grep(input);
+                continue;
+            }
+            s if s == "/apply" || s.starts_with("/apply ") => {
+                commands::handle_apply(input);
                 continue;
             }
             s if s.starts_with("/run ") || (s.starts_with('!') && s.len() > 1) => {

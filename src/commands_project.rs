@@ -1,11 +1,13 @@
-//! Project-related command handlers: /add, /context, /init, /doctor, /health, /fix, /test,
-//! /lint, /tree, /run, /docs, /find, /index, /web, /refactor, /watch, /ast.
+//! Project-related command handlers: /add, /apply, /context, /init, /doctor, /health, /fix,
+//! /test, /lint, /tree, /run, /docs, /find, /index, /web, /refactor, /watch, /ast.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
 use crate::docs;
 use crate::format::*;
 use crate::prompt::*;
+
+use std::io::IsTerminal;
 
 use yoagent::agent::Agent;
 use yoagent::*;
@@ -3968,6 +3970,181 @@ pub fn handle_ast_grep(input: &str) {
     }
 }
 
+// ── /apply ──────────────────────────────────────────────────────────────
+
+/// Tab-completion flags for `/apply`.
+pub const APPLY_FLAGS: &[&str] = &["--check"];
+
+/// Parsed arguments for the `/apply` command.
+#[derive(Debug, PartialEq)]
+pub struct ApplyArgs {
+    /// Path to the patch file (None if reading from stdin).
+    pub file: Option<String>,
+    /// Dry-run mode: show what would change without applying.
+    pub check_only: bool,
+}
+
+/// Parse `/apply` arguments.
+///
+/// Accepted forms:
+///   /apply                     — no file (read from stdin or show usage)
+///   /apply patch.diff          — apply the given patch file
+///   /apply --check patch.diff  — dry-run
+///   /apply patch.diff --check  — dry-run (flag can be before or after file)
+pub fn parse_apply_args(input: &str) -> ApplyArgs {
+    let rest = input.strip_prefix("/apply").unwrap_or("").trim();
+
+    if rest.is_empty() {
+        return ApplyArgs {
+            file: None,
+            check_only: false,
+        };
+    }
+
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let mut check_only = false;
+    let mut file: Option<String> = None;
+
+    for part in &parts {
+        if *part == "--check" {
+            check_only = true;
+        } else if file.is_none() {
+            file = Some(part.to_string());
+        }
+    }
+
+    ApplyArgs { file, check_only }
+}
+
+/// Apply a patch file using `git apply`. Returns `(success, output_message)`.
+pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
+    use std::process::Command;
+
+    // Verify file exists
+    if !std::path::Path::new(path).exists() {
+        return (false, format!("Patch file not found: {path}"));
+    }
+
+    // First get stat output to show a summary
+    let stat_result = Command::new("git").args(["apply", "--stat", path]).output();
+
+    let stat_text = match &stat_result {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+        Err(_) => String::new(),
+    };
+
+    // Run the actual apply (or check)
+    let mut args = vec!["apply"];
+    if check_only {
+        args.push("--check");
+    }
+    args.push(path);
+
+    match Command::new("git").args(&args).output() {
+        Ok(output) => {
+            if output.status.success() {
+                let mut msg = String::new();
+                if check_only {
+                    msg.push_str("Dry-run OK — patch can be applied cleanly.\n");
+                } else {
+                    msg.push_str("Patch applied successfully.\n");
+                }
+                if !stat_text.is_empty() {
+                    msg.push_str("\nFiles affected:\n");
+                    msg.push_str(&stat_text);
+                }
+                (true, msg)
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let mut msg = String::new();
+                if check_only {
+                    msg.push_str("Dry-run FAILED — patch cannot be applied cleanly.\n");
+                } else {
+                    msg.push_str("Failed to apply patch.\n");
+                }
+                if !stderr.is_empty() {
+                    msg.push_str(&stderr);
+                }
+                (false, msg)
+            }
+        }
+        Err(e) => (false, format!("Failed to run git apply: {e}")),
+    }
+}
+
+/// Apply a patch from string content. Writes to a temp file, applies, then cleans up.
+/// Returns `(success, output_message)`.
+pub fn apply_patch_from_string(patch: &str, check_only: bool) -> (bool, String) {
+    if patch.trim().is_empty() {
+        return (false, "Empty patch content — nothing to apply.".to_string());
+    }
+
+    // Write to a temp file
+    let tmp_dir = std::env::temp_dir();
+    let tmp_path = tmp_dir.join("yoyo_apply_patch.tmp");
+    let tmp_str = tmp_path.to_string_lossy().to_string();
+
+    if let Err(e) = std::fs::write(&tmp_path, patch) {
+        return (false, format!("Failed to write temp patch file: {e}"));
+    }
+
+    let result = apply_patch(&tmp_str, check_only);
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&tmp_path);
+
+    result
+}
+
+/// Handle the `/apply` REPL command.
+pub fn handle_apply(input: &str) {
+    let args = parse_apply_args(input);
+
+    match args.file {
+        Some(path) => {
+            let mode = if args.check_only {
+                "Checking"
+            } else {
+                "Applying"
+            };
+            println!("{DIM}  {mode} patch: {path}{RESET}");
+
+            let (ok, msg) = apply_patch(&path, args.check_only);
+            if ok {
+                println!("{GREEN}  {msg}{RESET}");
+            } else {
+                println!("{YELLOW}  {msg}{RESET}");
+            }
+        }
+        None => {
+            // No file provided — check if stdin is piped
+            if std::io::stdin().is_terminal() {
+                // Interactive mode: show usage
+                println!("{DIM}  Usage: /apply <file>        Apply a patch file");
+                println!("         /apply --check <file>  Dry-run (show what would change)");
+                println!("         cat patch.diff | yoyo  Pipe patch via stdin (non-interactive){RESET}\n");
+            } else {
+                // Piped mode: read patch from stdin
+                use std::io::Read;
+                let mut patch = String::new();
+                match std::io::stdin().read_to_string(&mut patch) {
+                    Ok(_) => {
+                        let (ok, msg) = apply_patch_from_string(&patch, args.check_only);
+                        if ok {
+                            println!("{GREEN}  {msg}{RESET}");
+                        } else {
+                            println!("{YELLOW}  {msg}{RESET}");
+                        }
+                    }
+                    Err(e) => {
+                        println!("{YELLOW}  Failed to read patch from stdin: {e}{RESET}\n");
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6792,5 +6969,153 @@ impl B {
     fn test_handle_ast_grep_no_panic_with_pattern() {
         // Should not panic even if sg is not installed
         handle_ast_grep("/ast $X.unwrap()");
+    }
+
+    // ── /apply tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_apply_in_known_commands() {
+        assert!(
+            KNOWN_COMMANDS.contains(&"/apply"),
+            "/apply should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_apply_in_help_text() {
+        let help = help_text();
+        assert!(help.contains("/apply"), "/apply should appear in help text");
+    }
+
+    #[test]
+    fn test_apply_parse_args_file() {
+        let args = parse_apply_args("/apply patch.diff");
+        assert_eq!(args.file, Some("patch.diff".to_string()));
+        assert!(!args.check_only);
+    }
+
+    #[test]
+    fn test_apply_parse_args_check() {
+        let args = parse_apply_args("/apply --check patch.diff");
+        assert_eq!(args.file, Some("patch.diff".to_string()));
+        assert!(args.check_only);
+    }
+
+    #[test]
+    fn test_apply_parse_args_check_after_file() {
+        let args = parse_apply_args("/apply patch.diff --check");
+        assert_eq!(args.file, Some("patch.diff".to_string()));
+        assert!(args.check_only);
+    }
+
+    #[test]
+    fn test_apply_parse_args_empty() {
+        let args = parse_apply_args("/apply");
+        assert_eq!(args.file, None);
+        assert!(!args.check_only);
+    }
+
+    #[test]
+    fn test_apply_parse_args_empty_with_spaces() {
+        let args = parse_apply_args("/apply   ");
+        assert_eq!(args.file, None);
+        assert!(!args.check_only);
+    }
+
+    #[test]
+    fn test_apply_patch_nonexistent_file() {
+        let (ok, msg) = apply_patch("nonexistent_patch_file_12345.diff", false);
+        assert!(!ok);
+        assert!(
+            msg.contains("not found"),
+            "Expected 'not found', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_apply_patch_from_string_empty() {
+        let (ok, msg) = apply_patch_from_string("", false);
+        assert!(!ok);
+        assert!(
+            msg.contains("Empty"),
+            "Expected 'Empty' in message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_apply_help_text_exists() {
+        use crate::help::command_help;
+        assert!(
+            command_help("apply").is_some(),
+            "/apply should have detailed help"
+        );
+    }
+
+    #[test]
+    fn test_apply_tab_completion() {
+        use crate::commands::command_arg_completions;
+        let candidates = command_arg_completions("/apply", "");
+        assert!(
+            candidates.contains(&"--check".to_string()),
+            "Should include '--check'"
+        );
+    }
+
+    #[test]
+    fn test_apply_tab_completion_filters() {
+        use crate::commands::command_arg_completions;
+        let candidates = command_arg_completions("/apply", "--c");
+        assert!(
+            candidates.contains(&"--check".to_string()),
+            "Should include '--check' for prefix '--c'"
+        );
+    }
+
+    #[test]
+    fn test_apply_patch_from_string_valid_in_git_repo() {
+        // Create a temp dir with a git repo and test applying a real patch
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("hello.txt");
+        fs::write(&file_path, "hello\n").unwrap();
+
+        // Initialize git repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        // Create a patch
+        let patch = "--- a/hello.txt\n+++ b/hello.txt\n@@ -1 +1 @@\n-hello\n+hello world\n";
+        let patch_path = dir.path().join("test.patch");
+        fs::write(&patch_path, patch).unwrap();
+
+        // Apply with --check first
+        let patch_str = patch_path.to_string_lossy().to_string();
+        let old_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let (ok, msg) = apply_patch(&patch_str, true);
+        assert!(ok, "Check should succeed: {msg}");
+
+        // Apply for real
+        let (ok, msg) = apply_patch(&patch_str, false);
+        assert!(ok, "Apply should succeed: {msg}");
+
+        // Verify file changed
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "hello world\n");
+
+        std::env::set_current_dir(old_dir).unwrap();
     }
 }

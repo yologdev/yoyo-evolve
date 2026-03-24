@@ -37,6 +37,16 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /add Cargo.toml:1-20\n\
              \x20 /add src/*.rs tests/*.rs",
         ),
+        "apply" => Some(
+            "/apply [file] — Apply a diff or patch file\n\n\
+             Usage:\n\
+             \x20 /apply patch.diff          Apply a patch file\n\
+             \x20 /apply --check patch.diff  Dry-run: show what would change\n\n\
+             Uses `git apply` under the hood. Supports unified diff format.\n\n\
+             Examples:\n\
+             \x20 /apply fix.patch\n\
+             \x20 /apply --check changes.diff",
+        ),
         "help" => Some(
             "/help [command] — Show help information\n\n\
              Usage:\n\
@@ -569,6 +579,17 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /ast $X.unwrap() --lang rust\n\
              \x20 /ast fn $NAME($$$ARGS) --lang rust --in src/",
         ),
+        "stash" => Some(
+            "/stash — Save and restore conversation context\n\n\
+             Usage:\n\
+             \x20 /stash [desc]        Push current conversation and start fresh\n\
+             \x20 /stash push [desc]   Same as above\n\
+             \x20 /stash pop           Restore the most recent stashed conversation\n\
+             \x20 /stash list          Show all stashed conversations\n\
+             \x20 /stash drop [N]      Remove stash entry N (default: most recent)\n\n\
+             Like git stash, but for your conversation. Useful when you need to\n\
+             quickly switch tasks and come back later.",
+        ),
         _ => None,
     }
 }
@@ -603,6 +624,9 @@ pub fn help_text() -> String {
     out.push_str(
         "  /export [path]     Export conversation as readable markdown (default: conversation.md)\n",
     );
+    out.push_str(
+        "  /stash [desc]      Stash conversation and start fresh (like git stash for chat)\n",
+    );
     out.push('\n');
 
     // ── Git ──
@@ -628,6 +652,7 @@ pub fn help_text() -> String {
     out.push_str(
         "                     /add <path>:<start>-<end> for line ranges, /add src/*.rs for globs\n",
     );
+    out.push_str("  /apply <file>      Apply a diff or patch file (--check for dry-run)\n");
     out.push_str("  /context           Show loaded project context files\n");
     out.push_str("  /doctor            Run environment diagnostics (git, API key, config, etc.)\n");
     out.push_str("  /init              Scan project and generate a YOYO.md context file\n");
@@ -763,6 +788,7 @@ mod tests {
             "/forget",
             "/provider",
             "/changes",
+            "/stash",
         ];
         for cmd in &expected {
             assert!(text.contains(cmd), "help text should contain {cmd}");
@@ -797,7 +823,7 @@ mod tests {
         for cmd in &[
             "/help", "/quit", "/clear", "/compact", "/save", "/load", "/retry", "/status",
             "/tokens", "/cost", "/config", "/version", "/history", "/search", "/mark", "/jump",
-            "/marks", "/changes",
+            "/marks", "/changes", "/stash",
         ] {
             assert!(
                 session_section.contains(cmd),
