@@ -42,6 +42,7 @@ pub fn clear_watch_command() {
 static AUDIT_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Enable audit logging for this session.
+#[allow(dead_code)]
 pub fn enable_audit_log() {
     AUDIT_ENABLED.store(true, Ordering::Relaxed);
 }
@@ -131,6 +132,7 @@ fn truncate_audit_value(v: &serde_json::Value) -> serde_json::Value {
 
 /// Read the last N entries from the audit log.
 /// Returns an empty vec if the file doesn't exist or can't be read.
+#[allow(dead_code)]
 pub fn read_audit_log(n: usize) -> Vec<String> {
     let path = std::path::Path::new(".yoyo").join("audit.jsonl");
     match std::fs::read_to_string(&path) {
@@ -145,6 +147,7 @@ pub fn read_audit_log(n: usize) -> Vec<String> {
 
 /// Clear the audit log file.
 /// Returns true if the file was cleared, false if it didn't exist.
+#[allow(dead_code)]
 pub fn clear_audit_log() -> bool {
     let path = std::path::Path::new(".yoyo").join("audit.jsonl");
     if path.exists() {
@@ -2551,7 +2554,7 @@ mod tests {
 
     #[test]
     fn test_truncate_audit_args_non_string() {
-        let args = serde_json::json!({"count": 42, "flag": true, "ratio": 3.14});
+        let args = serde_json::json!({"count": 42, "flag": true, "ratio": 3.15});
         let truncated = truncate_audit_args(&args);
         assert_eq!(truncated, args, "Non-string values should pass through");
     }
