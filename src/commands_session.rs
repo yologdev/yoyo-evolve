@@ -997,6 +997,7 @@ pub fn handle_stash(agent: &mut Agent, input: &str) -> String {
 
 /// Return the description used for a stash entry when none is provided.
 /// Useful for testing the auto-generated name.
+#[cfg(test)]
 pub fn stash_default_description(index: usize) -> String {
     format!("stash@{{{index}}}")
 }
