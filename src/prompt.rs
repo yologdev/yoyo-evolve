@@ -3,7 +3,7 @@
 use crate::cli::is_verbose;
 use crate::format::*;
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use yoagent::agent::Agent;
@@ -909,16 +909,18 @@ async fn handle_prompt_events(
                             timer.set_line_count(line_count);
                         }
 
-                        // Show the last few lines of partial output (dimmed, updating)
-                        let text = extract_result_text(&partial_result);
-                        if !text.is_empty() {
-                            let tail = format_partial_tail(&text, 3);
-                            if !tail.is_empty() {
-                                // Clear previous partial output lines, then show new tail
-                                // Move cursor up for each line we previously wrote, then clear
-                                println!();
-                                println!("{tail}");
-                                io::stdout().flush().ok();
+                        // Only show partial output in interactive (terminal) mode.
+                        // In piped/CI mode, cursor-up sequences don't work and every
+                        // partial update becomes a permanent log line, inflating output.
+                        if io::stdout().is_terminal() {
+                            let text = extract_result_text(&partial_result);
+                            if !text.is_empty() {
+                                let tail = format_partial_tail(&text, 3);
+                                if !tail.is_empty() {
+                                    println!();
+                                    println!("{tail}");
+                                    io::stdout().flush().ok();
+                                }
                             }
                         }
                     }
