@@ -1058,7 +1058,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                 eprintln!("{RED}error:{RESET} image file not found: {img_path}");
                 std::process::exit(1);
             }
-            if !crate::commands_project::is_image_extension(img_path) {
+            if !crate::commands_file::is_image_extension(img_path) {
                 eprintln!(
                     "{RED}error:{RESET} '{img_path}' is not a supported image format. Supported: png, jpg, jpeg, gif, webp, bmp"
                 );

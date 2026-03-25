@@ -134,9 +134,9 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/help" => help_command_completions(&partial_lower),
         "/undo" => filter_candidates(UNDO_OPTIONS, &partial_lower),
         "/refactor" => filter_candidates(REFACTOR_SUBCOMMANDS, &partial_lower),
-        "/watch" => filter_candidates(crate::commands_project::WATCH_SUBCOMMANDS, &partial_lower),
-        "/ast" => filter_candidates(crate::commands_project::AST_GREP_FLAGS, &partial_lower),
-        "/apply" => filter_candidates(crate::commands_project::APPLY_FLAGS, &partial_lower),
+        "/watch" => filter_candidates(crate::commands_dev::WATCH_SUBCOMMANDS, &partial_lower),
+        "/ast" => filter_candidates(crate::commands_search::AST_GREP_FLAGS, &partial_lower),
+        "/apply" => filter_candidates(crate::commands_file::APPLY_FLAGS, &partial_lower),
         _ => Vec::new(),
     }
 }
@@ -472,11 +472,19 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    expand_file_mentions, handle_add, handle_apply, handle_ast_grep, handle_context, handle_docs,
-    handle_doctor, handle_extract, handle_find, handle_fix, handle_grep, handle_health,
-    handle_index, handle_init, handle_lint, handle_move, handle_plan, handle_refactor,
-    handle_rename, handle_run, handle_run_usage, handle_test, handle_todo, handle_tree,
-    handle_watch, handle_web, AddResult,
+    handle_context, handle_docs, handle_extract, handle_init, handle_move, handle_plan,
+    handle_refactor, handle_rename, handle_todo,
+};
+
+pub use crate::commands_search::{handle_ast_grep, handle_find, handle_grep, handle_index};
+
+pub use crate::commands_dev::{
+    handle_doctor, handle_fix, handle_health, handle_lint, handle_run, handle_run_usage,
+    handle_test, handle_tree, handle_watch,
+};
+
+pub use crate::commands_file::{
+    expand_file_mentions, handle_add, handle_apply, handle_web, AddResult,
 };
 
 // Session-related handlers
@@ -580,18 +588,23 @@ pub fn handle_forget(input: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands_dev::{
+        build_fix_prompt, build_project_tree, format_tree_from_paths, health_checks_for_project,
+        lint_command_for_project, run_health_check_for_project, run_health_checks_full_output,
+        run_shell_command, test_command_for_project,
+    };
     use crate::commands_git::{
         build_review_content, build_review_prompt, format_diff_stat, parse_diff_stat,
         parse_pr_args, DiffStatEntry, DiffStatSummary, PrSubcommand,
     };
     use crate::commands_project::{
-        build_commands_for_project, build_fix_prompt, build_plan_prompt, build_project_tree,
-        detect_project_name, detect_project_type, extract_first_meaningful_line, find_files,
-        format_project_index, format_tree_from_paths, fuzzy_score, generate_init_content,
-        health_checks_for_project, highlight_match, is_binary_extension, lint_command_for_project,
-        parse_plan_task, run_health_check_for_project, run_health_checks_full_output,
-        run_shell_command, scan_important_dirs, scan_important_files, test_command_for_project,
-        IndexEntry, ProjectType,
+        build_commands_for_project, build_plan_prompt, detect_project_name, detect_project_type,
+        generate_init_content, parse_plan_task, scan_important_dirs, scan_important_files,
+        ProjectType,
+    };
+    use crate::commands_search::{
+        extract_first_meaningful_line, find_files, format_project_index, fuzzy_score,
+        highlight_match, is_binary_extension, IndexEntry,
     };
     use crate::commands_session::{parse_bookmark_name, parse_spawn_args, parse_spawn_task};
     use crate::memory::{

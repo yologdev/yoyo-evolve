@@ -37,8 +37,11 @@
 
 mod cli;
 mod commands;
+mod commands_dev;
+mod commands_file;
 mod commands_git;
 mod commands_project;
+mod commands_search;
 mod commands_session;
 mod docs;
 mod format;
@@ -1241,7 +1244,7 @@ async fn main() {
         let prompt_start = Instant::now();
         let response = if let Some(ref img_path) = image_path {
             // Multi-modal prompt: text + image
-            match commands_project::read_image_for_add(img_path) {
+            match commands_file::read_image_for_add(img_path) {
                 Ok((data, mime_type)) => {
                     let content_blocks = vec![
                         Content::Text {
