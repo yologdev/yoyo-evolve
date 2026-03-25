@@ -15,13 +15,13 @@ cargo run
 The prompt shows your current git branch (if you're in a git repo):
 
 ```
-main > _
+main 🐙 › _
 ```
 
 If you're not in a git repo, you get a plain prompt:
 
 ```
-> _
+🐙 › _
 ```
 
 ## Line editing & history

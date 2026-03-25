@@ -901,6 +901,9 @@ async fn handle_prompt_events(
     let mut md_renderer = MarkdownRenderer::new();
     let mut spinner: Option<Spinner> = Some(Spinner::start());
 
+    // Filter for <think>...</think> blocks that leak into text output
+    let mut think_filter = ThinkBlockFilter::new();
+
     // Audit log: track in-flight tool calls (name + args) so we can log at completion
     let mut audit_inflight: HashMap<String, (String, serde_json::Value)> = HashMap::new();
 
@@ -1109,15 +1112,26 @@ async fn handle_prompt_events(
                             in_text = true;
                             had_text = true;
                         }
+                        // Filter <think>...</think> blocks unless verbose mode
+                        let filtered = if is_verbose() {
+                            delta.clone()
+                        } else {
+                            think_filter.filter(&delta)
+                        };
+                        if filtered.is_empty() {
+                            // Inside a think block — nothing to render yet
+                            io::stdout().flush().ok();
+                            continue;
+                        }
                         // Render and display BEFORE collecting — minimizes time-to-screen.
                         // collected_text is only used after the stream ends, so ordering
                         // with print doesn't affect correctness. (render_latency_budget)
-                        let rendered = md_renderer.render_delta(&delta);
+                        let rendered = md_renderer.render_delta(&filtered);
                         if !rendered.is_empty() {
                             print!("{}", rendered);
                         }
                         io::stdout().flush().ok();
-                        collected_text.push_str(&delta);
+                        collected_text.push_str(&filtered);
                     }
                     AgentEvent::MessageUpdate {
                         delta: StreamDelta::Thinking { delta },
@@ -1138,6 +1152,17 @@ async fn handle_prompt_events(
                     AgentEvent::AgentEnd { messages } => {
                         // Stop spinner if still running
                         if let Some(s) = spinner.take() { s.stop(); }
+
+                        // Flush think block filter — emit any partial non-think text
+                        let remaining = think_filter.flush();
+                        if !remaining.is_empty() {
+                            let rendered = md_renderer.render_delta(&remaining);
+                            if !rendered.is_empty() {
+                                print!("{rendered}");
+                                io::stdout().flush().ok();
+                            }
+                            collected_text.push_str(&remaining);
+                        }
 
                         // Print batch summary if tools were the last thing before end
                         if batch_count > 0 {

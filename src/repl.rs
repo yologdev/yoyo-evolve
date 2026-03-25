@@ -276,9 +276,9 @@ pub async fn run_repl(
 
     loop {
         let prompt = if let Some(branch) = git_branch() {
-            format!("{BOLD}{GREEN}{branch}{RESET} {BOLD}{GREEN}> {RESET}")
+            format!("{BOLD}{GREEN}{branch}{RESET} {BOLD}{GREEN}🐙 › {RESET}")
         } else {
-            format!("{BOLD}{GREEN}> {RESET}")
+            format!("{BOLD}{GREEN}🐙 › {RESET}")
         };
 
         let line = match rl.readline(&prompt) {
@@ -937,6 +937,22 @@ fn extract_image_label(summary: &str, fallback_mime: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_prompt_has_octopus() {
+        // Verify the styled prompt contains the octopus emoji
+        let prompt_no_branch = format!("{BOLD}{GREEN}🐙 › {RESET}");
+        assert!(
+            prompt_no_branch.contains('🐙'),
+            "Prompt should contain octopus emoji"
+        );
+
+        let prompt_with_branch = format!("{BOLD}{GREEN}main{RESET} {BOLD}{GREEN}🐙 › {RESET}");
+        assert!(
+            prompt_with_branch.contains('🐙'),
+            "Branch prompt should contain octopus emoji"
+        );
+    }
 
     #[test]
     fn test_needs_continuation_backslash() {

@@ -2385,6 +2385,95 @@ impl Drop for ToolProgressTimer {
     }
 }
 
+// ── Think block filter ───────────────────────────────────────────────────
+// Filters `<think>...</think>` blocks from streamed text deltas.
+// Some models emit reasoning as raw text (not the Thinking stream),
+// and we don't want that XML leaking into the user-visible output.
+
+/// State machine for filtering `<think>...</think>` blocks from streamed text.
+/// Returns the text that should be displayed (everything outside think blocks).
+pub struct ThinkBlockFilter {
+    in_block: bool,
+    buffer: String,
+}
+
+impl ThinkBlockFilter {
+    pub fn new() -> Self {
+        Self {
+            in_block: false,
+            buffer: String::new(),
+        }
+    }
+
+    /// Process a text delta, returning only the visible (non-think) portion.
+    pub fn filter(&mut self, delta: &str) -> String {
+        let mut result = String::new();
+        self.buffer.push_str(delta);
+
+        loop {
+            if self.in_block {
+                // Look for </think>
+                if let Some(end_pos) = self.buffer.find("</think>") {
+                    // Skip everything up to and including </think>
+                    self.buffer = self.buffer[end_pos + 8..].to_string();
+                    self.in_block = false;
+                } else if self.buffer.ends_with('<')
+                    || self.buffer.ends_with("</")
+                    || self.buffer.ends_with("</t")
+                    || self.buffer.ends_with("</th")
+                    || self.buffer.ends_with("</thi")
+                    || self.buffer.ends_with("</thin")
+                    || self.buffer.ends_with("</think")
+                {
+                    // Might be a partial </think> — keep buffering
+                    break;
+                } else {
+                    // No closing tag possibility — discard buffer
+                    self.buffer.clear();
+                    break;
+                }
+            } else {
+                // Look for <think>
+                if let Some(start_pos) = self.buffer.find("<think>") {
+                    // Emit everything before <think>
+                    result.push_str(&self.buffer[..start_pos]);
+                    self.buffer = self.buffer[start_pos + 7..].to_string();
+                    self.in_block = true;
+                } else if self.buffer.ends_with('<')
+                    || self.buffer.ends_with("<t")
+                    || self.buffer.ends_with("<th")
+                    || self.buffer.ends_with("<thi")
+                    || self.buffer.ends_with("<thin")
+                    || self.buffer.ends_with("<think")
+                {
+                    // Might be a partial <think> — emit everything before the '<'
+                    if let Some(lt_pos) = self.buffer.rfind('<') {
+                        result.push_str(&self.buffer[..lt_pos]);
+                        self.buffer = self.buffer[lt_pos..].to_string();
+                    }
+                    break;
+                } else {
+                    // No tag possibility — emit all
+                    result.push_str(&self.buffer);
+                    self.buffer.clear();
+                    break;
+                }
+            }
+        }
+        result
+    }
+
+    /// Flush any remaining buffered text (call at end of stream).
+    pub fn flush(&mut self) -> String {
+        let remaining = std::mem::take(&mut self.buffer);
+        if self.in_block {
+            String::new() // Still inside think block — discard
+        } else {
+            remaining // Partial tag that never completed — emit as-is
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6566,5 +6655,103 @@ mod tests {
         // In test environment this is harmless.
         maybe_ring_bell(Duration::from_secs(3));
         maybe_ring_bell(Duration::from_secs(60));
+    }
+
+    // ── ThinkBlockFilter tests ───────────────────────────────────────
+
+    #[test]
+    fn test_think_filter_simple_block() {
+        let mut f = ThinkBlockFilter::new();
+        let out = f.filter("Hello <think>reasoning</think> World");
+        assert_eq!(out, "Hello  World");
+    }
+
+    #[test]
+    fn test_think_filter_no_block() {
+        let mut f = ThinkBlockFilter::new();
+        let out = f.filter("Hello World");
+        assert_eq!(out, "Hello World");
+    }
+
+    #[test]
+    fn test_think_filter_streaming_split() {
+        let mut f = ThinkBlockFilter::new();
+        let out1 = f.filter("Hello <thi");
+        assert_eq!(out1, "Hello ");
+        let out2 = f.filter("nk>secret</think> World");
+        assert_eq!(out2, " World");
+    }
+
+    #[test]
+    fn test_think_filter_nested_or_repeated() {
+        let mut f = ThinkBlockFilter::new();
+        let out = f.filter("A<think>x</think>B<think>y</think>C");
+        assert_eq!(out, "ABC");
+    }
+
+    #[test]
+    fn test_think_filter_partial_at_end() {
+        // Buffer has partial "<thi" that never completes — flush emits it as-is
+        let mut f = ThinkBlockFilter::new();
+        let out1 = f.filter("Hello <thi");
+        assert_eq!(out1, "Hello ");
+        let flushed = f.flush();
+        assert_eq!(flushed, "<thi");
+    }
+
+    #[test]
+    fn test_think_filter_flush_inside_block() {
+        // Flush while inside a think block — discard remaining
+        let mut f = ThinkBlockFilter::new();
+        let out = f.filter("Hello <think>still going");
+        assert_eq!(out, "Hello ");
+        let flushed = f.flush();
+        assert_eq!(flushed, "");
+    }
+
+    #[test]
+    fn test_think_filter_empty_input() {
+        let mut f = ThinkBlockFilter::new();
+        let out = f.filter("");
+        assert_eq!(out, "");
+        let flushed = f.flush();
+        assert_eq!(flushed, "");
+    }
+
+    #[test]
+    fn test_think_filter_block_at_start() {
+        let mut f = ThinkBlockFilter::new();
+        let out = f.filter("<think>hidden</think>visible");
+        assert_eq!(out, "visible");
+    }
+
+    #[test]
+    fn test_think_filter_block_at_end() {
+        let mut f = ThinkBlockFilter::new();
+        let out = f.filter("visible<think>hidden</think>");
+        assert_eq!(out, "visible");
+    }
+
+    #[test]
+    fn test_think_filter_split_closing_tag() {
+        // Closing tag split across deltas
+        let mut f = ThinkBlockFilter::new();
+        let out1 = f.filter("<think>hidden</thi");
+        assert_eq!(out1, "");
+        let out2 = f.filter("nk>visible");
+        assert_eq!(out2, "visible");
+    }
+
+    #[test]
+    fn test_think_filter_char_by_char() {
+        // Simulate extreme token-by-token streaming
+        let mut f = ThinkBlockFilter::new();
+        let input = "Hi<think>x</think>!";
+        let mut collected = String::new();
+        for ch in input.chars() {
+            collected.push_str(&f.filter(&ch.to_string()));
+        }
+        collected.push_str(&f.flush());
+        assert_eq!(collected, "Hi!");
     }
 }
