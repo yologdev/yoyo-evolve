@@ -1243,7 +1243,18 @@ fi
 
 # ── Step 7: Agent-driven issue responses ──
 # The agent directly calls `gh issue comment` and `gh issue close` — no intermediary files.
-ISSUE_COUNT=$(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null) || ISSUE_COUNT=0
+# Combine all issue sources so the response agent sees everything that was worked on.
+ALL_ISSUES="$(cat "$ISSUES_FILE" 2>/dev/null || true)"
+if [ -n "$SELF_ISSUES" ]; then
+    ALL_ISSUES="${ALL_ISSUES}
+${SELF_ISSUES}"
+fi
+ISSUE_RESPONSE_PLAN=""
+if [ -f "session_plan/issue_responses.md" ]; then
+    ISSUE_RESPONSE_PLAN=$(cat "session_plan/issue_responses.md")
+fi
+
+ISSUE_COUNT=$(echo "$ALL_ISSUES" | grep -c '^### Issue' 2>/dev/null) || ISSUE_COUNT=0
 if [ "$ISSUE_COUNT" -gt 0 ] && command -v gh &>/dev/null; then
     # Pre-filter: find issues already commented on today (cross-session dedup)
     SKIP_COUNT=0
@@ -1255,7 +1266,7 @@ if [ "$ISSUE_COUNT" -gt 0 ] && command -v gh &>/dev/null; then
             SKIP_COUNT=$((SKIP_COUNT + 1))
             ALREADY_RESPONDED="${ALREADY_RESPONDED} #${check_num}"
         fi
-    done < <(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | grep -oE '[0-9]+')
+    done < <(echo "$ALL_ISSUES" | grep -oE '### Issue #[0-9]+' | grep -oE '[0-9]+')
     ISSUE_COUNT=$((ISSUE_COUNT - SKIP_COUNT))
     if [ "$SKIP_COUNT" -gt 0 ]; then
         echo "  Already responded today:${ALREADY_RESPONDED}"
@@ -1280,9 +1291,12 @@ You are yoyo, a self-evolving coding agent. You just finished an evolution sessi
 Today is Day $DAY ($DATE $SESSION_TIME).
 Repository: $REPO
 
-Here are the community issues you were working with:
-$(cat "$ISSUES_FILE")
-
+Here are ALL the issues (community + self-filed) from this session:
+$ALL_ISSUES
+${ISSUE_RESPONSE_PLAN:+
+Here is what the planning agent decided for each issue:
+$ISSUE_RESPONSE_PLAN
+}
 Here are the commits you made this session:
 $SESSION_COMMITS
 
@@ -1339,7 +1353,7 @@ RESPONDEOF
             if echo "$LAST_COMMENT" | grep -q "Day $DAY"; then
                 COMMENTS_POSTED=$((COMMENTS_POSTED + 1))
             fi
-        done < <(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | grep -oE '[0-9]+')
+        done < <(echo "$ALL_ISSUES" | grep -oE '### Issue #[0-9]+' | grep -oE '[0-9]+')
         echo "  Agent posted $COMMENTS_POSTED issue comment(s)."
     fi
 
