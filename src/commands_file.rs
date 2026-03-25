@@ -9,6 +9,42 @@ use std::io::IsTerminal;
 /// Maximum characters to display from a fetched web page.
 const WEB_MAX_CHARS: usize = 5000;
 
+/// Case-insensitive search for an ASCII-only pattern in a UTF-8 string.
+///
+/// Returns the byte offset in `haystack` where `needle` starts.
+/// `needle` must be ASCII lowercase.
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let needle_bytes = needle.as_bytes();
+    let hay_bytes = haystack.as_bytes();
+    if needle_bytes.is_empty() || needle_bytes.len() > hay_bytes.len() {
+        return None;
+    }
+    'outer: for start in 0..=(hay_bytes.len() - needle_bytes.len()) {
+        for (k, &nb) in needle_bytes.iter().enumerate() {
+            if hay_bytes[start + k].to_ascii_lowercase() != nb {
+                continue 'outer;
+            }
+        }
+        return Some(start);
+    }
+    None
+}
+
+/// Check if `haystack` starts with ASCII lowercase `needle` (case-insensitive).
+fn starts_with_ascii_ci(haystack: &str, needle: &str) -> bool {
+    let hay_bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    if hay_bytes.len() < needle_bytes.len() {
+        return false;
+    }
+    for (k, &nb) in needle_bytes.iter().enumerate() {
+        if hay_bytes[k].to_ascii_lowercase() != nb {
+            return false;
+        }
+    }
+    true
+}
+
 /// Strip HTML tags and extract readable text content.
 ///
 /// This function:
@@ -21,94 +57,103 @@ const WEB_MAX_CHARS: usize = 5000;
 /// - Truncates to `max_chars`
 pub fn strip_html_tags(html: &str, max_chars: usize) -> String {
     // First pass: remove blocks we want to skip entirely (script, style, etc.)
-    let html_lower = html.to_lowercase();
+    // Uses find_ascii_ci for case-insensitive tag matching without pre-lowering
+    // the entire string (which would break byte-position correspondence for
+    // non-ASCII chars whose lowercase has a different byte length).
     let mut cleaned = String::with_capacity(html.len());
     let skip_tags = ["script", "style", "nav", "footer", "header", "svg"];
 
     let mut i = 0;
     let bytes = html.as_bytes();
-    let lower_bytes = html_lower.as_bytes();
 
     while i < bytes.len() {
+        // '<' is ASCII (0x3C) — never appears as a UTF-8 continuation byte
         if bytes[i] == b'<' {
-            // Check if this is a skip-tag opening
+            let rest = &html[i..];
             let mut found_skip = false;
             for tag in &skip_tags {
                 let open = format!("<{}", tag);
-                if i + open.len() <= lower_bytes.len()
-                    && html_lower[i..i + open.len()] == *open
-                    && (i + open.len() >= lower_bytes.len()
-                        || lower_bytes[i + open.len()] == b' '
-                        || lower_bytes[i + open.len()] == b'>'
-                        || lower_bytes[i + open.len()] == b'\t'
-                        || lower_bytes[i + open.len()] == b'\n')
-                {
-                    // Find the closing tag
-                    let close = format!("</{}>", tag);
-                    if let Some(end_pos) = html_lower[i..].find(&close) {
-                        i += end_pos + close.len();
-                        found_skip = true;
-                        break;
+                if starts_with_ascii_ci(rest, &open) {
+                    // Check delimiter after tag name (open is ASCII, so len is byte-safe)
+                    let after = &rest[open.len()..];
+                    if after.is_empty()
+                        || after.starts_with(' ')
+                        || after.starts_with('>')
+                        || after.starts_with('\t')
+                        || after.starts_with('\n')
+                    {
+                        // Find the closing tag (case-insensitive)
+                        let close = format!("</{}>", tag);
+                        if let Some(end_pos) = find_ascii_ci(rest, &close) {
+                            i += end_pos + close.len();
+                            found_skip = true;
+                            break;
+                        }
                     }
                 }
             }
             if !found_skip {
-                cleaned.push(bytes[i] as char);
-                i += 1;
+                cleaned.push('<');
+                i += 1; // '<' is 1 byte
             }
         } else {
-            cleaned.push(bytes[i] as char);
-            i += 1;
+            // Copy one full UTF-8 character. i is always at a char boundary
+            // because we only advance by char len or past single-byte ASCII '<'.
+            if let Some(c) = html[i..].chars().next() {
+                cleaned.push(c);
+                i += c.len_utf8();
+            } else {
+                break;
+            }
         }
     }
 
-    // Second pass: convert meaningful tags to formatting, strip the rest
+    // Second pass: convert meaningful tags to formatting, strip the rest.
+    // Tag delimiters '<' and '>' are ASCII, so byte-scanning for them is safe
+    // in UTF-8. Non-tag text is copied char-by-char to preserve multi-byte chars.
     let mut result = String::with_capacity(cleaned.len());
-    let cleaned_lower = cleaned.to_lowercase();
-    let cleaned_bytes = cleaned.as_bytes();
-    let len = cleaned_bytes.len();
+    let cbytes = cleaned.as_bytes();
     let mut j = 0;
 
-    while j < len {
-        if cleaned_bytes[j] == b'<' {
-            // Find end of tag
+    while j < cbytes.len() {
+        if cbytes[j] == b'<' {
             let tag_start = j;
             let mut tag_end = j + 1;
-            while tag_end < len && cleaned_bytes[tag_end] != b'>' {
+            // '>' is ASCII — safe to scan byte-by-byte
+            while tag_end < cbytes.len() && cbytes[tag_end] != b'>' {
                 tag_end += 1;
             }
-            if tag_end < len {
-                tag_end += 1; // include the '>'
+            if tag_end < cbytes.len() {
+                tag_end += 1; // include '>'
             }
 
-            let tag_lower = &cleaned_lower[tag_start..tag_end.min(len)];
+            let tag_content = &cleaned[tag_start..tag_end.min(cbytes.len())];
 
-            // Decide what to emit based on tag
-            if tag_lower.starts_with("<br") {
+            if starts_with_ascii_ci(tag_content, "<br") {
                 result.push('\n');
-            } else if tag_lower.starts_with("<li") {
+            } else if starts_with_ascii_ci(tag_content, "<li") {
                 result.push_str("\n• ");
-            } else if tag_lower.starts_with("<h1")
-                || tag_lower.starts_with("<h2")
-                || tag_lower.starts_with("<h3")
-                || tag_lower.starts_with("<h4")
-                || tag_lower.starts_with("<h5")
-                || tag_lower.starts_with("<h6")
+            } else if starts_with_ascii_ci(tag_content, "<h1")
+                || starts_with_ascii_ci(tag_content, "<h2")
+                || starts_with_ascii_ci(tag_content, "<h3")
+                || starts_with_ascii_ci(tag_content, "<h4")
+                || starts_with_ascii_ci(tag_content, "<h5")
+                || starts_with_ascii_ci(tag_content, "<h6")
             {
                 result.push_str("\n\n");
-            } else if tag_lower.starts_with("</h")
-                || tag_lower.starts_with("<p")
-                || tag_lower.starts_with("</p")
-                || tag_lower.starts_with("<div")
-                || tag_lower.starts_with("</div")
-                || tag_lower.starts_with("<tr")
-                || tag_lower.starts_with("</tr")
-                || tag_lower.starts_with("<blockquote")
-                || tag_lower.starts_with("</blockquote")
-                || tag_lower.starts_with("<section")
-                || tag_lower.starts_with("</section")
-                || tag_lower.starts_with("<article")
-                || tag_lower.starts_with("</article")
+            } else if starts_with_ascii_ci(tag_content, "</h")
+                || starts_with_ascii_ci(tag_content, "<p")
+                || starts_with_ascii_ci(tag_content, "</p")
+                || starts_with_ascii_ci(tag_content, "<div")
+                || starts_with_ascii_ci(tag_content, "</div")
+                || starts_with_ascii_ci(tag_content, "<tr")
+                || starts_with_ascii_ci(tag_content, "</tr")
+                || starts_with_ascii_ci(tag_content, "<blockquote")
+                || starts_with_ascii_ci(tag_content, "</blockquote")
+                || starts_with_ascii_ci(tag_content, "<section")
+                || starts_with_ascii_ci(tag_content, "</section")
+                || starts_with_ascii_ci(tag_content, "<article")
+                || starts_with_ascii_ci(tag_content, "</article")
             {
                 result.push('\n');
             }
@@ -116,10 +161,13 @@ pub fn strip_html_tags(html: &str, max_chars: usize) -> String {
 
             j = tag_end;
         } else {
-            // Safety: we're iterating byte-by-byte, but we need valid UTF-8.
-            // Use the original cleaned string's chars at this position.
-            result.push(cleaned_bytes[j] as char);
-            j += 1;
+            // Copy one full UTF-8 character
+            if let Some(c) = cleaned[j..].chars().next() {
+                result.push(c);
+                j += c.len_utf8();
+            } else {
+                break;
+            }
         }
     }
 
@@ -950,6 +998,63 @@ mod tests {
         let html = "<p>word&nbsp;word</p>";
         let text = strip_html_tags(html, 5000);
         assert!(text.contains("word word"));
+    }
+
+    #[test]
+    fn strip_html_non_ascii_content() {
+        // Common non-ASCII characters: middle dot, em dash, accented letters
+        let html = "<p>Price · $10 — café résumé</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("·"), "Should preserve middle dot");
+        assert!(text.contains("—"), "Should preserve em dash");
+        assert!(text.contains("café"), "Should preserve accented chars");
+        assert!(text.contains("résumé"), "Should preserve accented chars");
+    }
+
+    #[test]
+    fn strip_html_non_ascii_in_skip_tag() {
+        // Non-ASCII inside script tags should not panic
+        let html = "<p>Before</p><script>alert('café — naïve')</script><p>After</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Before"));
+        assert!(text.contains("After"));
+        assert!(!text.contains("café"));
+    }
+
+    #[test]
+    fn strip_html_chinese_japanese() {
+        let html = "<p>中文测试</p><div>日本語テスト</div>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("中文测试"), "Should preserve Chinese");
+        assert!(text.contains("日本語テスト"), "Should preserve Japanese");
+    }
+
+    #[test]
+    fn strip_html_mixed_multibyte() {
+        // Mix of ASCII and multi-byte throughout, including emoji
+        let html = "<h1>Hello 🌍 World</h1><p>naïve · recipe — Pro™</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("Hello 🌍 World"), "Should preserve emoji");
+        assert!(text.contains("naïve"), "Should preserve accented chars");
+        assert!(text.contains("·"), "Should preserve middle dot");
+        assert!(text.contains("—"), "Should preserve em dash");
+        assert!(text.contains("Pro™"), "Should preserve trademark");
+    }
+
+    #[test]
+    fn strip_html_emoji_in_tags() {
+        let html = "<li>🎉 Party</li><li>🚀 Launch</li>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("🎉 Party"));
+        assert!(text.contains("🚀 Launch"));
+    }
+
+    #[test]
+    fn strip_html_non_ascii_truncation() {
+        // Ensure truncation with non-ASCII doesn't panic
+        let html = "<p>".to_string() + &"café ".repeat(1000) + "</p>";
+        let text = strip_html_tags(&html, 100);
+        assert!(text.contains("[… truncated at 100 chars]"));
     }
 
     // ── is_valid_url ────────────────────────────────────────────────
