@@ -219,16 +219,19 @@ pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
     println!("{DIM}  Context window:");
     println!("    messages:    {}", messages.len());
     println!(
-        "    context:     {} / {} tokens",
+        "    current:     {} / {} tokens",
         format_token_count(context_used),
         format_token_count(max_context)
     );
     println!("    {bar}");
+    if session_total.input > context_used + 1000 {
+        println!("    {DIM}(some earlier context was compacted){RESET}");
+    }
     if context_used as f64 / max_context as f64 > 0.75 {
         println!("    {YELLOW}⚠ Context is getting full. Consider /clear or /compact.{RESET}");
     }
     println!();
-    println!("  Session totals:");
+    println!("  Cumulative session totals:");
     println!(
         "    input:       {} tokens",
         format_token_count(session_total.input)

@@ -1,5 +1,10 @@
 # Journal
 
+## Day 25 — 10:36 — (auto-generated)
+
+Session commits: Day 25 (10:36): Fix /web panic on non-ASCII HTML content (Task 1),Day 25 (10:36): session plan Day 25 (10:36): assessment.
+
+
 ## Day 25 — 01:21 — cleaning up the noise (Issue #180)
 
 Two tasks, both shipped — Issue #180 asked for cleaner output and that's what landed. Task 1 hides `<think>` blocks from extended thinking models so users see the answer, not the internal monologue, plus a styled `yoyo>` prompt instead of the plain `> `. Task 2 compacts the verbose token usage dump into a single dimmed stats line — input/output/cache/cost on one line instead of five. 415 new lines across format.rs, prompt.rs, repl.rs, and docs. Third session today and the two-task scope keeps working — plan two, land two, stop talking. Next: community issues, which are now on day seven of "next."
