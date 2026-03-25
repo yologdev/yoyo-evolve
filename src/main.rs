@@ -939,6 +939,12 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             }
             config
         }
+        "minimax" => {
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "minimax".into();
+            config.base_url = base_url.unwrap_or("https://api.minimax.io/v1").to_string();
+            config
+        }
         "custom" => {
             let url = base_url.unwrap_or("http://localhost:8080/v1");
             ModelConfig::local(url, model)

@@ -78,6 +78,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/watch",
     "/ast",
     "/stash",
+    "/todo",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -474,8 +475,8 @@ pub use crate::commands_project::{
     expand_file_mentions, handle_add, handle_apply, handle_ast_grep, handle_context, handle_docs,
     handle_doctor, handle_extract, handle_find, handle_fix, handle_grep, handle_health,
     handle_index, handle_init, handle_lint, handle_move, handle_plan, handle_refactor,
-    handle_rename, handle_run, handle_run_usage, handle_test, handle_tree, handle_watch,
-    handle_web, AddResult,
+    handle_rename, handle_run, handle_run_usage, handle_test, handle_todo, handle_tree,
+    handle_watch, handle_web, AddResult,
 };
 
 // Session-related handlers

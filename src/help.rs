@@ -596,6 +596,18 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Like git stash, but for your conversation. Useful when you need to\n\
              quickly switch tasks and come back later.",
         ),
+        "todo" => Some(
+            "/todo — Track tasks during complex operations\n\n\
+             Usage:\n\
+             \x20 /todo                    Show all tasks\n\
+             \x20 /todo add <description>  Add a new task\n\
+             \x20 /todo done <id>          Mark task as done\n\
+             \x20 /todo wip <id>           Mark as in-progress\n\
+             \x20 /todo remove <id>        Remove a task\n\
+             \x20 /todo clear              Clear all tasks\n\n\
+             Keep track of multi-step plans without losing context.\n\
+             Tasks persist for the duration of the session.",
+        ),
         _ => None,
     }
 }
@@ -632,6 +644,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /stash [desc]      Stash conversation and start fresh (like git stash for chat)\n",
+    );
+    out.push_str(
+        "  /todo [subcmd]     Track tasks: add, done, wip, remove, clear (in-session checklist)\n",
     );
     out.push('\n');
 
@@ -795,6 +810,7 @@ mod tests {
             "/provider",
             "/changes",
             "/stash",
+            "/todo",
         ];
         for cmd in &expected {
             assert!(text.contains(cmd), "help text should contain {cmd}");
@@ -829,7 +845,7 @@ mod tests {
         for cmd in &[
             "/help", "/quit", "/clear", "/compact", "/save", "/load", "/retry", "/status",
             "/tokens", "/cost", "/config", "/version", "/history", "/search", "/mark", "/jump",
-            "/marks", "/changes", "/stash",
+            "/marks", "/changes", "/stash", "/todo",
         ] {
             assert!(
                 session_section.contains(cmd),

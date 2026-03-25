@@ -32,6 +32,7 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "mistral",
     "cerebras",
     "zai",
+    "minimax",
     "custom",
 ];
 
@@ -1348,6 +1349,7 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
         "mistral" => Some("MISTRAL_API_KEY"),
         "cerebras" => Some("CEREBRAS_API_KEY"),
         "zai" => Some("ZAI_API_KEY"),
+        "minimax" => Some("MINIMAX_API_KEY"),
         "anthropic" => Some("ANTHROPIC_API_KEY"),
         _ => None,
     }
@@ -1423,6 +1425,7 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
         ],
         "cerebras" => &["llama-3.3-70b"],
         "zai" => &["glm-4-plus", "glm-4-air", "glm-4-flash"],
+        "minimax" => &["MiniMax-M1", "MiniMax-M1-40k"],
         "ollama" => &["llama3.2", "llama3.1", "codellama", "mistral"],
         _ => &[],
     }
@@ -1441,6 +1444,7 @@ pub fn default_model_for_provider(provider: &str) -> String {
         "mistral" => "mistral-large-latest".into(),
         "cerebras" => "llama-3.3-70b".into(),
         "zai" => "glm-4-plus".into(),
+        "minimax" => "MiniMax-M1".into(),
         _ => "claude-opus-4-6".into(),
     }
 }
@@ -2799,5 +2803,31 @@ system_prompt = "You are a Go expert"
         assert_eq!(result, "CLI text wins");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_minimax_provider_api_key_env() {
+        assert_eq!(provider_api_key_env("minimax"), Some("MINIMAX_API_KEY"));
+    }
+
+    #[test]
+    fn test_minimax_default_model() {
+        assert_eq!(default_model_for_provider("minimax"), "MiniMax-M1");
+    }
+
+    #[test]
+    fn test_minimax_known_models() {
+        let models = known_models_for_provider("minimax");
+        assert!(!models.is_empty(), "minimax should have known models");
+        assert!(models.contains(&"MiniMax-M1"));
+        assert!(models.contains(&"MiniMax-M1-40k"));
+    }
+
+    #[test]
+    fn test_minimax_in_known_providers() {
+        assert!(
+            KNOWN_PROVIDERS.contains(&"minimax"),
+            "minimax should be in KNOWN_PROVIDERS"
+        );
     }
 }

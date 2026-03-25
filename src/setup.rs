@@ -21,6 +21,7 @@ pub const WIZARD_PROVIDERS: &[(&str, &str)] = &[
     ("xai", "xAI (Grok)"),
     ("mistral", "Mistral"),
     ("cerebras", "Cerebras"),
+    ("minimax", "MiniMax"),
     ("custom", "Custom (self-hosted OpenAI-compatible)"),
 ];
 
@@ -469,7 +470,8 @@ mod tests {
         assert_eq!(parse_provider_choice("8"), Some("xai"));
         assert_eq!(parse_provider_choice("9"), Some("mistral"));
         assert_eq!(parse_provider_choice("10"), Some("cerebras"));
-        assert_eq!(parse_provider_choice("11"), Some("custom"));
+        assert_eq!(parse_provider_choice("11"), Some("minimax"));
+        assert_eq!(parse_provider_choice("12"), Some("custom"));
     }
 
     #[test]
@@ -480,6 +482,8 @@ mod tests {
         assert_eq!(parse_provider_choice("ollama"), Some("ollama"));
         assert_eq!(parse_provider_choice("cerebras"), Some("cerebras"));
         assert_eq!(parse_provider_choice("Cerebras"), Some("cerebras"));
+        assert_eq!(parse_provider_choice("minimax"), Some("minimax"));
+        assert_eq!(parse_provider_choice("MiniMax"), Some("minimax"));
         assert_eq!(parse_provider_choice("custom"), Some("custom"));
         assert_eq!(parse_provider_choice("CUSTOM"), Some("custom"));
     }
@@ -694,9 +698,28 @@ mod tests {
     }
 
     #[test]
+    fn test_wizard_minimax_flow() {
+        // Choose minimax (11), enter API key, accept default model, save=no
+        let input = "11\nsk-minimax-key\n\nn\n";
+        let mut reader = io::Cursor::new(input.as_bytes());
+        let mut output = Vec::new();
+
+        let result = run_wizard_interactive(&mut reader, &mut output);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.provider, "minimax");
+        assert_eq!(r.api_key, "sk-minimax-key");
+        assert_eq!(r.model, "MiniMax-M1"); // default for minimax
+        assert_eq!(r.base_url, None);
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("MiniMax"));
+    }
+
+    #[test]
     fn test_wizard_custom_provider_flow() {
-        // Choose custom (11), enter API key, enter base URL, accept default model, save=no
-        let input = "11\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
+        // Choose custom (12), enter API key, enter base URL, accept default model, save=no
+        let input = "12\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
 
@@ -714,8 +737,8 @@ mod tests {
 
     #[test]
     fn test_wizard_custom_provider_no_base_url_returns_none() {
-        // Choose custom (11), enter API key, enter empty base URL
-        let input = "11\nmy-custom-key\n\n";
+        // Choose custom (12), enter API key, enter empty base URL
+        let input = "12\nmy-custom-key\n\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
 

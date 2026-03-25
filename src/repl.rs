@@ -649,6 +649,11 @@ pub async fn run_repl(
                 commands::handle_watch(input);
                 continue;
             }
+            s if s == "/todo" || s.starts_with("/todo ") => {
+                let result = commands::handle_todo(input);
+                println!("{result}\n");
+                continue;
+            }
             s if s == "/ast" || s.starts_with("/ast ") => {
                 commands::handle_ast_grep(input);
                 continue;
