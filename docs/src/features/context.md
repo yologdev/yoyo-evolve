@@ -70,3 +70,16 @@ This removes all messages and resets the conversation. Unlike `/compact`, nothin
 - For long sessions, use `/tokens` periodically to monitor usage
 - If you notice the agent losing track of earlier context, try `/compact`
 - Starting a new task? Use `/clear` to avoid confusing the agent with unrelated history
+
+## Checkpoint-restart strategy
+
+For automated pipelines (like CI scripts), compaction can be lossy. The `--context-strategy checkpoint` flag provides an alternative: when context usage exceeds 70%, yoyo stops the agent loop and exits with code **2**.
+
+```bash
+yoyo --context-strategy checkpoint -p "do some long task"
+# Exit code 2 means "context was getting full — restart me"
+```
+
+The calling script can then restart yoyo with fresh context. This is useful for multi-phase pipelines where a structured restart produces better results than lossy compaction.
+
+The default strategy is `compaction`, which uses auto-compaction as described above.

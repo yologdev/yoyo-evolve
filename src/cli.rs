@@ -36,6 +36,16 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "custom",
 ];
 
+/// Context management strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ContextStrategy {
+    /// Default: auto-compact conversation when approaching context limit
+    #[default]
+    Compaction,
+    /// Write checkpoint file and exit with code 2 when approaching limit
+    Checkpoint,
+}
+
 /// Permission configuration for tool execution.
 /// Controls which bash commands are auto-approved, auto-denied, or require prompting.
 /// Patterns use simple glob matching: `*` matches any sequence of characters.
@@ -336,6 +346,7 @@ pub struct Config {
     pub auto_approve: bool,
     pub permissions: PermissionConfig,
     pub dir_restrictions: DirectoryRestrictions,
+    pub context_strategy: ContextStrategy,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -386,6 +397,7 @@ pub fn print_help() {
     println!("  --deny <pat>      Auto-deny bash commands matching glob pattern (repeatable)");
     println!("  --allow-dir <d>   Restrict file access to this directory (repeatable)");
     println!("  --deny-dir <d>    Block file access to this directory (repeatable)");
+    println!("  --context-strategy <s>  Context management: compaction (default) or checkpoint");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -526,6 +538,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--allow-dir",
     "--deny-dir",
     "--image",
+    "--context-strategy",
     "--no-color",
     "--no-bell",
     "--verbose",
@@ -966,6 +979,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "--allow-dir",
         "--deny-dir",
         "--image",
+        "--context-strategy",
     ];
     for flag in &flags_needing_values {
         if let Some(pos) = args.iter().position(|a| a == flag) {
@@ -1296,6 +1310,23 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         }
     };
 
+    // --context-strategy <compaction|checkpoint> (CLI only, not in config file)
+    let context_strategy = args
+        .iter()
+        .position(|a| a == "--context-strategy")
+        .and_then(|i| args.get(i + 1))
+        .map(|val| match val.as_str() {
+            "compaction" => ContextStrategy::Compaction,
+            "checkpoint" => ContextStrategy::Checkpoint,
+            other => {
+                eprintln!(
+                    "{YELLOW}warning:{RESET} Unknown context strategy '{other}', using compaction"
+                );
+                ContextStrategy::Compaction
+            }
+        })
+        .unwrap_or_default();
+
     // --mcp <command> flags: collect all MCP server commands (repeatable)
     let mcp_servers: Vec<String> = args
         .iter()
@@ -1333,6 +1364,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         auto_approve,
         permissions,
         dir_restrictions,
+        context_strategy,
     })
 }
 
@@ -2828,6 +2860,61 @@ system_prompt = "You are a Go expert"
         assert!(
             KNOWN_PROVIDERS.contains(&"minimax"),
             "minimax should be in KNOWN_PROVIDERS"
+        );
+    }
+
+    #[test]
+    fn test_context_strategy_default_is_compaction() {
+        let strategy = ContextStrategy::default();
+        assert_eq!(strategy, ContextStrategy::Compaction);
+    }
+
+    #[test]
+    fn test_context_strategy_parses_checkpoint() {
+        // Set a dummy API key so parse_args doesn't bail
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec![
+            "yoyo".into(),
+            "--context-strategy".into(),
+            "checkpoint".into(),
+        ];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.context_strategy, ContextStrategy::Checkpoint);
+    }
+
+    #[test]
+    fn test_context_strategy_parses_compaction_explicit() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec![
+            "yoyo".into(),
+            "--context-strategy".into(),
+            "compaction".into(),
+        ];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.context_strategy, ContextStrategy::Compaction);
+    }
+
+    #[test]
+    fn test_context_strategy_unknown_defaults_to_compaction() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into(), "--context-strategy".into(), "banana".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.context_strategy, ContextStrategy::Compaction);
+    }
+
+    #[test]
+    fn test_context_strategy_absent_defaults_to_compaction() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.context_strategy, ContextStrategy::Compaction);
+    }
+
+    #[test]
+    fn test_context_strategy_in_known_flags() {
+        assert!(
+            KNOWN_FLAGS.contains(&"--context-strategy"),
+            "--context-strategy should be in KNOWN_FLAGS"
         );
     }
 }

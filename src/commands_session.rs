@@ -722,6 +722,7 @@ fn clone_agent_config(config: &crate::AgentConfig) -> crate::AgentConfig {
         auto_approve: config.auto_approve,
         permissions: config.permissions.clone(),
         dir_restrictions: config.dir_restrictions.clone(),
+        context_strategy: config.context_strategy,
     }
 }
 

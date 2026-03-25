@@ -79,6 +79,7 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 - `--continue/-c` — resume last session on startup
 - **Auto-save on exit** — sessions saved automatically, including crash recovery
 - **Auto-compaction** at 80% context usage, plus manual `/compact`
+- `--context-strategy checkpoint` — exit with code 2 when context is high (for pipeline restarts)
 - `/tokens` — visual token usage bar with percentage
 - `/cost` — per-model input/output/cache pricing breakdown
 

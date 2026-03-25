@@ -71,6 +71,10 @@ use yoagent::tools::search::SearchTool;
 use yoagent::types::AgentTool;
 use yoagent::*;
 
+/// Global flag: set to `true` when checkpoint mode's `on_before_turn` fires.
+/// Checked at the end of `main()` to exit with code 2.
+static CHECKPOINT_TRIGGERED: AtomicBool = AtomicBool::new(false);
+
 /// A wrapper tool that checks directory restrictions before delegating to an inner tool.
 /// Intercepts the `"path"` parameter from tool arguments and validates it against
 /// the configured `DirectoryRestrictions`. If the path is blocked, the tool returns
@@ -978,6 +982,7 @@ pub struct AgentConfig {
     pub auto_approve: bool,
     pub permissions: cli::PermissionConfig,
     pub dir_restrictions: cli::DirectoryRestrictions,
+    pub context_strategy: cli::ContextStrategy,
 }
 
 impl AgentConfig {
@@ -1027,6 +1032,26 @@ impl AgentConfig {
         if let Some(temp) = self.temperature {
             agent.temperature = Some(temp);
         }
+
+        // Checkpoint mode: register on_before_turn to stop when context gets high
+        if self.context_strategy == cli::ContextStrategy::Checkpoint {
+            let max_tokens = cli::MAX_CONTEXT_TOKENS;
+            let threshold = cli::PROACTIVE_COMPACT_THRESHOLD; // 70% — stop before overflow
+            agent = agent.on_before_turn(move |messages, _turn| {
+                let used = yoagent::context::total_tokens(messages) as u64;
+                let ratio = used as f64 / max_tokens as f64;
+                if ratio > threshold {
+                    eprintln!(
+                        "\n⚡ Context at {:.0}% — checkpoint-restart triggered",
+                        ratio * 100.0
+                    );
+                    CHECKPOINT_TRIGGERED.store(true, Ordering::SeqCst);
+                    return false; // stop the agent loop
+                }
+                true
+            });
+        }
+
         agent
     }
 
@@ -1103,6 +1128,7 @@ async fn main() {
         auto_approve,
         permissions: config.permissions,
         dir_restrictions: config.dir_restrictions,
+        context_strategy: config.context_strategy,
     };
 
     // Interactive setup wizard: if no config file or API key is detected,
@@ -1248,6 +1274,9 @@ async fn main() {
         };
         format::maybe_ring_bell(prompt_start.elapsed());
         write_output_file(&output_path, &response.text);
+        if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
+            std::process::exit(2);
+        }
         return;
     }
 
@@ -1270,6 +1299,9 @@ async fn main() {
         let response = run_prompt(&mut agent, input, &mut session_total, &agent_config.model).await;
         format::maybe_ring_bell(prompt_start.elapsed());
         write_output_file(&output_path, &response.text);
+        if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
+            std::process::exit(2);
+        }
         return;
     }
 
@@ -1295,6 +1327,12 @@ mod tests {
         // The "always" flag should start as false
         let flag = Arc::new(AtomicBool::new(false));
         assert!(!flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_checkpoint_triggered_flag_starts_false() {
+        // CHECKPOINT_TRIGGERED should default to false
+        assert!(!CHECKPOINT_TRIGGERED.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -1426,6 +1464,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, "test-key");
@@ -1457,6 +1496,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let agent = config.build_agent();
         // Agent should have 6 tools (bash, read, write, edit, list, search)
@@ -1481,6 +1521,7 @@ mod tests {
             auto_approve: false,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1505,6 +1546,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1528,6 +1570,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1551,6 +1594,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let agent1 = config.build_agent();
         let agent2 = config.build_agent();
@@ -1576,6 +1620,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         assert_eq!(config.model, "claude-opus-4-6");
         config.model = "claude-haiku-35".to_string();
@@ -1600,6 +1645,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         assert_eq!(config.thinking, ThinkingLevel::Off);
         config.thinking = ThinkingLevel::High;
@@ -1905,6 +1951,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -1927,6 +1974,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         // Verify the anthropic ModelConfig would have headers set
         // (We test the helper directly since Agent doesn't expose model_config)
@@ -1956,6 +2004,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         }
     }
 
@@ -2373,6 +2422,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         // This should not panic — context config and execution limits are wired
         let agent = config.configure_agent(Agent::new(yoagent::provider::AnthropicProvider));
@@ -2397,6 +2447,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         // Should not panic — limits are set with defaults
         let agent =
@@ -2418,6 +2469,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let agent =
             config_with_turns.configure_agent(Agent::new(yoagent::provider::AnthropicProvider));

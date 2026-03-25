@@ -743,6 +743,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let mut agent = config.build_agent();
         handle_provider_switch("openai", &mut config, &mut agent);
@@ -767,6 +768,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let mut agent = config.build_agent();
         // Invalid provider should not change the config
@@ -792,6 +794,7 @@ mod tests {
             auto_approve: true,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
         };
         let mut agent = config.build_agent();
         // Switch to google → should use gemini default
