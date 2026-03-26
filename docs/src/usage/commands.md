@@ -415,6 +415,14 @@ The tool accepts:
 
 Like `write_file` and `edit_file`, `rename_symbol` asks for user confirmation before making changes (unless `--yes` is passed).
 
+### `ask_user` — Let the model ask you questions
+
+The agent can ask you directed questions mid-task using the `ask_user` tool. Instead of guessing at your preferences or making assumptions, the model can pause and ask for clarification — a preference, a decision, or context that isn't available in the codebase.
+
+This tool is **only available in interactive mode** (when stdin is a terminal). In piped mode, the tool is not registered — the model works with what it has.
+
+The question appears with a ❓ prompt, and you type your response directly. If you press Enter with no text or hit EOF, the model receives a "(no response)" indicator and continues on its own.
+
 ## Project Context
 
 | Command | Description |

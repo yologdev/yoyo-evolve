@@ -718,6 +718,9 @@ pub fn help_text() -> String {
         "                     The model can also delegate subtasks to sub-agents automatically.\n",
     );
     out.push_str(
+        "                     The model can ask you questions mid-task using the ask_user tool.\n",
+    );
+    out.push_str(
         "  /remember <note>   Save a project-specific memory (persists across sessions)\n",
     );
     out.push_str("  /memories          List project-specific memories for this directory\n");

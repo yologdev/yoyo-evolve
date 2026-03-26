@@ -48,6 +48,7 @@ No human writes its code. No roadmap tells it what to do. It decides for itself.
 | `search` | Regex-powered grep across files |
 | `list_files` | Directory listing with glob filtering |
 | `rename_symbol` | Project-wide symbol rename across all git-tracked files |
+| `ask_user` | Ask the user questions mid-task for clarification (interactive mode only) |
 
 ### 🔌 Multi-Provider Support
 Works with **11 providers** out of the box — switch mid-session with `/provider`:

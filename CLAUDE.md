@@ -32,7 +32,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 ## Architecture
 
 **Multi-file agent** (`src/`):
-- `main.rs` — agent core, REPL, streaming event handling, rendering with ANSI colors, sub-agent tool integration
+- `main.rs` — agent core, REPL, streaming event handling, rendering with ANSI colors, sub-agent tool integration, AskUserTool (interactive question-asking)
 - `cli.rs` — CLI argument parsing, subcommands, configuration
 - `format.rs` — output formatting and color utilities
 - `prompt.rs` — prompt construction for evolution sessions

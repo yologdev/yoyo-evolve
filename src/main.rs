@@ -732,6 +732,92 @@ impl AgentTool for RenameSymbolTool {
     }
 }
 
+// ── ask_user agent tool ──────────────────────────────────────────────────
+
+/// Tool that lets the model ask the user directed questions.
+/// The user types their answer, which is returned as the tool result.
+/// Only registered in interactive mode (when stdin is a terminal).
+pub struct AskUserTool;
+
+#[async_trait::async_trait]
+impl AgentTool for AskUserTool {
+    fn name(&self) -> &str {
+        "ask_user"
+    }
+
+    fn label(&self) -> &str {
+        "ask_user"
+    }
+
+    fn description(&self) -> &str {
+        "Ask the user a question to get clarification or input. Use this when you need \
+         specific information to proceed, like a preference, a decision, or context that \
+         isn't available in the codebase. The user sees your question and types a response."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask the user. Be specific and concise."
+                }
+            },
+            "required": ["question"]
+        })
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        _ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        use yoagent::types::{Content, ToolError, ToolResult as TR};
+
+        let question = params
+            .get("question")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidArgs("Missing 'question' parameter".into()))?;
+
+        // Display the question with visual distinction
+        eprintln!("\n{YELLOW}  ❓ {question}{RESET}");
+        eprint!("{GREEN}  → {RESET}");
+        io::stderr().flush().ok();
+
+        // Read the user's response
+        use std::io::BufRead;
+        let mut response = String::new();
+        let stdin = io::stdin();
+        match stdin.lock().read_line(&mut response) {
+            Ok(0) | Err(_) => {
+                return Ok(TR {
+                    content: vec![Content::Text {
+                        text: "(user provided no response)".to_string(),
+                    }],
+                    details: serde_json::Value::Null,
+                });
+            }
+            _ => {}
+        }
+
+        let response = response.trim().to_string();
+        if response.is_empty() {
+            return Ok(TR {
+                content: vec![Content::Text {
+                    text: "(user provided empty response)".to_string(),
+                }],
+                details: serde_json::Value::Null,
+            });
+        }
+
+        Ok(TR {
+            content: vec![Content::Text { text: response }],
+            details: serde_json::Value::Null,
+        })
+    }
+}
+
 /// Build the tool set, optionally with a bash confirmation prompt.
 /// When `auto_approve` is false (default), bash commands and file writes require user approval.
 /// The "always" option sets a session-wide flag so subsequent operations are auto-approved.
@@ -830,7 +916,7 @@ pub fn build_tools(
         maybe_confirm(Box::new(RenameSymbolTool), &always_approved, permissions)
     };
 
-    vec![
+    let mut tools = vec![
         with_truncation(Box::new(bash), max_tool_output),
         with_truncation(
             maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
@@ -847,7 +933,15 @@ pub fn build_tools(
             max_tool_output,
         ),
         with_truncation(rename_tool, max_tool_output),
-    ]
+    ];
+
+    // Only add ask_user in interactive mode (stdin is a terminal).
+    // In piped mode or test environments, this tool isn't available.
+    if std::io::stdin().is_terminal() {
+        tools.push(Box::new(AskUserTool));
+    }
+
+    tools
 }
 
 /// Build a SubAgentTool that inherits the parent's provider/model/key.
@@ -2550,6 +2644,32 @@ mod tests {
         let dirs = cli::DirectoryRestrictions::default();
         let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS_PIPED);
         assert_eq!(tools.len(), 7, "Should still have 7 tools with piped limit");
+    }
+
+    #[test]
+    fn test_ask_user_tool_schema() {
+        let tool = AskUserTool;
+        assert_eq!(tool.name(), "ask_user");
+        assert_eq!(tool.label(), "ask_user");
+        let schema = tool.parameters_schema();
+        assert!(schema["properties"]["question"].is_object());
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("question")));
+    }
+
+    #[test]
+    fn test_ask_user_tool_not_in_non_terminal_mode() {
+        // In test environment (no terminal), ask_user should NOT be included
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(
+            !names.contains(&"ask_user"),
+            "ask_user should not be in non-terminal mode"
+        );
     }
 
     #[test]
