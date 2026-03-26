@@ -529,6 +529,12 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         "retry",
         "capacity",
         "server error",
+        "stream ended",
+        "stream closed",
+        "unexpected eof",
+        "broken pipe",
+        "reset by peer",
+        "incomplete",
     ];
     for keyword in &retriable {
         if lower.contains(keyword) {
@@ -629,6 +635,21 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
              This usually means your API key doesn't have access to model '{model}'.\n\
              Check your plan/tier with {provider}, or try a different model."
         ));
+    }
+
+    // ── Stream / connection interruption ────────────────────────────
+    if lower.contains("stream ended")
+        || lower.contains("stream closed")
+        || lower.contains("unexpected eof")
+        || lower.contains("broken pipe")
+        || lower.contains("incomplete")
+    {
+        return Some(
+            "The API stream was interrupted before the response completed.\n\
+             This is usually a transient network issue — yoyo will auto-retry.\n\
+             If it persists, check your internet connection or try a different model."
+                .to_string(),
+        );
     }
 
     None
@@ -1746,6 +1767,53 @@ mod tests {
         // Unknown errors without retriable keywords should NOT be retried
         assert!(!is_retriable_error("something went wrong"));
         assert!(!is_retriable_error("unexpected error"));
+    }
+
+    #[test]
+    fn test_is_retriable_stream_errors() {
+        assert!(is_retriable_error("Stream ended"));
+        assert!(is_retriable_error("stream closed unexpectedly"));
+        assert!(is_retriable_error("unexpected eof while reading"));
+        assert!(is_retriable_error("broken pipe"));
+        assert!(is_retriable_error("connection reset by peer"));
+        assert!(is_retriable_error("incomplete response from server"));
+    }
+
+    #[test]
+    fn test_diagnose_stream_ended() {
+        let diag = diagnose_api_error("error: Stream ended", "claude-sonnet-4-20250514");
+        assert!(diag.is_some());
+        let msg = diag.unwrap();
+        assert!(msg.contains("interrupted"));
+        assert!(msg.contains("auto-retry"));
+    }
+
+    #[test]
+    fn test_diagnose_stream_closed() {
+        let diag = diagnose_api_error("stream closed unexpectedly", "gpt-4o");
+        assert!(diag.is_some());
+        assert!(diag.unwrap().contains("interrupted"));
+    }
+
+    #[test]
+    fn test_diagnose_unexpected_eof() {
+        let diag = diagnose_api_error("unexpected eof", "claude-sonnet-4-20250514");
+        assert!(diag.is_some());
+        assert!(diag.unwrap().contains("interrupted"));
+    }
+
+    #[test]
+    fn test_diagnose_broken_pipe() {
+        let diag = diagnose_api_error("broken pipe while writing", "claude-sonnet-4-20250514");
+        assert!(diag.is_some());
+        assert!(diag.unwrap().contains("interrupted"));
+    }
+
+    #[test]
+    fn test_diagnose_incomplete() {
+        let diag = diagnose_api_error("incomplete response", "claude-sonnet-4-20250514");
+        assert!(diag.is_some());
+        assert!(diag.unwrap().contains("interrupted"));
     }
 
     #[test]
