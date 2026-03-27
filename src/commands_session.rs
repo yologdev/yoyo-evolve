@@ -12,7 +12,7 @@ use yoagent::types::{AgentMessage, Content, Message};
 use yoagent::*;
 
 use crate::cli::{
-    AUTO_COMPACT_THRESHOLD, AUTO_SAVE_SESSION_PATH, DEFAULT_SESSION_PATH, MAX_CONTEXT_TOKENS,
+    AUTO_COMPACT_THRESHOLD, AUTO_SAVE_SESSION_PATH, DEFAULT_SESSION_PATH,
     PROACTIVE_COMPACT_THRESHOLD,
 };
 
@@ -40,7 +40,7 @@ pub fn compact_agent(agent: &mut Agent) -> Option<(usize, u64, usize, u64)> {
 pub fn auto_compact_if_needed(agent: &mut Agent) {
     let messages = agent.messages().to_vec();
     let used = total_tokens(&messages) as u64;
-    let ratio = used as f64 / MAX_CONTEXT_TOKENS as f64;
+    let ratio = used as f64 / crate::cli::effective_context_tokens() as f64;
 
     if ratio > AUTO_COMPACT_THRESHOLD {
         if let Some((before_count, before_tokens, after_count, after_tokens)) = compact_agent(agent)
@@ -61,7 +61,7 @@ pub fn auto_compact_if_needed(agent: &mut Agent) {
 pub fn proactive_compact_if_needed(agent: &mut Agent) -> bool {
     let messages = agent.messages().to_vec();
     let used = total_tokens(&messages) as u64;
-    let ratio = used as f64 / MAX_CONTEXT_TOKENS as f64;
+    let ratio = used as f64 / crate::cli::effective_context_tokens() as f64;
 
     if ratio > PROACTIVE_COMPACT_THRESHOLD {
         if let Some((before_count, before_tokens, after_count, after_tokens)) = compact_agent(agent)
@@ -723,6 +723,7 @@ fn clone_agent_config(config: &crate::AgentConfig) -> crate::AgentConfig {
         permissions: config.permissions.clone(),
         dir_restrictions: config.dir_restrictions.clone(),
         context_strategy: config.context_strategy,
+        context_window: config.context_window,
     }
 }
 

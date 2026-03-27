@@ -1243,6 +1243,7 @@ pub struct AgentConfig {
     pub permissions: cli::PermissionConfig,
     pub dir_restrictions: cli::DirectoryRestrictions,
     pub context_strategy: cli::ContextStrategy,
+    pub context_window: Option<u32>,
 }
 
 impl AgentConfig {
@@ -1252,7 +1253,14 @@ impl AgentConfig {
     /// This is the single source of truth for agent configuration — every field
     /// is applied here, so adding a new `AgentConfig` field only requires one
     /// update instead of one per provider branch.
-    fn configure_agent(&self, mut agent: Agent) -> Agent {
+    fn configure_agent(&self, mut agent: Agent, model_context_window: u32) -> Agent {
+        // User override takes precedence; otherwise use the model's actual context window
+        let effective_window = self.context_window.unwrap_or(model_context_window);
+        let effective_tokens = (effective_window as u64) * 80 / 100;
+
+        // Store for display by /tokens and /status commands
+        cli::set_effective_context_tokens(effective_window as u64);
+
         agent = agent
             .with_system_prompt(&self.system_prompt)
             .with_model(&self.model)
@@ -1273,9 +1281,10 @@ impl AgentConfig {
         // Add sub-agent tool via the dedicated API (separate from build_tools count)
         agent = agent.with_sub_agent(build_sub_agent_tool(self));
 
-        // Tell yoagent the context window size so its built-in compaction knows the budget
+        // Tell yoagent the context window size so its built-in compaction knows the budget.
+        // Uses 80% of the effective context window as the compaction threshold.
         agent = agent.with_context_config(ContextConfig {
-            max_context_tokens: 200_000,
+            max_context_tokens: effective_tokens as usize,
             system_prompt_tokens: 4_000,
             keep_recent: 10,
             keep_first: 2,
@@ -1298,7 +1307,7 @@ impl AgentConfig {
 
         // Checkpoint mode: register on_before_turn to stop when context gets high
         if self.context_strategy == cli::ContextStrategy::Checkpoint {
-            let max_tokens = cli::MAX_CONTEXT_TOKENS;
+            let max_tokens = effective_tokens;
             let threshold = cli::PROACTIVE_COMPACT_THRESHOLD; // 70% — stop before overflow
             agent = agent.on_before_turn(move |messages, _turn| {
                 let used = yoagent::context::total_tokens(messages) as u64;
@@ -1330,18 +1339,21 @@ impl AgentConfig {
             // Default Anthropic path
             let mut model_config = ModelConfig::anthropic(&self.model, &self.model);
             insert_client_headers(&mut model_config);
+            let context_window = model_config.context_window;
             let agent = Agent::new(AnthropicProvider).with_model_config(model_config);
-            self.configure_agent(agent)
+            self.configure_agent(agent, context_window)
         } else if self.provider == "google" {
             // Google uses its own provider
             let model_config = create_model_config(&self.provider, &self.model, base_url);
+            let context_window = model_config.context_window;
             let agent = Agent::new(GoogleProvider).with_model_config(model_config);
-            self.configure_agent(agent)
+            self.configure_agent(agent, context_window)
         } else {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);
+            let context_window = model_config.context_window;
             let agent = Agent::new(OpenAiCompatProvider).with_model_config(model_config);
-            self.configure_agent(agent)
+            self.configure_agent(agent, context_window)
         }
     }
 }
@@ -1392,6 +1404,7 @@ async fn main() {
         permissions: config.permissions,
         dir_restrictions: config.dir_restrictions,
         context_strategy: config.context_strategy,
+        context_window: config.context_window,
     };
 
     // Interactive setup wizard: if no config file or API key is detected,
@@ -1773,6 +1786,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, "test-key");
@@ -1805,6 +1819,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let agent = config.build_agent();
         // Agent should have 6 tools (bash, read, write, edit, list, search)
@@ -1830,6 +1845,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1855,6 +1871,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1879,6 +1896,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1903,6 +1921,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let agent1 = config.build_agent();
         let agent2 = config.build_agent();
@@ -1929,6 +1948,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         config.model = "claude-haiku-35".to_string();
@@ -1954,6 +1974,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         assert_eq!(config.thinking, ThinkingLevel::Off);
         config.thinking = ThinkingLevel::High;
@@ -2260,6 +2281,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -2313,6 +2335,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -2336,6 +2359,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         // Verify the anthropic ModelConfig would have headers set
         // (We test the helper directly since Agent doesn't expose model_config)
@@ -2366,6 +2390,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         }
     }
 
@@ -2810,9 +2835,11 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         // This should not panic — context config and execution limits are wired
-        let agent = config.configure_agent(Agent::new(yoagent::provider::AnthropicProvider));
+        let agent =
+            config.configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
         // Agent built successfully with context config
         let _ = agent;
     }
@@ -2835,10 +2862,11 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         // Should not panic — limits are set with defaults
-        let agent =
-            config_no_turns.configure_agent(Agent::new(yoagent::provider::AnthropicProvider));
+        let agent = config_no_turns
+            .configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
         let _ = agent;
 
         // With explicit max_turns, it should use that value
@@ -2857,9 +2885,10 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
-        let agent =
-            config_with_turns.configure_agent(Agent::new(yoagent::provider::AnthropicProvider));
+        let agent = config_with_turns
+            .configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
         let _ = agent;
     }
 

@@ -99,7 +99,7 @@ This lets yoyo read and write anywhere in the current project, but blocks access
 
 ## Config File
 
-Instead of passing flags every time, put your permission rules in `.yoyo.toml` (project-level) or `~/.config/yoyo/config.toml` (user-level):
+Instead of passing flags every time, put your permission rules in `.yoyo.toml` (project-level), `~/.yoyo.toml` (home directory), or `~/.config/yoyo/config.toml` (XDG):
 
 ```toml
 [permissions]
@@ -120,7 +120,8 @@ CLI flags override config file values:
 
 Config file search order (first found wins):
 1. `.yoyo.toml` in the current directory
-2. `~/.config/yoyo/config.toml`
+2. `~/.yoyo.toml` in your home directory
+3. `~/.config/yoyo/config.toml`
 
 ## Practical Examples
 

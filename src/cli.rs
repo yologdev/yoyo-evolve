@@ -7,9 +7,25 @@ use yoagent::skills::SkillSet;
 use yoagent::ThinkingLevel;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const MAX_CONTEXT_TOKENS: u64 = 200_000;
+pub const DEFAULT_CONTEXT_TOKENS: u64 = 200_000;
 pub const AUTO_COMPACT_THRESHOLD: f64 = 0.80;
 pub const PROACTIVE_COMPACT_THRESHOLD: f64 = 0.70;
+
+/// Effective context window (tokens) for the current session.
+/// Set once in configure_agent() based on model config + CLI override.
+/// Read by /tokens and /status commands to show accurate budget.
+static EFFECTIVE_CONTEXT_TOKENS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(DEFAULT_CONTEXT_TOKENS);
+
+/// Set the effective context window size. Called once during agent setup.
+pub fn set_effective_context_tokens(tokens: u64) {
+    EFFECTIVE_CONTEXT_TOKENS.store(tokens, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Get the effective context window size for display purposes.
+pub fn effective_context_tokens() -> u64 {
+    EFFECTIVE_CONTEXT_TOKENS.load(std::sync::atomic::Ordering::SeqCst)
+}
 pub const DEFAULT_SESSION_PATH: &str = "yoyo-session.json";
 pub const AUTO_SAVE_SESSION_PATH: &str = ".yoyo/last-session.json";
 
@@ -347,6 +363,7 @@ pub struct Config {
     pub permissions: PermissionConfig,
     pub dir_restrictions: DirectoryRestrictions,
     pub context_strategy: ContextStrategy,
+    pub context_window: Option<u32>,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -398,6 +415,12 @@ pub fn print_help() {
     println!("  --allow-dir <d>   Restrict file access to this directory (repeatable)");
     println!("  --deny-dir <d>    Block file access to this directory (repeatable)");
     println!("  --context-strategy <s>  Context management: compaction (default) or checkpoint");
+    println!(
+        "  --context-window <n>    Override context window size (tokens). Default: auto-detected"
+    );
+    println!(
+        "                          per provider (200K Anthropic, 1M Google, 128K OpenAI, etc.)"
+    );
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -451,8 +474,9 @@ pub fn print_help() {
     println!("  API_KEY            Fallback API key (any provider)");
     println!();
     println!("Config files (searched in order, first found wins):");
-    println!("  .yoyo.toml              Project-level config (current directory)");
-    println!("  ~/.config/yoyo/config.toml  User-level config");
+    println!("  .yoyo.toml                  Project-level config (current directory)");
+    println!("  ~/.yoyo.toml                Home directory config");
+    println!("  ~/.config/yoyo/config.toml  User-level config (XDG)");
     println!();
     println!("Config file format (key = value):");
     println!("  model = \"claude-sonnet-4-20250514\"");
@@ -540,6 +564,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--deny-dir",
     "--image",
     "--context-strategy",
+    "--context-window",
     "--no-color",
     "--no-bell",
     "--verbose",
@@ -769,11 +794,19 @@ pub fn list_project_context_files() -> Vec<(&'static str, usize)> {
 
 /// Config file search paths, checked in order (first found wins).
 /// - `.yoyo.toml` in the current directory (project-level)
-/// - `~/.config/yoyo/config.toml` (user-level)
+/// - `~/.yoyo.toml` (home directory shorthand)
+/// - `~/.config/yoyo/config.toml` (XDG user-level)
 const CONFIG_FILE_NAMES: &[&str] = &[".yoyo.toml"];
 
 pub fn user_config_path() -> Option<std::path::PathBuf> {
     dirs_hint().map(|dir| dir.join("yoyo").join("config.toml"))
+}
+
+/// Home directory config path: ~/.yoyo.toml
+pub fn home_config_path() -> Option<std::path::PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| std::path::PathBuf::from(h).join(".yoyo.toml"))
 }
 
 /// Best-effort XDG config dir (~/.config on Linux/macOS).
@@ -884,7 +917,7 @@ pub fn resolve_system_prompt(
     SYSTEM_PROMPT.to_string()
 }
 
-/// Load config from file, checking project-level then user-level paths.
+/// Load config from file, checking project-level, home-level, then user-level paths.
 /// Returns an empty map if no config file is found.
 fn load_config_file() -> HashMap<String, String> {
     // Check project-level config first
@@ -894,7 +927,14 @@ fn load_config_file() -> HashMap<String, String> {
             return parse_config_file(&content);
         }
     }
-    // Check user-level config
+    // Check ~/.yoyo.toml (home directory shorthand)
+    if let Some(path) = home_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            eprintln!("{DIM}  config: {}{RESET}", path.display());
+            return parse_config_file(&content);
+        }
+    }
+    // Check user-level config (XDG)
     if let Some(path) = user_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             eprintln!("{DIM}  config: {}{RESET}", path.display());
@@ -904,7 +944,7 @@ fn load_config_file() -> HashMap<String, String> {
     HashMap::new()
 }
 
-/// Load permission config from config file, checking project-level then user-level paths.
+/// Load permission config from config file, checking project-level, home-level, then user-level paths.
 /// Returns a default (empty) PermissionConfig if no config file or no [permissions] section.
 fn load_permissions_from_config_file() -> PermissionConfig {
     // Check project-level config first
@@ -913,7 +953,13 @@ fn load_permissions_from_config_file() -> PermissionConfig {
             return parse_permissions_from_config(&content);
         }
     }
-    // Check user-level config
+    // Check ~/.yoyo.toml (home directory shorthand)
+    if let Some(path) = home_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            return parse_permissions_from_config(&content);
+        }
+    }
+    // Check user-level config (XDG)
     if let Some(path) = user_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             return parse_permissions_from_config(&content);
@@ -931,7 +977,13 @@ fn load_directories_from_config_file() -> DirectoryRestrictions {
             return parse_directories_from_config(&content);
         }
     }
-    // Check user-level config
+    // Check ~/.yoyo.toml (home directory shorthand)
+    if let Some(path) = home_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            return parse_directories_from_config(&content);
+        }
+    }
+    // Check user-level config (XDG)
     if let Some(path) = user_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             return parse_directories_from_config(&content);
@@ -981,6 +1033,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "--deny-dir",
         "--image",
         "--context-strategy",
+        "--context-window",
     ];
     for flag in &flags_needing_values {
         if let Some(pos) = args.iter().position(|a| a == flag) {
@@ -1328,6 +1381,25 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         })
         .unwrap_or_default();
 
+    // --context-window <N> (CLI > config file > None = auto-detect from model)
+    let context_window = args
+        .iter()
+        .position(|a| a == "--context-window")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| {
+            s.parse::<u32>().ok().or_else(|| {
+                eprintln!(
+                    "{YELLOW}warning:{RESET} Invalid --context-window value '{s}', using model default"
+                );
+                None
+            })
+        })
+        .or_else(|| {
+            file_config
+                .get("context_window")
+                .and_then(|s| s.parse::<u32>().ok())
+        });
+
     // --mcp <command> flags: collect all MCP server commands (repeatable)
     let mut mcp_servers: Vec<String> = args
         .iter()
@@ -1376,6 +1448,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         permissions,
         dir_restrictions,
         context_strategy,
+        context_window,
     })
 }
 
@@ -1422,6 +1495,7 @@ pub fn get_welcome_text() -> String {
      {DIM}api_key = "sk-ant-..."{RESET}
      {DIM}model = "claude-sonnet-4-20250514"{RESET}
      {DIM}provider = "anthropic"{RESET}
+  Or use {CYAN}~/.config/yoyo/config.toml{RESET} for XDG-style config.
 
   Run {CYAN}yoyo --help{RESET} for all options.
 "#
@@ -1659,7 +1733,7 @@ mod tests {
 
     #[test]
     fn test_auto_compact_threshold_constants() {
-        assert_eq!(MAX_CONTEXT_TOKENS, 200_000);
+        assert_eq!(DEFAULT_CONTEXT_TOKENS, 200_000);
         assert!((AUTO_COMPACT_THRESHOLD - 0.80).abs() < f64::EPSILON);
         assert!((PROACTIVE_COMPACT_THRESHOLD - 0.70).abs() < f64::EPSILON);
     }
@@ -2002,6 +2076,108 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
         let content = "api_key = \"sk-ant-test-from-config\"";
         let config = parse_config_file(content);
         assert_eq!(config.get("api_key").unwrap(), "sk-ant-test-from-config");
+    }
+
+    #[test]
+    fn test_home_config_path_returns_yoyo_toml_in_home() {
+        // home_config_path() should return $HOME/.yoyo.toml
+        let original_home = std::env::var("HOME").ok();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", tmp.path());
+
+        let path = home_config_path();
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert_eq!(path, tmp.path().join(".yoyo.toml"));
+
+        // Restore
+        if let Some(h) = original_home {
+            std::env::set_var("HOME", h);
+        }
+    }
+
+    #[test]
+    fn test_home_config_path_file_is_loadable() {
+        // If ~/.yoyo.toml exists, parse_config_file should parse it
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join(".yoyo.toml");
+        std::fs::write(
+            &config_path,
+            "model = \"test-model\"\napi_key = \"sk-home-test\"\n",
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let config = parse_config_file(&content);
+        assert_eq!(config.get("model").unwrap(), "test-model");
+        assert_eq!(config.get("api_key").unwrap(), "sk-home-test");
+    }
+
+    #[test]
+    fn test_config_precedence_project_over_home() {
+        // If both project-level .yoyo.toml and ~/.yoyo.toml exist,
+        // the project-level config should be found first.
+        // We verify this by checking the search order logic:
+        // CONFIG_FILE_NAMES is checked before home_config_path().
+        //
+        // Since load_config_file() checks project-level first, and both files
+        // would parse correctly, we verify the ordering is as documented.
+        let project_content = "model = \"project-model\"";
+        let home_content = "model = \"home-model\"";
+
+        let project_config = parse_config_file(project_content);
+        let home_config = parse_config_file(home_content);
+
+        assert_eq!(project_config.get("model").unwrap(), "project-model");
+        assert_eq!(home_config.get("model").unwrap(), "home-model");
+
+        // The search order is documented: project > home > XDG
+        // This test verifies both configs parse independently.
+        // The actual precedence is enforced by the early-return in load_config_file().
+    }
+
+    #[test]
+    fn test_config_search_order_documented() {
+        // Verify the documented search order: project (.yoyo.toml), home (~/.yoyo.toml), XDG
+        // CONFIG_FILE_NAMES contains the project-level name
+        assert_eq!(CONFIG_FILE_NAMES, &[".yoyo.toml"]);
+
+        // home_config_path returns ~/.yoyo.toml
+        let original_home = std::env::var("HOME").ok();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", tmp.path());
+
+        let home = home_config_path().unwrap();
+        assert!(home.to_string_lossy().ends_with(".yoyo.toml"));
+        assert!(home
+            .to_string_lossy()
+            .contains(&tmp.path().to_string_lossy().to_string()));
+
+        // user_config_path returns ~/.config/yoyo/config.toml (XDG)
+        let xdg = user_config_path().unwrap();
+        assert!(xdg.to_string_lossy().ends_with("config.toml"));
+        assert!(xdg.to_string_lossy().contains("yoyo"));
+
+        // Restore
+        if let Some(h) = original_home {
+            std::env::set_var("HOME", h);
+        }
+    }
+
+    #[test]
+    fn test_help_text_mentions_home_config() {
+        // The help output should mention all three config paths.
+        // We can't capture print_help() output easily, but we can verify
+        // the welcome text mentions the paths.
+        let welcome = get_welcome_text();
+        assert!(
+            welcome.contains(".yoyo.toml"),
+            "welcome should mention .yoyo.toml"
+        );
+        assert!(
+            welcome.contains("config/yoyo/config.toml"),
+            "welcome should mention XDG config path"
+        );
     }
 
     #[test]

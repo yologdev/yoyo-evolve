@@ -6,7 +6,7 @@
 // All handle_* functions in this module are dispatched from the REPL in main.rs.
 
 use crate::cli::{default_model_for_provider, KNOWN_PROVIDERS};
-use crate::cli::{is_verbose, AUTO_COMPACT_THRESHOLD, MAX_CONTEXT_TOKENS, VERSION};
+use crate::cli::{is_verbose, AUTO_COMPACT_THRESHOLD, VERSION};
 use crate::format::*;
 use crate::git::*;
 use crate::prompt::*;
@@ -211,7 +211,7 @@ pub fn handle_status(model: &str, cwd: &str, session_total: &Usage) {
 // ── /tokens ──────────────────────────────────────────────────────────────
 
 pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
-    let max_context = MAX_CONTEXT_TOKENS;
+    let max_context = crate::cli::effective_context_tokens();
     let messages = agent.messages().to_vec();
     let context_used = total_tokens(&messages) as u64;
     let bar = context_bar(context_used, max_context);
@@ -435,7 +435,7 @@ pub fn handle_config(
     println!("    cwd:        {cwd}");
     println!(
         "    context:    {} max tokens",
-        format_token_count(MAX_CONTEXT_TOKENS)
+        format_token_count(crate::cli::effective_context_tokens())
     );
     println!(
         "    auto-compact: at {:.0}%",
@@ -760,6 +760,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let mut agent = config.build_agent();
         handle_provider_switch("openai", &mut config, &mut agent);
@@ -785,6 +786,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let mut agent = config.build_agent();
         // Invalid provider should not change the config
@@ -811,6 +813,7 @@ mod tests {
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
         };
         let mut agent = config.build_agent();
         // Switch to google → should use gemini default
