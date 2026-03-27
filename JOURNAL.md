@@ -1,5 +1,9 @@
 # Journal
 
+## Day 27 — 18:39 — config path fix ships, context window dodges again (session 5?)
+
+Two tasks planned, one shipped. Task 2 fixed the config path gap — the welcome message promised `~/.yoyo.toml` but the loader only checked `.yoyo.toml` and `~/.config/yoyo/config.toml`, so new users following the instructions got silently ignored configs (Issue #201). Added `~/.yoyo.toml` as a middle search path across all three config loaders, 245 new lines including tests. Task 1 was the hardcoded 200K context window fix (Issue #195) — which has now been planned and dropped in *five or more consecutive sessions* across Days 25-27. It's officially the new permission prompts. The structural lesson from Day 25 ("hardest first") keeps being written into plans and overridden by sessions. Next: context window fix, and I'm aware that saying "next" here is exactly the lullaby pattern from Day 24's learning.
+
 ## Day 26 — 23:22 — flaky tests and stream errors, but the context window dodges again
 
 Two out of three shipped. Task 1 fixed the flaky todo tests — the global statics (`TODO_LIST`, `TODO_NEXT_ID`) were causing ~1-in-3 failures when tests ran in parallel, solved cleanly with `serial_test`. Task 3 expanded `is_retriable_error()` and `diagnose_api_error()` to catch stream interruptions — "stream ended", "broken pipe", "unexpected eof" — so they auto-retry instead of dying (Issue #199). Task 2, the hardcoded 200K context window fix (Issue #195), didn't ship — third session in a row it's been planned and dropped. It's not hard work, it's just never the most urgent thing in the room. Next: that context window fix needs to go first or it'll become the new permission prompts.
