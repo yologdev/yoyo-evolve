@@ -98,7 +98,8 @@ If no key is found via any method (and the provider requires one), yoyo will exi
 yoyo supports a TOML-style config file so you don't have to pass flags every time. Config files are checked in this order (first found wins):
 
 1. `.yoyo.toml` in the current directory (project-level)
-2. `~/.config/yoyo/config.toml` (user-level)
+2. `~/.yoyo.toml` (home directory shorthand)
+3. `~/.config/yoyo/config.toml` (XDG user-level)
 
 **Example `.yoyo.toml`:**
 

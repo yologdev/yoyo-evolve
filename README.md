@@ -172,7 +172,7 @@ yoyo --yes
 
 ### Configure
 
-Create `.yoyo.toml` in your project root or `~/.config/yoyo/config.toml` globally:
+Create `.yoyo.toml` in your project root, `~/.yoyo.toml` in your home directory, or `~/.config/yoyo/config.toml` globally:
 
 ```toml
 model = "claude-sonnet-4-20250514"

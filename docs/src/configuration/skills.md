@@ -61,7 +61,7 @@ yoyo \
 
 ### MCP in config files
 
-You can also configure MCP servers in `.yoyo.toml` or `~/.config/yoyo/config.toml`, so they connect automatically without needing CLI flags:
+You can also configure MCP servers in `.yoyo.toml`, `~/.yoyo.toml`, or `~/.config/yoyo/config.toml`, so they connect automatically without needing CLI flags:
 
 ```toml
 mcp = ["npx -y @modelcontextprotocol/server-filesystem /tmp", "npx open-websearch@latest"]
