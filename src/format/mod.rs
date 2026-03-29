@@ -1,0 +1,1385 @@
+//! Formatting helpers: ANSI colors, cost, duration, tokens, context bar, truncation.
+
+use std::io::{self, Write};
+use std::sync::OnceLock;
+use std::time::Duration;
+
+// --- Color support with NO_COLOR and --no-color ---
+
+/// Whether color output has been disabled (via NO_COLOR env or --no-color flag).
+static COLOR_DISABLED: OnceLock<bool> = OnceLock::new();
+
+// --- Bell notification support with YOYO_NO_BELL and --no-bell ---
+
+/// Whether bell notification has been disabled (via --no-bell flag or YOYO_NO_BELL env).
+static BELL_DISABLED: OnceLock<bool> = OnceLock::new();
+
+/// Disable bell notifications. Call from CLI arg parsing.
+pub fn disable_bell() {
+    let _ = BELL_DISABLED.set(true);
+}
+
+/// Check if bell is enabled. Respects YOYO_NO_BELL env var.
+pub fn bell_enabled() -> bool {
+    !*BELL_DISABLED.get_or_init(|| std::env::var("YOYO_NO_BELL").is_ok())
+}
+
+/// Ring the terminal bell if enabled and elapsed time exceeds threshold.
+/// The bell character (\x07) causes most terminal emulators to flash the tab
+/// or play a sound, alerting multitasking developers.
+pub fn maybe_ring_bell(elapsed: Duration) {
+    if bell_enabled() && elapsed.as_secs() >= 3 {
+        let _ = io::stdout().write_all(b"\x07");
+        let _ = io::stdout().flush();
+    }
+}
+
+/// Disable color output. Call before any formatting happens (e.g., from CLI arg parsing).
+pub fn disable_color() {
+    let _ = COLOR_DISABLED.set(true);
+}
+
+/// Check if color output is enabled. Cached after first call.
+/// Respects the NO_COLOR environment variable (https://no-color.org/).
+fn color_enabled() -> bool {
+    !*COLOR_DISABLED.get_or_init(|| std::env::var("NO_COLOR").is_ok())
+}
+
+/// A color code that respects the NO_COLOR convention.
+/// When color is disabled, formats as an empty string.
+pub struct Color(pub &'static str);
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if color_enabled() {
+            f.write_str(self.0)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+// ANSI color helpers — respect NO_COLOR env var and --no-color flag
+pub static RESET: Color = Color("\x1b[0m");
+pub static BOLD: Color = Color("\x1b[1m");
+pub static DIM: Color = Color("\x1b[2m");
+pub static GREEN: Color = Color("\x1b[32m");
+pub static YELLOW: Color = Color("\x1b[33m");
+pub static CYAN: Color = Color("\x1b[36m");
+pub static RED: Color = Color("\x1b[31m");
+pub static MAGENTA: Color = Color("\x1b[35m");
+pub static ITALIC: Color = Color("\x1b[3m");
+pub static BOLD_ITALIC: Color = Color("\x1b[1;3m");
+pub static BOLD_CYAN: Color = Color("\x1b[1;36m");
+pub static BOLD_YELLOW: Color = Color("\x1b[1;33m");
+
+// --- Syntax highlighting for code blocks ---
+
+mod cost;
+/// Languages recognized for syntax highlighting.
+mod highlight;
+mod markdown;
+mod tools;
+
+pub use cost::*;
+pub use highlight::*;
+pub use markdown::*;
+pub use tools::*;
+
+pub fn truncate_with_ellipsis(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((idx, _)) => format!("{}…", &s[..idx]),
+        None => s.to_string(),
+    }
+}
+
+/// Decode HTML entities in a string.
+///
+/// Handles named entities (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&#39;`,
+/// `&nbsp;`, `&#x27;`, `&mdash;`, `&ndash;`, `&hellip;`, `&copy;`, `&reg;`)
+/// and numeric entities (decimal `&#NNN;` and hex `&#xHH;`).
+pub fn decode_html_entities(s: &str) -> String {
+    // First pass: named entities
+    let s = s
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&#x27;", "'")
+        .replace("&mdash;", "—")
+        .replace("&ndash;", "–")
+        .replace("&hellip;", "…")
+        .replace("&copy;", "©")
+        .replace("&reg;", "®");
+
+    // Second pass: remaining numeric entities (&#NNN; and &#xHH;)
+    let mut decoded = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' && chars.peek() == Some(&'#') {
+            let mut entity = String::from("&#");
+            chars.next(); // consume '#'
+            while let Some(&nc) = chars.peek() {
+                if nc == ';' {
+                    chars.next();
+                    break;
+                }
+                entity.push(nc);
+                chars.next();
+            }
+            let num_str = &entity[2..];
+            let parsed = if let Some(hex) = num_str.strip_prefix('x').or(num_str.strip_prefix('X'))
+            {
+                u32::from_str_radix(hex, 16).ok()
+            } else {
+                num_str.parse::<u32>().ok()
+            };
+            if let Some(ch) = parsed.and_then(char::from_u32) {
+                decoded.push(ch);
+            } else {
+                // Failed to decode — emit original
+                decoded.push_str(&entity);
+                decoded.push(';');
+            }
+        } else {
+            decoded.push(c);
+        }
+    }
+
+    decoded
+}
+
+/// Default character threshold for tool output truncation.
+/// Outputs longer than this get the head/tail treatment.
+pub const TOOL_OUTPUT_MAX_CHARS: usize = 30_000;
+
+/// Maximum tool output size in piped/CI mode (half of interactive).
+/// Reduces context growth rate during evolution sessions and CI runs
+/// where the user isn't watching live output anyway.
+pub const TOOL_OUTPUT_MAX_CHARS_PIPED: usize = 15_000;
+
+/// Number of lines to keep from the start of truncated output.
+const TRUNCATION_HEAD_LINES: usize = 100;
+
+/// Number of lines to keep from the end of truncated output.
+const TRUNCATION_TAIL_LINES: usize = 50;
+
+/// Intelligently truncate large tool output to save context window tokens.
+///
+/// When output exceeds `max_chars`, keeps the first ~100 lines and last ~50 lines
+/// with a clear `[... truncated N lines ...]` marker in between. This preserves
+/// the beginning of output (usually the most informative — headers, first errors)
+/// and the end (summary lines, final status).
+///
+/// Output under the threshold is returned unchanged.
+pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
+    // Under threshold — return unchanged
+    if output.len() <= max_chars {
+        return output.to_string();
+    }
+
+    let lines: Vec<&str> = output.lines().collect();
+    let total_lines = lines.len();
+
+    // If not enough lines to meaningfully truncate, return as-is
+    // (edge case: very long single lines or very few lines)
+    if total_lines <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
+        return output.to_string();
+    }
+
+    let head = &lines[..TRUNCATION_HEAD_LINES];
+    let tail = &lines[total_lines - TRUNCATION_TAIL_LINES..];
+    let omitted = total_lines - TRUNCATION_HEAD_LINES - TRUNCATION_TAIL_LINES;
+
+    let mut result = String::with_capacity(max_chars);
+    for line in head {
+        result.push_str(line);
+        result.push('\n');
+    }
+    result.push_str(&format!(
+        "\n[... truncated {omitted} {} ...]\n\n",
+        pluralize(omitted, "line", "lines")
+    ));
+    for (i, line) in tail.iter().enumerate() {
+        result.push_str(line);
+        if i < tail.len() - 1 {
+            result.push('\n');
+        }
+    }
+
+    result
+}
+
+// --- Section headers and dividers for visual hierarchy ---
+
+/// Get the terminal width from the COLUMNS environment variable, falling back to 80.
+fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(80)
+}
+
+/// Format a summary line for a batch of tool executions within a single turn.
+///
+/// Example output: `  3 tools completed in 1.2s (3 ✓, 0 ✗)`
+/// When all succeed: `  3 tools completed in 1.2s (3 ✓)`
+/// When some fail: `  3 tools completed in 1.2s (2 ✓, 1 ✗)`
+/// Single tool batches return empty (not worth summarizing).
+pub fn format_tool_batch_summary(
+    total: usize,
+    succeeded: usize,
+    failed: usize,
+    total_duration: std::time::Duration,
+) -> String {
+    if total <= 1 {
+        return String::new();
+    }
+    let dur = format_duration(total_duration);
+    let tool_word = pluralize(total, "tool", "tools");
+    let status = if failed == 0 {
+        format!("{succeeded} {GREEN}✓{RESET}")
+    } else {
+        format!("{succeeded} {GREEN}✓{RESET}, {failed} {RED}✗{RESET}")
+    };
+    format!("{DIM}  {total} {tool_word} completed in {dur}{RESET} ({status})")
+}
+
+/// Indent multi-line tool output under its tool header.
+///
+/// Each line of output gets a `    │ ` prefix for visual nesting.
+/// Single-line output is returned as-is with the prefix.
+/// Empty input returns empty string.
+pub fn indent_tool_output(output: &str) -> String {
+    if output.is_empty() {
+        return String::new();
+    }
+    output
+        .lines()
+        .map(|line| format!("{DIM}    │ {RESET}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Render a turn boundary marker between agent turns.
+///
+/// Shows a subtle visual separator so users can distinguish
+/// when the agent starts a new reasoning/action cycle.
+/// Example: `  ╭─ Turn 3 ──────────────────────────╮`
+pub fn turn_boundary(turn_number: usize) -> String {
+    let width = terminal_width();
+    let label = format!(" Turn {turn_number} ");
+    let prefix = "  ╭─";
+    let suffix = "╮";
+    let used = prefix.len() + label.len() + suffix.len();
+    let fill = width.saturating_sub(used);
+    let trail = "─".repeat(fill);
+    format!("{DIM}{prefix}{label}{trail}{suffix}{RESET}")
+}
+
+/// Render a labeled section header, e.g. `── Thinking ──────────────────────────`
+/// Uses DIM style and thin box-drawing characters (─).
+/// The label is centered between two runs of ─ characters.
+pub fn section_header(label: &str) -> String {
+    let width = terminal_width();
+    if label.is_empty() {
+        return section_divider();
+    }
+    // Format: "── Label ─────────..."
+    let prefix = "── ";
+    let separator = " ";
+    let used = prefix.len() + label.len() + separator.len();
+    let remaining = width.saturating_sub(used);
+    let trail = "─".repeat(remaining);
+    format!("{DIM}{prefix}{label}{separator}{trail}{RESET}")
+}
+
+/// Render a plain thin divider line: `──────────────────────────────────────`
+/// Uses DIM style and thin box-drawing characters (─).
+pub fn section_divider() -> String {
+    let width = terminal_width();
+    format!("{DIM}{}{RESET}", "─".repeat(width))
+}
+
+/// Maximum number of diff lines to display before truncating.
+const MAX_DIFF_LINES: usize = 20;
+
+/// Format a colored unified diff between old_text and new_text.
+/// Removed lines are shown in red with `- ` prefix, added lines in green with `+ ` prefix.
+/// If the diff exceeds `MAX_DIFF_LINES`, it is truncated with an ellipsis note.
+pub fn format_edit_diff(old_text: &str, new_text: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    // Show removed lines (old_text)
+    if !old_text.is_empty() {
+        for line in old_text.lines() {
+            lines.push(format!("{RED}  - {line}{RESET}"));
+        }
+    }
+
+    // Show added lines (new_text)
+    if !new_text.is_empty() {
+        for line in new_text.lines() {
+            lines.push(format!("{GREEN}  + {line}{RESET}"));
+        }
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    // Truncate if too many lines
+    if lines.len() > MAX_DIFF_LINES {
+        let remaining = lines.len() - MAX_DIFF_LINES;
+        lines.truncate(MAX_DIFF_LINES);
+        lines.push(format!("{DIM}  ... ({remaining} more lines){RESET}"));
+    }
+
+    lines.join("\n")
+}
+
+/// Format a human-readable summary for a tool execution.
+///
+/// Each tool gets a concise one-line description showing the key parameters:
+/// - `bash` — `$ <command>` (first line + line count for multi-line scripts)
+/// - `read_file` — `read <path>` with optional `:offset..end` or `(N lines)` range
+/// - `write_file` — `write <path> (N lines)`
+/// - `edit_file` — `edit <path> (old → new lines)`
+/// - `list_files` — `ls <path> (pattern)`
+/// - `search` — `search 'pattern' in <path> (include)`
+pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String {
+    match tool_name {
+        "bash" => {
+            let cmd = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("...");
+            let line_count = cmd.lines().count();
+            let first_line = cmd.lines().next().unwrap_or("...");
+            if line_count > 1 {
+                format!(
+                    "$ {} ({line_count} lines)",
+                    truncate_with_ellipsis(first_line, 60)
+                )
+            } else {
+                format!("$ {}", truncate_with_ellipsis(cmd, 80))
+            }
+        }
+        "read_file" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+            let offset = args.get("offset").and_then(|v| v.as_u64());
+            let limit = args.get("limit").and_then(|v| v.as_u64());
+            match (offset, limit) {
+                (Some(off), Some(lim)) => {
+                    format!("read {path}:{off}..{}", off + lim)
+                }
+                (Some(off), None) => {
+                    format!("read {path}:{off}..")
+                }
+                (None, Some(lim)) => {
+                    let word = pluralize(lim as usize, "line", "lines");
+                    format!("read {path} ({lim} {word})")
+                }
+                (None, None) => {
+                    format!("read {path}")
+                }
+            }
+        }
+        "write_file" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+            let line_info = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| {
+                    let count = c.lines().count();
+                    let word = pluralize(count, "line", "lines");
+                    format!(" ({count} {word})")
+                })
+                .unwrap_or_default();
+            format!("write {path}{line_info}")
+        }
+        "edit_file" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+            let old_text = args.get("old_text").and_then(|v| v.as_str());
+            let new_text = args.get("new_text").and_then(|v| v.as_str());
+            match (old_text, new_text) {
+                (Some(old), Some(new)) => {
+                    let old_lines = old.lines().count();
+                    let new_lines = new.lines().count();
+                    format!("edit {path} ({old_lines} → {new_lines} lines)")
+                }
+                _ => format!("edit {path}"),
+            }
+        }
+        "list_files" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            let pattern = args.get("pattern").and_then(|v| v.as_str());
+            match pattern {
+                Some(pat) => format!("ls {path} ({pat})"),
+                None => format!("ls {path}"),
+            }
+        }
+        "search" => {
+            let pat = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
+            let search_path = args.get("path").and_then(|v| v.as_str());
+            let include = args.get("include").and_then(|v| v.as_str());
+            let mut summary = format!("search '{}'", truncate_with_ellipsis(pat, 60));
+            if let Some(p) = search_path {
+                summary.push_str(&format!(" in {p}"));
+            }
+            if let Some(inc) = include {
+                summary.push_str(&format!(" ({inc})"));
+            }
+            summary
+        }
+        _ => tool_name.to_string(),
+    }
+}
+
+/// Format usage stats into a string (verbose or compact).
+///
+/// Verbose format (shown with `--verbose`):
+///   `tokens: 1119 in / 47 out  [cache: ...]  (session: ...)  cost: ...  total: ...  ⏱ 1.0s`
+///
+/// Compact format (default):
+///   `↳ 1.0s · 1119→47 tokens · $0.020`
+pub fn format_usage_line(
+    usage: &yoagent::Usage,
+    total: &yoagent::Usage,
+    model: &str,
+    elapsed: std::time::Duration,
+    verbose: bool,
+) -> Option<String> {
+    if usage.input == 0 && usage.output == 0 {
+        return None;
+    }
+
+    let elapsed_str = format_duration(elapsed);
+
+    if verbose {
+        let cache_info = if usage.cache_read > 0 || usage.cache_write > 0 {
+            format!(
+                "  [cache: {} read, {} write]",
+                usage.cache_read, usage.cache_write
+            )
+        } else {
+            String::new()
+        };
+        let cost_info = estimate_cost(usage, model)
+            .map(|c| format!("  cost: {}", format_cost(c)))
+            .unwrap_or_default();
+        let total_cost_info = estimate_cost(total, model)
+            .map(|c| format!("  total: {}", format_cost(c)))
+            .unwrap_or_default();
+        Some(format!(
+            "tokens: {} in / {} out{cache_info}  (session: {} in / {} out){cost_info}{total_cost_info}  ⏱ {elapsed_str}",
+            usage.input, usage.output, total.input, total.output
+        ))
+    } else {
+        let cost_suffix = estimate_cost(usage, model)
+            .map(|c| format!(" · {}", format_cost(c)))
+            .unwrap_or_default();
+        Some(format!(
+            "↳ {elapsed_str} · {}→{} tokens{cost_suffix}",
+            usage.input, usage.output
+        ))
+    }
+}
+
+/// Print usage stats after a prompt response.
+pub fn print_usage(
+    usage: &yoagent::Usage,
+    total: &yoagent::Usage,
+    model: &str,
+    elapsed: std::time::Duration,
+) {
+    if let Some(line) = format_usage_line(usage, total, model, elapsed, crate::cli::is_verbose()) {
+        println!("\n{DIM}  {line}{RESET}");
+    }
+}
+
+#[cfg(test)]
+pub fn truncate(s: &str, max: usize) -> &str {
+    match s.char_indices().nth(max) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_short_string() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact_length() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_long_string() {
+        assert_eq!(truncate("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_unicode() {
+        assert_eq!(truncate("héllo wörld", 5), "héllo");
+    }
+
+    #[test]
+    fn test_truncate_empty() {
+        assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn test_truncate_adds_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("hello world", 5), "hello…");
+        assert_eq!(truncate_with_ellipsis("hi", 5), "hi");
+        assert_eq!(truncate_with_ellipsis("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_format_tool_summary_bash() {
+        let args = serde_json::json!({"command": "echo hello"});
+        assert_eq!(format_tool_summary("bash", &args), "$ echo hello");
+    }
+
+    #[test]
+    fn test_format_tool_summary_bash_long_command() {
+        let long_cmd = "a".repeat(100);
+        let args = serde_json::json!({"command": long_cmd});
+        let result = format_tool_summary("bash", &args);
+        assert!(result.starts_with("$ "));
+        assert!(result.ends_with('…'));
+        assert!(result.len() < 100);
+    }
+
+    #[test]
+    fn test_format_tool_summary_read_file() {
+        let args = serde_json::json!({"path": "src/main.rs"});
+        assert_eq!(format_tool_summary("read_file", &args), "read src/main.rs");
+    }
+
+    #[test]
+    fn test_format_tool_summary_write_file() {
+        let args = serde_json::json!({"path": "out.txt"});
+        assert_eq!(format_tool_summary("write_file", &args), "write out.txt");
+    }
+
+    #[test]
+    fn test_format_tool_summary_edit_file() {
+        let args = serde_json::json!({"path": "foo.rs"});
+        assert_eq!(format_tool_summary("edit_file", &args), "edit foo.rs");
+    }
+
+    #[test]
+    fn test_format_tool_summary_list_files() {
+        let args = serde_json::json!({"path": "src/"});
+        assert_eq!(format_tool_summary("list_files", &args), "ls src/");
+    }
+
+    #[test]
+    fn test_format_tool_summary_list_files_no_path() {
+        let args = serde_json::json!({});
+        assert_eq!(format_tool_summary("list_files", &args), "ls .");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search() {
+        let args = serde_json::json!({"pattern": "TODO"});
+        assert_eq!(format_tool_summary("search", &args), "search 'TODO'");
+    }
+
+    #[test]
+    fn test_format_tool_summary_unknown_tool() {
+        let args = serde_json::json!({});
+        assert_eq!(format_tool_summary("custom_tool", &args), "custom_tool");
+    }
+
+    #[test]
+    fn test_color_struct_display_outputs_ansi() {
+        // Color struct should produce the ANSI code when color is enabled
+        let c = Color("\x1b[1m");
+        let formatted = format!("{c}");
+        // We can't guarantee NO_COLOR isn't set in the test environment,
+        // but the type itself should compile and format correctly.
+        assert!(formatted == "\x1b[1m" || formatted.is_empty());
+    }
+
+    #[test]
+    fn test_format_edit_diff_single_line_change() {
+        let diff = format_edit_diff("old line", "new line");
+        assert!(diff.contains("- old line"));
+        assert!(diff.contains("+ new line"));
+        // Should have red for removed, green for added
+        assert!(diff.contains(&format!("{RED}")));
+        assert!(diff.contains(&format!("{GREEN}")));
+    }
+
+    #[test]
+    fn test_format_edit_diff_multi_line_change() {
+        let old = "line 1\nline 2\nline 3";
+        let new = "line A\nline B";
+        let diff = format_edit_diff(old, new);
+        assert!(diff.contains("- line 1"));
+        assert!(diff.contains("- line 2"));
+        assert!(diff.contains("- line 3"));
+        assert!(diff.contains("+ line A"));
+        assert!(diff.contains("+ line B"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_addition_only() {
+        let diff = format_edit_diff("", "new content\nmore content");
+        // No removed lines
+        assert!(!diff.contains("- "));
+        // Added lines present
+        assert!(diff.contains("+ new content"));
+        assert!(diff.contains("+ more content"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_deletion_only() {
+        let diff = format_edit_diff("old content\nmore old", "");
+        // Removed lines present
+        assert!(diff.contains("- old content"));
+        assert!(diff.contains("- more old"));
+        // No added lines
+        assert!(!diff.contains("+ "));
+    }
+
+    #[test]
+    fn test_format_edit_diff_long_diff_truncation() {
+        // Generate a diff with more than MAX_DIFF_LINES lines
+        let old_lines: Vec<&str> = (0..15).map(|_| "old").collect();
+        let new_lines: Vec<&str> = (0..15).map(|_| "new").collect();
+        let old = old_lines.join("\n");
+        let new = new_lines.join("\n");
+        let diff = format_edit_diff(&old, &new);
+        // Should be truncated — total would be 30 lines, max is 20
+        assert!(diff.contains("more lines)"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_empty_both() {
+        let diff = format_edit_diff("", "");
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn test_format_edit_diff_empty_old_text_new_file_section() {
+        // Simulates adding new content to a file (old_text is empty)
+        let diff = format_edit_diff("", "fn new_function() {\n    println!(\"hello\");\n}");
+        assert!(!diff.contains("- "));
+        assert!(diff.contains("+ fn new_function()"));
+        assert!(diff.contains("+ }"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_short_diff_not_truncated() {
+        let diff = format_edit_diff("a", "b");
+        assert!(!diff.contains("more lines"));
+    }
+
+    // --- format_tool_summary write_file with line count ---
+
+    #[test]
+    fn test_format_tool_summary_write_file_with_content() {
+        let args = serde_json::json!({"path": "out.txt", "content": "line1\nline2\nline3"});
+        let result = format_tool_summary("write_file", &args);
+        assert_eq!(result, "write out.txt (3 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_write_file_single_line() {
+        let args = serde_json::json!({"path": "out.txt", "content": "hello"});
+        let result = format_tool_summary("write_file", &args);
+        assert_eq!(result, "write out.txt (1 line)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_write_file_no_content() {
+        let args = serde_json::json!({"path": "out.txt"});
+        let result = format_tool_summary("write_file", &args);
+        assert_eq!(result, "write out.txt");
+    }
+
+    // --- format_tool_summary enriched details ---
+
+    #[test]
+    fn test_format_tool_summary_read_file_with_offset_and_limit() {
+        let args = serde_json::json!({"path": "src/main.rs", "offset": 10, "limit": 50});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs:10..60");
+    }
+
+    #[test]
+    fn test_format_tool_summary_read_file_with_offset_only() {
+        let args = serde_json::json!({"path": "src/main.rs", "offset": 100});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs:100..");
+    }
+
+    #[test]
+    fn test_format_tool_summary_read_file_with_limit_only() {
+        let args = serde_json::json!({"path": "src/main.rs", "limit": 25});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs (25 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_read_file_no_extras() {
+        let args = serde_json::json!({"path": "src/main.rs"});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs");
+    }
+
+    #[test]
+    fn test_format_tool_summary_edit_file_with_text() {
+        let args = serde_json::json!({
+            "path": "foo.rs",
+            "old_text": "fn old() {\n}\n",
+            "new_text": "fn new() {\n    // improved\n    do_stuff();\n}\n"
+        });
+        let result = format_tool_summary("edit_file", &args);
+        assert_eq!(result, "edit foo.rs (2 → 4 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_edit_file_no_text() {
+        let args = serde_json::json!({"path": "foo.rs"});
+        let result = format_tool_summary("edit_file", &args);
+        assert_eq!(result, "edit foo.rs");
+    }
+
+    #[test]
+    fn test_format_tool_summary_edit_file_same_lines() {
+        let args = serde_json::json!({
+            "path": "foo.rs",
+            "old_text": "let x = 1;",
+            "new_text": "let x = 2;"
+        });
+        let result = format_tool_summary("edit_file", &args);
+        assert_eq!(result, "edit foo.rs (1 → 1 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_with_path() {
+        let args = serde_json::json!({"pattern": "TODO", "path": "src/"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'TODO' in src/");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_with_include() {
+        let args = serde_json::json!({"pattern": "fn main", "include": "*.rs"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'fn main' (*.rs)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_with_path_and_include() {
+        let args = serde_json::json!({"pattern": "test", "path": "src/", "include": "*.rs"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'test' in src/ (*.rs)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_pattern_only() {
+        let args = serde_json::json!({"pattern": "TODO"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'TODO'");
+    }
+
+    #[test]
+    fn test_format_tool_summary_list_files_with_pattern() {
+        let args = serde_json::json!({"path": "src/", "pattern": "*.rs"});
+        let result = format_tool_summary("list_files", &args);
+        assert_eq!(result, "ls src/ (*.rs)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_list_files_pattern_no_path() {
+        let args = serde_json::json!({"pattern": "*.toml"});
+        let result = format_tool_summary("list_files", &args);
+        assert_eq!(result, "ls . (*.toml)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_bash_multiline_shows_first_line() {
+        let args = serde_json::json!({"command": "cd src\ngrep -r 'test' ."});
+        let result = format_tool_summary("bash", &args);
+        assert!(
+            result.starts_with("$ cd src"),
+            "Should show first line: {result}"
+        );
+        assert!(
+            result.contains("(2 lines)"),
+            "Should indicate line count: {result}"
+        );
+    }
+
+    // --- pluralize ---
+
+    #[test]
+    fn test_truncate_tool_output_under_threshold_unchanged() {
+        let short = "hello world\nsecond line\nthird line";
+        let result = truncate_tool_output(short, 30_000);
+        assert_eq!(result, short);
+    }
+
+    #[test]
+    fn test_truncate_tool_output_empty_string() {
+        let result = truncate_tool_output("", 30_000);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_truncate_tool_output_exactly_at_threshold() {
+        // Create output exactly at the threshold
+        let line = "x".repeat(100);
+        let lines: Vec<String> = (0..300).map(|_| line.clone()).collect();
+        let output = lines.join("\n");
+        // If it's at or under threshold length, it should be unchanged
+        let result = truncate_tool_output(&output, output.len());
+        assert_eq!(result, output);
+    }
+
+    #[test]
+    fn test_truncate_tool_output_over_threshold_has_marker() {
+        // Create output with 200 lines, each long enough to exceed 30k chars
+        let line = "x".repeat(200);
+        let lines: Vec<String> = (0..200).map(|i| format!("line{i}: {line}")).collect();
+        let output = lines.join("\n");
+        assert!(output.len() > 30_000);
+
+        let result = truncate_tool_output(&output, 30_000);
+        assert!(result.contains("[... truncated"));
+        assert!(result.contains("lines ...]"));
+        // Should contain head lines
+        assert!(result.contains("line0:"));
+        assert!(result.contains("line99:"));
+        // Should contain tail lines
+        assert!(result.contains("line199:"));
+        assert!(result.contains("line150:"));
+        // Should NOT contain middle lines
+        assert!(!result.contains("line100:"));
+        assert!(!result.contains("line120:"));
+    }
+
+    #[test]
+    fn test_truncate_tool_output_preserves_head_and_tail_count() {
+        // 300 lines, each 200 chars → ~60k chars, well over 30k threshold
+        let lines: Vec<String> = (0..300).map(|i| format!("{:>200}", i)).collect();
+        let output = lines.join("\n");
+
+        let result = truncate_tool_output(&output, 30_000);
+        let _result_lines: Vec<&str> = result.lines().collect();
+
+        // Head: first 100 lines should be present
+        for i in 0..100 {
+            let expected = format!("{:>200}", i);
+            assert!(result.contains(&expected), "Missing head line {i}");
+        }
+
+        // Tail: last 50 lines should be present
+        for i in 250..300 {
+            let expected = format!("{:>200}", i);
+            assert!(result.contains(&expected), "Missing tail line {i}");
+        }
+
+        // Middle should be omitted
+        assert!(!result.contains(&format!("{:>200}", 150)));
+
+        // Marker should show correct count
+        // 300 - 100 - 50 = 150 omitted lines
+        assert!(result.contains("[... truncated 150 lines ...]"));
+
+        // Result should be shorter than original
+        assert!(result.len() < output.len());
+    }
+
+    #[test]
+    fn test_truncate_tool_output_few_long_lines_not_truncated() {
+        // Only 140 lines (< head + tail = 150), even if over char threshold
+        // Should NOT be truncated because there aren't enough lines
+        let line = "x".repeat(500);
+        let lines: Vec<String> = (0..140).map(|_| line.clone()).collect();
+        let output = lines.join("\n");
+        assert!(output.len() > 30_000);
+
+        let result = truncate_tool_output(&output, 30_000);
+        assert_eq!(
+            result, output,
+            "Too few lines to truncate, should be unchanged"
+        );
+    }
+
+    #[test]
+    fn test_truncate_tool_output_single_truncated_line_in_marker() {
+        // 152 lines → head 100 + tail 50 + 2 omitted
+        // But 2 omitted uses "lines" (plural)
+        // 151 lines → 1 omitted → "line" (singular)
+        let line = "x".repeat(300);
+        let lines: Vec<String> = (0..151).map(|_| line.clone()).collect();
+        let output = lines.join("\n");
+        assert!(output.len() > 30_000);
+
+        let result = truncate_tool_output(&output, 30_000);
+        assert!(result.contains("[... truncated 1 line ...]"));
+    }
+
+    #[test]
+    fn test_truncate_tool_output_default_threshold_constant() {
+        // Verify the default constant is 30,000
+        assert_eq!(TOOL_OUTPUT_MAX_CHARS, 30_000);
+    }
+
+    #[test]
+    fn test_tool_output_max_chars_piped_smaller() {
+        // Piped/CI mode limit should be strictly less than interactive limit
+        const _: () = assert!(TOOL_OUTPUT_MAX_CHARS_PIPED < TOOL_OUTPUT_MAX_CHARS);
+    }
+
+    #[test]
+    fn test_tool_output_max_chars_piped_value() {
+        // Piped/CI mode limit should be 15,000
+        assert_eq!(TOOL_OUTPUT_MAX_CHARS_PIPED, 15_000);
+    }
+
+    #[test]
+    fn test_truncate_tool_output_with_custom_limit() {
+        // Verify truncation respects a custom (small) limit
+        let output = (0..200)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = truncate_tool_output(&output, 100);
+        // Output is well over 100 chars and has 200 lines (> head+tail),
+        // so it should be truncated
+        assert!(
+            result.contains("[... truncated"),
+            "Should be truncated with 100-char limit, got length {}",
+            result.len()
+        );
+    }
+
+    #[test]
+    fn test_truncate_tool_output_respects_limit_parameter() {
+        // Same output should NOT be truncated with a large limit but SHOULD be with a small one
+        let output = (0..200)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let large_limit_result = truncate_tool_output(&output, 1_000_000);
+        let small_limit_result = truncate_tool_output(&output, 100);
+        assert_eq!(
+            large_limit_result, output,
+            "Large limit should return output unchanged"
+        );
+        assert_ne!(
+            small_limit_result, output,
+            "Small limit should truncate the output"
+        );
+    }
+
+    // ── decode_html_entities tests ──────────────────────────────────
+
+    #[test]
+    fn test_decode_html_entities_named() {
+        assert_eq!(decode_html_entities("&amp;"), "&");
+        assert_eq!(decode_html_entities("&lt;"), "<");
+        assert_eq!(decode_html_entities("&gt;"), ">");
+        assert_eq!(decode_html_entities("&quot;"), "\"");
+        assert_eq!(decode_html_entities("&apos;"), "'");
+        assert_eq!(decode_html_entities("&#39;"), "'");
+        assert_eq!(decode_html_entities("&nbsp;"), " ");
+        assert_eq!(decode_html_entities("&#x27;"), "'");
+        assert_eq!(decode_html_entities("&mdash;"), "—");
+        assert_eq!(decode_html_entities("&ndash;"), "–");
+        assert_eq!(decode_html_entities("&hellip;"), "…");
+        assert_eq!(decode_html_entities("&copy;"), "©");
+        assert_eq!(decode_html_entities("&reg;"), "®");
+    }
+
+    #[test]
+    fn test_decode_html_entities_numeric_decimal() {
+        // &#65; = 'A'
+        assert_eq!(decode_html_entities("&#65;"), "A");
+        // &#8212; = '—' (em dash)
+        assert_eq!(decode_html_entities("&#8212;"), "—");
+    }
+
+    #[test]
+    fn test_decode_html_entities_numeric_hex() {
+        // &#x41; = 'A'
+        assert_eq!(decode_html_entities("&#x41;"), "A");
+        // &#x2014; = '—' (em dash)
+        assert_eq!(decode_html_entities("&#x2014;"), "—");
+    }
+
+    #[test]
+    fn test_decode_html_entities_mixed() {
+        assert_eq!(
+            decode_html_entities("hello &amp; world &lt;3 &#8212; done"),
+            "hello & world <3 — done"
+        );
+    }
+
+    #[test]
+    fn test_decode_html_entities_no_entities() {
+        assert_eq!(decode_html_entities("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_decode_html_entities_invalid_numeric() {
+        // Invalid numeric entity — should be preserved as-is
+        assert_eq!(decode_html_entities("&#xZZZZ;"), "&#xZZZZ;");
+        assert_eq!(decode_html_entities("&#abc;"), "&#abc;");
+    }
+
+    #[test]
+    fn test_decode_html_entities_incomplete() {
+        // Ampersand not part of an entity
+        assert_eq!(decode_html_entities("a & b"), "a & b");
+    }
+
+    // --- Section header and divider tests ---
+
+    #[test]
+    fn test_section_header_contains_label_and_line_chars() {
+        let header = section_header("Thinking");
+        assert!(
+            header.contains("Thinking"),
+            "header should contain the label"
+        );
+        assert!(
+            header.contains("─"),
+            "header should contain box-drawing chars"
+        );
+    }
+
+    #[test]
+    fn test_section_header_empty_label_produces_divider() {
+        let header = section_header("");
+        // Empty label should produce the same as section_divider
+        let divider = section_divider();
+        assert_eq!(header, divider);
+    }
+
+    #[test]
+    fn test_section_divider_nonempty_with_line_chars() {
+        let divider = section_divider();
+        assert!(!divider.is_empty(), "divider should not be empty");
+        assert!(
+            divider.contains("─"),
+            "divider should contain box-drawing chars"
+        );
+    }
+
+    #[test]
+    fn test_section_header_no_color() {
+        // When NO_COLOR is set, the output still contains the label and line chars
+        // (Color codes render as empty strings, but the structural content remains)
+        let header = section_header("Tools");
+        assert!(header.contains("Tools"));
+        assert!(header.contains("─"));
+    }
+
+    #[test]
+    fn test_section_divider_no_color() {
+        let divider = section_divider();
+        assert!(divider.contains("─"));
+    }
+
+    #[test]
+    fn test_terminal_width_default() {
+        // terminal_width should return a reasonable default (80) when COLUMNS is not set
+        // or it should return the value of COLUMNS if set
+        let width = terminal_width();
+        assert!(width > 0, "terminal width should be positive");
+    }
+
+    #[test]
+    fn test_section_header_with_various_labels() {
+        // Test with different labels to ensure formatting works
+        for label in &[
+            "Thinking",
+            "Response",
+            "A",
+            "Very Long Section Label For Testing",
+        ] {
+            let header = section_header(label);
+            assert!(header.contains(label), "header should contain '{}'", label);
+            assert!(header.contains("──"), "header should have line prefix");
+        }
+    }
+
+    // ── tool batch summary tests ──────────────────────────────────
+
+    #[test]
+    fn test_tool_batch_summary_single_tool_returns_empty() {
+        let result = format_tool_batch_summary(1, 1, 0, Duration::from_millis(500));
+        assert!(
+            result.is_empty(),
+            "single tool batch should not produce summary"
+        );
+    }
+
+    #[test]
+    fn test_tool_batch_summary_zero_tools_returns_empty() {
+        let result = format_tool_batch_summary(0, 0, 0, Duration::from_millis(0));
+        assert!(result.is_empty(), "zero tools should not produce summary");
+    }
+
+    #[test]
+    fn test_tool_batch_summary_all_succeed() {
+        let result = format_tool_batch_summary(3, 3, 0, Duration::from_millis(1200));
+        assert!(result.contains("3 tools"), "should show tool count");
+        assert!(result.contains("1.2s"), "should show duration");
+        assert!(result.contains("3"), "should show success count");
+        assert!(result.contains("✓"), "should show success marker");
+        // When all succeed, no failure count shown
+        assert!(
+            !result.contains("✗"),
+            "should not show failure marker when all succeed"
+        );
+    }
+
+    #[test]
+    fn test_tool_batch_summary_with_failures() {
+        let result = format_tool_batch_summary(4, 3, 1, Duration::from_millis(2500));
+        assert!(result.contains("4 tools"), "should show total count");
+        assert!(result.contains("2.5s"), "should show duration");
+        assert!(result.contains("3"), "should show success count");
+        assert!(result.contains("✓"), "should show success marker");
+        assert!(result.contains("1"), "should show failure count");
+        assert!(result.contains("✗"), "should show failure marker");
+    }
+
+    #[test]
+    fn test_tool_batch_summary_two_tools_plural() {
+        let result = format_tool_batch_summary(2, 2, 0, Duration::from_millis(800));
+        assert!(result.contains("2 tools"), "should pluralize 'tools'");
+        assert!(result.contains("800ms"), "should show ms for sub-second");
+    }
+
+    // ── indent tool output tests ──────────────────────────────────
+
+    #[test]
+    fn test_indent_tool_output_empty() {
+        assert_eq!(indent_tool_output(""), "");
+    }
+
+    #[test]
+    fn test_indent_tool_output_single_line() {
+        let result = indent_tool_output("hello world");
+        assert!(result.contains("│"), "should have indent marker");
+        assert!(result.contains("hello world"), "should preserve content");
+    }
+
+    #[test]
+    fn test_indent_tool_output_multiline() {
+        let result = indent_tool_output("line 1\nline 2\nline 3");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 3, "should preserve line count");
+        for line in &lines {
+            assert!(line.contains("│"), "each line should have indent marker");
+        }
+        assert!(lines[0].contains("line 1"));
+        assert!(lines[1].contains("line 2"));
+        assert!(lines[2].contains("line 3"));
+    }
+
+    // ── turn boundary tests ──────────────────────────────────
+
+    #[test]
+    fn test_turn_boundary_contains_number() {
+        let result = turn_boundary(1);
+        assert!(result.contains("Turn 1"), "should show turn number");
+        assert!(result.contains("╭"), "should have box-drawing start");
+        assert!(result.contains("╮"), "should have box-drawing end");
+    }
+
+    #[test]
+    fn test_turn_boundary_different_numbers() {
+        for n in [1, 5, 10, 99] {
+            let result = turn_boundary(n);
+            assert!(
+                result.contains(&format!("Turn {n}")),
+                "should contain Turn {n}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_turn_boundary_has_fill_characters() {
+        let result = turn_boundary(1);
+        assert!(result.contains("─"), "should have fill characters");
+    }
+
+    // --- Streaming latency tests (issue #147) ---
+
+    #[test]
+    fn test_bell_enabled_default() {
+        // Verify bell_enabled() is callable and returns a bool without panicking.
+        // Since OnceLock is global, the value depends on test ordering and env,
+        // but the function itself should never panic.
+        let _result = bell_enabled();
+    }
+
+    #[test]
+    fn test_maybe_ring_bell_short_duration_no_bell() {
+        // Durations under 3s should never ring the bell, regardless of settings.
+        // This just verifies no panic or error — the bell character is harmless
+        // even if it does get emitted.
+        maybe_ring_bell(Duration::from_secs(0));
+        maybe_ring_bell(Duration::from_secs(1));
+        maybe_ring_bell(Duration::from_secs(2));
+        // No assertion needed — we're testing that it doesn't panic.
+    }
+
+    #[test]
+    fn test_maybe_ring_bell_long_duration_no_panic() {
+        // Durations >= 3s should attempt the bell if enabled.
+        // In test environment this is harmless.
+        maybe_ring_bell(Duration::from_secs(3));
+        maybe_ring_bell(Duration::from_secs(60));
+    }
+
+    // ── format_usage_line tests ────────────────────────────────────
+
+    #[test]
+    fn test_format_usage_compact() {
+        let usage = yoagent::Usage {
+            input: 1119,
+            output: 47,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let total = yoagent::Usage {
+            input: 1119,
+            output: 47,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let elapsed = Duration::from_secs_f64(1.0);
+        let line = format_usage_line(&usage, &total, "claude-sonnet-4-20250514", elapsed, false)
+            .expect("should produce output");
+        // Compact: ↳ 1.0s · 1119→47 tokens · $0.006
+        assert!(line.starts_with("↳ 1.0s"), "got: {line}");
+        assert!(line.contains("1119→47 tokens"), "got: {line}");
+        // Should NOT contain verbose markers
+        assert!(!line.contains("session:"), "got: {line}");
+        assert!(!line.contains("in /"), "got: {line}");
+    }
+
+    #[test]
+    fn test_format_usage_verbose() {
+        let usage = yoagent::Usage {
+            input: 500,
+            output: 100,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let total = yoagent::Usage {
+            input: 2000,
+            output: 400,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let elapsed = Duration::from_secs(3);
+        let line = format_usage_line(&usage, &total, "claude-sonnet-4-20250514", elapsed, true)
+            .expect("should produce output");
+        // Verbose: tokens: 500 in / 100 out  (session: 2000 in / 400 out) ...
+        assert!(line.contains("tokens: 500 in / 100 out"), "got: {line}");
+        assert!(line.contains("session: 2000 in / 400 out"), "got: {line}");
+        assert!(line.contains("⏱"), "got: {line}");
+    }
+
+    #[test]
+    fn test_format_usage_zero_tokens_returns_none() {
+        let usage = yoagent::Usage {
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let total = usage.clone();
+        let elapsed = Duration::from_secs(1);
+        assert!(
+            format_usage_line(&usage, &total, "claude-sonnet-4-20250514", elapsed, false).is_none()
+        );
+        assert!(
+            format_usage_line(&usage, &total, "claude-sonnet-4-20250514", elapsed, true).is_none()
+        );
+    }
+
+    #[test]
+    fn test_format_usage_verbose_with_cache() {
+        let usage = yoagent::Usage {
+            input: 1000,
+            output: 200,
+            cache_read: 500,
+            cache_write: 100,
+            total_tokens: 0,
+        };
+        let total = usage.clone();
+        let elapsed = Duration::from_secs(2);
+        let line = format_usage_line(&usage, &total, "claude-sonnet-4-20250514", elapsed, true)
+            .expect("should produce output");
+        assert!(line.contains("[cache: 500 read, 100 write]"), "got: {line}");
+    }
+
+    #[test]
+    fn test_format_usage_compact_includes_cost() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let total = usage.clone();
+        let elapsed = Duration::from_secs(5);
+        let line = format_usage_line(&usage, &total, "claude-sonnet-4-20250514", elapsed, false)
+            .expect("should produce output");
+        // Should have cost separator
+        assert!(line.contains(" · $"), "compact should include cost: {line}");
+    }
+
+    #[test]
+    fn test_format_usage_compact_unknown_model_no_cost() {
+        let usage = yoagent::Usage {
+            input: 100,
+            output: 50,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let total = usage.clone();
+        let elapsed = Duration::from_millis(500);
+        let line = format_usage_line(&usage, &total, "unknown-model-xyz", elapsed, false)
+            .expect("should produce output");
+        // No cost for unknown model
+        assert!(
+            !line.contains("$"),
+            "unknown model should have no cost: {line}"
+        );
+        assert!(line.contains("100→50 tokens"), "got: {line}");
+    }
+
+    // ── ThinkBlockFilter tests ───────────────────────────────────────
+}

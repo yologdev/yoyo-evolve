@@ -49,7 +49,11 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 **Multi-file agent** (`src/`):
 - `main.rs` — agent core, REPL, streaming event handling, rendering with ANSI colors, sub-agent tool integration, AskUserTool (interactive question-asking)
 - `cli.rs` — CLI argument parsing, subcommands, configuration
-- `format.rs` — output formatting and color utilities
+- `format/mod.rs` — Color, constants, utility functions, re-exports
+- `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML
+- `format/cost.rs` — pricing, cost display, token formatting
+- `format/markdown.rs` — MarkdownRenderer for streaming markdown output
+- `format/tools.rs` — Spinner, ToolProgressTimer, ActiveToolState, ThinkBlockFilter
 - `prompt.rs` — prompt construction for evolution sessions
 
 Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an optional `SkillSet`.
