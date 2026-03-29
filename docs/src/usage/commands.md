@@ -578,7 +578,7 @@ src/cli.rs (400 lines)
   pub const SYSTEM_PROMPT
   ...
 
-  45 symbols across 8 files
+  45 symbols across 8 files (using ast-grep)
 ```
 
 **Usage:**
@@ -589,8 +589,11 @@ src/cli.rs (400 lines)
 | `/map src/` | Map only files under a specific directory |
 | `/map --all` | Include private/non-exported symbols |
 | `/map --all src/` | All symbols under a specific directory |
+| `/map --regex` | Force regex backend (skip ast-grep) |
 
 **Supported languages:** Rust, Python, JavaScript, TypeScript, Go, Java.
+
+**ast-grep integration:** When [ast-grep](https://ast-grep.github.io/) (`sg`) is installed, `/map` uses it for more accurate AST-based symbol extraction. When ast-grep is not available, it falls back to built-in regex extractors. The output footer shows which backend was used. Use `--regex` to force the regex backend for comparison or debugging.
 
 **Automatic system prompt integration:** The repo map is automatically included in the system prompt at the start of every session, giving the AI structural awareness of your codebase without you needing to manually add files. This is similar to Aider's repo-map feature. The system prompt version is limited to public symbols and capped at ~16K characters to avoid bloating context.
 

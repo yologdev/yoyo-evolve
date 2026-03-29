@@ -1141,13 +1141,336 @@ fn extract_java_symbols(code: &str) -> Vec<Symbol> {
     symbols
 }
 
+/// Build the ast-grep inline rule YAML for a given language.
+///
+/// Returns a YAML string targeting structural symbol kinds (functions, structs,
+/// classes, etc.) appropriate for the language.
+fn ast_grep_rule_for_language(language: &str) -> Option<String> {
+    let rule = match language {
+        "rust" => {
+            "id: symbols\nlanguage: Rust\nrule:\n  any:\n    \
+             - kind: function_item\n    \
+             - kind: struct_item\n    \
+             - kind: enum_item\n    \
+             - kind: trait_item\n    \
+             - kind: impl_item\n    \
+             - kind: const_item\n    \
+             - kind: mod_item"
+        }
+        "python" => {
+            "id: symbols\nlanguage: Python\nrule:\n  any:\n    \
+             - kind: function_definition\n    \
+             - kind: class_definition"
+        }
+        "javascript" => {
+            "id: symbols\nlanguage: JavaScript\nrule:\n  any:\n    \
+             - kind: function_declaration\n    \
+             - kind: class_declaration\n    \
+             - kind: lexical_declaration\n    \
+             - kind: export_statement"
+        }
+        "typescript" => {
+            "id: symbols\nlanguage: TypeScript\nrule:\n  any:\n    \
+             - kind: function_declaration\n    \
+             - kind: class_declaration\n    \
+             - kind: interface_declaration\n    \
+             - kind: type_alias_declaration\n    \
+             - kind: lexical_declaration\n    \
+             - kind: export_statement"
+        }
+        "go" => {
+            "id: symbols\nlanguage: Go\nrule:\n  any:\n    \
+             - kind: function_declaration\n    \
+             - kind: method_declaration\n    \
+             - kind: type_declaration"
+        }
+        "java" => {
+            "id: symbols\nlanguage: Java\nrule:\n  any:\n    \
+             - kind: class_declaration\n    \
+             - kind: interface_declaration\n    \
+             - kind: enum_declaration\n    \
+             - kind: method_declaration"
+        }
+        _ => return None,
+    };
+    Some(rule.to_string())
+}
+
+/// Parse ast-grep JSON output into Symbol entries.
+///
+/// Each match from `sg scan --json` has "text", "range.start.line", etc.
+/// We parse the first line of text to extract the symbol kind and name.
+pub fn parse_ast_grep_symbols(json_str: &str, language: &str) -> Vec<Symbol> {
+    // ast-grep outputs a JSON array of match objects
+    let arr: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut symbols = Vec::new();
+    for item in &arr {
+        let text = match item.get("text").and_then(|t| t.as_str()) {
+            Some(t) => t,
+            None => continue,
+        };
+        let line = item
+            .get("range")
+            .and_then(|r| r.get("start"))
+            .and_then(|s| s.get("line"))
+            .and_then(|l| l.as_u64())
+            .unwrap_or(0) as usize;
+
+        // Extract symbol info from the first line of matched text
+        let first_line = text.lines().next().unwrap_or("");
+        if let Some(sym) = parse_symbol_from_text(first_line, language, line) {
+            symbols.push(sym);
+        }
+    }
+    symbols
+}
+
+/// Parse a symbol kind and name from a source code line.
+///
+/// Handles patterns like:
+///   - `pub fn name(...)` / `fn name(...)`
+///   - `pub struct Name` / `struct Name`
+///   - `impl Name` / `impl Trait for Name`
+///   - `class Name` / `def name(...)` / `func name(...)` etc.
+fn parse_symbol_from_text(line: &str, language: &str, line_num: usize) -> Option<Symbol> {
+    let trimmed = line.trim();
+    let is_public = trimmed.starts_with("pub ")
+        || trimmed.starts_with("export ")
+        || (language == "go" && first_ident_uppercase(trimmed));
+
+    // Strip leading visibility/decorators
+    let stripped = trimmed
+        .strip_prefix("pub(crate) ")
+        .or_else(|| trimmed.strip_prefix("pub(super) "))
+        .or_else(|| trimmed.strip_prefix("pub "))
+        .or_else(|| trimmed.strip_prefix("export default "))
+        .or_else(|| trimmed.strip_prefix("export "))
+        .or_else(|| trimmed.strip_prefix("async "))
+        .unwrap_or(trimmed);
+
+    // Also handle "async" after pub
+    let stripped = stripped.strip_prefix("async ").unwrap_or(stripped);
+
+    // Match keyword → (SymbolKind, what-follows)
+    if let Some(rest) = stripped.strip_prefix("fn ") {
+        let name = ident_before(rest, &['(', '<', ' ', '{']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Function,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("struct ") {
+        let name = ident_before(rest, &['(', '<', ' ', '{', ';']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Struct,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("enum ") {
+        let name = ident_before(rest, &['<', ' ', '{']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Enum,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("trait ") {
+        let name = ident_before(rest, &['<', ' ', '{', ':']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Trait,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("impl ") {
+        // "impl Foo" or "impl Trait for Foo"
+        let name = rest.split([' ', '<', '{']).next().unwrap_or("").trim();
+        if name.is_empty() {
+            return None;
+        }
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Impl,
+            is_public: false,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("mod ") {
+        let name = ident_before(rest, &[' ', '{', ';']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Module,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("const ") {
+        let name = ident_before(rest, &[':', ' ', '=']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Const,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("class ") {
+        let name = ident_before(rest, &['(', ' ', '{', ':']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Class,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("interface ") {
+        let name = ident_before(rest, &['<', ' ', '{']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Interface,
+            is_public,
+            line: line_num,
+        });
+    }
+    if let Some(rest) = stripped.strip_prefix("type ") {
+        let name = ident_before(rest, &['<', ' ', '=']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Type,
+            is_public,
+            line: line_num,
+        });
+    }
+    // Python: def/async def
+    if let Some(rest) = stripped.strip_prefix("def ") {
+        let name = ident_before(rest, &['(', ' ', ':']);
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Function,
+            is_public: !name.starts_with('_'),
+            line: line_num,
+        });
+    }
+    // Go: func (receiver) Name(...) or func Name(...)
+    if let Some(rest) = stripped.strip_prefix("func ") {
+        let rest = if rest.starts_with('(') {
+            // Method: skip receiver
+            rest.find(')').map(|i| rest[i + 1..].trim()).unwrap_or(rest)
+        } else {
+            rest
+        };
+        let name = ident_before(rest, &['(', '<', ' ', '{']);
+        let is_go_pub = name.chars().next().is_some_and(|c| c.is_uppercase());
+        return Some(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Function,
+            is_public: is_go_pub,
+            line: line_num,
+        });
+    }
+
+    None
+}
+
+/// Extract the identifier from the start of `s`, stopping at any of `stops`.
+fn ident_before<'a>(s: &'a str, stops: &[char]) -> &'a str {
+    let end = s.find(stops).unwrap_or(s.len());
+    s[..end].trim()
+}
+
+/// Check if the first identifier in a Go declaration is uppercase (exported).
+fn first_ident_uppercase(line: &str) -> bool {
+    // Skip "func ", "type ", etc.
+    let after_kw = line
+        .strip_prefix("func ")
+        .or_else(|| line.strip_prefix("type "))
+        .or_else(|| line.strip_prefix("const "))
+        .or_else(|| line.strip_prefix("var "))
+        .unwrap_or(line);
+    // For methods, skip receiver
+    let after_kw = if after_kw.starts_with('(') {
+        after_kw
+            .find(')')
+            .map(|i| after_kw[i + 1..].trim())
+            .unwrap_or(after_kw)
+    } else {
+        after_kw
+    };
+    after_kw.chars().next().is_some_and(|c| c.is_uppercase())
+}
+
+/// Try to extract symbols from a file using ast-grep.
+///
+/// Returns `Some(symbols)` if ast-grep succeeds, `None` if sg is not available
+/// or the extraction fails (callers should fall back to regex).
+pub fn extract_symbols_ast_grep(path: &str, language: &str) -> Option<Vec<Symbol>> {
+    let rule = ast_grep_rule_for_language(language)?;
+
+    let output = std::process::Command::new("sg")
+        .arg("scan")
+        .arg("--json")
+        .arg("--inline-rules")
+        .arg(&rule)
+        .arg(path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        return Some(Vec::new());
+    }
+
+    let symbols = parse_ast_grep_symbols(&stdout, language);
+    Some(symbols)
+}
+
+/// Which backend was used for symbol extraction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MapBackend {
+    AstGrep,
+    Regex,
+}
+
 /// Build a repo map by scanning project files and extracting symbols.
 ///
 /// If `root` is Some, only scan files under that path.
 /// If `public_only` is true, filter to only public/exported symbols.
 pub fn build_repo_map(root: Option<&str>, public_only: bool) -> Vec<FileSymbols> {
+    build_repo_map_with_backend(root, public_only, false).0
+}
+
+/// Build a repo map with explicit backend control.
+///
+/// When `force_regex` is true, skip ast-grep even if available.
+/// Returns the file symbols and which backend was actually used.
+pub fn build_repo_map_with_backend(
+    root: Option<&str>,
+    public_only: bool,
+    force_regex: bool,
+) -> (Vec<FileSymbols>, MapBackend) {
     let files = list_project_files();
     let mut result = Vec::new();
+
+    // Check ast-grep availability once upfront
+    let use_ast_grep = !force_regex && is_ast_grep_available();
+    let backend = if use_ast_grep {
+        MapBackend::AstGrep
+    } else {
+        MapBackend::Regex
+    };
 
     for path in &files {
         // If a root filter is given, only include matching files
@@ -1169,7 +1492,14 @@ pub fn build_repo_map(root: Option<&str>, public_only: bool) -> Vec<FileSymbols>
             Err(_) => continue,
         };
         let line_count = content.lines().count();
-        let mut symbols = extract_symbols(&content, lang);
+
+        // Try ast-grep first, fall back to regex
+        let mut symbols = if use_ast_grep {
+            extract_symbols_ast_grep(path, lang).unwrap_or_else(|| extract_symbols(&content, lang))
+        } else {
+            extract_symbols(&content, lang)
+        };
+
         if public_only {
             symbols.retain(|s| s.is_public);
         }
@@ -1184,7 +1514,7 @@ pub fn build_repo_map(root: Option<&str>, public_only: bool) -> Vec<FileSymbols>
 
     // Sort by line count descending (biggest/most important files first)
     result.sort_by(|a, b| b.lines.cmp(&a.lines));
-    result
+    (result, backend)
 }
 
 /// Format the repo map with ANSI colors for REPL display.
@@ -1311,23 +1641,25 @@ pub fn generate_repo_map_for_prompt() -> Option<String> {
 ///
 /// Usage: `/map [path]` — show all symbols
 /// Usage: `/map --all [path]` — include private symbols
+/// Usage: `/map --regex [path]` — force regex backend even if ast-grep is available
 pub fn handle_map(input: &str) {
     let rest = input.strip_prefix("/map").unwrap_or("").trim();
 
     let mut show_all = false;
+    let mut force_regex = false;
     let mut path_filter: Option<&str> = None;
 
     for part in rest.split_whitespace() {
-        if part == "--all" {
-            show_all = true;
-        } else {
-            path_filter = Some(part);
+        match part {
+            "--all" => show_all = true,
+            "--regex" => force_regex = true,
+            _ => path_filter = Some(part),
         }
     }
 
     println!("{DIM}  Building repo map...{RESET}");
     let public_only = !show_all;
-    let entries = build_repo_map(path_filter, public_only);
+    let (entries, backend) = build_repo_map_with_backend(path_filter, public_only, force_regex);
 
     if entries.is_empty() {
         println!("{DIM}  (no supported source files with symbols found){RESET}\n");
@@ -1340,8 +1672,13 @@ pub fn handle_map(input: &str) {
     let formatted = format_repo_map_colored(&entries);
     print!("{formatted}");
 
+    let backend_label = match backend {
+        MapBackend::AstGrep => "using ast-grep",
+        MapBackend::Regex => "using regex",
+    };
+
     println!(
-        "\n{DIM}  {} symbol{} across {} file{}{RESET}\n",
+        "\n{DIM}  {} symbol{} across {} file{} ({backend_label}){RESET}\n",
         total_symbols,
         if total_symbols == 1 { "" } else { "s" },
         total_files,
@@ -2283,5 +2620,227 @@ public enum Status { OK, ERROR }
             text.contains("structural"),
             "map help should describe structural mapping"
         );
+    }
+
+    // ── ast-grep backend ───────────────────────────────────────────
+
+    #[test]
+    fn ast_grep_rule_exists_for_supported_languages() {
+        for lang in &["rust", "python", "javascript", "typescript", "go", "java"] {
+            assert!(
+                ast_grep_rule_for_language(lang).is_some(),
+                "should have ast-grep rule for {lang}"
+            );
+        }
+    }
+
+    #[test]
+    fn ast_grep_rule_none_for_unknown_language() {
+        assert!(ast_grep_rule_for_language("haskell").is_none());
+        assert!(ast_grep_rule_for_language("").is_none());
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_empty_input() {
+        let symbols = parse_ast_grep_symbols("[]", "rust");
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_invalid_json() {
+        let symbols = parse_ast_grep_symbols("not json", "rust");
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_rust_function() {
+        let json = r#"[{
+            "text": "pub fn my_func(x: i32) -> bool {\n    true\n}",
+            "range": {"start": {"line": 5, "column": 0}, "end": {"line": 7, "column": 1}},
+            "file": "src/lib.rs",
+            "ruleId": "symbols"
+        }]"#;
+        let symbols = parse_ast_grep_symbols(json, "rust");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "my_func");
+        assert_eq!(symbols[0].kind, SymbolKind::Function);
+        assert!(symbols[0].is_public);
+        assert_eq!(symbols[0].line, 5);
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_rust_struct() {
+        let json = r#"[{
+            "text": "pub struct Config {\n    name: String\n}",
+            "range": {"start": {"line": 1, "column": 0}, "end": {"line": 3, "column": 1}},
+            "file": "src/lib.rs",
+            "ruleId": "symbols"
+        }]"#;
+        let symbols = parse_ast_grep_symbols(json, "rust");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "Config");
+        assert_eq!(symbols[0].kind, SymbolKind::Struct);
+        assert!(symbols[0].is_public);
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_rust_impl() {
+        let json = r#"[{
+            "text": "impl Config {\n    fn new() -> Self { todo!() }\n}",
+            "range": {"start": {"line": 10, "column": 0}, "end": {"line": 12, "column": 1}},
+            "file": "src/lib.rs",
+            "ruleId": "symbols"
+        }]"#;
+        let symbols = parse_ast_grep_symbols(json, "rust");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "Config");
+        assert_eq!(symbols[0].kind, SymbolKind::Impl);
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_rust_enum_and_trait() {
+        let json = r#"[
+            {
+                "text": "pub enum Color {\n    Red,\n    Blue\n}",
+                "range": {"start": {"line": 1, "column": 0}, "end": {"line": 4, "column": 1}},
+                "file": "src/lib.rs",
+                "ruleId": "symbols"
+            },
+            {
+                "text": "pub trait Drawable {\n    fn draw(&self);\n}",
+                "range": {"start": {"line": 6, "column": 0}, "end": {"line": 8, "column": 1}},
+                "file": "src/lib.rs",
+                "ruleId": "symbols"
+            }
+        ]"#;
+        let symbols = parse_ast_grep_symbols(json, "rust");
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].name, "Color");
+        assert_eq!(symbols[0].kind, SymbolKind::Enum);
+        assert_eq!(symbols[1].name, "Drawable");
+        assert_eq!(symbols[1].kind, SymbolKind::Trait);
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_private_fn() {
+        let json = r#"[{
+            "text": "fn helper() {\n    // ...\n}",
+            "range": {"start": {"line": 0, "column": 0}, "end": {"line": 2, "column": 1}},
+            "file": "src/lib.rs",
+            "ruleId": "symbols"
+        }]"#;
+        let symbols = parse_ast_grep_symbols(json, "rust");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "helper");
+        assert!(!symbols[0].is_public);
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_python() {
+        let json = r#"[
+            {
+                "text": "def process(data):\n    pass",
+                "range": {"start": {"line": 0, "column": 0}, "end": {"line": 1, "column": 8}},
+                "file": "main.py",
+                "ruleId": "symbols"
+            },
+            {
+                "text": "class Handler:\n    pass",
+                "range": {"start": {"line": 3, "column": 0}, "end": {"line": 4, "column": 8}},
+                "file": "main.py",
+                "ruleId": "symbols"
+            }
+        ]"#;
+        let symbols = parse_ast_grep_symbols(json, "python");
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].name, "process");
+        assert_eq!(symbols[0].kind, SymbolKind::Function);
+        assert_eq!(symbols[1].name, "Handler");
+        assert_eq!(symbols[1].kind, SymbolKind::Class);
+    }
+
+    #[test]
+    fn parse_ast_grep_symbols_go() {
+        let json = r#"[{
+            "text": "func (s *Server) HandleRequest(w http.ResponseWriter, r *http.Request) {",
+            "range": {"start": {"line": 10, "column": 0}, "end": {"line": 20, "column": 1}},
+            "file": "server.go",
+            "ruleId": "symbols"
+        }]"#;
+        let symbols = parse_ast_grep_symbols(json, "go");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "HandleRequest");
+        assert!(symbols[0].is_public, "Go exported func should be public");
+    }
+
+    #[test]
+    fn parse_symbol_from_text_various_rust() {
+        let sym = parse_symbol_from_text("pub const MAX_SIZE: usize = 100;", "rust", 1).unwrap();
+        assert_eq!(sym.name, "MAX_SIZE");
+        assert_eq!(sym.kind, SymbolKind::Const);
+        assert!(sym.is_public);
+
+        let sym = parse_symbol_from_text("mod utils {", "rust", 5).unwrap();
+        assert_eq!(sym.name, "utils");
+        assert_eq!(sym.kind, SymbolKind::Module);
+
+        let sym = parse_symbol_from_text("pub async fn serve()", "rust", 3).unwrap();
+        assert_eq!(sym.name, "serve");
+        assert_eq!(sym.kind, SymbolKind::Function);
+        assert!(sym.is_public);
+    }
+
+    #[test]
+    fn parse_symbol_from_text_typescript() {
+        let sym =
+            parse_symbol_from_text("export interface ApiResponse {", "typescript", 1).unwrap();
+        assert_eq!(sym.name, "ApiResponse");
+        assert_eq!(sym.kind, SymbolKind::Interface);
+        assert!(sym.is_public);
+
+        let sym = parse_symbol_from_text("type Config = {", "typescript", 5).unwrap();
+        assert_eq!(sym.name, "Config");
+        assert_eq!(sym.kind, SymbolKind::Type);
+    }
+
+    #[test]
+    fn extract_symbols_ast_grep_returns_none_when_sg_unavailable() {
+        // If the system `sg` is NOT ast-grep (or not installed),
+        // extract_symbols_ast_grep should return None (graceful fallback).
+        // This test just verifies it doesn't panic.
+        let result = extract_symbols_ast_grep("nonexistent_file.rs", "rust");
+        // Result is None (file doesn't exist) or Some (if sg happened to work)
+        // Either way, no panic.
+        let _ = result;
+    }
+
+    #[test]
+    fn build_repo_map_with_regex_backend() {
+        // Force regex backend and verify it returns results and correct backend
+        let (entries, backend) = build_repo_map_with_backend(Some("src/"), true, true);
+        assert_eq!(backend, MapBackend::Regex);
+        // We're in a Rust project, so we should find symbols
+        assert!(
+            !entries.is_empty(),
+            "should find symbols in src/ with regex backend"
+        );
+    }
+
+    #[test]
+    fn handle_map_no_panic_with_regex_flag() {
+        handle_map("/map --regex");
+    }
+
+    #[test]
+    fn handle_map_no_panic_with_regex_and_all() {
+        handle_map("/map --regex --all");
+    }
+
+    #[test]
+    fn map_backend_display() {
+        // Verify MapBackend values match expected variants
+        assert_eq!(MapBackend::AstGrep, MapBackend::AstGrep);
+        assert_eq!(MapBackend::Regex, MapBackend::Regex);
+        assert_ne!(MapBackend::AstGrep, MapBackend::Regex);
     }
 }

@@ -239,11 +239,14 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
             "/map [path] — Show structural map of the codebase\n\n\
              Extracts function signatures, struct/class/trait/enum definitions,\n\
              and other structural symbols from source files.\n\n\
+             When ast-grep (sg) is installed, uses it for more accurate AST-based\n\
+             extraction. Falls back to regex when ast-grep is not available.\n\n\
              Usage:\n\
              \x20 /map              Map entire project (public symbols)\n\
              \x20 /map src/         Map only files under src/\n\
              \x20 /map --all        Include private symbols\n\
-             \x20 /map --all src/   All symbols under src/\n\n\
+             \x20 /map --all src/   All symbols under src/\n\
+             \x20 /map --regex      Force regex backend (skip ast-grep)\n\n\
              Supported languages: Rust, Python, JavaScript, TypeScript, Go, Java.\n\n\
              The repo map is also automatically included in the system prompt\n\
              for structural codebase awareness.",
