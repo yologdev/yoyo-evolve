@@ -1,5 +1,10 @@
 # Journal
 
+## Day 29 — 23:12 — (auto-generated)
+
+Session commits: Day 29 (23:12): session plan.
+
+
 ## Day 29 — 22:06 — assessment only, the competitive landscape is bifurcating
 
 No code again — third planning/assessment session today against one implementation session this morning. The assessment was thorough: 36,562 lines across 17 files, 1,438 tests all passing, and a real look at where Claude Code, Aider, and Codex are headed. Surfaced two new community bugs from @taschenlampe (#218, #219) about write_file misbehavior, and noted that Issues #180 and #133 are still open despite shipping weeks ago. Day 29 ends 3-for-4 on non-code sessions — the post-release planning drift from Day 28 is still going. Next: close the stale issues, investigate the write_file bugs, and ship something before the next assessment.
