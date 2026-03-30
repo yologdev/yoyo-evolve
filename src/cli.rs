@@ -49,6 +49,7 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "cerebras",
     "zai",
     "minimax",
+    "bedrock",
     "custom",
 ];
 
@@ -1472,6 +1473,7 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
         "cerebras" => Some("CEREBRAS_API_KEY"),
         "zai" => Some("ZAI_API_KEY"),
         "minimax" => Some("MINIMAX_API_KEY"),
+        "bedrock" => Some("AWS_ACCESS_KEY_ID"),
         "anthropic" => Some("ANTHROPIC_API_KEY"),
         _ => None,
     }
@@ -1493,8 +1495,9 @@ pub fn get_welcome_text() -> String {
 
   {BOLD}Other providers:{RESET}
   Use {CYAN}--provider{RESET} to switch backends:
-     openai, google, ollama (local), deepseek, groq, and more.
+     openai, google, ollama (local), deepseek, groq, bedrock, and more.
   Example: {DIM}yoyo --provider ollama --model llama3.2{RESET}
+  AWS Bedrock: {DIM}yoyo --provider bedrock --base-url https://bedrock-runtime.us-east-1.amazonaws.com{RESET}
 
   {BOLD}Persistent config:{RESET}
   Create a {CYAN}.yoyo.toml{RESET} file in your project or home directory:
@@ -1556,6 +1559,12 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "MiniMax-M1",
             "MiniMax-M1-40k",
         ],
+        "bedrock" => &[
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-haiku-4-5-20250414-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+        ],
         "ollama" => &["llama3.2", "llama3.1", "codellama", "mistral"],
         _ => &[],
     }
@@ -1575,6 +1584,7 @@ pub fn default_model_for_provider(provider: &str) -> String {
         "cerebras" => "llama-3.3-70b".into(),
         "zai" => "glm-4-plus".into(),
         "minimax" => "MiniMax-M2.7".into(),
+        "bedrock" => "anthropic.claude-sonnet-4-20250514-v1:0".into(),
         _ => "claude-opus-4-6".into(),
     }
 }
@@ -3086,6 +3096,44 @@ system_prompt = "You are a Go expert"
         assert!(!models.is_empty(), "minimax should have known models");
         assert!(models.contains(&"MiniMax-M1"));
         assert!(models.contains(&"MiniMax-M1-40k"));
+    }
+
+    #[test]
+    fn test_bedrock_in_known_providers() {
+        assert!(
+            KNOWN_PROVIDERS.contains(&"bedrock"),
+            "bedrock should be in KNOWN_PROVIDERS"
+        );
+    }
+
+    #[test]
+    fn test_bedrock_provider_api_key_env() {
+        assert_eq!(provider_api_key_env("bedrock"), Some("AWS_ACCESS_KEY_ID"));
+    }
+
+    #[test]
+    fn test_bedrock_default_model() {
+        assert_eq!(
+            default_model_for_provider("bedrock"),
+            "anthropic.claude-sonnet-4-20250514-v1:0"
+        );
+    }
+
+    #[test]
+    fn test_bedrock_known_models() {
+        let models = known_models_for_provider("bedrock");
+        assert!(!models.is_empty(), "bedrock should have known models");
+        assert!(models.contains(&"anthropic.claude-sonnet-4-20250514-v1:0"));
+        assert!(models.contains(&"amazon.nova-pro-v1:0"));
+    }
+
+    #[test]
+    fn test_welcome_text_mentions_bedrock() {
+        let welcome = get_welcome_text();
+        assert!(
+            welcome.contains("bedrock"),
+            "welcome text should mention bedrock"
+        );
     }
 
     #[test]

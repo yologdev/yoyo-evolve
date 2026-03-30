@@ -22,6 +22,10 @@ pub const WIZARD_PROVIDERS: &[(&str, &str)] = &[
     ("mistral", "Mistral"),
     ("cerebras", "Cerebras"),
     ("minimax", "MiniMax"),
+    (
+        "bedrock",
+        "AWS Bedrock (Claude, Nova — uses AWS credentials)",
+    ),
     ("custom", "Custom (self-hosted OpenAI-compatible)"),
 ];
 
@@ -42,6 +46,10 @@ pub fn generate_config_contents(provider: &str, model: &str, base_url: Option<&s
     config.push_str(&format!("model = \"{model}\"\n"));
     if let Some(url) = base_url {
         config.push_str(&format!("base_url = \"{url}\"\n"));
+    }
+    if provider == "bedrock" {
+        config.push_str("# For Bedrock, set: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY\n");
+        config.push_str("# Or pass --api-key \"access_key:secret_key\"\n");
     }
     config
 }
@@ -188,15 +196,87 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
     )
     .ok();
 
-    // Step 2: API key (skip for ollama)
-    let api_key = if provider == "ollama" {
+    // Step 2: API key (skip for ollama, special flow for bedrock)
+    let (api_key, base_url_from_step2) = if provider == "ollama" {
         writeln!(writer).ok();
         writeln!(
             writer,
             "  {DIM}No API key needed for {provider} — nice!{RESET}"
         )
         .ok();
-        "not-needed".to_string()
+        ("not-needed".to_string(), None)
+    } else if provider == "bedrock" {
+        writeln!(writer).ok();
+        writeln!(writer, "  {BOLD}Step 2:{RESET} Enter your AWS credentials").ok();
+        writeln!(
+            writer,
+            "  {DIM}(or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your shell){RESET}"
+        )
+        .ok();
+        writeln!(writer).ok();
+
+        write!(writer, "  AWS Access Key ID: ").ok();
+        writer.flush().ok();
+        let mut access_key_input = String::new();
+        if reader.read_line(&mut access_key_input).is_err() {
+            return None;
+        }
+        let access_key = access_key_input.trim().to_string();
+
+        write!(writer, "  AWS Secret Access Key: ").ok();
+        writer.flush().ok();
+        let mut secret_key_input = String::new();
+        if reader.read_line(&mut secret_key_input).is_err() {
+            return None;
+        }
+        let secret_key = secret_key_input.trim().to_string();
+
+        write!(writer, "  AWS Region [us-east-1]: ").ok();
+        writer.flush().ok();
+        let mut region_input = String::new();
+        if reader.read_line(&mut region_input).is_err() {
+            return None;
+        }
+        let region = region_input.trim();
+        let region = if region.is_empty() {
+            "us-east-1"
+        } else {
+            region
+        };
+
+        // Build the combined key and base URL
+        let combined_key = if access_key.is_empty() && secret_key.is_empty() {
+            // Check environment variables
+            let env_access = std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_default();
+            let env_secret = std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default();
+            if !env_access.is_empty() && !env_secret.is_empty() {
+                writeln!(
+                    writer,
+                    "  {GREEN}✓{RESET} Using credentials from {DIM}AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY{RESET}"
+                )
+                .ok();
+                format!("{env_access}:{env_secret}")
+            } else {
+                writeln!(
+                    writer,
+                    "  {YELLOW}No AWS credentials provided.{RESET} Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY or re-run the wizard."
+                )
+                .ok();
+                return None;
+            }
+        } else {
+            writeln!(writer, "  {GREEN}✓{RESET} AWS credentials received").ok();
+            format!("{access_key}:{secret_key}")
+        };
+
+        let bedrock_url = format!("https://bedrock-runtime.{region}.amazonaws.com");
+        writeln!(
+            writer,
+            "  {GREEN}✓{RESET} Region: {BOLD}{region}{RESET} → {DIM}{bedrock_url}{RESET}"
+        )
+        .ok();
+
+        (combined_key, Some(bedrock_url))
     } else {
         let env_var = provider_api_key_env(provider).unwrap_or("ANTHROPIC_API_KEY");
         writeln!(writer).ok();
@@ -226,7 +306,7 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
                             "  {GREEN}✓{RESET} Using key from {DIM}{env_key}{RESET}"
                         )
                         .ok();
-                        val
+                        (val, None)
                     } else {
                         writeln!(
                             writer,
@@ -253,12 +333,14 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
             }
         } else {
             writeln!(writer, "  {GREEN}✓{RESET} API key received").ok();
-            key
+            (key, None)
         }
     };
 
-    // Base URL prompt (for custom/self-hosted providers)
-    let base_url = if provider == "custom" {
+    // Base URL prompt (for custom/self-hosted providers, or pre-set by bedrock)
+    let base_url = if base_url_from_step2.is_some() {
+        base_url_from_step2
+    } else if provider == "custom" {
         writeln!(writer).ok();
         writeln!(
             writer,
@@ -471,7 +553,8 @@ mod tests {
         assert_eq!(parse_provider_choice("9"), Some("mistral"));
         assert_eq!(parse_provider_choice("10"), Some("cerebras"));
         assert_eq!(parse_provider_choice("11"), Some("minimax"));
-        assert_eq!(parse_provider_choice("12"), Some("custom"));
+        assert_eq!(parse_provider_choice("12"), Some("bedrock"));
+        assert_eq!(parse_provider_choice("13"), Some("custom"));
     }
 
     #[test]
@@ -484,6 +567,8 @@ mod tests {
         assert_eq!(parse_provider_choice("Cerebras"), Some("cerebras"));
         assert_eq!(parse_provider_choice("minimax"), Some("minimax"));
         assert_eq!(parse_provider_choice("MiniMax"), Some("minimax"));
+        assert_eq!(parse_provider_choice("bedrock"), Some("bedrock"));
+        assert_eq!(parse_provider_choice("Bedrock"), Some("bedrock"));
         assert_eq!(parse_provider_choice("custom"), Some("custom"));
         assert_eq!(parse_provider_choice("CUSTOM"), Some("custom"));
     }
@@ -718,8 +803,8 @@ mod tests {
 
     #[test]
     fn test_wizard_custom_provider_flow() {
-        // Choose custom (12), enter API key, enter base URL, accept default model, save=no
-        let input = "12\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
+        // Choose custom (13), enter API key, enter base URL, accept default model, save=no
+        let input = "13\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
 
@@ -737,8 +822,8 @@ mod tests {
 
     #[test]
     fn test_wizard_custom_provider_no_base_url_returns_none() {
-        // Choose custom (12), enter API key, enter empty base URL
-        let input = "12\nmy-custom-key\n\n";
+        // Choose custom (13), enter API key, enter empty base URL
+        let input = "13\nmy-custom-key\n\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
 
@@ -924,5 +1009,82 @@ mod tests {
             display.contains("yoyo") || display.contains("config"),
             "display path should mention yoyo or config: {display}"
         );
+    }
+
+    #[test]
+    fn test_bedrock_in_wizard_providers() {
+        let slugs: Vec<&str> = WIZARD_PROVIDERS.iter().map(|&(s, _)| s).collect();
+        assert!(
+            slugs.contains(&"bedrock"),
+            "bedrock should be in WIZARD_PROVIDERS"
+        );
+    }
+
+    #[test]
+    fn test_generate_config_bedrock() {
+        let config = generate_config_contents(
+            "bedrock",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            Some("https://bedrock-runtime.us-east-1.amazonaws.com"),
+        );
+        assert!(config.contains("provider = \"bedrock\""));
+        assert!(config.contains("model = \"anthropic.claude-sonnet-4-20250514-v1:0\""));
+        assert!(config.contains("base_url = \"https://bedrock-runtime.us-east-1.amazonaws.com\""));
+        assert!(config.contains("AWS_ACCESS_KEY_ID"));
+        assert!(config.contains("AWS_SECRET_ACCESS_KEY"));
+        // Verify it's valid-ish TOML (lines starting with # are comments, others are key=value)
+        for line in config.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            assert!(
+                trimmed.contains('='),
+                "non-comment line should be key=value: {trimmed}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_wizard_bedrock_with_credentials() {
+        // Choose bedrock (12), enter access key, secret key, default region, default model, save=no
+        let input = "12\nAKIATEST123\nwJalrXUtnFEMI/test\n\n\nn\n";
+        let mut reader = io::Cursor::new(input.as_bytes());
+        let mut output = Vec::new();
+
+        let result = run_wizard_interactive(&mut reader, &mut output);
+        assert!(result.is_some(), "wizard should succeed for bedrock");
+        let r = result.unwrap();
+        assert_eq!(r.provider, "bedrock");
+        assert_eq!(r.api_key, "AKIATEST123:wJalrXUtnFEMI/test");
+        assert_eq!(r.model, "anthropic.claude-sonnet-4-20250514-v1:0"); // default
+        assert_eq!(
+            r.base_url.as_deref(),
+            Some("https://bedrock-runtime.us-east-1.amazonaws.com")
+        );
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("AWS credentials received"));
+        assert!(output_str.contains("us-east-1"));
+    }
+
+    #[test]
+    fn test_wizard_bedrock_custom_region() {
+        // Choose bedrock (12), enter credentials, custom region, default model, save=no
+        let input = "12\nAKIATEST123\nsecretkey\neu-west-1\n\nn\n";
+        let mut reader = io::Cursor::new(input.as_bytes());
+        let mut output = Vec::new();
+
+        let result = run_wizard_interactive(&mut reader, &mut output);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.provider, "bedrock");
+        assert_eq!(
+            r.base_url.as_deref(),
+            Some("https://bedrock-runtime.eu-west-1.amazonaws.com")
+        );
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("eu-west-1"));
     }
 }
