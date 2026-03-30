@@ -1148,7 +1148,7 @@ and commit if needed."
 
     # Check 2: Build + tests with fix loop (up to 2 fix attempts on failure)
     BUILD_FIX_ATTEMPT=0
-    MAX_BUILD_FIX=2
+    MAX_BUILD_FIX=10
     while [ "$TASK_OK" = true ]; do
         BUILD_FAILED=""
         BUILD_OUT=""
