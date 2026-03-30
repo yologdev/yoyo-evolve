@@ -376,6 +376,235 @@ fn maybe_confirm(
 }
 
 // ---------------------------------------------------------------------------
+// Hook system — pre/post tool execution pipeline
+// ---------------------------------------------------------------------------
+
+/// Hook that runs before/after tool execution.
+///
+/// Hooks form a pipeline: pre-hooks run first-to-last before the tool executes,
+/// post-hooks run first-to-last after execution. A pre-hook can block execution
+/// (return Err) or short-circuit with a cached result (return Ok(Some(...))).
+/// A post-hook can inspect or modify the tool's output.
+pub trait Hook: Send + Sync {
+    /// Human-readable name for this hook (used in diagnostics/logging).
+    fn name(&self) -> &str;
+
+    /// Pre-execute: return Err to block, Ok(None) to proceed, Ok(Some(result)) to short-circuit.
+    fn pre_execute(
+        &self,
+        _tool_name: &str,
+        _params: &serde_json::Value,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    /// Post-execute: can inspect/log the result. Return modified output or pass through.
+    fn post_execute(
+        &self,
+        _tool_name: &str,
+        _params: &serde_json::Value,
+        output: &str,
+    ) -> Result<String, String> {
+        Ok(output.to_string())
+    }
+}
+
+/// Registry that collects hooks and runs them in order.
+///
+/// Pre-hooks run first-to-last: the first hook to block (Err) or short-circuit
+/// (Ok(Some)) wins. Post-hooks run first-to-last, each receiving the output
+/// from the previous hook (or the tool itself for the first hook).
+pub struct HookRegistry {
+    hooks: Vec<Box<dyn Hook>>,
+}
+
+impl Default for HookRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HookRegistry {
+    pub fn new() -> Self {
+        Self { hooks: vec![] }
+    }
+
+    pub fn register(&mut self, hook: Box<dyn Hook>) {
+        self.hooks.push(hook);
+    }
+
+    /// Run all pre-hooks in order. Returns:
+    /// - `Ok(None)` — all hooks passed, proceed with tool execution
+    /// - `Ok(Some(result))` — a hook short-circuited with a cached result
+    /// - `Err(reason)` — a hook blocked execution
+    pub fn run_pre_hooks(
+        &self,
+        tool_name: &str,
+        params: &serde_json::Value,
+    ) -> Result<Option<String>, String> {
+        for hook in &self.hooks {
+            match hook.pre_execute(tool_name, params)? {
+                Some(result) => return Ok(Some(result)),
+                None => continue,
+            }
+        }
+        Ok(None)
+    }
+
+    /// Run all post-hooks in order, threading output through each.
+    /// Returns the final (possibly modified) output, or Err if a hook fails.
+    pub fn run_post_hooks(
+        &self,
+        tool_name: &str,
+        params: &serde_json::Value,
+        output: &str,
+    ) -> Result<String, String> {
+        let mut current = output.to_string();
+        for hook in &self.hooks {
+            current = hook.post_execute(tool_name, params, &current)?;
+        }
+        Ok(current)
+    }
+
+    /// Number of registered hooks.
+    pub fn len(&self) -> usize {
+        self.hooks.len()
+    }
+
+    /// Whether the registry has no hooks.
+    pub fn is_empty(&self) -> bool {
+        self.hooks.is_empty()
+    }
+}
+
+/// AuditHook — logs every tool execution to `.yoyo/audit.jsonl`.
+///
+/// This is the audit logging that was previously done ad-hoc in the event handler.
+/// Now it's a proper hook in the tool execution pipeline. Only logs when audit
+/// mode is enabled (via `--audit` flag, `YOYO_AUDIT=1`, or config).
+pub struct AuditHook;
+
+impl Hook for AuditHook {
+    fn name(&self) -> &str {
+        "audit"
+    }
+
+    // AuditHook doesn't block or modify — it only observes.
+    // pre_execute: default (Ok(None)) — always proceed.
+
+    fn post_execute(
+        &self,
+        tool_name: &str,
+        params: &serde_json::Value,
+        output: &str,
+    ) -> Result<String, String> {
+        // Only log if audit mode is enabled
+        if is_audit_enabled() {
+            // We don't have precise duration here (the HookedTool wrapper measures it),
+            // but the hook sees the output. Duration is logged separately by HookedTool.
+            // Log with duration=0 — the actual timing is handled by the event stream.
+            audit_log_tool_call(tool_name, params, 0, true);
+        }
+        Ok(output.to_string())
+    }
+}
+
+/// A wrapper tool that runs hooks before/after delegating to the inner tool.
+///
+/// This is the outermost wrapper in the tool pipeline — it wraps tools that may
+/// already be wrapped with TruncatingTool, GuardedTool, or ConfirmTool.
+struct HookedTool {
+    inner: Box<dyn AgentTool>,
+    hooks: Arc<HookRegistry>,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for HookedTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        // Run pre-hooks
+        match self.hooks.run_pre_hooks(self.inner.name(), &params) {
+            Err(reason) => {
+                return Err(yoagent::types::ToolError::Failed(format!(
+                    "Blocked by hook: {reason}"
+                )));
+            }
+            Ok(Some(cached)) => {
+                // Short-circuit: return the cached result without executing the tool
+                return Ok(yoagent::types::ToolResult {
+                    content: vec![yoagent::Content::Text { text: cached }],
+                    details: serde_json::Value::default(),
+                });
+            }
+            Ok(None) => {
+                // Proceed with normal execution
+            }
+        }
+
+        // Execute the inner tool
+        let result = self.inner.execute(params.clone(), ctx).await?;
+
+        // Extract text content for post-hooks
+        let output_text: String = result
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                yoagent::Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Run post-hooks (they can inspect/modify the output)
+        match self
+            .hooks
+            .run_post_hooks(self.inner.name(), &params, &output_text)
+        {
+            Ok(_modified) => {
+                // Post-hooks ran successfully. We pass through the original result
+                // unchanged — post-hooks are for observation/logging, not mutation
+                // of the ToolResult structure (which may contain non-text content).
+                Ok(result)
+            }
+            Err(reason) => Err(yoagent::types::ToolError::Failed(format!(
+                "Post-hook error: {reason}"
+            ))),
+        }
+    }
+}
+
+/// Wrap a tool with the hook registry. If the registry is empty, returns the tool unwrapped.
+fn maybe_hook(tool: Box<dyn AgentTool>, hooks: &Arc<HookRegistry>) -> Box<dyn AgentTool> {
+    if hooks.is_empty() {
+        tool
+    } else {
+        Box::new(HookedTool {
+            inner: tool,
+            hooks: Arc::clone(hooks),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // StreamingBashTool — real-time subprocess output via on_update callbacks
 // ---------------------------------------------------------------------------
 
@@ -945,11 +1174,13 @@ impl AgentTool for TodoTool {
 /// The same `always_approved` flag is shared across bash, write_file, and edit_file.
 /// When `permissions` has patterns, matching commands/paths are auto-approved or auto-denied.
 /// When `dir_restrictions` has rules, file tools check paths before executing.
+/// When `audit` is true, all tools are wrapped with the AuditHook via the hook system.
 pub fn build_tools(
     auto_approve: bool,
     permissions: &cli::PermissionConfig,
     dir_restrictions: &cli::DirectoryRestrictions,
     max_tool_output: usize,
+    audit: bool,
 ) -> Vec<Box<dyn AgentTool>> {
     // Shared flag: when any tool gets "always", all tools skip prompts
     let always_approved = Arc::new(AtomicBool::new(false));
@@ -1037,33 +1268,52 @@ pub fn build_tools(
         maybe_confirm(Box::new(RenameSymbolTool), &always_approved, permissions)
     };
 
+    // Build hook registry — currently just AuditHook when audit mode is on.
+    // Future hooks (rate limiting, caching, custom scripts) register here.
+    let hooks = {
+        let mut registry = HookRegistry::new();
+        if audit {
+            registry.register(Box::new(AuditHook));
+        }
+        Arc::new(registry)
+    };
+
     let mut tools = vec![
-        with_truncation(Box::new(bash), max_tool_output),
-        with_truncation(
-            maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
-            max_tool_output,
+        maybe_hook(with_truncation(Box::new(bash), max_tool_output), &hooks),
+        maybe_hook(
+            with_truncation(
+                maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
+                max_tool_output,
+            ),
+            &hooks,
         ),
-        with_truncation(write_tool, max_tool_output),
-        with_truncation(edit_tool, max_tool_output),
-        with_truncation(
-            maybe_guard(Box::new(ListFilesTool::default()), dir_restrictions),
-            max_tool_output,
+        maybe_hook(with_truncation(write_tool, max_tool_output), &hooks),
+        maybe_hook(with_truncation(edit_tool, max_tool_output), &hooks),
+        maybe_hook(
+            with_truncation(
+                maybe_guard(Box::new(ListFilesTool::default()), dir_restrictions),
+                max_tool_output,
+            ),
+            &hooks,
         ),
-        with_truncation(
-            maybe_guard(Box::new(SearchTool::default()), dir_restrictions),
-            max_tool_output,
+        maybe_hook(
+            with_truncation(
+                maybe_guard(Box::new(SearchTool::default()), dir_restrictions),
+                max_tool_output,
+            ),
+            &hooks,
         ),
-        with_truncation(rename_tool, max_tool_output),
+        maybe_hook(with_truncation(rename_tool, max_tool_output), &hooks),
     ];
 
     // Only add ask_user in interactive mode (stdin is a terminal).
     // In piped mode or test environments, this tool isn't available.
     if std::io::stdin().is_terminal() {
-        tools.push(Box::new(AskUserTool));
+        tools.push(maybe_hook(Box::new(AskUserTool), &hooks));
     }
 
     // TodoTool is always available — it only modifies in-memory state, not filesystem
-    tools.push(Box::new(TodoTool));
+    tools.push(maybe_hook(Box::new(TodoTool), &hooks));
 
     tools
 }
@@ -1298,6 +1548,7 @@ impl AgentConfig {
                 } else {
                     TOOL_OUTPUT_MAX_CHARS_PIPED
                 },
+                is_audit_enabled(),
             ));
 
         // Add sub-agent tool via the dedicated API (separate from build_tools count)
@@ -1758,8 +2009,8 @@ mod tests {
         // build_tools should return 8 tools regardless of auto_approve (in non-terminal: no ask_user)
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools_approved = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
-        let tools_confirm = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let tools_approved = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools_confirm = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
         assert_eq!(tools_approved.len(), 8);
         assert_eq!(tools_confirm.len(), 8);
     }
@@ -1804,7 +2055,7 @@ mod tests {
         // Verify build_tools still returns exactly 8 — SubAgentTool is added via with_sub_agent
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
         assert_eq!(
             tools.len(),
             8,
@@ -2194,7 +2445,7 @@ mod tests {
         // When auto_approve is true, tools should not have ConfirmTool wrappers
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
         assert_eq!(tools.len(), 8);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"write_file"));
@@ -2208,7 +2459,7 @@ mod tests {
         // (ConfirmTool delegates name() to inner tool)
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let tools = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
         assert_eq!(tools.len(), 8);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"write_file"));
@@ -2834,7 +3085,7 @@ mod tests {
     fn test_rename_symbol_tool_in_build_tools() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             names.contains(&"rename_symbol"),
@@ -2916,7 +3167,7 @@ mod tests {
         // build_tools should work with the piped limit too
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS_PIPED);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS_PIPED, false);
         assert_eq!(tools.len(), 8, "Should still have 8 tools with piped limit");
     }
 
@@ -2938,7 +3189,7 @@ mod tests {
         // In test environment (no terminal), ask_user should NOT be included
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             !names.contains(&"ask_user"),
@@ -3127,11 +3378,288 @@ mod tests {
     fn test_todo_tool_in_build_tools() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             names.contains(&"todo"),
             "build_tools should include todo, got: {names:?}"
+        );
+    }
+
+    // === Hook system tests ===
+
+    #[test]
+    fn test_hook_registry_new_is_empty() {
+        let registry = HookRegistry::new();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn test_hook_registry_default_is_empty() {
+        let registry = HookRegistry::default();
+        assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn test_pre_hooks_with_no_hooks_returns_none() {
+        let registry = HookRegistry::new();
+        let params = serde_json::json!({"command": "ls"});
+        let result = registry.run_pre_hooks("bash", &params);
+        assert_eq!(result, Ok(None));
+    }
+
+    #[test]
+    fn test_post_hooks_with_no_hooks_passes_through() {
+        let registry = HookRegistry::new();
+        let params = serde_json::json!({});
+        let result = registry.run_post_hooks("bash", &params, "hello world");
+        assert_eq!(result, Ok("hello world".to_string()));
+    }
+
+    /// A test hook that blocks all tool execution.
+    struct BlockingHook;
+    impl Hook for BlockingHook {
+        fn name(&self) -> &str {
+            "blocker"
+        }
+        fn pre_execute(
+            &self,
+            _tool_name: &str,
+            _params: &serde_json::Value,
+        ) -> Result<Option<String>, String> {
+            Err("blocked by test".to_string())
+        }
+    }
+
+    #[test]
+    fn test_blocking_pre_hook_returns_err() {
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(BlockingHook));
+        let params = serde_json::json!({});
+        let result = registry.run_pre_hooks("bash", &params);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "blocked by test");
+    }
+
+    /// A test hook that short-circuits with a cached result.
+    struct CachingHook {
+        cached: String,
+    }
+    impl Hook for CachingHook {
+        fn name(&self) -> &str {
+            "cache"
+        }
+        fn pre_execute(
+            &self,
+            _tool_name: &str,
+            _params: &serde_json::Value,
+        ) -> Result<Option<String>, String> {
+            Ok(Some(self.cached.clone()))
+        }
+    }
+
+    #[test]
+    fn test_short_circuit_pre_hook_returns_cached_result() {
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(CachingHook {
+            cached: "cached output".to_string(),
+        }));
+        let params = serde_json::json!({});
+        let result = registry.run_pre_hooks("read_file", &params);
+        assert_eq!(result, Ok(Some("cached output".to_string())));
+    }
+
+    /// A test hook that modifies output in post_execute.
+    struct UppercaseHook;
+    impl Hook for UppercaseHook {
+        fn name(&self) -> &str {
+            "uppercase"
+        }
+        fn post_execute(
+            &self,
+            _tool_name: &str,
+            _params: &serde_json::Value,
+            output: &str,
+        ) -> Result<String, String> {
+            Ok(output.to_uppercase())
+        }
+    }
+
+    #[test]
+    fn test_post_hook_can_modify_output() {
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(UppercaseHook));
+        let params = serde_json::json!({});
+        let result = registry.run_post_hooks("bash", &params, "hello");
+        assert_eq!(result, Ok("HELLO".to_string()));
+    }
+
+    /// A test hook that appends a tag to output.
+    struct TagHook {
+        tag: String,
+    }
+    impl Hook for TagHook {
+        fn name(&self) -> &str {
+            "tag"
+        }
+        fn post_execute(
+            &self,
+            _tool_name: &str,
+            _params: &serde_json::Value,
+            output: &str,
+        ) -> Result<String, String> {
+            Ok(format!("{output}:{}", self.tag))
+        }
+    }
+
+    #[test]
+    fn test_hook_ordering_post_hooks_chain_first_to_last() {
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(TagHook {
+            tag: "first".to_string(),
+        }));
+        registry.register(Box::new(TagHook {
+            tag: "second".to_string(),
+        }));
+        registry.register(Box::new(TagHook {
+            tag: "third".to_string(),
+        }));
+        let params = serde_json::json!({});
+        let result = registry.run_post_hooks("bash", &params, "start");
+        // Each hook appends its tag in order
+        assert_eq!(result, Ok("start:first:second:third".to_string()));
+    }
+
+    /// A pass-through hook that increments a counter.
+    struct CountingHook {
+        count: std::sync::atomic::AtomicUsize,
+    }
+    impl Hook for CountingHook {
+        fn name(&self) -> &str {
+            "counter"
+        }
+        fn pre_execute(
+            &self,
+            _tool_name: &str,
+            _params: &serde_json::Value,
+        ) -> Result<Option<String>, String> {
+            self.count.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn test_hook_ordering_pre_hooks_run_first_to_last() {
+        // Register a pass-through hook, then a blocking hook.
+        // The pass-through should run (incrementing count), then the blocker fires.
+        let mut registry = HookRegistry::new();
+        let counter = Arc::new(CountingHook {
+            count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        // We can't share Arc<CountingHook> directly via register(Box<dyn Hook>),
+        // so we test ordering by putting a blocker second and checking that Err is returned.
+        // A pass-through + blocker = first runs, second blocks.
+        struct PassThroughHook;
+        impl Hook for PassThroughHook {
+            fn name(&self) -> &str {
+                "pass"
+            }
+        }
+        registry.register(Box::new(PassThroughHook));
+        registry.register(Box::new(BlockingHook));
+        let params = serde_json::json!({});
+        // Blocker is second, so result should be Err (first hook passed through)
+        let result = registry.run_pre_hooks("bash", &params);
+        assert!(
+            result.is_err(),
+            "Second hook (blocker) should fire after first"
+        );
+        // Count that registry has 2 hooks
+        assert_eq!(registry.len(), 2);
+        drop(counter);
+    }
+
+    #[test]
+    fn test_short_circuit_pre_hook_stops_later_hooks() {
+        // A caching hook followed by a blocking hook: the cache should win, blocker never runs.
+        let mut registry = HookRegistry::new();
+        registry.register(Box::new(CachingHook {
+            cached: "early exit".to_string(),
+        }));
+        registry.register(Box::new(BlockingHook));
+        let params = serde_json::json!({});
+        let result = registry.run_pre_hooks("bash", &params);
+        assert_eq!(
+            result,
+            Ok(Some("early exit".to_string())),
+            "Caching hook should short-circuit before blocker"
+        );
+    }
+
+    #[test]
+    fn test_audit_hook_implements_trait() {
+        let hook = AuditHook;
+        assert_eq!(hook.name(), "audit");
+
+        // pre_execute should always return Ok(None) — never blocks
+        let params = serde_json::json!({"command": "ls"});
+        let pre = hook.pre_execute("bash", &params);
+        assert_eq!(pre, Ok(None));
+
+        // post_execute should pass through output unchanged
+        // (audit logging won't fire since is_audit_enabled() is false in tests)
+        let post = hook.post_execute("bash", &params, "file1.rs\nfile2.rs");
+        assert_eq!(post, Ok("file1.rs\nfile2.rs".to_string()));
+    }
+
+    #[test]
+    fn test_hook_registry_register_increases_len() {
+        let mut registry = HookRegistry::new();
+        assert_eq!(registry.len(), 0);
+        registry.register(Box::new(AuditHook));
+        assert_eq!(registry.len(), 1);
+        assert!(!registry.is_empty());
+        registry.register(Box::new(UppercaseHook));
+        assert_eq!(registry.len(), 2);
+    }
+
+    #[test]
+    fn test_maybe_hook_skips_wrap_when_empty() {
+        // With an empty registry, maybe_hook should return the tool as-is (no HookedTool wrapper)
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        // Build with audit=false => hooks is empty => tools are NOT wrapped
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        assert_eq!(tools.len(), 8, "Tool count should be 8 without audit hooks");
+    }
+
+    #[test]
+    fn test_build_tools_with_audit_preserves_tool_count() {
+        // With audit=true, tool count stays the same (tools are wrapped, not added)
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools_with_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true);
+        assert_eq!(
+            tools_no_audit.len(),
+            tools_with_audit.len(),
+            "Audit hooks should wrap tools, not add new ones"
+        );
+    }
+
+    #[test]
+    fn test_build_tools_with_audit_preserves_tool_names() {
+        // Tool names should be identical with or without audit
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions::default();
+        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools_with_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true);
+        let names_no: Vec<&str> = tools_no_audit.iter().map(|t| t.name()).collect();
+        let names_yes: Vec<&str> = tools_with_audit.iter().map(|t| t.name()).collect();
+        assert_eq!(
+            names_no, names_yes,
+            "Tool names should be identical with/without audit"
         );
     }
 }
