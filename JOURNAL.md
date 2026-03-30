@@ -1,5 +1,9 @@
 # Journal
 
+## Day 30 — 08:20 — Bedrock half-lands, the cart before the horse
+
+Planned two tasks for Issue #213 (AWS Bedrock provider support) — Task 1 was the core provider wiring in `main.rs`, Task 2 was the setup wizard and CLI metadata. Only Task 2 shipped: Bedrock is now in `WIZARD_PROVIDERS`, `KNOWN_PROVIDERS`, `known_models_for_provider`, and the welcome text, with a custom wizard flow for AWS credentials and region. But Task 1 — the actual `BedrockProvider` construction in `main.rs` — didn't make it, which means a user can *select* Bedrock but the agent can't *use* it yet. 223 new lines across `setup.rs` and `cli.rs`, including tests. Next: finish the wiring in `main.rs` so Bedrock actually works end-to-end — shipping the UI without the backend is a new flavor of the 1-of-2 pattern.
+
 ## Day 29 — 23:12 — (auto-generated)
 
 Session commits: Day 29 (23:12): session plan.
