@@ -64,8 +64,8 @@ use yoagent::agent::Agent;
 use yoagent::context::{ContextConfig, ExecutionLimits};
 use yoagent::openapi::{OpenApiConfig, OperationFilter};
 use yoagent::provider::{
-    AnthropicProvider, GoogleProvider, ModelConfig, OpenAiCompat, OpenAiCompatProvider,
-    StreamProvider,
+    AnthropicProvider, ApiProtocol, BedrockProvider, GoogleProvider, ModelConfig, OpenAiCompat,
+    OpenAiCompatProvider, StreamProvider,
 };
 use yoagent::sub_agent::SubAgentTool;
 use yoagent::tools::bash::ConfirmFn;
@@ -1081,6 +1081,7 @@ fn build_sub_agent_tool(config: &AgentConfig) -> SubAgentTool {
     let provider: Arc<dyn StreamProvider> = match config.provider.as_str() {
         "anthropic" => Arc::new(AnthropicProvider),
         "google" => Arc::new(GoogleProvider),
+        "bedrock" => Arc::new(BedrockProvider),
         _ => Arc::new(OpenAiCompatProvider),
     };
 
@@ -1208,6 +1209,22 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
                 config.base_url = url.to_string();
             }
             config
+        }
+        "bedrock" => {
+            let url = base_url.unwrap_or("https://bedrock-runtime.us-east-1.amazonaws.com");
+            ModelConfig {
+                id: model.into(),
+                name: model.into(),
+                api: ApiProtocol::BedrockConverseStream,
+                provider: "bedrock".into(),
+                base_url: url.to_string(),
+                reasoning: false,
+                context_window: 200_000,
+                max_tokens: 8192,
+                cost: Default::default(),
+                headers: std::collections::HashMap::new(),
+                compat: None,
+            }
         }
         "custom" => {
             let url = base_url.unwrap_or("http://localhost:8080/v1");
@@ -1348,6 +1365,12 @@ impl AgentConfig {
             let context_window = model_config.context_window;
             let agent = Agent::new(GoogleProvider).with_model_config(model_config);
             self.configure_agent(agent, context_window)
+        } else if self.provider == "bedrock" {
+            // Bedrock uses AWS SigV4 signing with ConverseStream protocol
+            let model_config = create_model_config(&self.provider, &self.model, base_url);
+            let context_window = model_config.context_window;
+            let agent = Agent::new(BedrockProvider).with_model_config(model_config);
+            self.configure_agent(agent, context_window)
         } else {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);
@@ -1426,6 +1449,18 @@ async fn main() {
             // User cancelled — show the static welcome screen and exit
             cli::print_welcome();
             return;
+        }
+    }
+
+    // Bedrock needs combined AWS credentials: access_key:secret_key[:session_token]
+    // parse_args() only reads AWS_ACCESS_KEY_ID; combine with the rest here.
+    if agent_config.provider == "bedrock" && !agent_config.api_key.contains(':') {
+        let access_key = agent_config.api_key.clone();
+        if let Ok(secret) = std::env::var("AWS_SECRET_ACCESS_KEY") {
+            agent_config.api_key = match std::env::var("AWS_SESSION_TOKEN") {
+                Ok(token) if !token.is_empty() => format!("{access_key}:{secret}:{token}"),
+                _ => format!("{access_key}:{secret}"),
+            };
         }
     }
 
@@ -1753,6 +1788,10 @@ mod tests {
             build_sub_agent_tool(&test_agent_config("anthropic", "claude-sonnet-4-20250514"));
         let _tool_google = build_sub_agent_tool(&test_agent_config("google", "gemini-2.0-flash"));
         let _tool_openai = build_sub_agent_tool(&test_agent_config("openai", "gpt-4o"));
+        let _tool_bedrock = build_sub_agent_tool(&test_agent_config(
+            "bedrock",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+        ));
     }
 
     #[test]
@@ -2338,6 +2377,56 @@ mod tests {
             context_window: None,
         };
         let agent = config.build_agent();
+        assert_eq!(agent.messages().len(), 0);
+    }
+
+    #[test]
+    fn test_bedrock_model_config() {
+        let config =
+            create_model_config("bedrock", "anthropic.claude-sonnet-4-20250514-v1:0", None);
+        assert_eq!(config.provider, "bedrock");
+        assert_eq!(
+            config.base_url,
+            "https://bedrock-runtime.us-east-1.amazonaws.com"
+        );
+        // Verify it uses BedrockConverseStream protocol (not OpenAI)
+        assert_eq!(format!("{}", config.api), "bedrock_converse_stream");
+    }
+
+    #[test]
+    fn test_bedrock_model_config_custom_url() {
+        let config = create_model_config(
+            "bedrock",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            Some("https://bedrock-runtime.eu-west-1.amazonaws.com"),
+        );
+        assert_eq!(
+            config.base_url,
+            "https://bedrock-runtime.eu-west-1.amazonaws.com"
+        );
+    }
+
+    #[test]
+    fn test_build_agent_bedrock() {
+        let config = AgentConfig {
+            model: "anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
+            api_key: "test-access:test-secret".to_string(),
+            provider: "bedrock".to_string(),
+            base_url: Some("https://bedrock-runtime.us-east-1.amazonaws.com".to_string()),
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "test".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
+            context_strategy: cli::ContextStrategy::default(),
+            context_window: None,
+        };
+        let agent = config.build_agent();
+        // If this compiles and runs, BedrockProvider is correctly wired
         assert_eq!(agent.messages().len(), 0);
     }
 
