@@ -529,7 +529,6 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         "retry",
         "capacity",
         "server error",
-        "stream ended",
         "stream closed",
         "unexpected eof",
         "broken pipe",
@@ -637,9 +636,19 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
         ));
     }
 
-    // ── Stream / connection interruption ────────────────────────────
-    if lower.contains("stream ended")
-        || lower.contains("stream closed")
+    // ── Stream ended (provider-specific, not retriable) ───────────
+    if lower.contains("stream ended") {
+        return Some(
+            "The API stream ended without the expected termination signal.\n\
+             This is common with some providers (e.g. MiniMax) whose SSE format \n\
+             differs slightly from the OpenAI standard. The response was likely \n\
+             delivered in full — check the output above. Not retrying."
+                .to_string(),
+        );
+    }
+
+    // ── Stream / connection interruption (retriable) ────────────────
+    if lower.contains("stream closed")
         || lower.contains("unexpected eof")
         || lower.contains("broken pipe")
         || lower.contains("incomplete")
@@ -1789,7 +1798,11 @@ mod tests {
 
     #[test]
     fn test_is_retriable_stream_errors() {
-        assert!(is_retriable_error("Stream ended"));
+        // "stream ended" is NOT retriable — the response was likely complete
+        // (see Issue #222: MiniMax SSE format causes false retries)
+        assert!(!is_retriable_error("Stream ended"));
+
+        // Other stream interruptions ARE retriable
         assert!(is_retriable_error("stream closed unexpectedly"));
         assert!(is_retriable_error("unexpected eof while reading"));
         assert!(is_retriable_error("broken pipe"));
@@ -1798,12 +1811,25 @@ mod tests {
     }
 
     #[test]
+    fn test_stream_ended_not_retriable() {
+        // Issue #222: MiniMax's SSE stream doesn't send `data: [DONE]` in the
+        // expected format. yoagent reports "stream ended" but the response was
+        // already complete. Retrying causes 4x duplicated output.
+        assert!(!is_retriable_error("stream ended"));
+        assert!(!is_retriable_error("Stream ended"));
+        assert!(!is_retriable_error("stream ended unexpectedly"));
+        assert!(!is_retriable_error("Stream ended: no more data"));
+    }
+
+    #[test]
     fn test_diagnose_stream_ended() {
+        // "stream ended" now gets a distinct message (not retriable, Issue #222)
         let diag = diagnose_api_error("error: Stream ended", "claude-sonnet-4-20250514");
         assert!(diag.is_some());
         let msg = diag.unwrap();
-        assert!(msg.contains("interrupted"));
-        assert!(msg.contains("auto-retry"));
+        assert!(msg.contains("stream ended"));
+        assert!(msg.contains("delivered in full"));
+        assert!(msg.contains("Not retrying"));
     }
 
     #[test]
