@@ -921,7 +921,8 @@ echo ""
 
 # ── Phase B: Implementation loop ──
 echo "  Phase B: Implementation..."
-# Fixed 20 min per implementation task + up to 2x10 min build-fix + up to 9x10 min eval-fix
+# Fixed 20 min per implementation task + up to 10x10 min build-fix + up to 9x10 min eval-fix
+# Job timeout (150 min) is the real cap; fix loops exit early on success/API error
 IMPL_TIMEOUT=1200
 TASK_NUM=0
 TASK_FAILURES=0
@@ -929,9 +930,9 @@ for TASK_FILE in session_plan/task_*.md; do
     [ -f "$TASK_FILE" ] || continue
     TASK_NUM=$((TASK_NUM + 1))
 
-    # Cap at 5 tasks per session (20 min each = 100 min max)
-    if [ "$TASK_NUM" -gt 5 ]; then
-        echo "    Skipping Task $TASK_NUM — max 5 tasks per session."
+    # Cap at 3 tasks per session (fix loops can consume significant time)
+    if [ "$TASK_NUM" -gt 3 ]; then
+        echo "    Skipping Task $TASK_NUM — max 3 tasks per session."
         break
     fi
 
