@@ -183,6 +183,8 @@ def format_issues(issues, sponsor_logins=None, pick=3, day=0):
         lines.append(boundary_begin)
         lines.append(f"### Issue #{num}")
         lines.append(f"**Title:** {title}")
+        if author:
+            lines.append(f"**Author:** @{author}")
         if status == "yoyo_last":
             lines.append("⏸️ You replied last — re-engage only if you promised follow-up")
         if sponsor_logins and author in sponsor_logins:
