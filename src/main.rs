@@ -218,13 +218,18 @@ pub fn describe_file_operation(tool_name: &str, params: &serde_json::Value) -> S
                 .get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or("<unknown>");
-            let line_count = params
-                .get("content")
-                .and_then(|v| v.as_str())
-                .map(|c| c.lines().count())
-                .unwrap_or(0);
-            let word = crate::format::pluralize(line_count, "line", "lines");
-            format!("write: {path} ({line_count} {word})")
+            let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let line_count = if content.is_empty() {
+                0
+            } else {
+                content.lines().count()
+            };
+            if content.is_empty() {
+                format!("write: {path} (⚠ EMPTY content — creates/overwrites with empty file)")
+            } else {
+                let word = crate::format::pluralize(line_count, "line", "lines");
+                format!("write: {path} ({line_count} {word})")
+            }
         }
         "edit_file" => {
             let path = params
@@ -2044,7 +2049,42 @@ mod tests {
         let desc = describe_file_operation("write_file", &params);
         assert!(desc.contains("write:"));
         assert!(desc.contains("empty.txt"));
-        assert!(desc.contains("0 lines"));
+        assert!(
+            desc.contains("EMPTY content"),
+            "Empty content should show warning, got: {desc}"
+        );
+    }
+
+    #[test]
+    fn test_describe_write_file_missing_content() {
+        // When the content key is entirely absent (model bug), treat as empty
+        let params = serde_json::json!({
+            "path": "missing.txt"
+        });
+        let desc = describe_file_operation("write_file", &params);
+        assert!(desc.contains("write:"));
+        assert!(desc.contains("missing.txt"));
+        assert!(
+            desc.contains("EMPTY content"),
+            "Missing content should show warning, got: {desc}"
+        );
+    }
+
+    #[test]
+    fn test_describe_write_file_normal_content() {
+        // Normal write_file should NOT show the empty warning
+        let params = serde_json::json!({
+            "path": "hello.txt",
+            "content": "hello world\n"
+        });
+        let desc = describe_file_operation("write_file", &params);
+        assert!(desc.contains("write:"));
+        assert!(desc.contains("hello.txt"));
+        assert!(desc.contains("1 line"));
+        assert!(
+            !desc.contains("EMPTY"),
+            "Non-empty content should not show warning, got: {desc}"
+        );
     }
 
     #[test]
