@@ -1038,7 +1038,7 @@ async fn handle_prompt_events(
                             deferred_bash_timers.insert(tool_call_id.clone());
                         }
                     }
-                    AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, .. } => {
+                    AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, tool_name, .. } => {
                         // Clean up deferred timer entry if command was denied before running
                         deferred_bash_timers.remove(&tool_call_id);
                         // Stop any live progress timer for this tool
@@ -1078,6 +1078,16 @@ async fn handle_prompt_events(
                             batch_succeeded += 1;
                             last_tool_error = None;
                             println!(" {GREEN}✓{RESET}{dur_str}");
+                            // Warn when write_file writes 0 bytes (empty content)
+                            if tool_name == "write_file" {
+                                let wrote_zero = result.details.get("bytes")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|b| b == 0)
+                                    .unwrap_or(false);
+                                if wrote_zero {
+                                    eprintln!("{YELLOW}    ⚠ write_file wrote 0 bytes — file is now empty{RESET}");
+                                }
+                            }
                             if is_verbose() {
                                 let preview = tool_result_preview(&result, 200);
                                 if !preview.is_empty() {
