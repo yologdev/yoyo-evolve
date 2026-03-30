@@ -921,7 +921,7 @@ echo ""
 
 # ── Phase B: Implementation loop ──
 echo "  Phase B: Implementation..."
-# Fixed 20 min per implementation task + up to 2x10 min build-fix + up to 2x10 min eval-fix
+# Fixed 20 min per implementation task + up to 2x10 min build-fix + up to 9x10 min eval-fix
 IMPL_TIMEOUT=1200
 TASK_NUM=0
 TASK_FAILURES=0
@@ -1245,9 +1245,9 @@ BFIXEOF
     done
 
     # ── Phase B-eval: Evaluator agent with fix loop (runs only if mechanical checks passed) ──
-    # On FAIL: give the agent up to 2 chances to fix, then re-evaluate. Revert only after all attempts fail.
+    # On FAIL: give the agent up to 9 chances to fix, then re-evaluate. Revert only after all attempts fail.
     EVAL_ATTEMPT=0
-    MAX_EVAL_ATTEMPTS=3
+    MAX_EVAL_ATTEMPTS=10
     EVAL_LOG=""
     while [ "$TASK_OK" = true ] && [ "$EVAL_ATTEMPT" -lt "$MAX_EVAL_ATTEMPTS" ]; do
         EVAL_ATTEMPT=$((EVAL_ATTEMPT + 1))
