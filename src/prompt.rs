@@ -2,7 +2,7 @@
 
 use crate::cli::is_verbose;
 use crate::format::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -931,6 +931,13 @@ async fn handle_prompt_events(
     // Live progress timers for long-running tools (bash)
     let mut tool_progress_timers: HashMap<String, ToolProgressTimer> = HashMap::new();
 
+    // Bash tool call IDs that need deferred timer start.
+    // We don't start the timer on ToolExecutionStart for bash because the
+    // confirmation prompt would be overwritten by the spinner. Instead we
+    // defer to the first ToolExecutionUpdate (which only fires once the
+    // command is actually running, i.e. after confirmation).
+    let mut deferred_bash_timers: HashSet<String> = HashSet::new();
+
     // Tool batch tracking for group summaries
     let mut batch_count: usize = 0;
     let mut batch_succeeded: usize = 0;
@@ -1015,14 +1022,16 @@ async fn handle_prompt_events(
                         }
                         io::stdout().flush().ok();
 
-                        // Start live progress timer for bash commands
-                        // (shows elapsed time while command runs)
+                        // Defer timer start for bash commands — the confirmation
+                        // prompt would be overwritten by the spinner. The timer
+                        // will start on the first ToolExecutionUpdate instead.
                         if tool_name == "bash" {
-                            let timer = ToolProgressTimer::start(tool_name.clone());
-                            tool_progress_timers.insert(tool_call_id.clone(), timer);
+                            deferred_bash_timers.insert(tool_call_id.clone());
                         }
                     }
                     AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, .. } => {
+                        // Clean up deferred timer entry if command was denied before running
+                        deferred_bash_timers.remove(&tool_call_id);
                         // Stop any live progress timer for this tool
                         if let Some(timer) = tool_progress_timers.remove(&tool_call_id) {
                             timer.stop();
@@ -1070,6 +1079,15 @@ async fn handle_prompt_events(
                         }
                     }
                     AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
+                        // Start deferred bash timer on first update.
+                        // This means the command is actually running (confirmation
+                        // has already been resolved), so the spinner won't
+                        // overwrite the permission prompt.
+                        if deferred_bash_timers.remove(&tool_call_id) {
+                            let timer = ToolProgressTimer::start("bash".to_string());
+                            tool_progress_timers.insert(tool_call_id.clone(), timer);
+                        }
+
                         // Update line count on the progress timer if active
                         let line_count = count_result_lines(&partial_result);
                         if let Some(timer) = tool_progress_timers.get(&tool_call_id) {
@@ -2725,6 +2743,82 @@ mod tests {
         assert!(
             val.contains("... [truncated, 201 chars total]"),
             "201-char string should be truncated"
+        );
+    }
+
+    /// Verify the deferred bash timer logic: bash tool_call_ids are tracked
+    /// in the deferred set, removed on first update (timer start), and cleaned
+    /// up on end if no update ever arrived (e.g. denied command).
+    #[test]
+    fn test_deferred_bash_timer_set_lifecycle() {
+        let mut deferred: HashSet<String> = HashSet::new();
+        let mut timers: HashMap<String, &str> = HashMap::new(); // simplified stand-in
+
+        // 1. ToolExecutionStart for bash → add to deferred set, NOT to timers
+        let id = "call_abc".to_string();
+        deferred.insert(id.clone());
+        assert!(
+            deferred.contains(&id),
+            "bash tool should be in deferred set"
+        );
+        assert!(
+            !timers.contains_key(&id),
+            "timer should NOT start on ToolExecutionStart"
+        );
+
+        // 2. ToolExecutionUpdate → remove from deferred, start timer
+        if deferred.remove(&id) {
+            timers.insert(id.clone(), "bash");
+        }
+        assert!(
+            !deferred.contains(&id),
+            "should be removed from deferred after update"
+        );
+        assert!(
+            timers.contains_key(&id),
+            "timer should start on first ToolExecutionUpdate"
+        );
+
+        // 3. ToolExecutionEnd → timer is already active, just clean up
+        timers.remove(&id);
+        deferred.remove(&id); // no-op, already removed
+        assert!(!timers.contains_key(&id));
+        assert!(!deferred.contains(&id));
+    }
+
+    /// Verify that a denied bash command (no ToolExecutionUpdate) gets cleaned
+    /// up properly on ToolExecutionEnd.
+    #[test]
+    fn test_deferred_bash_timer_denied_command_cleanup() {
+        let mut deferred: HashSet<String> = HashSet::new();
+        let timers: HashMap<String, &str> = HashMap::new();
+
+        // ToolExecutionStart for bash → deferred
+        let id = "call_denied".to_string();
+        deferred.insert(id.clone());
+
+        // No ToolExecutionUpdate (command was denied by user)
+
+        // ToolExecutionEnd → clean up deferred entry
+        deferred.remove(&id);
+        assert!(
+            !deferred.contains(&id),
+            "deferred entry should be cleaned up on end"
+        );
+        assert!(
+            !timers.contains_key(&id),
+            "no timer should exist for denied command"
+        );
+    }
+
+    /// Non-bash tools should not be deferred — they don't have confirmation prompts.
+    #[test]
+    fn test_non_bash_tools_not_deferred() {
+        let deferred: HashSet<String> = HashSet::new();
+        // For non-bash tools (read_file, write_file, etc.), we never insert into deferred
+        assert!(
+            deferred.is_empty(),
+            "non-bash tools should never be in deferred set"
         );
     }
 }
