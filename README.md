@@ -104,7 +104,7 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 
 ### ✨ REPL Experience
 - **Rustyline** — arrow keys, Ctrl-A/E/K/W, persistent history
-- **Tab completion** — slash commands, file paths, model names, git subcommands
+- **Tab completion** — slash commands, file paths, model names, git subcommands, inline hints
 - **Multi-line input** — backslash continuation and fenced code blocks
 - **Markdown rendering** — headers, bold, italic, code blocks with syntax-labeled headers
 - **Syntax highlighting** — Rust, Python, JS/TS, Go, Shell, C/C++, JSON, YAML, TOML

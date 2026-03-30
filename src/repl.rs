@@ -137,9 +137,56 @@ pub fn complete_file_path(partial: &str) -> Vec<String> {
 
 impl Hinter for YoyoHelper {
     type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+        // Only hint when cursor is at the end of the line
+        if pos != line.len() {
+            return None;
+        }
+        // Only hint for slash commands
+        if !line.starts_with('/') {
+            return None;
+        }
+        let typed = &line[1..]; // strip the leading /
+        if typed.is_empty() {
+            return None; // Don't hint on bare "/"
+        }
+        // Don't hint if there's already a space (user is typing arguments)
+        if typed.contains(' ') {
+            return None;
+        }
+        // Find the first matching command
+        for cmd in KNOWN_COMMANDS {
+            let cmd_name = &cmd[1..]; // strip leading /
+            if cmd_name.starts_with(typed) && cmd_name != typed {
+                // Show the rest of the command + description
+                let rest = &cmd_name[typed.len()..];
+                if let Some(desc) = crate::help::command_short_description(cmd_name) {
+                    return Some(format!("{rest} — {desc}"));
+                } else {
+                    return Some(rest.to_string());
+                }
+            }
+        }
+        // If user typed a complete command name, show its description
+        for cmd in KNOWN_COMMANDS {
+            let cmd_name = &cmd[1..];
+            if cmd_name == typed {
+                if let Some(desc) = crate::help::command_short_description(cmd_name) {
+                    return Some(format!(" — {desc}"));
+                }
+            }
+        }
+        None
+    }
 }
 
-impl Highlighter for YoyoHelper {}
+impl Highlighter for YoyoHelper {
+    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
+        // Show hints in dim text
+        std::borrow::Cow::Owned(format!("\x1b[2m{hint}\x1b[0m"))
+    }
+}
 
 impl Validator for YoyoHelper {}
 
@@ -1385,5 +1432,69 @@ mod tests {
     fn extract_image_label_fallback() {
         let label = extract_image_label("something unexpected", "image/jpeg");
         assert_eq!(label, "image (image/jpeg)");
+    }
+
+    #[test]
+    fn test_hinter_shows_command_completion() {
+        let helper = YoyoHelper;
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        // Typing "/he" should suggest "lp — Show help for commands"
+        let hint = helper.hint("/he", 3, &ctx);
+        assert!(hint.is_some());
+        assert!(hint.unwrap().starts_with("lp"));
+    }
+
+    #[test]
+    fn test_hinter_shows_description_for_complete_command() {
+        let helper = YoyoHelper;
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        // Typing "/help" exactly should show description
+        let hint = helper.hint("/help", 5, &ctx);
+        assert!(hint.is_some());
+        let hint_text = hint.unwrap();
+        assert!(
+            hint_text.contains("—"),
+            "Hint should contain em-dash: {hint_text}"
+        );
+    }
+
+    #[test]
+    fn test_hinter_no_hint_for_arguments() {
+        let helper = YoyoHelper;
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        // After space (typing arguments), no hint
+        let hint = helper.hint("/add src/", 9, &ctx);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn test_hinter_no_hint_for_non_slash() {
+        let helper = YoyoHelper;
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        let hint = helper.hint("hello", 5, &ctx);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn test_hinter_no_hint_for_bare_slash() {
+        let helper = YoyoHelper;
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        let hint = helper.hint("/", 1, &ctx);
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn test_hinter_no_hint_when_cursor_not_at_end() {
+        let helper = YoyoHelper;
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        // Cursor at position 2, but line is 5 chars
+        let hint = helper.hint("/help", 2, &ctx);
+        assert!(hint.is_none());
     }
 }
