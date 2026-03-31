@@ -921,77 +921,32 @@ pub fn resolve_system_prompt(
 
 /// Load config from file, checking project-level, home-level, then user-level paths.
 /// Returns an empty map if no config file is found.
-fn load_config_file() -> HashMap<String, String> {
+/// Read the config file once, returning both the parsed key-value map and the raw content.
+/// Checks project-level, home-level (~/.yoyo.toml), then user-level (XDG) paths.
+/// Returns `(HashMap, raw_content)` or `(empty HashMap, empty string)` if no config found.
+fn load_config_file() -> (HashMap<String, String>, String) {
     // Check project-level config first
     for name in CONFIG_FILE_NAMES {
         if let Ok(content) = std::fs::read_to_string(name) {
             eprintln!("{DIM}  config: {name}{RESET}");
-            return parse_config_file(&content);
+            return (parse_config_file(&content), content);
         }
     }
     // Check ~/.yoyo.toml (home directory shorthand)
     if let Some(path) = home_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             eprintln!("{DIM}  config: {}{RESET}", path.display());
-            return parse_config_file(&content);
+            return (parse_config_file(&content), content);
         }
     }
     // Check user-level config (XDG)
     if let Some(path) = user_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             eprintln!("{DIM}  config: {}{RESET}", path.display());
-            return parse_config_file(&content);
+            return (parse_config_file(&content), content);
         }
     }
-    HashMap::new()
-}
-
-/// Load permission config from config file, checking project-level, home-level, then user-level paths.
-/// Returns a default (empty) PermissionConfig if no config file or no [permissions] section.
-fn load_permissions_from_config_file() -> PermissionConfig {
-    // Check project-level config first
-    for name in CONFIG_FILE_NAMES {
-        if let Ok(content) = std::fs::read_to_string(name) {
-            return parse_permissions_from_config(&content);
-        }
-    }
-    // Check ~/.yoyo.toml (home directory shorthand)
-    if let Some(path) = home_config_path() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            return parse_permissions_from_config(&content);
-        }
-    }
-    // Check user-level config (XDG)
-    if let Some(path) = user_config_path() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            return parse_permissions_from_config(&content);
-        }
-    }
-    PermissionConfig::default()
-}
-
-/// Load directory restriction config from config file.
-/// Returns a default (empty) DirectoryRestrictions if no config file or no [directories] section.
-fn load_directories_from_config_file() -> DirectoryRestrictions {
-    // Check project-level config first
-    for name in CONFIG_FILE_NAMES {
-        if let Ok(content) = std::fs::read_to_string(name) {
-            return parse_directories_from_config(&content);
-        }
-    }
-    // Check ~/.yoyo.toml (home directory shorthand)
-    if let Some(path) = home_config_path() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            return parse_directories_from_config(&content);
-        }
-    }
-    // Check user-level config (XDG)
-    if let Some(path) = user_config_path() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            return parse_directories_from_config(&content);
-        }
-    }
-    DirectoryRestrictions::default()
+    (HashMap::new(), String::new())
 }
 
 /// Parse CLI arguments into a Config, or exit with help/version.
@@ -1008,7 +963,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     }
 
     // Load config file defaults (CLI flags override these)
-    let file_config = load_config_file();
+    // Read the file once and reuse raw content for permissions + directory parsing
+    let (file_config, raw_config_content) = load_config_file();
 
     // Validate that flags requiring values actually have them
     let flags_needing_values = [
@@ -1337,8 +1293,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 
     // Build permission config: CLI flags override config file
     let permissions = if cli_allow.is_empty() && cli_deny.is_empty() {
-        // No CLI flags — try loading from config file
-        load_permissions_from_config_file()
+        // No CLI flags — parse from already-loaded config content
+        parse_permissions_from_config(&raw_config_content)
     } else {
         PermissionConfig {
             allow: cli_allow,
@@ -1364,7 +1320,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 
     // Build directory restrictions: CLI flags override config file
     let dir_restrictions = if cli_allow_dirs.is_empty() && cli_deny_dirs.is_empty() {
-        load_directories_from_config_file()
+        parse_directories_from_config(&raw_config_content)
     } else {
         DirectoryRestrictions {
             allow: cli_allow_dirs,
