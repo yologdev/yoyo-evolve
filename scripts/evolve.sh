@@ -13,8 +13,8 @@
 #   TIMEOUT            — Total planning phase time budget in seconds (default: 1200)
 #                        Split evenly between assessment (A1) and planning (A2) agents
 #   FORCE_RUN          — Set to "true" to bypass the run-frequency gate
-#   FALLBACK_PROVIDER  — Fallback provider on API error (e.g., "zai")
-#   FALLBACK_MODEL     — Fallback model on API error (e.g., "glm-5")
+#   FALLBACK_PROVIDER  — Fallback provider on API error (e.g., "zai"); passed as --fallback to yoyo
+#   FALLBACK_MODEL     — (unused, kept for backwards compat; binary auto-derives from provider)
 
 set -euo pipefail
 
@@ -453,38 +453,27 @@ echo "  Build OK."
 echo ""
 
 # ── Helper: run agent with automatic fallback on API error ──
-# If primary invocation hits an API error and FALLBACK_PROVIDER + FALLBACK_MODEL
-# are configured, re-runs the same phase with the fallback provider/model.
+# Run yoyo with optional --fallback flag for provider failover.
+# Fallback switching happens inside the binary (see Issue #226).
 run_agent_with_fallback() {
     local timeout_val="$1"
     local prompt_file="$2"
     local log_file="$3"
     local extra_flags="${4:-}"
 
-    # Primary attempt
+    local fallback_flag=""
+    if [ -n "$FALLBACK_PROVIDER" ]; then
+        fallback_flag="--fallback $FALLBACK_PROVIDER"
+    fi
+
     local exit_code=0
     # shellcheck disable=SC2086
     ${TIMEOUT_CMD:+$TIMEOUT_CMD "$timeout_val"} "$YOYO_BIN" \
         --model "$MODEL" \
         --skills ./skills \
+        $fallback_flag \
         $extra_flags \
         < "$prompt_file" 2>&1 | tee "$log_file" || exit_code=$?
-
-    # Check for API error + fallback available
-    # Note: fallback overwrites log_file, so post-call checks reflect fallback result only
-    if grep -q '"type":"error"' "$log_file" 2>/dev/null && \
-       [ -n "$FALLBACK_PROVIDER" ] && [ -n "$FALLBACK_MODEL" ]; then
-        echo "  ⚡ Primary API failed — retrying with fallback ($FALLBACK_PROVIDER:$FALLBACK_MODEL)..."
-
-        exit_code=0
-        # shellcheck disable=SC2086
-        ${TIMEOUT_CMD:+$TIMEOUT_CMD "$timeout_val"} "$YOYO_BIN" \
-            --provider "$FALLBACK_PROVIDER" \
-            --model "$FALLBACK_MODEL" \
-            --skills ./skills \
-            $extra_flags \
-            < "$prompt_file" 2>&1 | tee "$log_file" || exit_code=$?
-    fi
 
     return "$exit_code"
 }
