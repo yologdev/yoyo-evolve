@@ -41,6 +41,7 @@ mod commands_dev;
 mod commands_file;
 mod commands_git;
 mod commands_project;
+mod commands_refactor;
 mod commands_search;
 mod commands_session;
 mod docs;
@@ -2927,7 +2928,7 @@ mod tests {
 
     #[test]
     fn test_rename_result_struct() {
-        let result = commands_project::RenameResult {
+        let result = commands_refactor::RenameResult {
             files_changed: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
             total_replacements: 5,
             preview: "preview text".to_string(),
