@@ -292,6 +292,9 @@ pub async fn run_repl(
             agent_config.permissions.deny.len()
         );
     }
+    if let Some(ref fallback) = agent_config.fallback_provider {
+        println!("{DIM}  fallback: {fallback}{RESET}");
+    }
     if let Some(branch) = git_branch() {
         println!("{DIM}  git:   {branch}{RESET}");
     }
@@ -848,7 +851,66 @@ pub async fn run_repl(
             .await
         };
         crate::format::maybe_ring_bell(prompt_start.elapsed());
-        last_error = outcome.last_tool_error;
+        last_error = outcome.last_tool_error.clone();
+
+        // Fallback provider: if the API failed and a fallback is configured, switch and retry
+        if outcome.last_api_error.is_some() {
+            if let Some(ref fallback) = agent_config.fallback_provider.clone() {
+                if agent_config.provider != *fallback {
+                    eprintln!(
+                        "\n{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
+                        agent_config.provider, fallback
+                    );
+
+                    // Switch provider and model
+                    let old_provider = agent_config.provider.clone();
+                    agent_config.provider = fallback.clone();
+                    agent_config.model = agent_config
+                        .fallback_model
+                        .clone()
+                        .unwrap_or_else(|| default_model_for_provider(fallback));
+
+                    // Resolve API key for fallback provider
+                    if let Some(env_var) = provider_api_key_env(fallback) {
+                        if let Ok(key) = std::env::var(env_var) {
+                            agent_config.api_key = key;
+                        }
+                    }
+
+                    // Rebuild agent with the new provider
+                    *agent = agent_config.build_agent();
+
+                    eprintln!(
+                        "{DIM}  now using: {} / {}{RESET}\n",
+                        agent_config.provider, agent_config.model
+                    );
+
+                    // Retry the same prompt with the fallback provider
+                    let retry_outcome = run_prompt_auto_retry(
+                        agent,
+                        input,
+                        &mut session_total,
+                        &agent_config.model,
+                        &session_changes,
+                    )
+                    .await;
+                    last_error = retry_outcome.last_tool_error.clone();
+
+                    // If fallback also failed, restore original provider info for display
+                    // but keep the fallback agent since the original was already broken
+                    if retry_outcome.last_api_error.is_some() {
+                        eprintln!(
+                            "{RED}  fallback provider '{}' also failed.{RESET}",
+                            fallback
+                        );
+                        eprintln!(
+                            "{DIM}  original provider was '{}'. Use /provider to switch manually.{RESET}",
+                            old_provider
+                        );
+                    }
+                }
+            }
+        }
 
         // After the turn, find newly modified files and update the snapshot
         let changes_after: Vec<String> = session_changes

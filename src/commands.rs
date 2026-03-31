@@ -765,6 +765,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let mut agent = config.build_agent();
         handle_provider_switch("openai", &mut config, &mut agent);
@@ -792,6 +794,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let mut agent = config.build_agent();
         // Invalid provider should not change the config
@@ -820,6 +824,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let mut agent = config.build_agent();
         // Switch to google → should use gemini default

@@ -385,6 +385,11 @@ pub struct PromptOutcome {
     /// Callers can use this to inform users or adjust behavior.
     #[allow(dead_code)]
     pub was_overflow: bool,
+    /// The last API-level error after all retries were exhausted, if any.
+    /// Set when the provider itself fails (rate limits, outages, auth errors)
+    /// rather than a tool execution error. Used by the REPL to trigger
+    /// fallback provider switching.
+    pub last_api_error: Option<String>,
 }
 
 /// Build a retry prompt that includes error context from a previous failed attempt.
@@ -1389,6 +1394,7 @@ pub async fn run_prompt_with_changes(
     let mut collected_text = String::new();
     let mut last_tool_error: Option<String> = None;
     let mut did_overflow_compact = false;
+    let mut api_error: Option<String> = None;
 
     // Save message state before the first attempt so we can restore on retry
     let saved_state = agent.save_messages().ok();
@@ -1440,6 +1446,7 @@ pub async fn run_prompt_with_changes(
                             diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))
                         );
                     }
+                    api_error = Some(error_msg);
                 }
             }
             PromptResult::ContextOverflow { error_msg, usage } => {
@@ -1500,6 +1507,7 @@ pub async fn run_prompt_with_changes(
                         eprintln!(
                             "{DIM}  (overflow retry also failed — try /compact manually){RESET}"
                         );
+                        api_error = Some(retry_err);
                     }
                 }
                 break;
@@ -1518,6 +1526,7 @@ pub async fn run_prompt_with_changes(
         text: collected_text,
         last_tool_error,
         was_overflow: did_overflow_compact,
+        last_api_error: api_error,
     }
 }
 
@@ -1628,8 +1637,7 @@ pub async fn run_prompt_with_content_and_changes(
     let mut total_usage = Usage::default();
     let mut collected_text = String::new();
     let mut last_tool_error: Option<String> = None;
-
-    // Build the user message with content blocks
+    let mut api_error: Option<String> = None;
     let user_msg = AgentMessage::Llm(Message::User {
         content: content_blocks,
         timestamp: now_ms(),
@@ -1684,6 +1692,7 @@ pub async fn run_prompt_with_content_and_changes(
                             diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))
                         );
                     }
+                    api_error = Some(error_msg);
                 }
             }
             PromptResult::ContextOverflow { error_msg, usage } => {
@@ -1696,6 +1705,7 @@ pub async fn run_prompt_with_content_and_changes(
                     "\n{YELLOW}  ⚡ context overflow detected — cannot retry with image content{RESET}"
                 );
                 eprintln!("{DIM}  ({error_msg}){RESET}");
+                api_error = Some(error_msg);
                 break;
             }
         }
@@ -1712,6 +1722,7 @@ pub async fn run_prompt_with_content_and_changes(
         text: collected_text,
         last_tool_error,
         was_overflow: false,
+        last_api_error: api_error,
     }
 }
 
@@ -2856,5 +2867,27 @@ mod tests {
             deferred.is_empty(),
             "non-bash tools should never be in deferred set"
         );
+    }
+
+    #[test]
+    fn test_prompt_outcome_has_api_error_field() {
+        let outcome = PromptOutcome {
+            text: String::new(),
+            last_tool_error: None,
+            was_overflow: false,
+            last_api_error: Some("503 Service Unavailable".to_string()),
+        };
+        assert_eq!(
+            outcome.last_api_error,
+            Some("503 Service Unavailable".to_string())
+        );
+
+        let outcome_no_error = PromptOutcome {
+            text: "hello".to_string(),
+            last_tool_error: None,
+            was_overflow: false,
+            last_api_error: None,
+        };
+        assert!(outcome_no_error.last_api_error.is_none());
     }
 }

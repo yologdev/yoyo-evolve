@@ -366,6 +366,8 @@ pub struct Config {
     pub context_strategy: ContextStrategy,
     pub context_window: Option<u32>,
     pub shell_hooks: Vec<crate::hooks::ShellHook>,
+    pub fallback_provider: Option<String>,
+    pub fallback_model: Option<String>,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -424,6 +426,7 @@ pub fn print_help() {
         "                          per provider (200K Anthropic, 1M Google, 128K OpenAI, etc.)"
     );
     println!("  --continue, -c    Resume last saved session");
+    println!("  --fallback <prov> Fallback provider if primary fails (e.g. --fallback google)");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
     println!();
@@ -575,6 +578,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "-y",
     "--continue",
     "-c",
+    "--fallback",
     "--help",
     "-h",
     "--version",
@@ -992,6 +996,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "--image",
         "--context-strategy",
         "--context-window",
+        "--fallback",
     ];
     for flag in &flags_needing_values {
         if let Some(pos) = args.iter().position(|a| a == flag) {
@@ -1393,6 +1398,20 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // Parse shell hooks from config file
     let shell_hooks = crate::hooks::parse_hooks_from_config(&file_config);
 
+    // --fallback <provider>: fallback provider if primary fails
+    let fallback_provider = args
+        .iter()
+        .position(|a| a == "--fallback")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .or_else(|| file_config.get("fallback").cloned())
+        .map(|s| s.to_lowercase());
+
+    // Derive a default model for the fallback provider
+    let fallback_model = fallback_provider
+        .as_ref()
+        .map(|p| default_model_for_provider(p));
+
     Some(Config {
         model,
         api_key,
@@ -1417,6 +1436,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         context_strategy,
         context_window,
         shell_hooks,
+        fallback_provider,
+        fallback_model,
     })
 }
 
@@ -3158,5 +3179,51 @@ system_prompt = "You are a Go expert"
             KNOWN_FLAGS.contains(&"--context-strategy"),
             "--context-strategy should be in KNOWN_FLAGS"
         );
+    }
+
+    #[test]
+    fn test_fallback_in_known_flags() {
+        assert!(
+            KNOWN_FLAGS.contains(&"--fallback"),
+            "--fallback should be in KNOWN_FLAGS"
+        );
+    }
+
+    #[test]
+    fn test_parse_fallback_flag() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into(), "--fallback".into(), "google".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.fallback_provider, Some("google".to_string()));
+        assert_eq!(
+            config.fallback_model,
+            Some(default_model_for_provider("google"))
+        );
+    }
+
+    #[test]
+    fn test_parse_fallback_missing() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.fallback_provider, None);
+        assert_eq!(config.fallback_model, None);
+    }
+
+    #[test]
+    fn test_parse_fallback_case_insensitive() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into(), "--fallback".into(), "Google".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.fallback_provider, Some("google".to_string()));
+    }
+
+    #[test]
+    fn test_parse_fallback_derives_model() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into(), "--fallback".into(), "openai".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert_eq!(config.fallback_provider, Some("openai".to_string()));
+        assert_eq!(config.fallback_model, Some("gpt-4o".to_string()));
     }
 }

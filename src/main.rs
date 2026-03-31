@@ -1296,6 +1296,8 @@ pub struct AgentConfig {
     pub context_strategy: cli::ContextStrategy,
     pub context_window: Option<u32>,
     pub shell_hooks: Vec<hooks::ShellHook>,
+    pub fallback_provider: Option<String>,
+    pub fallback_model: Option<String>,
 }
 
 impl AgentConfig {
@@ -1466,6 +1468,8 @@ async fn main() {
         context_strategy: config.context_strategy,
         context_window: config.context_window,
         shell_hooks: config.shell_hooks,
+        fallback_provider: config.fallback_provider,
+        fallback_model: config.fallback_model,
     };
 
     // Interactive setup wizard: if no config file or API key is detected,
@@ -1865,6 +1869,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, "test-key");
@@ -1899,6 +1905,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config.build_agent();
         // Agent should have 6 tools (bash, read, write, edit, list, search)
@@ -1926,6 +1934,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1953,6 +1963,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1979,6 +1991,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -2005,6 +2019,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent1 = config.build_agent();
         let agent2 = config.build_agent();
@@ -2033,6 +2049,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         config.model = "claude-haiku-35".to_string();
@@ -2060,6 +2078,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         assert_eq!(config.thinking, ThinkingLevel::Off);
         config.thinking = ThinkingLevel::High;
@@ -2403,6 +2423,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -2458,6 +2480,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -2508,6 +2532,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config.build_agent();
         // If this compiles and runs, BedrockProvider is correctly wired
@@ -2534,6 +2560,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         // Verify the anthropic ModelConfig would have headers set
         // (We test the helper directly since Agent doesn't expose model_config)
@@ -2566,6 +2594,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         }
     }
 
@@ -3019,6 +3049,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         // This should not panic — context config and execution limits are wired
         let agent =
@@ -3047,6 +3079,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         // Should not panic — limits are set with defaults
         let agent = config_no_turns
@@ -3071,6 +3105,8 @@ mod tests {
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
             shell_hooks: vec![],
+            fallback_provider: None,
+            fallback_model: None,
         };
         let agent = config_with_turns
             .configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
