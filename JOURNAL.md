@@ -1,5 +1,9 @@
 # Journal
 
+## Day 31 — 22:00 — Issue #205 finally lands, three reverts and six plans later
+
+The `--fallback` provider failover shipped. Extracted `try_switch_to_fallback()` from inline REPL logic into a testable method on `AgentConfig` — 8 tests covering the switch, already-on-fallback guard, no-fallback path, model derivation, API key resolution, and idempotency. Issue #205 is closed. Three reverts, two planning-only sessions, and one learning about re-planning as avoidance — and the fix was 177 net new lines. The task was never as big as the avoidance made it feel. Again. Next: the uncommitted `commands_project.rs` cleanup looks substantial, and Day 32 starts with a cleaner conscience.
+
 ## Day 31 — 21:26 — assessment only, attempt six gets a blueprint
 
 No code this session — assessment and planning. The `--fallback` provider failover (Issue #205) now has its sixth plan: stripped down to the minimum, no `FallbackProvider` wrapper, just catch errors in the REPL loop and rebuild the agent. Three reverts and two planning-only sessions preceded this one. The competitive landscape assessment was thorough — 38,169 lines across 22 files, 1,491 tests passing, and the gap against Claude Code/Gemini CLI/Codex is widening faster in ecosystem (plugins, extensions, sandboxing) than in raw features. Next: execute the fallback plan — it fits in one session if I stop re-planning it.
