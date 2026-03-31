@@ -1418,6 +1418,37 @@ impl AgentConfig {
             self.configure_agent(agent, context_window)
         }
     }
+
+    /// Attempt to switch to the fallback provider.
+    ///
+    /// Returns `true` if the switch was made (caller should rebuild the agent
+    /// and retry). Returns `false` if no fallback is configured or the agent
+    /// is already running on the fallback provider.
+    pub fn try_switch_to_fallback(&mut self) -> bool {
+        let fallback = match self.fallback_provider {
+            Some(ref f) => f.clone(),
+            None => return false,
+        };
+
+        if self.provider == fallback {
+            return false;
+        }
+
+        self.provider = fallback.clone();
+        self.model = self
+            .fallback_model
+            .clone()
+            .unwrap_or_else(|| cli::default_model_for_provider(&fallback));
+
+        // Resolve API key for fallback provider
+        if let Some(env_var) = cli::provider_api_key_env(&fallback) {
+            if let Ok(key) = std::env::var(env_var) {
+                self.api_key = key;
+            }
+        }
+
+        true
+    }
 }
 #[tokio::main]
 async fn main() {
@@ -3266,5 +3297,117 @@ mod tests {
             names_no, names_yes,
             "Tool names should be identical with/without audit"
         );
+    }
+
+    // ── Fallback provider switch tests ──────────────────────────────────
+
+    #[test]
+    fn test_fallback_switch_success() {
+        // When fallback is configured and different from current, switch should succeed
+        let mut config = AgentConfig {
+            fallback_provider: Some("google".to_string()),
+            fallback_model: Some("gemini-2.0-flash".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.provider, "google");
+        assert_eq!(config.model, "gemini-2.0-flash");
+    }
+
+    #[test]
+    fn test_fallback_switch_already_on_fallback() {
+        // When current provider already matches the fallback, no switch should happen
+        let mut config = AgentConfig {
+            fallback_provider: Some("anthropic".to_string()),
+            fallback_model: Some("claude-opus-4-6".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        assert!(!config.try_switch_to_fallback());
+        // Provider should remain unchanged
+        assert_eq!(config.provider, "anthropic");
+    }
+
+    #[test]
+    fn test_fallback_switch_no_fallback_configured() {
+        // When no fallback is set, switch should return false
+        let mut config = test_agent_config("anthropic", "claude-opus-4-6");
+        assert!(config.fallback_provider.is_none());
+        assert!(!config.try_switch_to_fallback());
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(config.model, "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_fallback_switch_derives_default_model() {
+        // When fallback_model is None, should derive the default model for the provider
+        let mut config = AgentConfig {
+            fallback_provider: Some("openai".to_string()),
+            fallback_model: None,
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, cli::default_model_for_provider("openai"));
+    }
+
+    #[test]
+    fn test_fallback_switch_uses_explicit_model() {
+        // When fallback_model is Some, should use it instead of the default
+        let mut config = AgentConfig {
+            fallback_provider: Some("openai".to_string()),
+            fallback_model: Some("gpt-4-turbo".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "gpt-4-turbo");
+    }
+
+    #[test]
+    #[serial]
+    fn test_fallback_switch_resolves_api_key() {
+        // When switching to fallback, API key should be resolved from the env var
+        std::env::set_var("GOOGLE_API_KEY", "test-google-key-fallback");
+        let mut config = AgentConfig {
+            fallback_provider: Some("google".to_string()),
+            fallback_model: Some("gemini-2.0-flash".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        assert_eq!(config.api_key, "test-key"); // original
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.api_key, "test-google-key-fallback");
+        std::env::remove_var("GOOGLE_API_KEY");
+    }
+
+    #[test]
+    fn test_fallback_switch_keeps_api_key_when_env_missing() {
+        // If the fallback provider's env var isn't set, original api_key should persist
+        // (removing the env var to be safe)
+        std::env::remove_var("XAI_API_KEY");
+        let mut config = AgentConfig {
+            fallback_provider: Some("xai".to_string()),
+            fallback_model: Some("grok-3".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        let original_key = config.api_key.clone();
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.provider, "xai");
+        assert_eq!(config.api_key, original_key);
+    }
+
+    #[test]
+    fn test_fallback_switch_idempotent() {
+        // Calling try_switch_to_fallback twice: first call switches, second returns false
+        // (because provider now matches fallback)
+        let mut config = AgentConfig {
+            fallback_provider: Some("google".to_string()),
+            fallback_model: Some("gemini-2.0-flash".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.provider, "google");
+        // Second call: already on fallback
+        assert!(!config.try_switch_to_fallback());
+        assert_eq!(config.provider, "google");
     }
 }
