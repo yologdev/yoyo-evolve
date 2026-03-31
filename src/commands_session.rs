@@ -724,6 +724,7 @@ fn clone_agent_config(config: &crate::AgentConfig) -> crate::AgentConfig {
         dir_restrictions: config.dir_restrictions.clone(),
         context_strategy: config.context_strategy,
         context_window: config.context_window,
+        shell_hooks: config.shell_hooks.clone(),
     }
 }
 

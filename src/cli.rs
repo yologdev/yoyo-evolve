@@ -365,6 +365,7 @@ pub struct Config {
     pub dir_restrictions: DirectoryRestrictions,
     pub context_strategy: ContextStrategy,
     pub context_window: Option<u32>,
+    pub shell_hooks: Vec<crate::hooks::ShellHook>,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -1433,6 +1434,9 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         .filter_map(|(i, _)| args.get(i + 1).cloned())
         .collect();
 
+    // Parse shell hooks from config file
+    let shell_hooks = crate::hooks::parse_hooks_from_config(&file_config);
+
     Some(Config {
         model,
         api_key,
@@ -1456,6 +1460,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         dir_restrictions,
         context_strategy,
         context_window,
+        shell_hooks,
     })
 }
 

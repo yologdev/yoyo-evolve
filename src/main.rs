@@ -957,6 +957,7 @@ pub fn build_tools(
     dir_restrictions: &cli::DirectoryRestrictions,
     max_tool_output: usize,
     audit: bool,
+    shell_hooks: Vec<hooks::ShellHook>,
 ) -> Vec<Box<dyn AgentTool>> {
     // Shared flag: when any tool gets "always", all tools skip prompts
     let always_approved = Arc::new(AtomicBool::new(false));
@@ -1044,12 +1045,14 @@ pub fn build_tools(
         maybe_confirm(Box::new(RenameSymbolTool), &always_approved, permissions)
     };
 
-    // Build hook registry — currently just AuditHook when audit mode is on.
-    // Future hooks (rate limiting, caching, custom scripts) register here.
+    // Build hook registry — AuditHook when audit mode is on, plus user-configured shell hooks.
     let hooks = {
         let mut registry = HookRegistry::new();
         if audit {
             registry.register(Box::new(AuditHook));
+        }
+        for hook in shell_hooks {
+            registry.register(Box::new(hook));
         }
         Arc::new(registry)
     };
@@ -1292,6 +1295,7 @@ pub struct AgentConfig {
     pub dir_restrictions: cli::DirectoryRestrictions,
     pub context_strategy: cli::ContextStrategy,
     pub context_window: Option<u32>,
+    pub shell_hooks: Vec<hooks::ShellHook>,
 }
 
 impl AgentConfig {
@@ -1325,6 +1329,7 @@ impl AgentConfig {
                     TOOL_OUTPUT_MAX_CHARS_PIPED
                 },
                 is_audit_enabled(),
+                self.shell_hooks.clone(),
             ));
 
         // Add sub-agent tool via the dedicated API (separate from build_tools count)
@@ -1460,6 +1465,7 @@ async fn main() {
         dir_restrictions: config.dir_restrictions,
         context_strategy: config.context_strategy,
         context_window: config.context_window,
+        shell_hooks: config.shell_hooks,
     };
 
     // Interactive setup wizard: if no config file or API key is detected,
@@ -1785,8 +1791,8 @@ mod tests {
         // build_tools should return 8 tools regardless of auto_approve (in non-terminal: no ask_user)
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools_approved = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
-        let tools_confirm = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools_approved = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
+        let tools_confirm = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         assert_eq!(tools_approved.len(), 8);
         assert_eq!(tools_confirm.len(), 8);
     }
@@ -1831,7 +1837,7 @@ mod tests {
         // Verify build_tools still returns exactly 8 — SubAgentTool is added via with_sub_agent
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         assert_eq!(
             tools.len(),
             8,
@@ -1858,6 +1864,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, "test-key");
@@ -1891,6 +1898,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config.build_agent();
         // Agent should have 6 tools (bash, read, write, edit, list, search)
@@ -1917,6 +1925,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1943,6 +1952,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1968,6 +1978,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -1993,6 +2004,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent1 = config.build_agent();
         let agent2 = config.build_agent();
@@ -2020,6 +2032,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         assert_eq!(config.model, "claude-opus-4-6");
         config.model = "claude-haiku-35".to_string();
@@ -2046,6 +2059,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         assert_eq!(config.thinking, ThinkingLevel::Off);
         config.thinking = ThinkingLevel::High;
@@ -2221,7 +2235,7 @@ mod tests {
         // When auto_approve is true, tools should not have ConfirmTool wrappers
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         assert_eq!(tools.len(), 8);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"write_file"));
@@ -2235,7 +2249,7 @@ mod tests {
         // (ConfirmTool delegates name() to inner tool)
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools = build_tools(false, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         assert_eq!(tools.len(), 8);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"write_file"));
@@ -2388,6 +2402,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -2442,6 +2457,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -2491,6 +2507,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config.build_agent();
         // If this compiles and runs, BedrockProvider is correctly wired
@@ -2516,6 +2533,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         // Verify the anthropic ModelConfig would have headers set
         // (We test the helper directly since Agent doesn't expose model_config)
@@ -2547,6 +2565,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         }
     }
 
@@ -2861,7 +2880,7 @@ mod tests {
     fn test_rename_symbol_tool_in_build_tools() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             names.contains(&"rename_symbol"),
@@ -2943,7 +2962,14 @@ mod tests {
         // build_tools should work with the piped limit too
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS_PIPED, false);
+        let tools = build_tools(
+            true,
+            &perms,
+            &dirs,
+            TOOL_OUTPUT_MAX_CHARS_PIPED,
+            false,
+            vec![],
+        );
         assert_eq!(tools.len(), 8, "Should still have 8 tools with piped limit");
     }
 
@@ -2965,7 +2991,7 @@ mod tests {
         // In test environment (no terminal), ask_user should NOT be included
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             !names.contains(&"ask_user"),
@@ -2992,6 +3018,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         // This should not panic — context config and execution limits are wired
         let agent =
@@ -3019,6 +3046,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         // Should not panic — limits are set with defaults
         let agent = config_no_turns
@@ -3042,6 +3070,7 @@ mod tests {
             dir_restrictions: cli::DirectoryRestrictions::default(),
             context_strategy: cli::ContextStrategy::default(),
             context_window: None,
+            shell_hooks: vec![],
         };
         let agent = config_with_turns
             .configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
@@ -3154,7 +3183,7 @@ mod tests {
     fn test_todo_tool_in_build_tools() {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(
             names.contains(&"todo"),
@@ -3168,7 +3197,7 @@ mod tests {
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
         // Build with audit=false => hooks is empty => tools are NOT wrapped
-        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
+        let tools = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
         assert_eq!(tools.len(), 8, "Tool count should be 8 without audit hooks");
     }
 
@@ -3177,8 +3206,9 @@ mod tests {
         // With audit=true, tool count stays the same (tools are wrapped, not added)
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
-        let tools_with_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true);
+        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
+        let tools_with_audit =
+            build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true, vec![]);
         assert_eq!(
             tools_no_audit.len(),
             tools_with_audit.len(),
@@ -3191,8 +3221,9 @@ mod tests {
         // Tool names should be identical with or without audit
         let perms = cli::PermissionConfig::default();
         let dirs = cli::DirectoryRestrictions::default();
-        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false);
-        let tools_with_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true);
+        let tools_no_audit = build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, false, vec![]);
+        let tools_with_audit =
+            build_tools(true, &perms, &dirs, TOOL_OUTPUT_MAX_CHARS, true, vec![]);
         let names_no: Vec<&str> = tools_no_audit.iter().map(|t| t.name()).collect();
         let names_yes: Vec<&str> = tools_with_audit.iter().map(|t| t.name()).collect();
         assert_eq!(
