@@ -855,59 +855,45 @@ pub async fn run_repl(
 
         // Fallback provider: if the API failed and a fallback is configured, switch and retry
         if outcome.last_api_error.is_some() {
-            if let Some(ref fallback) = agent_config.fallback_provider.clone() {
-                if agent_config.provider != *fallback {
+            let old_provider = agent_config.provider.clone();
+            let fallback_name = agent_config.fallback_provider.clone();
+            if agent_config.try_switch_to_fallback() {
+                let fallback = fallback_name.as_deref().unwrap_or("unknown");
+                eprintln!(
+                    "\n{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
+                    old_provider, fallback
+                );
+
+                // Rebuild agent with the new provider
+                *agent = agent_config.build_agent();
+
+                eprintln!(
+                    "{DIM}  now using: {} / {}{RESET}\n",
+                    agent_config.provider, agent_config.model
+                );
+
+                // Retry the same prompt with the fallback provider
+                let retry_outcome = run_prompt_auto_retry(
+                    agent,
+                    input,
+                    &mut session_total,
+                    &agent_config.model,
+                    &session_changes,
+                )
+                .await;
+                last_error = retry_outcome.last_tool_error.clone();
+
+                // If fallback also failed, restore original provider info for display
+                // but keep the fallback agent since the original was already broken
+                if retry_outcome.last_api_error.is_some() {
                     eprintln!(
-                        "\n{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
-                        agent_config.provider, fallback
+                        "{RED}  fallback provider '{}' also failed.{RESET}",
+                        fallback
                     );
-
-                    // Switch provider and model
-                    let old_provider = agent_config.provider.clone();
-                    agent_config.provider = fallback.clone();
-                    agent_config.model = agent_config
-                        .fallback_model
-                        .clone()
-                        .unwrap_or_else(|| default_model_for_provider(fallback));
-
-                    // Resolve API key for fallback provider
-                    if let Some(env_var) = provider_api_key_env(fallback) {
-                        if let Ok(key) = std::env::var(env_var) {
-                            agent_config.api_key = key;
-                        }
-                    }
-
-                    // Rebuild agent with the new provider
-                    *agent = agent_config.build_agent();
-
                     eprintln!(
-                        "{DIM}  now using: {} / {}{RESET}\n",
-                        agent_config.provider, agent_config.model
+                        "{DIM}  original provider was '{}'. Use /provider to switch manually.{RESET}",
+                        old_provider
                     );
-
-                    // Retry the same prompt with the fallback provider
-                    let retry_outcome = run_prompt_auto_retry(
-                        agent,
-                        input,
-                        &mut session_total,
-                        &agent_config.model,
-                        &session_changes,
-                    )
-                    .await;
-                    last_error = retry_outcome.last_tool_error.clone();
-
-                    // If fallback also failed, restore original provider info for display
-                    // but keep the fallback agent since the original was already broken
-                    if retry_outcome.last_api_error.is_some() {
-                        eprintln!(
-                            "{RED}  fallback provider '{}' also failed.{RESET}",
-                            fallback
-                        );
-                        eprintln!(
-                            "{DIM}  original provider was '{}'. Use /provider to switch manually.{RESET}",
-                            old_provider
-                        );
-                    }
                 }
             }
         }
