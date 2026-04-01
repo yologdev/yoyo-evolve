@@ -37,6 +37,7 @@ No human writes its code. No roadmap tells it what to do. It decides for itself.
 - **Subagent spawning** — `/spawn` delegates focused tasks to a child agent; the model can also delegate subtasks automatically via a built-in sub-agent tool
 - **Parallel tool execution** — multiple tool calls run simultaneously
 - **Automatic retry** with exponential backoff and rate-limit awareness
+- **Provider failover** — `--fallback` flag switches to backup provider on API failure with configurable priority
 
 ### 🛠️ Tools
 | Tool | What it does |
@@ -51,9 +52,9 @@ No human writes its code. No roadmap tells it what to do. It decides for itself.
 | `ask_user` | Ask the user questions mid-task for clarification (interactive mode only) |
 
 ### 🔌 Multi-Provider Support
-Works with **11 providers** out of the box — switch mid-session with `/provider`:
+Works with **12 providers** out of the box — switch mid-session with `/provider`:
 
-Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · Custom (any OpenAI-compatible endpoint)
+Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · AWS Bedrock · Custom (any OpenAI-compatible endpoint)
 
 ### 📂 Git Integration
 - `/diff` — full status + diff with insertion/deletion summary
@@ -74,6 +75,7 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 - `/tree` — project structure visualization
 - `/find` — fuzzy file search with scoring and ranked results
 - `/ast` — structural code search using [ast-grep](https://ast-grep.github.io/) (optional)
+- `/map` — structural repo map showing file symbols and relationships with ast-grep backend
 
 ### 💾 Session Management
 - `/save` and `/load` — persist and restore sessions as JSON

@@ -4,6 +4,29 @@ All notable changes to **yoyo-agent** (`cargo install yoyo-agent`) are documente
 
 This project is a self-evolving coding agent — every change was planned, implemented, and tested by yoyo itself during automated evolution sessions. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] — 2026-04-01
+
+Feature release adding provider failover reliability, AWS Bedrock support, structural repo mapping, and inline command hints — built across Days 29–32.
+
+### Added
+
+- **`/map` command** — structural repo map with ast-grep backend and regex fallback, showing file symbols and relationships (Day 29)
+- **AWS Bedrock provider** — full end-to-end support with BedrockConverseStream for Claude 3 models via AWS credentials (Day 30)
+- **REPL inline command hints** — type `/he` and see dimmed `lp — Show help` suggestions for faster command discovery (Day 30)
+- **`--fallback` provider failover** — auto-switch to backup provider on API failure, with configurable provider priority (Day 31)
+
+### Improved
+
+- **Hook system extracted** — Hook trait, HookRegistry, AuditHook, ShellHook consolidated into `src/hooks.rs` for better modularity (Day 31)
+- **Config loading consolidated** — single `load_config_file()` eliminates 3 redundant config reads and improves error handling (Day 31)
+
+### Fixed
+
+- **Permission prompt hidden behind spinner** — stop spinner before prompting to prevent UI interference (Issue #224) (Day 30)
+- **MiniMax stream duplication** — exclude "stream ended" from auto-retry to prevent infinite loops (Issue #222) (Day 30)
+- **`write_file` empty content** — validation + confirmation prompt for empty writes to prevent accidental data loss (Issues #218, #219) (Day 30)
+- **`--fallback` in piped mode** — fallback retry now works in piped and --prompt modes, with proper non-zero exit codes on failure (Day 32, Issue #230)
+
 ## [0.1.4] — 2026-03-28
 
 Feature release adding agent delegation, interactive questioning, task tracking, context management strategies, and provider resilience — built across Days 24–28.
