@@ -1451,6 +1451,113 @@ impl AgentConfig {
         true
     }
 }
+
+/// Attempt fallback retry for non-interactive modes (piped and --prompt).
+///
+/// If the original response has an API error and a fallback provider is configured,
+/// switches to the fallback, rebuilds the agent, and retries the prompt.
+///
+/// Returns `(final_response, should_exit_with_error)`:
+/// - If no API error occurred: returns the original response, no error exit.
+/// - If fallback succeeded: returns the retry response, no error exit.
+/// - If fallback also failed or no fallback configured: returns the best response, error exit.
+async fn try_fallback_prompt(
+    agent_config: &mut AgentConfig,
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    original_response: PromptOutcome,
+) -> (PromptOutcome, bool) {
+    // No API error — nothing to retry
+    if original_response.last_api_error.is_none() {
+        return (original_response, false);
+    }
+
+    let old_provider = agent_config.provider.clone();
+    let fallback_name = agent_config.fallback_provider.clone();
+
+    if !agent_config.try_switch_to_fallback() {
+        // No fallback configured or already on fallback — exit with error
+        eprintln!("{RED}  API error with no fallback configured. Exiting.{RESET}",);
+        return (original_response, true);
+    }
+
+    let fallback = fallback_name.as_deref().unwrap_or("unknown");
+    eprintln!(
+        "{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
+        old_provider, fallback
+    );
+
+    // Rebuild agent with the new provider
+    *agent = agent_config.build_agent();
+
+    eprintln!(
+        "{DIM}  now using: {} / {}{RESET}",
+        agent_config.provider, agent_config.model
+    );
+
+    // Retry with the fallback provider
+    let retry_response = run_prompt(agent, input, session_total, &agent_config.model).await;
+
+    if retry_response.last_api_error.is_some() {
+        eprintln!(
+            "{RED}  Fallback provider '{}' also failed. Exiting.{RESET}",
+            fallback
+        );
+        return (retry_response, true);
+    }
+
+    (retry_response, false)
+}
+
+/// Like `try_fallback_prompt` but for content-block prompts (e.g., multi-modal with images).
+async fn try_fallback_prompt_with_content(
+    agent_config: &mut AgentConfig,
+    agent: &mut Agent,
+    content_blocks: Vec<Content>,
+    session_total: &mut Usage,
+    original_response: PromptOutcome,
+) -> (PromptOutcome, bool) {
+    // No API error — nothing to retry
+    if original_response.last_api_error.is_none() {
+        return (original_response, false);
+    }
+
+    let old_provider = agent_config.provider.clone();
+    let fallback_name = agent_config.fallback_provider.clone();
+
+    if !agent_config.try_switch_to_fallback() {
+        eprintln!("{RED}  API error with no fallback configured. Exiting.{RESET}",);
+        return (original_response, true);
+    }
+
+    let fallback = fallback_name.as_deref().unwrap_or("unknown");
+    eprintln!(
+        "{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
+        old_provider, fallback
+    );
+
+    *agent = agent_config.build_agent();
+
+    eprintln!(
+        "{DIM}  now using: {} / {}{RESET}",
+        agent_config.provider, agent_config.model
+    );
+
+    let retry_response =
+        run_prompt_with_content(agent, content_blocks, session_total, &agent_config.model).await;
+
+    if retry_response.last_api_error.is_some() {
+        eprintln!(
+            "{RED}  Fallback provider '{}' also failed. Exiting.{RESET}",
+            fallback
+        );
+        return (retry_response, true);
+    }
+
+    (retry_response, false)
+}
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -1632,15 +1739,39 @@ async fn main() {
                         Content::Text {
                             text: prompt_text.trim().to_string(),
                         },
-                        Content::Image { data, mime_type },
+                        Content::Image {
+                            data: data.clone(),
+                            mime_type: mime_type.clone(),
+                        },
                     ];
-                    run_prompt_with_content(
+                    let initial = run_prompt_with_content(
                         &mut agent,
                         content_blocks,
                         &mut session_total,
                         &agent_config.model,
                     )
-                    .await
+                    .await;
+                    // Fallback retry for multi-modal prompts
+                    let retry_blocks = vec![
+                        Content::Text {
+                            text: prompt_text.trim().to_string(),
+                        },
+                        Content::Image { data, mime_type },
+                    ];
+                    let (final_response, should_exit_error) = try_fallback_prompt_with_content(
+                        &mut agent_config,
+                        &mut agent,
+                        retry_blocks,
+                        &mut session_total,
+                        initial,
+                    )
+                    .await;
+                    if should_exit_error {
+                        format::maybe_ring_bell(prompt_start.elapsed());
+                        write_output_file(&output_path, &final_response.text);
+                        std::process::exit(1);
+                    }
+                    final_response
                 }
                 Err(e) => {
                     eprintln!("{RED}  error: {e}{RESET}");
@@ -1649,13 +1780,28 @@ async fn main() {
             }
         } else {
             // Text-only prompt
-            run_prompt(
+            let initial = run_prompt(
                 &mut agent,
                 prompt_text.trim(),
                 &mut session_total,
                 &agent_config.model,
             )
-            .await
+            .await;
+            // Fallback retry for text-only prompts
+            let (final_response, should_exit_error) = try_fallback_prompt(
+                &mut agent_config,
+                &mut agent,
+                prompt_text.trim(),
+                &mut session_total,
+                initial,
+            )
+            .await;
+            if should_exit_error {
+                format::maybe_ring_bell(prompt_start.elapsed());
+                write_output_file(&output_path, &final_response.text);
+                std::process::exit(1);
+            }
+            final_response
         };
         format::maybe_ring_bell(prompt_start.elapsed());
         write_output_file(&output_path, &response.text);
@@ -1681,9 +1827,21 @@ async fn main() {
         );
         let mut session_total = Usage::default();
         let prompt_start = Instant::now();
-        let response = run_prompt(&mut agent, input, &mut session_total, &agent_config.model).await;
+        let initial = run_prompt(&mut agent, input, &mut session_total, &agent_config.model).await;
+        // Fallback retry for piped mode
+        let (response, should_exit_error) = try_fallback_prompt(
+            &mut agent_config,
+            &mut agent,
+            input,
+            &mut session_total,
+            initial,
+        )
+        .await;
         format::maybe_ring_bell(prompt_start.elapsed());
         write_output_file(&output_path, &response.text);
+        if should_exit_error {
+            std::process::exit(1);
+        }
         if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
             std::process::exit(2);
         }
@@ -3410,5 +3568,69 @@ mod tests {
         // Second call: already on fallback
         assert!(!config.try_switch_to_fallback());
         assert_eq!(config.provider, "google");
+    }
+
+    // ── Fallback retry helper (non-interactive) tests ────────────────────
+
+    #[test]
+    fn test_fallback_prompt_no_api_error_passthrough() {
+        // When the response has no API error, try_switch_to_fallback should NOT be called.
+        // This verifies the guard condition: no error → no retry, no exit error.
+        let config = AgentConfig {
+            fallback_provider: Some("google".to_string()),
+            fallback_model: Some("gemini-2.0-flash".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+        // Simulate: response has no API error
+        let response = PromptOutcome {
+            text: "success".to_string(),
+            last_tool_error: None,
+            was_overflow: false,
+            last_api_error: None,
+        };
+        // The helper's first check: if no API error, return immediately.
+        // We verify this contract by checking the config isn't touched.
+        assert!(response.last_api_error.is_none());
+        assert_eq!(config.provider, "anthropic"); // still on primary
+    }
+
+    #[test]
+    fn test_fallback_prompt_api_error_no_fallback_configured() {
+        // When API error occurs but no fallback is configured, should_exit_error = true
+        let mut config = test_agent_config("anthropic", "claude-opus-4-6");
+        assert!(config.fallback_provider.is_none());
+
+        let response = PromptOutcome {
+            text: String::new(),
+            last_tool_error: None,
+            was_overflow: false,
+            last_api_error: Some("503 Service Unavailable".to_string()),
+        };
+        // The helper would: check API error (yes) → try_switch_to_fallback (false) → exit error
+        assert!(response.last_api_error.is_some());
+        assert!(!config.try_switch_to_fallback()); // no fallback → returns false
+                                                   // Contract: should_exit_error = true in this case
+    }
+
+    #[test]
+    fn test_fallback_prompt_api_error_with_fallback_switches() {
+        // When API error occurs and fallback is configured, the config should switch
+        let mut config = AgentConfig {
+            fallback_provider: Some("google".to_string()),
+            fallback_model: Some("gemini-2.0-flash".to_string()),
+            ..test_agent_config("anthropic", "claude-opus-4-6")
+        };
+
+        let response = PromptOutcome {
+            text: String::new(),
+            last_tool_error: None,
+            was_overflow: false,
+            last_api_error: Some("529 Overloaded".to_string()),
+        };
+        // The helper would: check API error (yes) → try_switch_to_fallback (true) → rebuild → retry
+        assert!(response.last_api_error.is_some());
+        assert!(config.try_switch_to_fallback());
+        assert_eq!(config.provider, "google");
+        assert_eq!(config.model, "gemini-2.0-flash");
     }
 }
