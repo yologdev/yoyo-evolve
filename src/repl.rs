@@ -251,6 +251,7 @@ pub async fn run_repl(
     mcp_count: u32,
     openapi_count: u32,
     continue_session: bool,
+    update_available: Option<String>,
 ) {
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
@@ -299,6 +300,13 @@ pub async fn run_repl(
         println!("{DIM}  git:   {branch}{RESET}");
     }
     println!("{DIM}  cwd:   {cwd}{RESET}\n");
+
+    // Show update notification if a newer version is available
+    if let Some(ref latest) = update_available {
+        println!(
+            "  {YELLOW}⬆ Update available: v{latest} (you have v{VERSION}) — https://github.com/yologdev/yoyo-evolve/releases{RESET}\n"
+        );
+    }
 
     // Hint about previous session if one exists and --continue wasn't used
     if !continue_session && commands::last_session_exists() {

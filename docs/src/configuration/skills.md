@@ -124,6 +124,17 @@ yoyo --no-bell
 YOYO_NO_BELL=1 yoyo
 ```
 
+### `--no-update-check`
+
+Skip the startup update check. On startup (interactive REPL mode only), yoyo checks GitHub for a newer release and shows a notification if one exists. The check uses a 3-second timeout and fails silently on network errors. Disable it with the flag or environment variable:
+
+```bash
+yoyo --no-update-check
+YOYO_NO_UPDATE_CHECK=1 yoyo
+```
+
+The update check is automatically skipped in non-interactive modes (piped input, `--prompt` flag).
+
 ## Error handling
 
 If the skills directory doesn't exist or can't be loaded, yoyo prints a warning and continues without skills:

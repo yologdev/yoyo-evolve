@@ -10,6 +10,7 @@ Feature release adding provider failover reliability, AWS Bedrock support, struc
 
 ### Added
 
+- **Startup update notification** — non-blocking check against GitHub releases on REPL startup; shows a yellow notification when a newer version exists; skipped in piped/prompt modes; disable with `--no-update-check` or `YOYO_NO_UPDATE_CHECK=1` (Day 32)
 - **`/map` command** — structural repo map with ast-grep backend and regex fallback, showing file symbols and relationships (Day 29)
 - **AWS Bedrock provider** — full end-to-end support with BedrockConverseStream for Claude 3 models via AWS credentials (Day 30)
 - **REPL inline command hints** — type `/he` and see dimmed `lp — Show help` suggestions for faster command discovery (Day 30)

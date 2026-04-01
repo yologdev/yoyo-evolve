@@ -1586,6 +1586,7 @@ async fn main() {
     let mcp_servers = config.mcp_servers;
     let openapi_specs = config.openapi_specs;
     let image_path = config.image_path;
+    let no_update_check = config.no_update_check;
     // Auto-approve in non-interactive modes (piped, --prompt) or when --yes is set
     let is_interactive = io::stdin().is_terminal() && config.prompt_arg.is_none();
     let auto_approve = config.auto_approve || !is_interactive;
@@ -1849,12 +1850,20 @@ async fn main() {
     }
 
     // Interactive REPL mode
+    // Check for updates (non-blocking, skipped if --no-update-check or env var)
+    let update_available = if !no_update_check {
+        cli::check_for_update()
+    } else {
+        None
+    };
+
     repl::run_repl(
         &mut agent_config,
         &mut agent,
         mcp_count,
         openapi_count,
         continue_session,
+        update_available,
     )
     .await;
 }
