@@ -384,6 +384,14 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
             "/version — Show yoyo version\n\n\
              Displays the current yoyo version number.",
         ),
+        "update" => Some(
+            "/update — Check for and install the latest version\n\n\
+             Checks for the latest release on GitHub and downloads the appropriate\n\
+             binary for your platform. Creates a backup of the current binary and\n\
+             replaces it with the new version. Requires confirmation before proceeding.\n\n\
+             Note: You'll need to restart yoyo to use the new version.\n\n\
+             Use --no-update-check at startup to disable the update notification.",
+        ),
         "run" => Some(
             "/run <cmd> — Run a shell command directly\n\n\
              Usage:\n\
@@ -649,6 +657,7 @@ pub fn help_text() -> String {
     out.push_str("  /cost              Show estimated session cost\n");
     out.push_str("  /config            Show all current settings\n");
     out.push_str("  /version           Show yoyo version\n");
+    out.push_str("  /update            Check for and install the latest version\n");
     out.push_str("  /history           Show summary of conversation messages\n");
     out.push_str("  /search <query>    Search conversation history for matching messages\n");
     out.push_str("  /mark <name>       Bookmark current conversation state\n");
@@ -842,6 +851,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "tokens" => Some("Show token usage and context window"),
         "tree" => Some("Show project directory tree"),
         "undo" => Some("Undo last turn's changes"),
+        "update" => Some("Check for and install the latest version"),
         "version" => Some("Show yoyo version"),
         "watch" => Some("Auto-run command after file changes"),
         "web" => Some("Fetch a web page"),
@@ -873,6 +883,7 @@ mod tests {
             "/cost",
             "/config",
             "/version",
+            "/update",
             "/history",
             "/search",
             "/mark",

@@ -776,6 +776,13 @@ pub async fn run_repl(
                 }
                 continue;
             }
+            "/update" => {
+                match commands::handle_update() {
+                    Ok(_) => println!("Update completed successfully. Please restart yoyo to use the new version."),
+                    Err(e) => eprintln!("Update failed: {}", e),
+                }
+                continue;
+            }
             s if s == "/plan" || s.starts_with("/plan ") => {
                 if let Some(plan_prompt) =
                     commands::handle_plan(input, agent, &mut session_total, &agent_config.model)

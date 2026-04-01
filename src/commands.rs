@@ -61,6 +61,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/test",
     "/lint",
     "/spawn",
+    "/update",
     "/review",
     "/mark",
     "/jump",
@@ -486,7 +487,7 @@ pub use crate::commands_search::{
 
 pub use crate::commands_dev::{
     handle_doctor, handle_fix, handle_health, handle_lint, handle_run, handle_run_usage,
-    handle_test, handle_tree, handle_watch,
+    handle_test, handle_tree, handle_update, handle_watch,
 };
 
 pub use crate::commands_file::{
