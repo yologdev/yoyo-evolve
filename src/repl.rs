@@ -940,6 +940,47 @@ pub async fn run_repl(
         }
         turn_history.push(turn_snap);
 
+        // ── Watch mode: auto-run test/lint command after agent edits ───────
+        let files_modified = changes_after.len() > changes_before.len();
+        if files_modified {
+            if let Some(watch_cmd) = get_watch_command() {
+                let (ok, output) = run_watch_command(&watch_cmd);
+                if ok {
+                    eprintln!("{GREEN}  ✓ Watch passed: `{watch_cmd}`{RESET}");
+                } else {
+                    eprintln!("{RED}  ✗ Watch failed: `{watch_cmd}`{RESET}");
+                    // Show truncated output
+                    let display_output = if output.len() > 2000 {
+                        format!("{}...\n(truncated)", &output[..2000])
+                    } else {
+                        output.clone()
+                    };
+                    eprintln!("{DIM}{display_output}{RESET}");
+                    eprintln!("{YELLOW}  → Auto-fixing...{RESET}");
+
+                    // One auto-fix attempt
+                    let fix_prompt = build_watch_fix_prompt(&watch_cmd, &output);
+                    let fix_outcome = run_prompt_auto_retry(
+                        agent,
+                        &fix_prompt,
+                        &mut session_total,
+                        &agent_config.model,
+                        &session_changes,
+                    )
+                    .await;
+                    last_error = fix_outcome.last_tool_error.clone();
+
+                    // Re-run watch command to see if fix worked
+                    let (fix_ok, _fix_output) = run_watch_command(&watch_cmd);
+                    if fix_ok {
+                        eprintln!("{GREEN}  ✓ Watch passed after fix{RESET}");
+                    } else {
+                        eprintln!("{RED}  ✗ Watch still failing — manual fix needed{RESET}");
+                    }
+                }
+            }
+        }
+
         // Auto-compact when context window is getting full
         auto_compact_if_needed(agent);
     }

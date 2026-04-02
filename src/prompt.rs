@@ -34,6 +34,42 @@ pub fn clear_watch_command() {
     *guard = None;
 }
 
+/// Maximum characters of watch command output to include in fix prompts.
+const WATCH_OUTPUT_MAX: usize = 5000;
+
+/// Build a prompt asking the agent to fix failures from a watch command.
+pub fn build_watch_fix_prompt(watch_cmd: &str, output: &str) -> String {
+    let truncated = if output.len() > WATCH_OUTPUT_MAX {
+        format!("{}... (truncated)", &output[..WATCH_OUTPUT_MAX])
+    } else {
+        output.to_string()
+    };
+    format!(
+        "Your changes caused test/lint failures. Here's the output from `{watch_cmd}`:\n\
+         ```\n{truncated}\n```\n\
+         Please fix the issues."
+    )
+}
+
+/// Run a watch command and return (success, output).
+pub fn run_watch_command(cmd: &str) -> (bool, String) {
+    match std::process::Command::new("sh").args(["-c", cmd]).output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = if stderr.is_empty() {
+                stdout.to_string()
+            } else if stdout.is_empty() {
+                stderr.to_string()
+            } else {
+                format!("{stdout}\n{stderr}")
+            };
+            (output.status.success(), combined)
+        }
+        Err(e) => (false, format!("Failed to run watch command: {e}")),
+    }
+}
+
 // ── Audit log ───────────────────────────────────────────────────────────
 // Records every tool call to `.yoyo/audit.jsonl` for debugging and transparency.
 // Enabled via `--audit` flag, `YOYO_AUDIT=1` env var, or `audit = true` in config.
@@ -2889,5 +2925,43 @@ mod tests {
             last_api_error: None,
         };
         assert!(outcome_no_error.last_api_error.is_none());
+    }
+
+    #[test]
+    fn test_build_watch_fix_prompt() {
+        let prompt = build_watch_fix_prompt("cargo test", "error[E0308]: mismatched types");
+        assert!(
+            prompt.contains("cargo test"),
+            "prompt should include the command name"
+        );
+        assert!(
+            prompt.contains("error[E0308]: mismatched types"),
+            "prompt should include the output"
+        );
+        assert!(prompt.contains("Please fix"), "prompt should ask for a fix");
+        assert!(
+            prompt.contains("```"),
+            "prompt should wrap output in code fence"
+        );
+    }
+
+    #[test]
+    fn test_build_watch_fix_prompt_truncates_long_output() {
+        let long_output = "x".repeat(6000);
+        let prompt = build_watch_fix_prompt("cargo test", &long_output);
+        assert!(
+            prompt.contains("... (truncated)"),
+            "long output should be truncated"
+        );
+        // The output in the prompt should not contain the full 6000 chars
+        assert!(
+            !prompt.contains(&"x".repeat(6000)),
+            "full output should not appear"
+        );
+        // But should contain the first 5000
+        assert!(
+            prompt.contains(&"x".repeat(5000)),
+            "first 5000 chars should appear"
+        );
     }
 }
