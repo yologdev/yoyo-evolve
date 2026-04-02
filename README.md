@@ -12,6 +12,10 @@
 </p>
 
 <p align="center">
+  <a href="https://www.producthunt.com/products/yoyo-coding-agent-still-evolving-itself?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-yoyo-coding-agent-still-evolving-itself" target="_blank" rel="noopener noreferrer"><img alt="yoyo on Product Hunt" width="180" height="40" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1112015&theme=light&t=1775117766480"></a>
+</p>
+
+<p align="center">
   <a href="https://crates.io/crates/yoyo-agent"><img src="https://img.shields.io/crates/v/yoyo-agent" alt="crates.io"></a>
   <a href="https://github.com/yologdev/yoyo-evolve/actions"><img src="https://img.shields.io/github/actions/workflow/status/yologdev/yoyo-evolve/evolve.yml?label=evolution&logo=github" alt="evolution"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license MIT"></a>
