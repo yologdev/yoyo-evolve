@@ -588,7 +588,11 @@ async fn main() {
             }
             // Set the env var so the provider builder picks it up
             if let Some(env_var) = cli::provider_api_key_env(&result.provider) {
-                std::env::set_var(env_var, &result.api_key);
+                // SAFETY: This runs during setup, before any concurrent agent work.
+                // The env var is read later by the provider builder on the same thread.
+                unsafe {
+                    std::env::set_var(env_var, &result.api_key);
+                }
             }
         } else {
             // User cancelled — show the static welcome screen and exit
@@ -2546,7 +2550,10 @@ mod tests {
     #[serial]
     fn test_fallback_switch_resolves_api_key() {
         // When switching to fallback, API key should be resolved from the env var
-        std::env::set_var("GOOGLE_API_KEY", "test-google-key-fallback");
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::set_var("GOOGLE_API_KEY", "test-google-key-fallback");
+        }
         let mut config = AgentConfig {
             fallback_provider: Some("google".to_string()),
             fallback_model: Some("gemini-2.0-flash".to_string()),
@@ -2555,14 +2562,20 @@ mod tests {
         assert_eq!(config.api_key, "test-key"); // original
         assert!(config.try_switch_to_fallback());
         assert_eq!(config.api_key, "test-google-key-fallback");
-        std::env::remove_var("GOOGLE_API_KEY");
+        // SAFETY: Test runs serially (#[serial]), no concurrent env var access.
+        unsafe {
+            std::env::remove_var("GOOGLE_API_KEY");
+        }
     }
 
     #[test]
     fn test_fallback_switch_keeps_api_key_when_env_missing() {
         // If the fallback provider's env var isn't set, original api_key should persist
         // (removing the env var to be safe)
-        std::env::remove_var("XAI_API_KEY");
+        // SAFETY: Test runs serially, no concurrent env var access.
+        unsafe {
+            std::env::remove_var("XAI_API_KEY");
+        }
         let mut config = AgentConfig {
             fallback_provider: Some("xai".to_string()),
             fallback_model: Some("grok-3".to_string()),
