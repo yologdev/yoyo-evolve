@@ -110,6 +110,8 @@ jobs:
     needs: [build, publish]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -126,10 +128,18 @@ jobs:
           fi
           echo "Found $ARCHIVE_COUNT archive(s)"
 
+      - name: Extract changelog
+        id: changelog
+        run: |
+          BODY=$(./scripts/extract_changelog.sh ${{ github.ref_name }})
+          echo 'body<<EOF' >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body: ${{ steps.changelog.outputs.body }}
           files: |
             yoyo-*.tar.gz
             yoyo-*.tar.gz.sha256
