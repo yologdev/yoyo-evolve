@@ -47,7 +47,8 @@ echo ""
 # Sponsor benefits (no run-frequency speedup):
 #   Monthly: $5→priority, $10→+shoutout, $25→+SPONSORS.md, $50→+README
 #   One-time: $2→1 accelerated run, $5→priority, $10→+shoutout (30d),
-#             $20→+SPONSORS.md (30d), $50→priority 60d+SPONSORS.md
+#             $20→+SPONSORS.md (30d), $50→priority 60d+SPONSORS.md+README,
+#             $1200→💎 Genesis (6mo priority, SPONSORS.md, README, journal ack)
 SPONSORS_FILE="/tmp/sponsor_logins.json"
 SPONSOR_INFO_FILE="/tmp/sponsor_info.json"
 CREDITS_FILE="sponsors/credits.json"
@@ -129,7 +130,9 @@ for login, info in credits.items():
         fs_date = datetime.strptime(first_seen, '%Y-%m-%d')
     except ValueError:
         fs_date = datetime.now(timezone.utc)
-    if dollars >= 50:
+    if dollars >= 1200:
+        info['benefit_expires'] = 'never'
+    elif dollars >= 50:
         info['benefit_expires'] = (fs_date + timedelta(days=60)).strftime('%Y-%m-%d')
     elif dollars >= 10:
         info['benefit_expires'] = (fs_date + timedelta(days=30)).strftime('%Y-%m-%d')
@@ -137,8 +140,10 @@ for login, info in credits.items():
         info['benefit_expires'] = (fs_date + timedelta(days=14)).strftime('%Y-%m-%d')
 
 # Expire credit entries older than 90 days (generous buffer beyond benefit windows)
+# Genesis sponsors ($1200+) never expire
 cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%Y-%m-%d')
-credits = {k: v for k, v in credits.items() if v.get('first_seen', '') >= cutoff}
+credits = {k: v for k, v in credits.items()
+           if v.get('benefit_expires') == 'never' or v.get('first_seen', '') >= cutoff}
 
 # Determine which one-time sponsors can still use an accelerated run
 onetime_with_run = []
@@ -165,10 +170,11 @@ def recurring_benefits(monthly_cents):
 def onetime_benefits(total_cents):
     dollars = total_cents / 100
     b = []
-    if dollars >= 5:  b.append("priority")
-    if dollars >= 10: b.append("shoutout")
-    if dollars >= 20: b.append("sponsors_md")
-    # $50+ also qualifies for sponsors_md (already covered by $20+ above)
+    if dollars >= 5:    b.append("priority")
+    if dollars >= 10:   b.append("shoutout")
+    if dollars >= 20:   b.append("sponsors_md")
+    if dollars >= 50:   b.append("readme")
+    if dollars >= 1200: b.append("genesis")
     return b
 
 sponsor_info = {}
@@ -189,7 +195,7 @@ for login, info in credits.items():
     benefit_expires = info.get('benefit_expires', '')
     # Check if benefits are still active
     benefits_active = True
-    if benefit_expires and benefit_expires < today:
+    if benefit_expires and benefit_expires != 'never' and benefit_expires < today:
         benefits_active = False
     benefits = onetime_benefits(info.get('total_cents', 0)) if (benefits_active and dollars >= 5) else []
     entry = {
@@ -209,6 +215,84 @@ for login, info in credits.items():
 # Write rich sponsor info
 with open('/tmp/sponsor_info.json', 'w') as f:
     json.dump(sponsor_info, f, indent=2)
+
+# ── Update SPONSORS.md (only add, never remove) ──
+sponsors_md_path = "SPONSORS.md"
+if os.path.exists(sponsors_md_path):
+    existing = open(sponsors_md_path).read()
+else:
+    existing = ""
+
+def already_listed(login, text):
+    return f"@{login}" in text
+
+changed_sponsors_md = False
+new_lines = {}  # section_header -> list of lines to add
+
+for login, info in sponsor_info.items():
+    if already_listed(login, existing):
+        continue
+
+    if info.get('type') == 'recurring':
+        cents = info.get('monthly_cents', 0)
+        dollars = cents // 100
+        if dollars >= 50:
+            section = "## 🦈 Patron ($50+/mo)"
+            new_lines.setdefault(section, []).append(f"- @{login} — ${dollars}/mo")
+        elif dollars >= 25:
+            section = "## 🦑 Boost ($25+/mo)"
+            new_lines.setdefault(section, []).append(f"- @{login} — ${dollars}/mo")
+    else:
+        cents = info.get('total_cents', 0)
+        dollars = cents // 100
+        benefits = info.get('benefits', [])
+        if 'genesis' in benefits:
+            section = "## 💎 Genesis ($1,200)"
+            new_lines.setdefault(section, []).append(f"- @{login} — ${dollars:,}")
+        elif dollars >= 50:
+            section = "## 🚀 Rocket Fuel ($50+)"
+            new_lines.setdefault(section, []).append(f"- @{login} — ${dollars}")
+        elif 'sponsors_md' in benefits:
+            section = "## 🧬 Evolution Boost ($20+)"
+            new_lines.setdefault(section, []).append(f"- @{login} — ${dollars}")
+
+if new_lines:
+    lines = existing.split('\n')
+    for section, entries in new_lines.items():
+        try:
+            idx = lines.index(section)
+            for entry in reversed(entries):
+                lines.insert(idx + 1, entry)
+            changed_sponsors_md = True
+        except ValueError:
+            pass  # Section header not found in file
+    if changed_sponsors_md:
+        with open(sponsors_md_path, 'w') as f:
+            f.write('\n'.join(lines))
+        print(f"  Updated SPONSORS.md with {sum(len(v) for v in new_lines.values())} new entries.")
+
+# ── Write active sponsors context (compact, for prompt injection) ──
+active_lines = []
+for login, info in sponsor_info.items():
+    benefits = info.get('benefits', [])
+    if 'priority' not in benefits and 'genesis' not in benefits:
+        continue  # Not active — expired or too small
+    if info.get('type') == 'recurring':
+        dollars = info.get('monthly_cents', 0) // 100
+        active_lines.append(f"@{login} — ${dollars}/mo (recurring)")
+    else:
+        dollars = info.get('total_cents', 0) // 100
+        if 'genesis' in benefits:
+            active_lines.append(f"@{login} — ${dollars:,} (💎 Genesis)")
+        else:
+            active_lines.append(f"@{login} — ${dollars} (one-time)")
+
+if active_lines:
+    with open('/tmp/active_sponsors.txt', 'w') as f:
+        f.write("Active sponsors:\n" + "\n".join(active_lines))
+else:
+    with open('/tmp/active_sponsors.txt', 'w') as f:
+        f.write("")
 
 # Write flat array of priority-eligible logins for backwards compat
 priority_logins = [login for login, info in sponsor_info.items()
@@ -669,11 +753,13 @@ Steps:
 
 4. **Self-test** — run \`cargo build\` and \`cargo test\`. Try running the binary with a simple prompt. Note what worked, what broke, any friction.
 
-5. **Research competitors** — use curl to check what Claude Code, Cursor, Aider, Codex, and other coding agents can do. What capabilities do they have that you don't? What's your biggest gap?
+5. **Analyze your evolution history** — run \`gh run list --repo $REPO --workflow evolve.yml --limit 5 --json conclusion,startedAt,displayTitle\` to see recent run outcomes. For any failed runs, check logs with \`gh run view RUN_ID --repo $REPO --log-failed 2>/dev/null | tail -40\`. Look for patterns: repeated failures, API errors, reverts, timeouts. This is ground truth about what actually happened, not what you think happened.
 
-6. **Check your own backlog** — read any self-filed issues (agent-self label) to see what you planned but haven't done.
+6. **Research competitors** — use curl to check what Claude Code, Cursor, Aider, Codex, and other coding agents can do. What capabilities do they have that you don't? What's your biggest gap?
 
-7. **Write your assessment** to \`session_plan/assessment.md\` in this exact format:
+7. **Check your own backlog** — read any self-filed issues (agent-self label) to see what you planned but haven't done.
+
+8. **Write your assessment** to \`session_plan/assessment.md\` in this exact format:
 
 \`\`\`markdown
 # Assessment — Day $DAY
@@ -689,6 +775,9 @@ Steps:
 
 ## Self-Test Results
 [ran binary, tried commands, what worked/broke/felt clunky]
+
+## Evolution History (last 5 runs)
+[from gh run list — pass/fail, errors, patterns, reverts]
 
 ## Capability Gaps
 [vs Claude Code, vs Cursor, vs user expectations — what's missing?]
@@ -1808,8 +1897,11 @@ if [ -f "$SPONSOR_INFO_FILE" ]; then
 import json
 try:
     info = json.load(open('/tmp/sponsor_info.json'))
+    gn = [l for l, d in info.items() if isinstance(d, dict) and 'genesis' in d.get('benefits', [])]
     sm = [l for l, d in info.items() if isinstance(d, dict) and 'sponsors_md' in d.get('benefits', [])]
     rm = [l for l, d in info.items() if isinstance(d, dict) and 'readme' in d.get('benefits', [])]
+    if gn:
+        print(f"  💎 Genesis sponsors: {', '.join('@'+l for l in gn)}")
     if sm:
         print(f"  SPONSORS.md eligible: {', '.join('@'+l for l in sm)}")
     if rm:

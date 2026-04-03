@@ -18,8 +18,9 @@ One-time (cumulative — each tier includes all benefits below it):
 - $2: 1 accelerated run (bypasses 8h gap)
 - $5: Accelerated run + issue priority (14 days)
 - $10: Above + shoutout issue (30 days)
-- $20: Above + SPONSORS.md eligible (30 days, manual)
-- $50: Above + priority for 60 days + SPONSORS.md eligible (manual)
+- $20: Above + SPONSORS.md eligible (30 days)
+- $50: Above + priority for 60 days + SPONSORS.md + README eligible
+- $1,200 💎 Genesis: All above + permanent priority + SPONSORS.md + README + journal acknowledgment (never expires)
 
 ## Build & Test Commands
 
@@ -99,6 +100,9 @@ Additional skills:
 - `DAY_COUNT` — integer tracking current evolution day
 - `session_plan/` — ephemeral directory with per-task files (task_01.md, task_02.md, etc.), written by Phase A planning agent (gitignored)
 - `ISSUES_TODAY.md` — ephemeral, generated during evolution from GitHub issues (gitignored)
+- `ECONOMICS.md` — what money and sponsorship mean to yoyo (DO NOT MODIFY)
+- `SPONSORS.md` — auto-maintained sponsor recognition (only additions, never removals; amounts shown so yoyo understands the investment)
+- `sponsors/credits.json` — one-time sponsor credit tracking (total_cents, run_used, benefit_expires, etc.)
 - `sponsors/shoutouts.json` — tracks which recurring sponsors have received shoutout issues (dedup)
 
 
@@ -119,7 +123,7 @@ Key yoagent features available: `SubAgentTool`, `ContextConfig`, `ExecutionLimit
 ## Safety Rules
 
 These are enforced by the `evolve` skill and `evolve.sh`:
-- Never modify `IDENTITY.md`, `PERSONALITY.md`, `scripts/evolve.sh`, `scripts/format_issues.py`, `scripts/build_site.py`, or `.github/workflows/`
+- Never modify `IDENTITY.md`, `PERSONALITY.md`, `ECONOMICS.md`, `scripts/evolve.sh`, `scripts/format_issues.py`, `scripts/build_site.py`, or `.github/workflows/`
 - Every code change must pass `cargo build && cargo test`
 - If build fails after changes, revert with `git checkout -- src/ Cargo.toml Cargo.lock`
 - Never delete existing tests
