@@ -501,6 +501,29 @@ pub fn print_usage(
     }
 }
 
+/// Return the color code for a context usage percentage.
+/// Green if ≤50%, yellow if 51-80%, red if >80%.
+pub fn context_usage_color(pct: u32) -> &'static Color {
+    if pct > 80 {
+        &RED
+    } else if pct > 50 {
+        &YELLOW
+    } else {
+        &GREEN
+    }
+}
+
+/// Print a context window usage indicator line.
+/// Shows percentage of context consumed, color-coded by fullness.
+pub fn print_context_usage(used_tokens: u64, max_tokens: u64) {
+    if max_tokens == 0 {
+        return;
+    }
+    let pct = ((used_tokens as f64 / max_tokens as f64) * 100.0).min(100.0) as u32;
+    let color = context_usage_color(pct);
+    println!("{DIM}  {color}⬤{RESET}{DIM} {pct}% of context window used{RESET}");
+}
+
 #[cfg(test)]
 pub fn truncate(s: &str, max: usize) -> &str {
     match s.char_indices().nth(max) {
@@ -1382,4 +1405,42 @@ mod tests {
     }
 
     // ── ThinkBlockFilter tests ───────────────────────────────────────
+
+    // ── context_usage_color tests ─────────────────────────────────────
+
+    #[test]
+    fn test_context_usage_color_green_at_zero() {
+        let color = context_usage_color(0);
+        assert_eq!(color.0, GREEN.0);
+    }
+
+    #[test]
+    fn test_context_usage_color_green_at_50() {
+        let color = context_usage_color(50);
+        assert_eq!(color.0, GREEN.0);
+    }
+
+    #[test]
+    fn test_context_usage_color_yellow_at_51() {
+        let color = context_usage_color(51);
+        assert_eq!(color.0, YELLOW.0);
+    }
+
+    #[test]
+    fn test_context_usage_color_yellow_at_80() {
+        let color = context_usage_color(80);
+        assert_eq!(color.0, YELLOW.0);
+    }
+
+    #[test]
+    fn test_context_usage_color_red_at_81() {
+        let color = context_usage_color(81);
+        assert_eq!(color.0, RED.0);
+    }
+
+    #[test]
+    fn test_context_usage_color_red_at_100() {
+        let color = context_usage_color(100);
+        assert_eq!(color.0, RED.0);
+    }
 }

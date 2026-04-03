@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use yoagent::agent::Agent;
+use yoagent::context::total_tokens;
 use yoagent::*;
 
 // ── Watch mode state ─────────────────────────────────────────────────────
@@ -1556,6 +1557,9 @@ pub async fn run_prompt_with_changes(
     session_total.cache_read += total_usage.cache_read;
     session_total.cache_write += total_usage.cache_write;
     print_usage(&total_usage, session_total, model, prompt_start.elapsed());
+    let ctx_used = total_tokens(agent.messages()) as u64;
+    let ctx_max = crate::cli::effective_context_tokens();
+    print_context_usage(ctx_used, ctx_max);
     maybe_ring_bell(prompt_start.elapsed());
     println!();
     PromptOutcome {
@@ -1752,6 +1756,9 @@ pub async fn run_prompt_with_content_and_changes(
     session_total.cache_read += total_usage.cache_read;
     session_total.cache_write += total_usage.cache_write;
     print_usage(&total_usage, session_total, model, prompt_start.elapsed());
+    let ctx_used = total_tokens(agent.messages()) as u64;
+    let ctx_max = crate::cli::effective_context_tokens();
+    print_context_usage(ctx_used, ctx_max);
     maybe_ring_bell(prompt_start.elapsed());
     println!();
     PromptOutcome {
