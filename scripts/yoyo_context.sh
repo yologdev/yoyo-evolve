@@ -9,7 +9,7 @@
 #   ... your task-specific instructions ...
 #   EOF
 #
-# Reads: IDENTITY.md, PERSONALITY.md, ECONOMICS.md, SPONSORS.md, memory/active_learnings.md, memory/active_social_learnings.md
+# Reads: IDENTITY.md, PERSONALITY.md, ECONOMICS.md, /tmp/active_sponsors.txt, memory/active_learnings.md, memory/active_social_learnings.md
 # These are yoyo's stable identity files — who it is, how it speaks,
 # what it's learned about itself, and what it's learned from humans.
 

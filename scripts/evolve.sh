@@ -48,7 +48,7 @@ echo ""
 #   Monthly: $5→priority, $10→+shoutout, $25→+SPONSORS.md, $50→+README
 #   One-time: $2→1 accelerated run, $5→priority, $10→+shoutout (30d),
 #             $20→+SPONSORS.md (30d), $50→priority 60d+SPONSORS.md+README,
-#             $1200→💎 Genesis (6mo priority, SPONSORS.md, README, journal ack)
+#             $1200→💎 Genesis (permanent priority, SPONSORS.md, README, journal ack)
 SPONSORS_FILE="/tmp/sponsor_logins.json"
 SPONSOR_INFO_FILE="/tmp/sponsor_info.json"
 CREDITS_FILE="sponsors/credits.json"
@@ -61,7 +61,7 @@ if command -v gh &>/dev/null; then
     GH_TOKEN="$SPONSOR_GH_TOKEN" gh api graphql -f query='{ viewer { sponsorshipsAsMaintainer(first: 100, activeOnly: true) { nodes { isOneTimePayment sponsorEntity { ... on User { login } ... on Organization { login } } tier { monthlyPriceInCents isOneTime } } } } }' > /tmp/sponsor_raw.json 2>/dev/null || echo '{}' > /tmp/sponsor_raw.json
 
     MONTHLY_TOTAL=$(python3 <<'PYEOF'
-import json, os
+import json, os, sys
 from datetime import datetime, timedelta, timezone
 
 CREDITS_FILE = "sponsors/credits.json"
@@ -139,8 +139,7 @@ for login, info in credits.items():
     elif dollars >= 5:
         info['benefit_expires'] = (fs_date + timedelta(days=14)).strftime('%Y-%m-%d')
 
-# Expire credit entries older than 90 days (generous buffer beyond benefit windows)
-# Genesis sponsors ($1200+) never expire
+# Expire credit entries older than 90 days, except Genesis sponsors who never expire
 cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%Y-%m-%d')
 credits = {k: v for k, v in credits.items()
            if v.get('benefit_expires') == 'never' or v.get('first_seen', '') >= cutoff}
@@ -219,7 +218,8 @@ with open('/tmp/sponsor_info.json', 'w') as f:
 # ── Update SPONSORS.md (only add, never remove) ──
 sponsors_md_path = "SPONSORS.md"
 if os.path.exists(sponsors_md_path):
-    existing = open(sponsors_md_path).read()
+    with open(sponsors_md_path) as f:
+        existing = f.read()
 else:
     existing = ""
 
@@ -265,11 +265,11 @@ if new_lines:
                 lines.insert(idx + 1, entry)
             changed_sponsors_md = True
         except ValueError:
-            pass  # Section header not found in file
+            print(f"  WARNING: Section '{section}' not found in SPONSORS.md — {len(entries)} sponsor(s) not added", file=sys.stderr)
     if changed_sponsors_md:
         with open(sponsors_md_path, 'w') as f:
             f.write('\n'.join(lines))
-        print(f"  Updated SPONSORS.md with {sum(len(v) for v in new_lines.values())} new entries.")
+        print(f"  Updated SPONSORS.md.")
 
 # ── Write active sponsors context (compact, for prompt injection) ──
 active_lines = []
@@ -1917,8 +1917,10 @@ try:
         print(f"  SPONSORS.md eligible: {', '.join('@'+l for l in sm)}")
     if rm:
         print(f"  README eligible: {', '.join('@'+l for l in rm)}")
-except (json.JSONDecodeError, FileNotFoundError, AttributeError, TypeError):
-    pass
+except (json.JSONDecodeError, FileNotFoundError) as e:
+    print(f"  WARNING: Could not read sponsor info: {e}")
+except (AttributeError, TypeError) as e:
+    print(f"  WARNING: Sponsor info has unexpected structure: {e}")
 PYEOF
 fi
 

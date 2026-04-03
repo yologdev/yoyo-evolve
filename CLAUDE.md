@@ -11,8 +11,8 @@ A self-evolving coding agent CLI built on [yoagent](https://github.com/yologdev/
 Monthly recurring (benefits only):
 - $5/mo: Issue priority (💖)
 - $10/mo: Priority + shoutout issue
-- $25/mo: Above + SPONSORS.md eligible (manual)
-- $50/mo: Above + README eligible (manual)
+- $25/mo: Above + SPONSORS.md eligible
+- $50/mo: Above + README eligible
 
 One-time (cumulative — each tier includes all benefits below it):
 - $2: 1 accelerated run (bypasses 8h gap)
@@ -87,7 +87,7 @@ Additional skills:
 - `memory/active_learnings.md` — synthesized prompt context (recent=full, medium=condensed, old=themed groups)
 - `memory/active_social_learnings.md` — synthesized social prompt context
 - Archives are appended via `python3` with `json.dumps()` (never `echo` — prevents quote-breaking). Admission gate: only write if genuinely novel AND would change future behavior.
-- Context loaded centrally by `scripts/yoyo_context.sh` → `$YOYO_CONTEXT` (WHO YOU ARE, YOUR VOICE, SELF-WISDOM, SOCIAL WISDOM sections)
+- Context loaded centrally by `scripts/yoyo_context.sh` → `$YOYO_CONTEXT` (WHO YOU ARE, YOUR VOICE, SELF-WISDOM, SOCIAL WISDOM, YOUR ECONOMICS, YOUR SPONSORS sections)
 
 **Release pipeline** (`.github/workflows/release.yml`): Triggered by `v*` tags. Builds binaries for 4 targets (Linux x86_64, macOS Intel, macOS ARM, Windows x86_64) and publishes a GitHub Release with tarballs/zips + SHA256 checksums. Install scripts:
 - `install.sh` — `curl -fsSL ... | bash` for macOS/Linux
