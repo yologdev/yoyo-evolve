@@ -79,7 +79,6 @@ pub fn run_watch_command(cmd: &str) -> (bool, String) {
 static AUDIT_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Enable audit logging for this session.
-#[allow(dead_code)]
 pub fn enable_audit_log() {
     AUDIT_ENABLED.store(true, Ordering::Relaxed);
 }

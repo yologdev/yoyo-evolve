@@ -539,6 +539,10 @@ async fn main() {
         enable_verbose();
     }
 
+    if config.audit {
+        prompt::enable_audit_log();
+    }
+
     let continue_session = config.continue_session;
     let output_path = config.output_path;
     let mcp_servers = config.mcp_servers;

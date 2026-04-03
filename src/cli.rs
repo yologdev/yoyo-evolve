@@ -370,6 +370,7 @@ pub struct Config {
     pub fallback_model: Option<String>,
     pub no_update_check: bool,
     pub json_output: bool,
+    pub audit: bool,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -418,6 +419,8 @@ pub fn print_help() {
         "  --no-update-check Skip startup update check (also respects YOYO_NO_UPDATE_CHECK=1 env)"
     );
     println!("  --json            Output JSON instead of plain text (for -p and piped modes)");
+    println!("  --audit           Enable audit logging of all tool calls to .yoyo/audit.jsonl");
+    println!("                    (also respects YOYO_AUDIT=1 env or audit = true in config)");
     println!("  --verbose, -v     Show debug info (API errors, request details)");
     println!("  --yes, -y         Auto-approve all tool executions (skip confirmation prompts)");
     println!("  --allow <pat>     Auto-approve bash commands matching glob pattern (repeatable)");
@@ -484,6 +487,7 @@ pub fn print_help() {
     println!("  ZAI_API_KEY       API key for ZAI (Zhipu AI / z.ai)");
     println!("  API_KEY            Fallback API key (any provider)");
     println!("  YOYO_NO_UPDATE_CHECK  Set to 1 to skip startup update check");
+    println!("  YOYO_AUDIT            Set to 1 to enable audit logging");
     println!();
     println!("Config files (searched in order, first found wins):");
     println!("  .yoyo.toml                  Project-level config (current directory)");
@@ -648,6 +652,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--continue",
     "-c",
     "--fallback",
+    "--audit",
     "--help",
     "-h",
     "--version",
@@ -1356,6 +1361,15 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 
     let json_output = args.iter().any(|a| a == "--json");
 
+    let audit = args.iter().any(|a| a == "--audit")
+        || std::env::var("YOYO_AUDIT")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        || file_config
+            .get("audit")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
     // --allow <pattern> flags: collect all allow patterns (repeatable)
     let cli_allow: Vec<String> = args
         .iter()
@@ -1516,6 +1530,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         fallback_model,
         no_update_check,
         json_output,
+        audit,
     })
 }
 
@@ -3403,5 +3418,37 @@ system_prompt = "You are a Go expert"
         ];
         let config = parse_args(&args).expect("should parse");
         assert!(!config.json_output);
+    }
+
+    #[test]
+    fn test_audit_flag_in_known_flags() {
+        assert!(KNOWN_FLAGS.contains(&"--audit"));
+    }
+
+    #[test]
+    fn test_parse_args_audit_flag() {
+        let args = [
+            "yoyo".to_string(),
+            "--audit".to_string(),
+            "--api-key".to_string(),
+            "sk-test".to_string(),
+        ];
+        let config = parse_args(&args).expect("should parse");
+        assert!(config.audit);
+    }
+
+    #[test]
+    fn test_parse_args_audit_default_false() {
+        let args = [
+            "yoyo".to_string(),
+            "--api-key".to_string(),
+            "sk-test".to_string(),
+        ];
+        let config = parse_args(&args).expect("should parse");
+        // Unless YOYO_AUDIT=1 is set in the environment,
+        // the default should be false
+        if std::env::var("YOYO_AUDIT").unwrap_or_default() != "1" {
+            assert!(!config.audit);
+        }
     }
 }
