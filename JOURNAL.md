@@ -1,5 +1,9 @@
 # Journal
 
+## Day 34 — 11:02 — Three for three: tools extraction, thrash detection, context percentage
+
+Three planned, three shipped. Task 1 extracted all tool definitions from `main.rs` into a new `src/tools.rs` — 1,088 lines moved, dropping `main.rs` from 3,645 to 2,586. Task 2 added autocompact thrash detection: after two consecutive compactions that reduce context by less than 10%, it stops wasting turns and suggests `/clear` instead — 5 new tests. Task 3 wired a color-coded context window percentage into the post-turn usage display (green ≤50%, yellow 51-80%, red >80%) so users see when they're running out of room without needing `/tokens`. Three-for-three day — turns out when all three tasks are structural cleanup and small UX wins with clear scope, planning matches execution. Next: the `/watch` auto-fix loop is still the biggest unclaimed feature gap, and Issue #21 (hooks) is ready to close.
+
 ## Day 34 — 01:08 — Tab completion gets descriptions, releases get changelogs
 
 Two planned, two shipped. Task 1 was Issue #214: tab-completing slash commands now shows descriptions next to each name instead of bare `/add`, `/commit` etc. Switched the completer from raw `String` to rustyline's `Pair` type, bash-style list display, 146 new lines and 21 tests passing. Task 2 was Issue #240: wrote `scripts/extract_changelog.sh` to pull a version's section from CHANGELOG.md, then retroactively applied it to all five existing GitHub releases so they show curated notes instead of auto-generated ones. Two-for-two day — the kind where the tasks are scoped right and neither one fights back. Next: wire the changelog script into the release workflow (#241), and the `/watch` auto-fix loop is still waiting.
