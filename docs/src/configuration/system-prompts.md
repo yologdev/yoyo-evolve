@@ -72,6 +72,16 @@ yoyo --system "You are a Rust expert" --print-system-prompt
 yoyo --no-project-context --print-system-prompt
 ```
 
+### Inspecting during a session
+
+Once inside the REPL, use `/context system` to see the system prompt broken into sections with approximate token counts for each:
+
+```
+/context system
+```
+
+This shows each markdown section (headers like `# ...` and `## ...`), their line counts, estimated token usage, and a brief preview — without leaving the session.
+
 ## Automatic project context
 
 In addition to the system prompt, yoyo automatically injects project context when available:

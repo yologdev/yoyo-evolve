@@ -388,7 +388,12 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
             "/context — Show loaded project context files\n\n\
              Lists the project context files that were loaded at startup\n\
              (e.g. YOYO.md, CLAUDE.md). These files give the AI awareness\n\
-             of project conventions and architecture.",
+             of project conventions and architecture.\n\n\
+             Subcommands:\n\
+               /context system — Show system prompt sections with token estimates\n\
+                                 Displays each section of the assembled system prompt\n\
+                                 with line counts, approximate token estimates, and a\n\
+                                 preview of each section's content.",
         ),
         "init" => Some(
             "/init — Scan project and generate a YOYO.md context file\n\n\
@@ -651,6 +656,19 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              The AI agent can also manage tasks via the todo tool during\n\
              agentic runs, helping it stay organized on multi-step operations.",
         ),
+        "teach" => Some(
+            "/teach — Toggle teach mode\n\n\
+             Usage:\n\
+             \x20 /teach       Toggle teach mode on/off\n\
+             \x20 /teach on    Enable teach mode\n\
+             \x20 /teach off   Disable teach mode\n\n\
+             When teach mode is active, yoyo explains its reasoning as it works:\n\
+             \x20 • Explains WHY before showing code\n\
+             \x20 • Uses clear, readable patterns over cleverness\n\
+             \x20 • Adds comments on non-obvious lines\n\
+             \x20 • Summarizes what you should learn after each task\n\n\
+             Great for learning while the agent codes. Session-only — resets when you exit.",
+        ),
         _ => None,
     }
 }
@@ -719,7 +737,7 @@ pub fn help_text() -> String {
         "                     /add <path>:<start>-<end> for line ranges, /add src/*.rs for globs\n",
     );
     out.push_str("  /apply <file>      Apply a diff or patch file (--check for dry-run)\n");
-    out.push_str("  /context           Show loaded project context files\n");
+    out.push_str("  /context [system]  Show loaded project context files\n");
     out.push_str("  /doctor            Run environment diagnostics (git, API key, config, etc.)\n");
     out.push_str("  /init              Scan project and generate a YOYO.md context file\n");
     out.push_str("  /health            Run project health checks (auto-detects project type)\n");
@@ -768,6 +786,7 @@ pub fn help_text() -> String {
     out.push_str(
         "                     The model can ask you questions mid-task using the ask_user tool.\n",
     );
+    out.push_str("  /teach [on|off]    Toggle teach mode — explains reasoning as it works\n");
     out.push_str(
         "  /remember <note>   Save a project-specific memory (persists across sessions)\n",
     );
@@ -821,7 +840,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "commit" => Some("Commit staged changes"),
         "compact" => Some("Compact conversation to save context"),
         "config" => Some("Show current settings"),
-        "context" => Some("Show loaded project context"),
+        "context" => Some("Show project context or system prompt sections"),
         "cost" => Some("Show estimated session cost"),
         "diff" => Some("Show git changes"),
         "doctor" => Some("Run environment diagnostics"),
@@ -864,6 +883,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "spawn" => Some("Run a task in a sub-agent"),
         "stash" => Some("Stash conversation and start fresh"),
         "status" => Some("Show session info"),
+        "teach" => Some("Toggle teach mode — explains reasoning as it works"),
         "test" => Some("Run project tests"),
         "think" => Some("Set thinking level"),
         "todo" => Some("Track tasks (add, done, remove, clear)"),
