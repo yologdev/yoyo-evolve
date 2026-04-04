@@ -2161,9 +2161,10 @@ mod tests {
     #[test]
     fn test_truncate_result_with_custom_limit() {
         use yoagent::types::{Content, ToolResult};
-        // Create a ToolResult with text longer than 100 chars and enough lines
+        // Create a ToolResult with text longer than 100 chars and enough lines.
+        // Each line starts with a unique first word to avoid compression collapsing.
         let long_text = (0..200)
-            .map(|i| format!("line {i}"))
+            .map(|i| format!("T{i} data"))
             .collect::<Vec<_>>()
             .join("\n");
         let result = ToolResult {

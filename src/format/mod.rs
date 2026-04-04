@@ -167,27 +167,152 @@ const TRUNCATION_HEAD_LINES: usize = 100;
 /// Number of lines to keep from the end of truncated output.
 const TRUNCATION_TAIL_LINES: usize = 50;
 
+/// Minimum number of consecutive similar lines to trigger collapsing.
+const COLLAPSE_MIN_LINES: usize = 4;
+
+/// Maximum prefix length used for line category comparison.
+const CATEGORY_PREFIX_MAX: usize = 20;
+
+/// Strip ANSI escape codes and collapse runs of similar lines.
+///
+/// This reduces token usage when tool output is fed back to the LLM:
+/// - **ANSI stripping**: removes `\x1b[...X` sequences (SGR, cursor, erase)
+/// - **Repetitive line collapsing**: when 4+ consecutive lines share a category
+///   prefix (first word(s) up to 20 chars), replaces with first line,
+///   `"... (N more similar lines)"`, and last line.
+///
+/// Called before head/tail truncation so the truncation operates on
+/// already-compressed output.
+pub fn compress_tool_output(output: &str) -> String {
+    if output.is_empty() {
+        return String::new();
+    }
+
+    // Phase 1: strip ANSI escape codes
+    let stripped = strip_ansi_codes(output);
+
+    // Phase 2: collapse repetitive line sequences
+    collapse_repetitive_lines(&stripped)
+}
+
+/// Remove ANSI escape sequences from a string.
+///
+/// Matches `ESC [ <params> <final byte>` where params are digits/semicolons
+/// and final byte is an ASCII letter.
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] == b'\x1b' && i + 1 < len && bytes[i + 1] == b'[' {
+            // Skip ESC [
+            i += 2;
+            // Skip parameter bytes (digits, semicolons)
+            while i < len && (bytes[i].is_ascii_digit() || bytes[i] == b';') {
+                i += 1;
+            }
+            // Skip final byte (ASCII letter)
+            if i < len && bytes[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+        } else {
+            // Safe because we're copying byte-by-byte from valid UTF-8
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Extract a "category" from a line for grouping similar lines.
+///
+/// Takes the leading whitespace + first word (up to CATEGORY_PREFIX_MAX chars).
+/// Lines with the same category are considered similar.
+fn line_category(line: &str) -> &str {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() {
+        return "";
+    }
+
+    // Find end of first word in the trimmed content
+    let first_word_end = trimmed
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(trimmed.len());
+
+    // Include leading whitespace length + first word
+    let prefix_len = (line.len() - trimmed.len()) + first_word_end;
+    let end = prefix_len.min(CATEGORY_PREFIX_MAX).min(line.len());
+
+    &line[..end]
+}
+
+/// Collapse runs of 4+ consecutive lines that share a category prefix.
+fn collapse_repetitive_lines(s: &str) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.len() < COLLAPSE_MIN_LINES {
+        return s.to_string();
+    }
+
+    let mut result = Vec::with_capacity(lines.len());
+    let mut i = 0;
+
+    while i < lines.len() {
+        let cat = line_category(lines[i]);
+
+        // Count consecutive lines with the same non-empty category
+        if !cat.is_empty() {
+            let mut run_end = i + 1;
+            while run_end < lines.len() && line_category(lines[run_end]) == cat {
+                run_end += 1;
+            }
+            let run_len = run_end - i;
+
+            if run_len >= COLLAPSE_MIN_LINES {
+                // Collapse: first line, marker, last line
+                result.push(lines[i].to_string());
+                let collapsed = run_len - 2; // exclude first and last
+                result.push(format!("... ({collapsed} more similar lines)"));
+                result.push(lines[run_end - 1].to_string());
+                i = run_end;
+                continue;
+            }
+        }
+
+        result.push(lines[i].to_string());
+        i += 1;
+    }
+
+    result.join("\n")
+}
+
 /// Intelligently truncate large tool output to save context window tokens.
 ///
-/// When output exceeds `max_chars`, keeps the first ~100 lines and last ~50 lines
+/// Applies compression (ANSI stripping + repetitive line collapsing) first,
+/// then when output exceeds `max_chars`, keeps the first ~100 lines and last ~50 lines
 /// with a clear `[... truncated N lines ...]` marker in between. This preserves
 /// the beginning of output (usually the most informative — headers, first errors)
 /// and the end (summary lines, final status).
 ///
 /// Output under the threshold is returned unchanged.
 pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
-    // Under threshold — return unchanged
-    if output.len() <= max_chars {
-        return output.to_string();
+    // Phase 1: compress (strip ANSI + collapse repetitive lines)
+    let compressed = compress_tool_output(output);
+
+    // Under threshold — return compressed output
+    if compressed.len() <= max_chars {
+        return compressed;
     }
 
-    let lines: Vec<&str> = output.lines().collect();
+    let lines: Vec<&str> = compressed.lines().collect();
     let total_lines = lines.len();
 
     // If not enough lines to meaningfully truncate, return as-is
     // (edge case: very long single lines or very few lines)
     if total_lines <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
-        return output.to_string();
+        return compressed;
     }
 
     let head = &lines[..TRUNCATION_HEAD_LINES];
@@ -866,9 +991,11 @@ mod tests {
 
     #[test]
     fn test_truncate_tool_output_exactly_at_threshold() {
-        // Create output exactly at the threshold
-        let line = "x".repeat(100);
-        let lines: Vec<String> = (0..300).map(|_| line.clone()).collect();
+        // Create output exactly at the threshold.
+        // Each line starts with a unique first word so compress won't collapse them.
+        let lines: Vec<String> = (0..300)
+            .map(|i| format!("L{i} {}", "x".repeat(100)))
+            .collect();
         let output = lines.join("\n");
         // If it's at or under threshold length, it should be unchanged
         let result = truncate_tool_output(&output, output.len());
@@ -899,8 +1026,9 @@ mod tests {
 
     #[test]
     fn test_truncate_tool_output_preserves_head_and_tail_count() {
-        // 300 lines, each 200 chars → ~60k chars, well over 30k threshold
-        let lines: Vec<String> = (0..300).map(|i| format!("{:>200}", i)).collect();
+        // 300 lines, each 200 chars → ~60k chars, well over 30k threshold.
+        // Each line starts with a unique first word to avoid compression collapsing.
+        let lines: Vec<String> = (0..300).map(|i| format!("U{i} {:>200}", i)).collect();
         let output = lines.join("\n");
 
         let result = truncate_tool_output(&output, 30_000);
@@ -908,18 +1036,18 @@ mod tests {
 
         // Head: first 100 lines should be present
         for i in 0..100 {
-            let expected = format!("{:>200}", i);
+            let expected = format!("U{i} {:>200}", i);
             assert!(result.contains(&expected), "Missing head line {i}");
         }
 
         // Tail: last 50 lines should be present
         for i in 250..300 {
-            let expected = format!("{:>200}", i);
+            let expected = format!("U{i} {:>200}", i);
             assert!(result.contains(&expected), "Missing tail line {i}");
         }
 
         // Middle should be omitted
-        assert!(!result.contains(&format!("{:>200}", 150)));
+        assert!(!result.contains(&format!("U150 {:>200}", 150)));
 
         // Marker should show correct count
         // 300 - 100 - 50 = 150 omitted lines
@@ -932,9 +1060,11 @@ mod tests {
     #[test]
     fn test_truncate_tool_output_few_long_lines_not_truncated() {
         // Only 140 lines (< head + tail = 150), even if over char threshold
-        // Should NOT be truncated because there aren't enough lines
-        let line = "x".repeat(500);
-        let lines: Vec<String> = (0..140).map(|_| line.clone()).collect();
+        // Should NOT be truncated because there aren't enough lines.
+        // Each line starts with a unique first word to avoid compression collapsing.
+        let lines: Vec<String> = (0..140)
+            .map(|i| format!("L{i} {}", "x".repeat(500)))
+            .collect();
         let output = lines.join("\n");
         assert!(output.len() > 30_000);
 
@@ -947,11 +1077,11 @@ mod tests {
 
     #[test]
     fn test_truncate_tool_output_single_truncated_line_in_marker() {
-        // 152 lines → head 100 + tail 50 + 2 omitted
-        // But 2 omitted uses "lines" (plural)
-        // 151 lines → 1 omitted → "line" (singular)
-        let line = "x".repeat(300);
-        let lines: Vec<String> = (0..151).map(|_| line.clone()).collect();
+        // 151 lines → head 100 + tail 50 + 1 omitted → "line" (singular).
+        // Each line starts with a unique first word to avoid compression collapsing.
+        let lines: Vec<String> = (0..151)
+            .map(|i| format!("L{i} {}", "x".repeat(300)))
+            .collect();
         let output = lines.join("\n");
         assert!(output.len() > 30_000);
 
@@ -979,9 +1109,10 @@ mod tests {
 
     #[test]
     fn test_truncate_tool_output_with_custom_limit() {
-        // Verify truncation respects a custom (small) limit
+        // Verify truncation respects a custom (small) limit.
+        // Each line starts with a unique first word to avoid compression collapsing.
         let output = (0..200)
-            .map(|i| format!("line {i}"))
+            .map(|i| format!("W{i} data"))
             .collect::<Vec<_>>()
             .join("\n");
         let result = truncate_tool_output(&output, 100);
@@ -996,9 +1127,10 @@ mod tests {
 
     #[test]
     fn test_truncate_tool_output_respects_limit_parameter() {
-        // Same output should NOT be truncated with a large limit but SHOULD be with a small one
+        // Same output should NOT be truncated with a large limit but SHOULD be with a small one.
+        // Each line starts with a unique first word to avoid compression collapsing.
         let output = (0..200)
-            .map(|i| format!("line {i}"))
+            .map(|i| format!("R{i} data"))
             .collect::<Vec<_>>()
             .join("\n");
         let large_limit_result = truncate_tool_output(&output, 1_000_000);
@@ -1442,5 +1574,132 @@ mod tests {
     fn test_context_usage_color_red_at_100() {
         let color = context_usage_color(100);
         assert_eq!(color.0, RED.0);
+    }
+
+    // ── compress_tool_output tests ────────────────────────────────────
+
+    #[test]
+    fn test_compress_strips_ansi_codes() {
+        let input = "\x1b[31merror\x1b[0m: something \x1b[1;33mwent\x1b[0m wrong";
+        let result = compress_tool_output(input);
+        assert_eq!(result, "error: something went wrong");
+        assert!(!result.contains("\x1b"));
+    }
+
+    #[test]
+    fn test_compress_strips_various_ansi_sequences() {
+        // SGR, cursor movement, erase
+        let input = "\x1b[32mgreen\x1b[0m \x1b[2Kclear \x1b[1Aup \x1b[38;5;196mcolor256\x1b[0m";
+        let result = compress_tool_output(input);
+        assert!(!result.contains("\x1b"), "still has ANSI: {result}");
+        assert!(result.contains("green"));
+        assert!(result.contains("color256"));
+    }
+
+    #[test]
+    fn test_compress_collapses_repetitive_lines() {
+        let mut lines = Vec::new();
+        for i in 0..10 {
+            lines.push(format!("   Compiling foo-{i} v1.0.{i}"));
+        }
+        let input = lines.join("\n");
+        let result = compress_tool_output(&input);
+        let result_lines: Vec<&str> = result.lines().collect();
+        // Should have first line, collapse marker, last line = 3 lines
+        assert_eq!(result_lines.len(), 3, "got: {result}");
+        assert!(
+            result_lines[0].contains("foo-0"),
+            "first: {}",
+            result_lines[0]
+        );
+        assert!(
+            result_lines[1].contains("8 more similar"),
+            "marker: {}",
+            result_lines[1]
+        );
+        assert!(
+            result_lines[2].contains("foo-9"),
+            "last: {}",
+            result_lines[2]
+        );
+    }
+
+    #[test]
+    fn test_compress_preserves_non_repetitive_output() {
+        let input = "line one\nline two\nline three\nsomething different";
+        let result = compress_tool_output(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_compress_short_output_unchanged() {
+        // Only 3 similar lines — below the threshold of 4
+        let input = "   Compiling a v1.0\n   Compiling b v1.0\n   Compiling c v1.0";
+        let result = compress_tool_output(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_compress_mixed_repetitive_blocks() {
+        let mut lines = Vec::new();
+        for i in 0..5 {
+            lines.push(format!("   Compiling crate-{i} v0.1.0"));
+        }
+        lines.push("warning: unused variable".to_string());
+        lines.push("  --> src/main.rs:10:5".to_string());
+        for i in 0..6 {
+            lines.push(format!("  Downloading dep-{i} v2.0.0"));
+        }
+        let input = lines.join("\n");
+        let result = compress_tool_output(&input);
+        // Both repetitive blocks collapsed
+        assert!(
+            result.contains("3 more similar"),
+            "compiling block: {result}"
+        );
+        assert!(
+            result.contains("4 more similar"),
+            "downloading block: {result}"
+        );
+        // Non-repetitive lines preserved
+        assert!(result.contains("warning: unused variable"));
+        assert!(result.contains("--> src/main.rs:10:5"));
+    }
+
+    #[test]
+    fn test_truncate_uses_compression() {
+        // Verify truncate_tool_output strips ANSI codes from output
+        let input = "\x1b[32mhello\x1b[0m world";
+        let result = truncate_tool_output(input, 100_000);
+        assert!(!result.contains("\x1b"), "ANSI not stripped: {result}");
+        assert!(result.contains("hello world"));
+    }
+
+    #[test]
+    fn test_compress_exact_threshold_four_lines() {
+        // Exactly 4 similar lines — should collapse
+        let input = "   Compiling a v1\n   Compiling b v1\n   Compiling c v1\n   Compiling d v1";
+        let result = compress_tool_output(input);
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert_eq!(result_lines.len(), 3, "got: {result}");
+        assert!(result_lines[1].contains("2 more similar"));
+    }
+
+    #[test]
+    fn test_compress_empty_input() {
+        assert_eq!(compress_tool_output(""), "");
+    }
+
+    #[test]
+    fn test_compress_pip_install_pattern() {
+        let mut lines = Vec::new();
+        for i in 0..8 {
+            lines.push(format!("Installing package-{i}==1.0.{i}"));
+        }
+        let input = lines.join("\n");
+        let result = compress_tool_output(&input);
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert_eq!(result_lines.len(), 3, "got: {result}");
+        assert!(result_lines[1].contains("6 more similar"));
     }
 }

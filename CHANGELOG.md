@@ -6,7 +6,7 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [0.1.6] — 2026-04-03
 
-Feature release adding tab completion descriptions, release tooling, smarter context management, and code organization improvements — built across Day 34.
+Feature release adding tab completion descriptions, release tooling, smarter context management, and code organization improvements — built across Days 34–35.
 
 ### Added
 
@@ -14,6 +14,7 @@ Feature release adding tab completion descriptions, release tooling, smarter con
 - **Release changelog extraction** — `scripts/extract_changelog.sh` pulls version sections from CHANGELOG.md; retroactively applied to all existing GitHub releases (Issue #240, Day 34)
 - **Autocompact thrash detection** — stops wasting turns after two low-yield compactions and suggests `/clear` instead (Day 34)
 - **Context window percentage** — color-coded context usage percentage in post-turn display: green ≤50%, yellow 51–80%, red >80% (Day 34)
+- **Watch mode multi-attempt fix loop** — `/watch` now retries up to 3 fix attempts per failure, feeding the latest error output to each retry so the agent can adapt to new errors introduced by previous fixes (Day 35)
 
 ### Improved
 
