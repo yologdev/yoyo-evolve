@@ -548,41 +548,50 @@ refresh_gh_token() {
     fi
 
     echo "  Refreshing GitHub App token..."
-    local pem
-    pem=$(echo "${APP_PRIVATE_KEY}" | sed 's/\\n/\n/g')
 
-    local now iat exp
-    now=$(date +%s)
-    iat=$((now - 60))
-    exp=$((now + 600))
-
-    # Base64url encode (no padding, URL-safe)
-    b64url() { openssl base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n'; }
-
-    local header payload signature
-    header=$(echo -n '{"typ":"JWT","alg":"RS256"}' | b64url)
-    payload=$(echo -n "{\"iat\":${iat},\"exp\":${exp},\"iss\":\"${APP_ID}\"}" | b64url)
-    signature=$(openssl dgst -sha256 -sign <(echo "${pem}") <(echo -n "${header}.${payload}") | b64url)
-
-    local jwt="${header}.${payload}.${signature}"
-
-    local response http_code
-    response=$(curl --silent --write-out "\n%{http_code}" --request POST \
-        --url "https://api.github.com/app/installations/${APP_INSTALLATION_ID}/access_tokens" \
-        --header "Accept: application/vnd.github+json" \
-        --header "Authorization: Bearer ${jwt}" \
-        --header "X-GitHub-Api-Version: 2022-11-28")
-    http_code=$(echo "$response" | tail -1)
-    response=$(echo "$response" | sed '$d')
-
-    if [ "$http_code" != "201" ]; then
-        echo "  WARNING: Token refresh failed (HTTP $http_code). Will continue with current token."
-        return 0
-    fi
-
+    # Run in a subshell so failures don't kill the script (set -e is active).
+    # Stderr passes through to the log for diagnostics; only stdout is captured as the token.
     local token
-    token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>&1) || {
-        echo "  WARNING: Token refresh failed — could not parse response: $token"
+    token=$( (
+        set -e
+
+        # Convert escaped \n to real newlines (GitHub Secrets may store PEM with literal \n)
+        pem="${APP_PRIVATE_KEY//\\n/$'\n'}"
+
+        now=$(date +%s)
+        iat=$((now - 60))
+        exp=$((now + 600))
+
+        # Base64url encode (no padding, URL-safe)
+        b64url() { openssl base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n'; }
+
+        header=$(echo -n '{"typ":"JWT","alg":"RS256"}' | b64url)
+        payload=$(echo -n "{\"iat\":${iat},\"exp\":${exp},\"iss\":\"${APP_ID}\"}" | b64url)
+
+        # Write PEM to a temp file (process substitution can be unreliable with multiline secrets)
+        pem_file=$(mktemp)
+        trap "rm -f '$pem_file'" EXIT
+        printf '%s\n' "$pem" > "$pem_file"
+        signature=$(echo -n "${header}.${payload}" | openssl dgst -sha256 -sign "$pem_file" | b64url)
+
+        jwt="${header}.${payload}.${signature}"
+
+        response=$(curl --silent --write-out "\n%{http_code}" --request POST \
+            --url "https://api.github.com/app/installations/${APP_INSTALLATION_ID}/access_tokens" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${jwt}" \
+            --header "X-GitHub-Api-Version: 2022-11-28")
+        http_code=$(echo "$response" | tail -1)
+        body=$(echo "$response" | sed '$d')
+
+        if [ "$http_code" != "201" ]; then
+            echo "Token refresh: HTTP $http_code — $body" >&2
+            exit 1
+        fi
+
+        echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])"
+    ) ) || {
+        echo "  WARNING: Token refresh failed (see errors above). Will continue with current token."
         return 0
     }
 
