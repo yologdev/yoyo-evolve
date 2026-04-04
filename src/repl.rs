@@ -631,8 +631,8 @@ pub async fn run_repl(
                 commands::handle_commit(input);
                 continue;
             }
-            "/context" => {
-                commands::handle_context();
+            s if s == "/context" || s.starts_with("/context ") => {
+                commands::handle_context(input, &agent_config.system_prompt);
                 continue;
             }
             s if s == "/add" || s.starts_with("/add ") => {
@@ -755,6 +755,10 @@ pub async fn run_repl(
                 println!("{result}\n");
                 continue;
             }
+            s if s == "/teach" || s.starts_with("/teach ") => {
+                commands::handle_teach(input);
+                continue;
+            }
             s if s == "/ast" || s.starts_with("/ast ") => {
                 commands::handle_ast_grep(input);
                 continue;
@@ -862,6 +866,13 @@ pub async fn run_repl(
         // Expand @file mentions (e.g. "explain @src/main.rs") into file content
         let (cleaned_text, file_results) = commands::expand_file_mentions(input);
 
+        // If teach mode is active, prepend the teaching instruction to the user message
+        let effective_input = if commands::is_teach_mode() {
+            format!("{}\n\n{}", commands::TEACH_MODE_PROMPT, cleaned_text)
+        } else {
+            cleaned_text.clone()
+        };
+
         let prompt_start = Instant::now();
         let outcome = if !file_results.is_empty() {
             // Print summaries like /add does
@@ -881,7 +892,7 @@ pub async fn run_repl(
 
             // Build content blocks: user text first, then file contents
             let mut content_blocks = vec![yoagent::types::Content::Text {
-                text: cleaned_text.clone(),
+                text: effective_input.clone(),
             }];
             content_blocks.extend(build_add_content_blocks(&file_results));
 
@@ -891,13 +902,13 @@ pub async fn run_repl(
                 &mut session_total,
                 &agent_config.model,
                 &session_changes,
-                &cleaned_text,
+                &effective_input,
             )
             .await
         } else {
             run_prompt_auto_retry(
                 agent,
-                input,
+                &effective_input,
                 &mut session_total,
                 &agent_config.model,
                 &session_changes,

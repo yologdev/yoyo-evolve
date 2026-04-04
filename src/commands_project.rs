@@ -184,7 +184,24 @@ pub fn handle_todo(input: &str) -> String {
 
 // ── /context ─────────────────────────────────────────────────────────────
 
-pub fn handle_context() {
+/// Subcommands for /context.
+const CONTEXT_SUBCOMMANDS: &[&str] = &["system"];
+
+pub fn context_subcommands() -> &'static [&'static str] {
+    CONTEXT_SUBCOMMANDS
+}
+
+pub fn handle_context(input: &str, system_prompt: &str) {
+    let args = input.strip_prefix("/context").unwrap_or("").trim();
+
+    if args.starts_with("system") {
+        show_system_prompt_sections(system_prompt);
+    } else {
+        show_project_context_files();
+    }
+}
+
+fn show_project_context_files() {
     let files = cli::list_project_context_files();
     if files.is_empty() {
         println!("{DIM}  No project context files found.");
@@ -199,6 +216,120 @@ pub fn handle_context() {
         }
         println!("{RESET}");
     }
+}
+
+/// A section parsed from a system prompt (split by markdown headers).
+#[derive(Debug, Clone)]
+pub struct PromptSection {
+    pub name: String,
+    pub header_level: usize,
+    pub lines: Vec<String>,
+}
+
+/// Parse a system prompt into sections by splitting on markdown headers.
+/// Each `# ` or `## ` header starts a new section. Content before the first
+/// header becomes a "(preamble)" section.
+pub fn parse_prompt_sections(prompt: &str) -> Vec<PromptSection> {
+    let mut sections: Vec<PromptSection> = Vec::new();
+    let mut current_name = "(preamble)".to_string();
+    let mut current_level = 0usize;
+    let mut current_lines: Vec<String> = Vec::new();
+
+    for line in prompt.lines() {
+        if let Some(rest) = line.strip_prefix("# ") {
+            // Flush previous section
+            if !current_lines.is_empty() || current_name != "(preamble)" {
+                sections.push(PromptSection {
+                    name: current_name,
+                    header_level: current_level,
+                    lines: current_lines,
+                });
+            }
+            current_name = rest.trim().to_string();
+            current_level = 1;
+            current_lines = Vec::new();
+        } else if let Some(rest) = line.strip_prefix("## ") {
+            // Flush previous section
+            if !current_lines.is_empty() || current_name != "(preamble)" {
+                sections.push(PromptSection {
+                    name: current_name,
+                    header_level: current_level,
+                    lines: current_lines,
+                });
+            }
+            current_name = rest.trim().to_string();
+            current_level = 2;
+            current_lines = Vec::new();
+        } else {
+            current_lines.push(line.to_string());
+        }
+    }
+    // Flush last section
+    if !current_lines.is_empty() || current_name != "(preamble)" {
+        sections.push(PromptSection {
+            name: current_name,
+            header_level: current_level,
+            lines: current_lines,
+        });
+    }
+
+    sections
+}
+
+/// Estimate token count from character count (rough approximation: chars / 4).
+pub fn estimate_tokens(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
+fn show_system_prompt_sections(prompt: &str) {
+    if prompt.is_empty() {
+        println!("{DIM}  System prompt is empty.{RESET}\n");
+        return;
+    }
+
+    let sections = parse_prompt_sections(prompt);
+    let total_lines: usize = sections.iter().map(|s| s.lines.len() + 1).sum(); // +1 for header
+    let total_tokens = estimate_tokens(prompt);
+
+    println!("{BOLD}  System prompt sections:{RESET}");
+    println!();
+
+    for section in &sections {
+        let section_text = section.lines.join("\n");
+        let tokens = estimate_tokens(&format!("{}\n{}", section.name, section_text));
+        let line_count = section.lines.len();
+        let prefix = if section.header_level <= 1 { "#" } else { "##" };
+        let word = crate::format::pluralize(line_count, "line", "lines");
+
+        println!(
+            "{BOLD}  {prefix} {}{RESET}  {DIM}({line_count} {word}, ~{tokens} tokens){RESET}",
+            section.name
+        );
+
+        // Print first 3 non-empty lines as preview
+        let preview_lines: Vec<&String> = section
+            .lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .take(3)
+            .collect();
+        for line in &preview_lines {
+            let display = crate::format::truncate_with_ellipsis(line, 80);
+            println!("{DIM}    {display}{RESET}");
+        }
+        if section
+            .lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .count()
+            > 3
+        {
+            println!("{DIM}    ...{RESET}");
+        }
+        println!();
+    }
+
+    println!("{DIM}  Total: {total_lines} lines, ~{total_tokens} tokens (estimated){RESET}\n");
 }
 
 // ── /init ────────────────────────────────────────────────────────────────
@@ -1232,5 +1363,95 @@ mod tests {
     fn test_todo_in_help_text() {
         let text = help_text();
         assert!(text.contains("/todo"), "/todo should appear in help text");
+    }
+
+    // ── parse_prompt_sections ──────────────────────────────────────────
+
+    #[test]
+    fn test_context_system_sections() {
+        let prompt = "# System Instructions\nYou are helpful.\nBe concise.\n\n\
+                      ## Tools\nYou have bash.\nYou have read_file.\nYou have write_file.\n\n\
+                      # Project Context\nThis is a Rust project.\n";
+
+        let sections = parse_prompt_sections(prompt);
+        assert_eq!(sections.len(), 3);
+
+        assert_eq!(sections[0].name, "System Instructions");
+        assert_eq!(sections[0].header_level, 1);
+        assert!(sections[0].lines.iter().any(|l| l.contains("helpful")));
+
+        assert_eq!(sections[1].name, "Tools");
+        assert_eq!(sections[1].header_level, 2);
+        assert!(sections[1].lines.iter().any(|l| l.contains("bash")));
+
+        assert_eq!(sections[2].name, "Project Context");
+        assert_eq!(sections[2].header_level, 1);
+        assert!(sections[2].lines.iter().any(|l| l.contains("Rust")));
+    }
+
+    #[test]
+    fn test_context_system_empty_prompt() {
+        let sections = parse_prompt_sections("");
+        assert!(sections.is_empty());
+    }
+
+    #[test]
+    fn test_context_system_no_headers() {
+        let prompt = "Just some plain text\nwith multiple lines.\n";
+        let sections = parse_prompt_sections(prompt);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].name, "(preamble)");
+        assert_eq!(sections[0].header_level, 0);
+        assert_eq!(sections[0].lines.len(), 2);
+    }
+
+    #[test]
+    fn test_context_system_preamble_before_header() {
+        let prompt = "Some preamble text.\n# First Section\nContent here.\n";
+        let sections = parse_prompt_sections(prompt);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].name, "(preamble)");
+        assert_eq!(sections[1].name, "First Section");
+    }
+
+    #[test]
+    fn test_context_system_consecutive_headers() {
+        let prompt = "# One\n# Two\nContent for two.\n";
+        let sections = parse_prompt_sections(prompt);
+        // "# One" creates section with empty lines, then "# Two" flushes it
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].name, "One");
+        assert!(sections[0].lines.is_empty());
+        assert_eq!(sections[1].name, "Two");
+        assert!(!sections[1].lines.is_empty());
+    }
+
+    #[test]
+    fn test_estimate_tokens() {
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("abcd"), 1);
+        assert_eq!(estimate_tokens("abcdefgh"), 2);
+        // Rough check: 400 chars ~= 100 tokens
+        let text = "a".repeat(400);
+        assert_eq!(estimate_tokens(&text), 100);
+    }
+
+    #[test]
+    fn test_context_default_behavior() {
+        // Verify handle_context with empty input doesn't panic
+        // (it just calls show_project_context_files which prints)
+        handle_context("/context", "");
+    }
+
+    #[test]
+    fn test_context_system_subcommand() {
+        // Verify handle_context with "system" doesn't panic
+        handle_context("/context system", "# Test\nHello world.\n");
+    }
+
+    #[test]
+    fn test_context_subcommands_list() {
+        let subs = context_subcommands();
+        assert!(subs.contains(&"system"));
     }
 }

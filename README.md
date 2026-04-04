@@ -26,7 +26,7 @@
 
 # yoyo: A Coding Agent That Evolves Itself
 
-**yoyo** is a free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 55 slash commands.
+**yoyo** is a free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 60+ slash commands.
 
 It started as a ~200-line CLI example. Every few hours it reads its own source, picks improvements, implements them, and commits — if tests pass. 24 days of autonomous evolution later: **31,000+ lines of Rust, 1,346 tests, 14 modules**.
 
@@ -211,7 +211,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/compact` | Compact conversation to save context |
 | `/commit [msg]` | Commit staged changes (AI-generates message if omitted) |
 | `/config` | Show all current settings |
-| `/context` | Show loaded project context files |
+| `/context [system]` | Show loaded project context files or system prompt sections |
 | `/cost` | Show session cost breakdown |
 | `/diff` | Git diff summary of uncommitted changes |
 | `/docs <crate>` | Look up docs.rs documentation |
@@ -242,6 +242,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/search <query>` | Search conversation history |
 | `/spawn <task>` | Spawn a subagent for a focused task |
 | `/status` | Show session info |
+| `/teach [on\|off]` | Toggle teach mode — explains reasoning as it works |
 | `/test` | Auto-detect and run project tests |
 | `/think [level]` | Show or change thinking level |
 | `/tokens` | Show token usage and context window |

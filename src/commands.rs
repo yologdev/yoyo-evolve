@@ -13,9 +13,35 @@ use crate::prompt::*;
 
 pub use crate::help::*;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use yoagent::agent::Agent;
 use yoagent::context::total_tokens;
 use yoagent::*;
+
+// ── Teach mode state ──────────────────────────────────────────────────────
+// Session toggle: when enabled, a teaching instruction is prepended to
+// each user message so the agent explains its reasoning as it works.
+
+static TEACH_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Enable or disable teach mode.
+pub fn set_teach_mode(enabled: bool) {
+    TEACH_MODE.store(enabled, Ordering::Relaxed);
+}
+
+/// Check whether teach mode is currently active.
+pub fn is_teach_mode() -> bool {
+    TEACH_MODE.load(Ordering::Relaxed)
+}
+
+/// Instruction prepended to user messages when teach mode is on.
+pub const TEACH_MODE_PROMPT: &str = "\
+[TEACH MODE] You are in teach mode. For every change you make:
+1. Explain WHY you're making the change before showing the code
+2. Use clear, readable code patterns — prefer clarity over cleverness
+3. Add brief comments on non-obvious lines
+4. After completing a task, summarize what the user should learn from it
+Keep explanations concise but educational.";
 
 /// Known REPL command prefixes. Used to detect unknown slash commands
 /// and for tab-completion in the REPL.
@@ -81,6 +107,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/ast",
     "/map",
     "/stash",
+    "/teach",
     "/todo",
 ];
 
@@ -140,6 +167,10 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/watch" => filter_candidates(crate::commands_dev::WATCH_SUBCOMMANDS, &partial_lower),
         "/ast" => filter_candidates(crate::commands_search::AST_GREP_FLAGS, &partial_lower),
         "/apply" => filter_candidates(crate::commands_file::APPLY_FLAGS, &partial_lower),
+        "/context" => filter_candidates(
+            crate::commands_project::context_subcommands(),
+            &partial_lower,
+        ),
         _ => Vec::new(),
     }
 }
@@ -629,6 +660,35 @@ pub fn handle_forget(input: &str) {
                 "{RED}  error: index {index} out of range (have {} memories). Use /memories to see indexes.{RESET}\n",
                 memory.entries.len()
             );
+        }
+    }
+}
+
+/// Toggle teach mode on/off. When active, yoyo explains its reasoning as it works.
+pub fn handle_teach(input: &str) {
+    let arg = input.strip_prefix("/teach").unwrap_or("").trim();
+    match arg {
+        "on" => {
+            set_teach_mode(true);
+            println!("{GREEN}  🎓 Teach mode enabled — yoyo will explain its reasoning as it works{RESET}\n");
+        }
+        "off" => {
+            set_teach_mode(false);
+            println!("{DIM}  Teach mode disabled{RESET}\n");
+        }
+        "" => {
+            // Toggle
+            let new_state = !is_teach_mode();
+            set_teach_mode(new_state);
+            if new_state {
+                println!("{GREEN}  🎓 Teach mode enabled — yoyo will explain its reasoning as it works{RESET}\n");
+            } else {
+                println!("{DIM}  Teach mode disabled{RESET}\n");
+            }
+        }
+        _ => {
+            println!("{DIM}  usage: /teach [on|off]");
+            println!("  Toggle teach mode. When active, yoyo explains its reasoning as it works.{RESET}\n");
         }
     }
 }
@@ -3111,5 +3171,58 @@ mod tests {
             source.contains("session totals below show full usage"),
             "Compaction note should reference session totals"
         );
+    }
+
+    // ── teach mode tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_teach_mode_default_off() {
+        // Reset to known state (tests may run in any order)
+        set_teach_mode(false);
+        assert!(!is_teach_mode());
+    }
+
+    #[test]
+    fn test_teach_mode_toggle() {
+        set_teach_mode(false);
+        assert!(!is_teach_mode());
+        set_teach_mode(true);
+        assert!(is_teach_mode());
+        set_teach_mode(false);
+        assert!(!is_teach_mode());
+    }
+
+    #[test]
+    fn test_teach_known_command() {
+        assert!(KNOWN_COMMANDS.contains(&"/teach"));
+    }
+
+    #[test]
+    fn test_teach_mode_prompt_not_empty() {
+        assert!(!TEACH_MODE_PROMPT.is_empty());
+        assert!(TEACH_MODE_PROMPT.contains("TEACH MODE"));
+    }
+
+    #[test]
+    fn test_teach_in_help_text() {
+        let text = crate::help::help_text();
+        assert!(
+            text.contains("/teach"),
+            "help text should list the /teach command"
+        );
+    }
+
+    #[test]
+    fn test_teach_command_help_exists() {
+        let help = crate::help::command_help("teach");
+        assert!(help.is_some(), "/help teach should have detailed help");
+        let help_text = help.unwrap();
+        assert!(help_text.contains("teach mode"));
+    }
+
+    #[test]
+    fn test_teach_short_description_exists() {
+        let desc = crate::help::command_short_description("teach");
+        assert!(desc.is_some(), "teach should have a short description");
     }
 }

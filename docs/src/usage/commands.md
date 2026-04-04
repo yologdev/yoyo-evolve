@@ -50,6 +50,7 @@ Bookmarks are stored in memory for the current session. Overwriting a bookmark w
 | `/model <name>` | Switch to a different model (preserves conversation) |
 | `/provider <name>` | Switch provider and reset model to the provider's default |
 | `/think [level]` | Show or change thinking level: `off`, `minimal`, `low`, `medium`, `high` |
+| `/teach [on\|off]` | Toggle teach mode — yoyo explains its reasoning as it works |
 
 Examples:
 ```
@@ -61,6 +62,8 @@ Examples:
 ```
 
 The `/model` command preserves conversation when switching models. The `/provider` command switches to a different API provider (e.g., `anthropic`, `openai`, `google`, `openrouter`, `ollama`, `xai`, `groq`, `deepseek`, `mistral`, `cerebras`, `custom`) and automatically sets the model to the provider's default. Use `/provider` without arguments to see the current provider and available options. The `/think` command adjusts the thinking level.
+
+The `/teach` command toggles teach mode on or off. When teach mode is active, yoyo explains *why* it's making each change before showing code, uses clear and readable patterns, adds comments on non-obvious lines, and summarizes what you should learn after completing a task. Great for learning while the agent codes. This is a session-only toggle — it resets when you exit.
 
 ## Session
 
@@ -451,7 +454,7 @@ The question appears with a ❓ prompt, and you type your response directly. If 
 | Command | Description |
 |---------|-------------|
 | `/add <path>` | Add file contents into the conversation — the AI sees them immediately |
-| `/context` | Show which project context files are loaded (YOYO.md is primary; CLAUDE.md supported for compatibility) |
+| `/context [system]` | Show which project context files are loaded, or use `/context system` to see system prompt sections with token estimates |
 | `/find <pattern>` | Fuzzy-search project files by name — respects `.gitignore`, ranked by relevance |
 | `/grep <pattern> [path]` | Search file contents directly — no AI, no tokens, instant results |
 | `/index` | Build a lightweight index of all project source files — shows path, line count, and first-line summary |
