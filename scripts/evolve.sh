@@ -538,6 +538,61 @@ YOYO_BIN="./target/debug/yoyo"
 echo "  Build OK."
 echo ""
 
+# ── Helper: refresh GitHub App token (tokens expire after 1 hour) ──
+# Uses APP_ID, APP_PRIVATE_KEY, and APP_INSTALLATION_ID env vars.
+# Generates a JWT with openssl, exchanges it for a fresh installation token,
+# and updates GH_TOKEN + git remote URL. No-op if env vars aren't set.
+refresh_gh_token() {
+    if [ -z "${APP_ID:-}" ] || [ -z "${APP_PRIVATE_KEY:-}" ] || [ -z "${APP_INSTALLATION_ID:-}" ]; then
+        return 0
+    fi
+
+    echo "  Refreshing GitHub App token..."
+    local pem
+    pem=$(echo "${APP_PRIVATE_KEY}" | sed 's/\\n/\n/g')
+
+    local now iat exp
+    now=$(date +%s)
+    iat=$((now - 60))
+    exp=$((now + 600))
+
+    # Base64url encode (no padding, URL-safe)
+    b64url() { openssl base64 | tr -d '=' | tr '/+' '_-' | tr -d '\n'; }
+
+    local header payload signature
+    header=$(echo -n '{"typ":"JWT","alg":"RS256"}' | b64url)
+    payload=$(echo -n "{\"iat\":${iat},\"exp\":${exp},\"iss\":\"${APP_ID}\"}" | b64url)
+    signature=$(openssl dgst -sha256 -sign <(echo "${pem}") <(echo -n "${header}.${payload}") | b64url)
+
+    local jwt="${header}.${payload}.${signature}"
+
+    local response http_code
+    response=$(curl --silent --write-out "\n%{http_code}" --request POST \
+        --url "https://api.github.com/app/installations/${APP_INSTALLATION_ID}/access_tokens" \
+        --header "Accept: application/vnd.github+json" \
+        --header "Authorization: Bearer ${jwt}" \
+        --header "X-GitHub-Api-Version: 2022-11-28")
+    http_code=$(echo "$response" | tail -1)
+    response=$(echo "$response" | sed '$d')
+
+    if [ "$http_code" != "201" ]; then
+        echo "  WARNING: Token refresh failed (HTTP $http_code). Will continue with current token."
+        return 0
+    fi
+
+    local token
+    token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>&1) || {
+        echo "  WARNING: Token refresh failed — could not parse response: $token"
+        return 0
+    }
+
+    # Mask token in CI logs and apply it
+    echo "::add-mask::${token}"
+    export GH_TOKEN="$token"
+    git remote set-url origin "https://x-access-token:${token}@github.com/${REPO}.git"
+    echo "  Token refreshed."
+}
+
 # ── Helper: run agent with automatic fallback on API error ──
 # Run yoyo with optional --fallback flag for provider failover.
 # Fallback switching happens inside the binary (see Issue #226).
@@ -563,6 +618,9 @@ run_agent_with_fallback() {
 
     return "$exit_code"
 }
+
+# ── Ensure fresh token (retries start with a stale token from job start) ──
+refresh_gh_token
 
 # ── Step 2: Check previous CI status ──
 CI_STATUS_MSG=""
@@ -1793,6 +1851,8 @@ REOF
 fi
 
 # ── Step 7: Agent-driven issue responses ──
+# Refresh token before making GitHub API calls (original token may have expired after 1h)
+refresh_gh_token
 # The agent directly calls `gh issue comment` and `gh issue close` — no intermediary files.
 # Combine all issue sources so the response agent sees everything that was worked on.
 ALL_ISSUES="$(cat "$ISSUES_FILE" 2>/dev/null || true)"
@@ -1958,6 +2018,7 @@ fi
 # ── Step 8: Push ──
 echo ""
 echo "→ Pushing..."
+refresh_gh_token
 git pull --rebase || echo "  Pull --rebase failed (will attempt push anyway)"
 git push || echo "  Push failed (maybe no remote or auth issue)"
 git push --tags || echo "  Tag push failed (non-fatal)"
