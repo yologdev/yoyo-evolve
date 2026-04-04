@@ -99,6 +99,11 @@ pub fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// `&nbsp;`, `&#x27;`, `&mdash;`, `&ndash;`, `&hellip;`, `&copy;`, `&reg;`)
 /// and numeric entities (decimal `&#NNN;` and hex `&#xHH;`).
 pub fn decode_html_entities(s: &str) -> String {
+    // Fast path: if there's no '&', there are no entities to decode
+    if !s.contains('&') {
+        return s.to_string();
+    }
+
     // First pass: named entities
     let s = s
         .replace("&amp;", "&")

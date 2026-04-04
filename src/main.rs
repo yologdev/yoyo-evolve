@@ -396,6 +396,14 @@ impl AgentConfig {
     }
 }
 
+/// What kind of prompt to retry on fallback.
+enum FallbackRetry<'a> {
+    /// Text-only prompt.
+    Text(&'a str),
+    /// Multi-modal prompt with content blocks (e.g., text + images).
+    Content(Vec<Content>),
+}
+
 /// Attempt fallback retry for non-interactive modes (piped and --prompt).
 ///
 /// If the original response has an API error and a fallback provider is configured,
@@ -408,7 +416,7 @@ impl AgentConfig {
 async fn try_fallback_prompt(
     agent_config: &mut AgentConfig,
     agent: &mut Agent,
-    input: &str,
+    retry: FallbackRetry<'_>,
     session_total: &mut Usage,
     original_response: PromptOutcome,
 ) -> (PromptOutcome, bool) {
@@ -441,55 +449,14 @@ async fn try_fallback_prompt(
     );
 
     // Retry with the fallback provider
-    let retry_response = run_prompt(agent, input, session_total, &agent_config.model).await;
-
-    if retry_response.last_api_error.is_some() {
-        eprintln!(
-            "{RED}  Fallback provider '{}' also failed. Exiting.{RESET}",
-            fallback
-        );
-        return (retry_response, true);
-    }
-
-    (retry_response, false)
-}
-
-/// Like `try_fallback_prompt` but for content-block prompts (e.g., multi-modal with images).
-async fn try_fallback_prompt_with_content(
-    agent_config: &mut AgentConfig,
-    agent: &mut Agent,
-    content_blocks: Vec<Content>,
-    session_total: &mut Usage,
-    original_response: PromptOutcome,
-) -> (PromptOutcome, bool) {
-    // No API error — nothing to retry
-    if original_response.last_api_error.is_none() {
-        return (original_response, false);
-    }
-
-    let old_provider = agent_config.provider.clone();
-    let fallback_name = agent_config.fallback_provider.clone();
-
-    if !agent_config.try_switch_to_fallback() {
-        eprintln!("{RED}  API error with no fallback configured. Exiting.{RESET}",);
-        return (original_response, true);
-    }
-
-    let fallback = fallback_name.as_deref().unwrap_or("unknown");
-    eprintln!(
-        "{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
-        old_provider, fallback
-    );
-
-    *agent = agent_config.build_agent();
-
-    eprintln!(
-        "{DIM}  now using: {} / {}{RESET}",
-        agent_config.provider, agent_config.model
-    );
-
-    let retry_response =
-        run_prompt_with_content(agent, content_blocks, session_total, &agent_config.model).await;
+    let retry_response = match retry {
+        FallbackRetry::Text(input) => {
+            run_prompt(agent, input, session_total, &agent_config.model).await
+        }
+        FallbackRetry::Content(blocks) => {
+            run_prompt_with_content(agent, blocks, session_total, &agent_config.model).await
+        }
+    };
 
     if retry_response.last_api_error.is_some() {
         eprintln!(
@@ -740,10 +707,10 @@ async fn main() {
                         },
                         Content::Image { data, mime_type },
                     ];
-                    let (final_response, should_exit_error) = try_fallback_prompt_with_content(
+                    let (final_response, should_exit_error) = try_fallback_prompt(
                         &mut agent_config,
                         &mut agent,
-                        retry_blocks,
+                        FallbackRetry::Content(retry_blocks),
                         &mut session_total,
                         initial,
                     )
@@ -785,7 +752,7 @@ async fn main() {
             let (final_response, should_exit_error) = try_fallback_prompt(
                 &mut agent_config,
                 &mut agent,
-                prompt_text.trim(),
+                FallbackRetry::Text(prompt_text.trim()),
                 &mut session_total,
                 initial,
             )
@@ -845,7 +812,7 @@ async fn main() {
         let (response, should_exit_error) = try_fallback_prompt(
             &mut agent_config,
             &mut agent,
-            input,
+            FallbackRetry::Text(input),
             &mut session_total,
             initial,
         )

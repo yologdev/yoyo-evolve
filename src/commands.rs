@@ -382,13 +382,22 @@ pub fn handle_provider_switch(
     agent_config.model = default_model_for_provider(new_provider);
     let saved = agent.save_messages().ok();
     *agent = agent_config.build_agent();
-    if let Some(json) = saved {
-        let _ = agent.restore_messages(&json);
+    let restored = if let Some(json) = saved {
+        agent.restore_messages(&json).is_ok()
+    } else {
+        false
+    };
+    if restored {
+        println!(
+            "{DIM}  (switched to provider '{}', model '{}', conversation preserved){RESET}\n",
+            agent_config.provider, agent_config.model
+        );
+    } else {
+        println!(
+            "{YELLOW}  (switched to provider '{}', model '{}', conversation could not be preserved){RESET}\n",
+            agent_config.provider, agent_config.model
+        );
     }
-    println!(
-        "{DIM}  (switched to provider '{}', model '{}', conversation preserved){RESET}\n",
-        agent_config.provider, agent_config.model
-    );
 }
 
 // ── /think ───────────────────────────────────────────────────────────────
@@ -435,7 +444,7 @@ pub fn handle_config(
         "    max_turns:  {}",
         max_turns
             .map(|m| m.to_string())
-            .unwrap_or_else(|| "default (50)".to_string())
+            .unwrap_or_else(|| "default (200)".to_string())
     );
     println!(
         "    temperature: {}",

@@ -474,10 +474,16 @@ pub async fn run_repl(
                 // Rebuild agent with new model, preserving conversation
                 let saved = agent.save_messages().ok();
                 *agent = agent_config.build_agent();
-                if let Some(json) = saved {
-                    let _ = agent.restore_messages(&json);
+                let restored = if let Some(json) = saved {
+                    agent.restore_messages(&json).is_ok()
+                } else {
+                    false
+                };
+                if restored {
+                    println!("{DIM}  (switched to {new_model}, conversation preserved){RESET}\n");
+                } else {
+                    println!("{YELLOW}  (switched to {new_model}, conversation could not be preserved){RESET}\n");
                 }
-                println!("{DIM}  (switched to {new_model}, conversation preserved){RESET}\n");
                 continue;
             }
             "/provider" => {
@@ -515,11 +521,19 @@ pub async fn run_repl(
                 // Rebuild agent with new thinking level, preserving conversation
                 let saved = agent.save_messages().ok();
                 *agent = agent_config.build_agent();
-                if let Some(json) = saved {
-                    let _ = agent.restore_messages(&json);
-                }
+                let restored = if let Some(json) = saved {
+                    agent.restore_messages(&json).is_ok()
+                } else {
+                    false
+                };
                 let level_name = thinking_level_name(agent_config.thinking);
-                println!("{DIM}  (thinking set to {level_name}, conversation preserved){RESET}\n");
+                if restored {
+                    println!(
+                        "{DIM}  (thinking set to {level_name}, conversation preserved){RESET}\n"
+                    );
+                } else {
+                    println!("{YELLOW}  (thinking set to {level_name}, conversation could not be preserved){RESET}\n");
+                }
                 continue;
             }
             s if s == "/save" || s.starts_with("/save ") => {
