@@ -54,6 +54,24 @@ Custom system prompts are useful for:
 - **Team defaults** — commit `.yoyo.toml` with `system_prompt` or `system_file` so every developer gets the same agent persona
 - **Persona tuning** — make the agent more or less verbose, formal, etc.
 
+## Viewing the assembled prompt
+
+To see the full system prompt (including project context, repo map, skills, and any overrides), use:
+
+```bash
+yoyo --print-system-prompt
+```
+
+This prints the complete prompt to stdout and exits — useful for debugging or understanding exactly what context the model receives. It works with other flags:
+
+```bash
+# See what the prompt looks like with a custom system prompt
+yoyo --system "You are a Rust expert" --print-system-prompt
+
+# See the prompt without project context
+yoyo --no-project-context --print-system-prompt
+```
+
 ## Automatic project context
 
 In addition to the system prompt, yoyo automatically injects project context when available:

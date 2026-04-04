@@ -371,6 +371,7 @@ pub struct Config {
     pub no_update_check: bool,
     pub json_output: bool,
     pub audit: bool,
+    pub print_system_prompt: bool,
 }
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -436,6 +437,7 @@ pub fn print_help() {
     );
     println!("  --continue, -c    Resume last saved session");
     println!("  --fallback <prov> Fallback provider if primary fails (e.g. --fallback google)");
+    println!("  --print-system-prompt  Print the fully assembled system prompt and exit");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
     println!();
@@ -653,6 +655,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "-c",
     "--fallback",
     "--audit",
+    "--print-system-prompt",
     "--help",
     "-h",
     "--version",
@@ -1370,6 +1373,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
             .map(|v| v == "true")
             .unwrap_or(false);
 
+    let print_system_prompt = args.iter().any(|a| a == "--print-system-prompt");
+
     // --allow <pattern> flags: collect all allow patterns (repeatable)
     let cli_allow: Vec<String> = args
         .iter()
@@ -1531,6 +1536,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         no_update_check,
         json_output,
         audit,
+        print_system_prompt,
     })
 }
 
@@ -3450,5 +3456,21 @@ system_prompt = "You are a Go expert"
         if std::env::var("YOYO_AUDIT").unwrap_or_default() != "1" {
             assert!(!config.audit);
         }
+    }
+
+    #[test]
+    fn test_print_system_prompt_flag_parsed() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into(), "--print-system-prompt".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert!(config.print_system_prompt);
+    }
+
+    #[test]
+    fn test_print_system_prompt_flag_default_false() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args: Vec<String> = vec!["yoyo".into(), "--api-key".into(), "sk-test".into()];
+        let config = parse_args(&args).expect("should parse");
+        assert!(!config.print_system_prompt);
     }
 }

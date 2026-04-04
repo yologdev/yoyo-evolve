@@ -535,6 +535,12 @@ async fn main() {
         return; // --help or --version was handled
     };
 
+    // --print-system-prompt: print the fully assembled system prompt and exit
+    if config.print_system_prompt {
+        println!("{}", config.system_prompt);
+        return;
+    }
+
     if config.verbose {
         enable_verbose();
     }
