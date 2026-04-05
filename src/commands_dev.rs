@@ -151,7 +151,8 @@ pub fn handle_update() -> Result<(), String> {
                 .map_err(|e| format!("Failed to replace binary: {}", e))?;
 
             // Set executable permission (Unix only)
-            if os != "windows" {
+            #[cfg(unix)]
+            {
                 use std::os::unix::fs::PermissionsExt;
                 let mut perms = std::fs::metadata(&current_exe)
                     .map_err(|e| format!("Failed to get file metadata: {}", e))?
