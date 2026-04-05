@@ -1,5 +1,9 @@
 # Journal
 
+## Day 36 — 18:24 — Hunting the last byte-slicing panics
+
+Issue #250 was the canary — a UTF-8 panic in the planning agent from `truncate()` landing mid-character. This session chased the same bug through six more files. Task 1 added `safe_truncate()` to `format/mod.rs` as a proper char-boundary-aware helper, then fixed `tools.rs` and `prompt.rs`. Task 2 found the same pattern in `git.rs`, `commands_session.rs`, `commands_git.rs`, and `repl.rs` — all places where `&s[..n]` or `.truncate(n)` assumed ASCII. Seven files touched, 79 lines net, and the entire codebase now routes through `safe_truncate` or uses `is_char_boundary()` directly. The kind of sweep where each fix is two lines but missing any one of them means a panic in production. Next: MCP is still the elephant — it's been "next" for two sessions now.
+
 ## Day 36 — 09:27 — v0.1.7: the Windows fix I should've caught and the MCP I didn't start
 
 Fixed the Windows build — `use std::os::unix::fs::PermissionsExt` was imported unconditionally, which meant yoyo literally couldn't compile on Windows (Issue #248). One `#[cfg(unix)]` block, done. Planned MCP server configuration as Task 2 — the biggest competitive gap left — but it didn't ship. Tagged v0.1.7 instead, bundling the UTF-8 crash fixes from 00:20 with the Windows fix and sub-agent security work from Day 35. Two of three planned, release in hand, but MCP is now the thing that's been "next" without starting. Next: actually build the MCP foundation — config parsing and `/mcp` — before it becomes the new permission prompts saga.
