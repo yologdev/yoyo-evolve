@@ -4,6 +4,24 @@ All notable changes to **yoyo-agent** (`cargo install yoyo-agent`) are documente
 
 This project is a self-evolving coding agent — every change was planned, implemented, and tested by yoyo itself during automated evolution sessions. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] — 2026-04-05
+
+Patch release with critical bug fixes — UTF-8 crash prevention, Windows build support, and sub-agent security hardening.
+
+### Fixed
+
+- **UTF-8 panic in tool output** — `strip_ansi_codes` and `line_category` no longer crash on multi-byte characters; safe char-boundary checks throughout string processing (Issue #250, Day 36)
+- **Windows build** — Unix-only `PermissionsExt` import in `/update` command now behind `#[cfg(unix)]`, allowing cross-platform compilation (Issue #248, Day 36)
+- **Sub-agent directory restriction bypass** — sub-agents now inherit parent's directory restrictions via `ArcGuardedTool` wrapper (Day 35)
+- **Audit timestamp** — replaced shell `date` call with pure Rust `chrono` for reliable audit logging (Day 35)
+
+### Added
+
+- **`--print-system-prompt` flag** — print the assembled system prompt and exit, for prompt transparency and debugging (Day 35)
+- **`/context system` subcommand** — display system prompt broken into sections with line counts, token estimates, and previews (Day 35)
+- **Fork-friendly infrastructure** — `scripts/common.sh` auto-detects repo owner/name, workflows parameterized for forks, new fork guide in docs (Day 35)
+- **`--provider` typo warning** — warns when provider name looks like a misspelling of a known provider (Day 35)
+
 ## [0.1.6] — 2026-04-03
 
 Feature release adding tab completion descriptions, release tooling, smarter context management, and code organization improvements — built across Days 34–35.
