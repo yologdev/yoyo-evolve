@@ -129,3 +129,13 @@ These are enforced by the `evolve` skill and `evolve.sh`:
 - Never delete existing tests
 - Multiple tasks per evolution session, each verified independently
 - Write tests before adding features
+- **Never use byte indexing on strings.** `s[..n]`, `s.truncate(n)`, and `s.split_at(n)` panic if `n` falls inside a multi-byte UTF-8 character. Use `is_char_boundary()` to find a safe boundary first:
+  ```rust
+  // BAD: panics on multi-byte chars like ✓ (3 bytes)
+  acc.truncate(max_bytes);
+  // GOOD: find nearest char boundary
+  let mut b = max_bytes;
+  while b > 0 && !acc.is_char_boundary(b) { b -= 1; }
+  acc.truncate(b);
+  ```
+  This caused planning agent crashes in production (#250).
