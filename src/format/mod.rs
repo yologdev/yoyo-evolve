@@ -86,6 +86,19 @@ pub use highlight::*;
 pub use markdown::*;
 pub use tools::*;
 
+/// Truncate a string at a safe UTF-8 char boundary, never exceeding `max_bytes`.
+/// Returns a `&str` slice. Avoids panics from slicing mid-character.
+pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut b = max_bytes;
+    while b > 0 && !s.is_char_boundary(b) {
+        b -= 1;
+    }
+    &s[..b]
+}
+
 pub fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((idx, _)) => format!("{}…", &s[..idx]),
@@ -703,6 +716,62 @@ mod tests {
     #[test]
     fn test_truncate_empty() {
         assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn test_safe_truncate_empty_string() {
+        assert_eq!(safe_truncate("", 10), "");
+    }
+
+    #[test]
+    fn test_safe_truncate_ascii_shorter_than_max() {
+        assert_eq!(safe_truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_safe_truncate_ascii_longer_than_max() {
+        assert_eq!(safe_truncate("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_safe_truncate_multibyte_no_panic() {
+        // ✓ is 3 bytes (E2 9C 93). "hello ✓ world" = 13 chars, 15 bytes
+        let s = "hello ✓ world";
+        // Truncating at byte 7 would land inside ✓ — should back up to byte 6
+        let result = safe_truncate(s, 7);
+        assert_eq!(result, "hello ");
+        // Truncating at byte 9 should include ✓ (bytes 6-8)
+        let result = safe_truncate(s, 9);
+        assert_eq!(result, "hello ✓");
+    }
+
+    #[test]
+    fn test_safe_truncate_all_multibyte() {
+        // Each CJK char is 3 bytes: "日本語テスト" = 18 bytes, 6 chars
+        let s = "日本語テスト";
+        // Truncating at 4 bytes should back up to 3 (one char)
+        let result = safe_truncate(s, 4);
+        assert_eq!(result, "日");
+        // Truncating at 7 should back up to 6 (two chars)
+        let result = safe_truncate(s, 7);
+        assert_eq!(result, "日本");
+    }
+
+    #[test]
+    fn test_safe_truncate_zero_max() {
+        assert_eq!(safe_truncate("hello", 0), "");
+        assert_eq!(safe_truncate("日本語", 0), "");
+    }
+
+    #[test]
+    fn test_safe_truncate_exact_boundary() {
+        // "ab✓" = 5 bytes. Truncating at exactly 5 should return all.
+        let s = "ab✓";
+        assert_eq!(safe_truncate(s, 5), "ab✓");
+        // Truncating at 4 lands mid-char, should back up to 2
+        assert_eq!(safe_truncate(s, 4), "ab");
+        // Truncating at 2 should give "ab"
+        assert_eq!(safe_truncate(s, 2), "ab");
     }
 
     #[test]

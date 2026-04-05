@@ -44,7 +44,7 @@ pub const MAX_WATCH_FIX_ATTEMPTS: usize = 3;
 /// Build a prompt asking the agent to fix failures from a watch command.
 pub fn build_watch_fix_prompt(watch_cmd: &str, output: &str) -> String {
     let truncated = if output.len() > WATCH_OUTPUT_MAX {
-        format!("{}... (truncated)", &output[..WATCH_OUTPUT_MAX])
+        format!("{}... (truncated)", safe_truncate(output, WATCH_OUTPUT_MAX))
     } else {
         output.to_string()
     };
@@ -194,7 +194,7 @@ fn truncate_audit_value(v: &serde_json::Value) -> serde_json::Value {
     match v {
         serde_json::Value::String(s) if s.len() > 200 => serde_json::Value::String(format!(
             "{}... [truncated, {} chars total]",
-            &s[..200],
+            safe_truncate(s, 200),
             s.len()
         )),
         other => other.clone(),
@@ -464,7 +464,7 @@ pub fn build_retry_prompt(input: &str, last_error: &Option<String>) -> String {
         Some(err) => {
             // Truncate very long errors to keep the prompt focused
             let summary = if err.len() > 200 {
-                format!("{}…", &err[..200])
+                format!("{}…", safe_truncate(err, 200))
             } else {
                 err.clone()
             };
@@ -487,7 +487,7 @@ pub const MAX_AUTO_RETRIES: u32 = 2;
 /// encouraging the agent to try a different approach.
 pub fn build_auto_retry_prompt(original_input: &str, tool_error: &str, attempt: u32) -> String {
     let summary = if tool_error.len() > 300 {
-        format!("{}…", &tool_error[..300])
+        format!("{}…", safe_truncate(tool_error, 300))
     } else {
         tool_error.to_string()
     };

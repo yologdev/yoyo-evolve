@@ -603,7 +603,8 @@ impl AgentTool for StreamingBashTool {
                         }
                         acc.push_str(&line);
                         if acc.len() > max_bytes {
-                            acc.truncate(max_bytes);
+                            let safe_len = crate::format::safe_truncate(&acc, max_bytes).len();
+                            acc.truncate(safe_len);
                             acc.push_str("\n... (output truncated)");
                             trunc_clone.store(true, Ordering::Relaxed);
                         }
