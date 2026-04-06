@@ -50,6 +50,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 **Multi-file agent** (`src/`):
 - `main.rs` — agent core, REPL, streaming event handling, rendering with ANSI colors, sub-agent tool integration, AskUserTool (interactive question-asking)
 - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
+- `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, bash command safety analysis, tool builders
 - `cli.rs` — CLI argument parsing, subcommands, configuration
 - `format/mod.rs` — Color, constants, utility functions, test output filtering, re-exports
 - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML

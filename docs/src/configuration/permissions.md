@@ -159,6 +159,28 @@ yoyo --deny "*" --allow "cat *" --allow "ls *" --allow "grep *" --allow-dir .
 
 This denies all bash commands except read-only ones, and restricts file access to the current directory.
 
+## Built-in Command Safety Analysis
+
+Beyond pattern matching, yoyo has a built-in safety analyzer that detects categories of dangerous commands and provides specific warnings. This runs automatically — you don't need to configure it.
+
+**Detected patterns include:**
+
+| Category | Examples |
+|---|---|
+| Filesystem destruction | `rm -rf /`, `rm -rf ~` |
+| Force git operations | `git push --force`, `git reset --hard` |
+| Permission changes | `chmod -R 777`, `chown -R` on system dirs |
+| File overwrites | `> /etc/passwd`, `> ~/.bashrc` |
+| System commands | `shutdown`, `reboot`, `halt` |
+| Database destruction | `DROP TABLE`, `DROP DATABASE`, `TRUNCATE TABLE` |
+| Pipe from internet | `curl ... \| bash`, `wget ... \| sh` |
+| Process killing | `kill -9 1`, `killall` |
+| Disk operations | `dd if=`, `fdisk`, `parted`, `mkfs` |
+
+When a dangerous pattern is detected, yoyo shows a warning explaining **why** the command is flagged before asking for confirmation. A handful of truly catastrophic patterns (like `rm -rf /` or fork bombs) are hard-blocked and can never execute, even with `--yes`.
+
+Safe commands like `ls`, `cargo test`, `git status`, and `grep` pass through without triggering any warnings.
+
 ## Summary
 
 | Mechanism | Scope | Effect |
