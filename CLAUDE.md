@@ -52,6 +52,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
 - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, bash command safety analysis, tool builders
 - `cli.rs` — CLI argument parsing, subcommands, configuration
+- `providers.rs` — provider constants (KNOWN_PROVIDERS), API key env vars, default/known models per provider
 - `format/mod.rs` — Color, constants, utility functions, test output filtering, re-exports
 - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML
 - `format/cost.rs` — pricing, cost display, token formatting

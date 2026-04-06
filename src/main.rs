@@ -51,6 +51,7 @@ mod help;
 mod hooks;
 mod memory;
 mod prompt;
+mod providers;
 mod repl;
 mod setup;
 mod tools;
