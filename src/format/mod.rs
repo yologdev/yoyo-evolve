@@ -209,8 +209,11 @@ pub fn compress_tool_output(output: &str) -> String {
     // Phase 1: strip ANSI escape codes
     let stripped = strip_ansi_codes(output);
 
-    // Phase 2: collapse repetitive line sequences
-    collapse_repetitive_lines(&stripped)
+    // Phase 2: filter test framework output (more specific, runs first)
+    let filtered = filter_test_output(&stripped);
+
+    // Phase 3: collapse repetitive line sequences
+    collapse_repetitive_lines(&filtered)
 }
 
 /// Remove ANSI escape sequences from a string.
@@ -318,6 +321,202 @@ fn collapse_repetitive_lines(s: &str) -> String {
     }
 
     result.join("\n")
+}
+
+/// Minimum number of test-pass lines required to activate the test filter.
+const TEST_FILTER_MIN_PASS_LINES: usize = 5;
+
+/// Detect and filter test framework output, keeping only failures + summary.
+///
+/// Supports:
+/// - **cargo test**: `test ... ok` / `test ... FAILED`, `test result:` summary
+/// - **pytest**: `PASSED` / `FAILED` lines, summary with pass/fail counts
+/// - **jest/vitest**: `✓` (pass) / `✕`/`✗` (fail) markers, `Tests:` summary
+/// - **go test**: `--- PASS:` / `--- FAIL:`, `ok`/`FAIL` summary
+/// - **rspec**: lines with `examples` and `failures` count
+///
+/// When ≥5 test-pass lines are detected, replaces them with a count marker.
+/// Failure lines, their context, error sections, and summaries are preserved.
+/// Non-test output passes through unchanged.
+pub fn filter_test_output(output: &str) -> String {
+    if output.is_empty() {
+        return String::new();
+    }
+
+    let lines: Vec<&str> = output.lines().collect();
+
+    // Phase 1: classify each line
+    let mut classifications: Vec<TestLineKind> = Vec::with_capacity(lines.len());
+    for line in &lines {
+        classifications.push(classify_test_line(line));
+    }
+
+    // Count pass lines to decide if we should filter
+    let pass_count = classifications
+        .iter()
+        .filter(|k| matches!(k, TestLineKind::Pass))
+        .count();
+
+    if pass_count < TEST_FILTER_MIN_PASS_LINES {
+        return output.to_string();
+    }
+
+    // Phase 2: mark lines in failure sections as kept
+    // Once we see a "failures:" header, everything until the summary is a failure section
+    let mut in_failure_section = false;
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "failures:"
+            || trimmed.starts_with("---- ") && trimmed.ends_with(" stdout ----")
+        {
+            in_failure_section = true;
+        }
+        if in_failure_section {
+            if matches!(classifications[i], TestLineKind::Pass) {
+                // Don't reclassify pass lines even in failure sections
+            } else if matches!(classifications[i], TestLineKind::Other) {
+                classifications[i] = TestLineKind::FailureDetail;
+            }
+        }
+        // Summary lines end the failure section
+        if matches!(classifications[i], TestLineKind::Summary) {
+            in_failure_section = false;
+        }
+    }
+
+    // Phase 3: build filtered output
+    let mut result_lines: Vec<String> = Vec::new();
+    let mut omitted_pass_count: usize = 0;
+
+    for (i, line) in lines.iter().enumerate() {
+        match classifications[i] {
+            TestLineKind::Pass => {
+                omitted_pass_count += 1;
+            }
+            TestLineKind::Fail | TestLineKind::FailureDetail | TestLineKind::Summary => {
+                // Flush any accumulated pass count before this line
+                if omitted_pass_count > 0 {
+                    result_lines.push(format!("... ({omitted_pass_count} passing tests omitted)"));
+                    omitted_pass_count = 0;
+                }
+                result_lines.push(line.to_string());
+            }
+            TestLineKind::Other => {
+                // Flush any accumulated pass count before non-test content
+                if omitted_pass_count > 0 {
+                    result_lines.push(format!("... ({omitted_pass_count} passing tests omitted)"));
+                    omitted_pass_count = 0;
+                }
+                result_lines.push(line.to_string());
+            }
+        }
+    }
+
+    // Flush trailing pass count
+    if omitted_pass_count > 0 {
+        result_lines.push(format!("... ({omitted_pass_count} passing tests omitted)"));
+    }
+
+    result_lines.join("\n")
+}
+
+/// Classification of a line in test output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TestLineKind {
+    /// A passing test line (will be omitted)
+    Pass,
+    /// A failing test line (will be kept)
+    Fail,
+    /// Detail lines inside a failure section (stack traces, assertions)
+    FailureDetail,
+    /// Summary/result line (will be kept)
+    Summary,
+    /// Non-test output (will be kept)
+    Other,
+}
+
+/// Classify a single line as test pass, fail, summary, or other.
+fn classify_test_line(line: &str) -> TestLineKind {
+    let trimmed = line.trim();
+
+    // --- cargo test ---
+    if trimmed.starts_with("test ") && trimmed.ends_with("... ok") {
+        return TestLineKind::Pass;
+    }
+    if trimmed.starts_with("test ") && trimmed.ends_with("... FAILED") {
+        return TestLineKind::Fail;
+    }
+    if trimmed.starts_with("test result:") {
+        return TestLineKind::Summary;
+    }
+
+    // --- pytest ---
+    if trimmed.ends_with(" PASSED") && trimmed.contains("::") {
+        return TestLineKind::Pass;
+    }
+    if trimmed.ends_with(" FAILED") && trimmed.contains("::") {
+        return TestLineKind::Fail;
+    }
+    // pytest summary: "N passed" or "N passed, M failed"
+    if (trimmed.contains(" passed") || trimmed.contains(" failed"))
+        && trimmed.starts_with('=')
+        && trimmed.ends_with('=')
+    {
+        return TestLineKind::Summary;
+    }
+
+    // --- jest/vitest ---
+    // ✓ or ✔ = pass; ✕ or ✗ = fail
+    if trimmed.starts_with('✓') || trimmed.starts_with('✔') {
+        return TestLineKind::Pass;
+    }
+    if trimmed.starts_with("✕") || trimmed.starts_with("✗") {
+        return TestLineKind::Fail;
+    }
+    if trimmed.starts_with("Tests:") && (trimmed.contains("passed") || trimmed.contains("failed")) {
+        return TestLineKind::Summary;
+    }
+
+    // --- go test ---
+    if trimmed.starts_with("--- PASS:") {
+        return TestLineKind::Pass;
+    }
+    if trimmed.starts_with("--- FAIL:") {
+        return TestLineKind::Fail;
+    }
+    // go test summary: "ok  pkg  0.123s" or "FAIL  pkg  0.123s"
+    if (trimmed.starts_with("ok ") || trimmed.starts_with("FAIL\t") || trimmed.starts_with("FAIL "))
+        && trimmed.contains('s')
+        && !trimmed.contains("::")
+    {
+        // Distinguish "FAIL" summary from pytest "FAILED" lines
+        if trimmed.starts_with("ok ") {
+            return TestLineKind::Summary;
+        }
+        if trimmed.starts_with("FAIL") && !trimmed.ends_with("FAILED") {
+            return TestLineKind::Summary;
+        }
+    }
+
+    // --- rspec ---
+    if trimmed.contains("example")
+        && trimmed.contains("failure")
+        && trimmed.chars().any(|c| c.is_ascii_digit())
+    {
+        return TestLineKind::Summary;
+    }
+
+    // --- pytest short test summary header ---
+    if trimmed.starts_with('=') && trimmed.contains("short test summary") {
+        return TestLineKind::Summary;
+    }
+
+    // --- FAILED line in pytest summary (e.g., "FAILED tests/...") ---
+    if trimmed.starts_with("FAILED ") && trimmed.contains("::") {
+        return TestLineKind::Fail;
+    }
+
+    TestLineKind::Other
 }
 
 /// Intelligently truncate large tool output to save context window tokens.
@@ -1853,5 +2052,275 @@ mod tests {
         let result_lines: Vec<&str> = result.lines().collect();
         assert_eq!(result_lines.len(), 3, "got: {result}");
         assert!(result_lines[1].contains("4 more similar"));
+    }
+
+    // ── filter_test_output tests ────────────────────────────────────
+
+    #[test]
+    fn test_filter_cargo_test_all_passing() {
+        let mut lines = Vec::new();
+        for i in 0..20 {
+            lines.push(format!("test tests::test_case_{i} ... ok"));
+        }
+        lines.push(String::new());
+        lines.push("test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s".to_string());
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        assert!(
+            result.contains("(20 passing tests omitted)"),
+            "should omit passing tests, got: {result}"
+        );
+        assert!(
+            result.contains("test result: ok."),
+            "should keep summary, got: {result}"
+        );
+        // Should be much shorter than input
+        assert!(
+            result.lines().count() < 5,
+            "should be very short, got {} lines: {result}",
+            result.lines().count()
+        );
+    }
+
+    #[test]
+    fn test_filter_cargo_test_with_failures() {
+        let mut lines = Vec::new();
+        for i in 0..10 {
+            lines.push(format!("test tests::test_pass_{i} ... ok"));
+        }
+        lines.push("test tests::test_broken ... FAILED".to_string());
+        for i in 10..15 {
+            lines.push(format!("test tests::test_pass_{i} ... ok"));
+        }
+        lines.push(String::new());
+        lines.push("failures:".to_string());
+        lines.push(String::new());
+        lines.push("---- tests::test_broken stdout ----".to_string());
+        lines.push("thread 'tests::test_broken' panicked at 'assertion failed'".to_string());
+        lines.push(String::new());
+        lines.push("failures:".to_string());
+        lines.push("    tests::test_broken".to_string());
+        lines.push(String::new());
+        lines.push("test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.0s".to_string());
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        // Failures must be preserved
+        assert!(
+            result.contains("test tests::test_broken ... FAILED"),
+            "should keep failure line, got: {result}"
+        );
+        // Failure details must be preserved
+        assert!(
+            result.contains("assertion failed"),
+            "should keep failure details, got: {result}"
+        );
+        // Summary must be preserved
+        assert!(
+            result.contains("test result: FAILED."),
+            "should keep summary, got: {result}"
+        );
+        // Passing tests should be omitted
+        assert!(
+            result.contains("passing tests omitted"),
+            "should omit passing tests, got: {result}"
+        );
+        assert!(
+            !result.contains("test_pass_5 ... ok"),
+            "should not contain passing test lines, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_filter_cargo_test_failure_details_preserved() {
+        let mut lines = Vec::new();
+        for i in 0..5 {
+            lines.push(format!("test test_{i} ... ok"));
+        }
+        lines.push("test test_bad ... FAILED".to_string());
+        lines.push(String::new());
+        lines.push("failures:".to_string());
+        lines.push(String::new());
+        lines.push("---- test_bad stdout ----".to_string());
+        lines.push("thread 'test_bad' panicked at src/lib.rs:42:".to_string());
+        lines.push("assertion `left == right` failed".to_string());
+        lines.push("  left: 1".to_string());
+        lines.push("  right: 2".to_string());
+        lines.push("note: run with `RUST_BACKTRACE=1`".to_string());
+        lines.push(String::new());
+        lines.push("failures:".to_string());
+        lines.push("    test_bad".to_string());
+        lines.push(String::new());
+        lines.push(
+            "test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out"
+                .to_string(),
+        );
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        // All failure details must be present
+        assert!(
+            result.contains("thread 'test_bad' panicked"),
+            "got: {result}"
+        );
+        assert!(result.contains("left: 1"), "got: {result}");
+        assert!(result.contains("right: 2"), "got: {result}");
+        assert!(result.contains("RUST_BACKTRACE"), "got: {result}");
+    }
+
+    #[test]
+    fn test_filter_pytest_output() {
+        let mut lines = Vec::new();
+        lines.push(
+            "============================= test session starts ============================="
+                .to_string(),
+        );
+        lines.push("collected 15 items".to_string());
+        lines.push(String::new());
+        for i in 0..12 {
+            lines.push(format!("tests/test_app.py::test_case_{i} PASSED"));
+        }
+        lines.push("tests/test_app.py::test_broken FAILED".to_string());
+        lines.push("tests/test_app.py::test_another PASSED".to_string());
+        lines.push("tests/test_app.py::test_more PASSED".to_string());
+        lines.push(String::new());
+        lines.push(
+            "=========================== short test summary info ==========================="
+                .to_string(),
+        );
+        lines.push("FAILED tests/test_app.py::test_broken - AssertionError".to_string());
+        lines.push(
+            "========================= 14 passed, 1 failed =========================".to_string(),
+        );
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        assert!(
+            result.contains("passing tests omitted"),
+            "should omit passing pytest tests, got: {result}"
+        );
+        assert!(
+            result.contains("test_broken FAILED"),
+            "should keep failures, got: {result}"
+        );
+        assert!(
+            result.contains("14 passed, 1 failed"),
+            "should keep summary, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_filter_jest_output() {
+        let mut lines = Vec::new();
+        lines.push("PASS src/app.test.js".to_string());
+        lines.push("  App component".to_string());
+        for i in 0..10 {
+            lines.push(format!("    ✓ should render item {i} (5ms)"));
+        }
+        lines.push("    ✕ should handle error (10ms)".to_string());
+        lines.push(String::new());
+        lines.push("Tests:  1 failed, 10 passed, 11 total".to_string());
+        lines.push("Time:   2.5s".to_string());
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        assert!(
+            result.contains("passing tests omitted"),
+            "should omit passing jest tests, got: {result}"
+        );
+        assert!(
+            result.contains("should handle error"),
+            "should keep failure, got: {result}"
+        );
+        assert!(
+            result.contains("Tests:"),
+            "should keep summary, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_filter_go_test_output() {
+        let mut lines = Vec::new();
+        for i in 0..8 {
+            lines.push(format!("--- PASS: TestCase{i} (0.00s)"));
+        }
+        lines.push("--- FAIL: TestBroken (0.01s)".to_string());
+        lines.push("    expected: 1, got: 2".to_string());
+        lines.push("FAIL".to_string());
+        lines.push("FAIL    github.com/user/repo    0.05s".to_string());
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        assert!(
+            result.contains("passing tests omitted"),
+            "should omit passing go tests, got: {result}"
+        );
+        assert!(
+            result.contains("--- FAIL: TestBroken"),
+            "should keep failure, got: {result}"
+        );
+        assert!(
+            result.contains("expected: 1, got: 2"),
+            "should keep failure details, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_filter_non_test_output_unchanged() {
+        let input = "hello world\nthis is regular output\nnothing to see here\nfoo bar baz";
+        let result = filter_test_output(input);
+        assert_eq!(
+            result, input,
+            "non-test output should pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn test_filter_mixed_content() {
+        // Compilation output followed by test output
+        let mut lines = vec![
+            "   Compiling myapp v0.1.0".to_string(),
+            "   Compiling dep v1.0.0".to_string(),
+            "    Finished test [unoptimized + debuginfo] target(s) in 5.00s".to_string(),
+            "     Running unittests src/lib.rs".to_string(),
+            String::new(),
+            "running 15 tests".to_string(),
+        ];
+        for i in 0..15 {
+            lines.push(format!("test tests::test_case_{i} ... ok"));
+        }
+        lines.push(String::new());
+        lines.push("test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s".to_string());
+        let input = lines.join("\n");
+        let result = filter_test_output(&input);
+        // Compilation output should be preserved
+        assert!(
+            result.contains("Compiling myapp"),
+            "should keep compilation output, got: {result}"
+        );
+        // Passing tests should be omitted
+        assert!(
+            result.contains("passing tests omitted"),
+            "should omit passing tests, got: {result}"
+        );
+        // Summary should be preserved
+        assert!(
+            result.contains("test result: ok."),
+            "should keep test summary, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_compress_tool_output_integrates_test_filter() {
+        // Verify compress_tool_output calls the test filter
+        let mut lines = Vec::new();
+        for i in 0..10 {
+            lines.push(format!("\x1b[32mtest test_{i} ... ok\x1b[0m"));
+        }
+        lines.push(String::new());
+        lines.push("\x1b[32mtest result: ok. 10 passed; 0 failed; 0 ignored\x1b[0m".to_string());
+        let input = lines.join("\n");
+        let result = compress_tool_output(&input);
+        // Should have stripped ANSI AND filtered test output
+        assert!(!result.contains("\x1b"), "should strip ANSI, got: {result}");
+        assert!(
+            result.contains("passing tests omitted"),
+            "should filter test output, got: {result}"
+        );
     }
 }

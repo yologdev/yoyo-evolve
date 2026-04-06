@@ -51,7 +51,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `main.rs` — agent core, REPL, streaming event handling, rendering with ANSI colors, sub-agent tool integration, AskUserTool (interactive question-asking)
 - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
 - `cli.rs` — CLI argument parsing, subcommands, configuration
-- `format/mod.rs` — Color, constants, utility functions, re-exports
+- `format/mod.rs` — Color, constants, utility functions, test output filtering, re-exports
 - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML
 - `format/cost.rs` — pricing, cost display, token formatting
 - `format/markdown.rs` — MarkdownRenderer for streaming markdown output
