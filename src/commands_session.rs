@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use yoagent::agent::Agent;
-use yoagent::context::{compact_messages, total_tokens, ContextConfig};
+use yoagent::context::{compact_messages, message_tokens, total_tokens, ContextConfig};
 use yoagent::types::{AgentMessage, Content, Message};
 use yoagent::*;
 
@@ -225,19 +225,199 @@ pub fn handle_load(agent: &mut Agent, input: &str) {
 
 // ── /history ─────────────────────────────────────────────────────────────
 
+/// Group messages into turns for display and `/drop` integration.
+///
+/// A "turn" starts at every `user` message that follows a non-user message
+/// (or is the very first user message). Each turn collects consecutive
+/// messages until the next turn boundary.
+///
+/// Returns `Vec<(turn_number_1based, Vec<(msg_index_0based, &AgentMessage)>)>`.
+/// Messages before the first user message (e.g. system prompts) are excluded
+/// from turn groups and rendered separately by `handle_history`.
+pub fn group_into_turns(messages: &[AgentMessage]) -> Vec<(usize, Vec<(usize, &AgentMessage)>)> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    // Find where each turn starts: a user message after a non-user (or first user).
+    let mut turn_starts: Vec<usize> = Vec::new();
+    for (i, msg) in messages.iter().enumerate() {
+        let role = msg.role();
+        if role == "user" {
+            // Start a new turn if this is the first message, or the previous was not user
+            if i == 0 || messages[i - 1].role() != "user" {
+                turn_starts.push(i);
+            }
+        }
+    }
+
+    if turn_starts.is_empty() {
+        return Vec::new();
+    }
+
+    // Build turn groups
+    let mut turns = Vec::new();
+    for (t, &start) in turn_starts.iter().enumerate() {
+        let end = if t + 1 < turn_starts.len() {
+            turn_starts[t + 1]
+        } else {
+            messages.len()
+        };
+        let members: Vec<(usize, &AgentMessage)> =
+            (start..end).map(|i| (i, &messages[i])).collect();
+        turns.push((t + 1, members));
+    }
+
+    turns
+}
+
+/// Estimate tokens for a single message using yoagent's `message_tokens`.
+pub fn estimate_message_tokens(msg: &AgentMessage) -> usize {
+    message_tokens(msg)
+}
+
+/// Format a token count for display (e.g. "~1,234 tokens").
+fn format_token_estimate(tokens: usize) -> String {
+    if tokens >= 1_000 {
+        // Format with comma separator: 12450 → "~12,450"
+        let thousands = tokens / 1_000;
+        let remainder = tokens % 1_000;
+        format!("~{},{:03} tokens", thousands, remainder)
+    } else {
+        format!("~{} tokens", tokens)
+    }
+}
+
 pub fn handle_history(agent: &Agent) {
     let messages = agent.messages();
     if messages.is_empty() {
         println!("{DIM}  (no messages in conversation){RESET}\n");
-    } else {
-        println!("{DIM}  Conversation ({} messages):", messages.len());
-        for (i, msg) in messages.iter().enumerate() {
-            let (role, preview) = summarize_message(msg);
-            let idx = i + 1;
-            println!("    {idx:>3}. [{role}] {preview}");
-        }
-        println!("{RESET}");
+        return;
     }
+
+    let turns = group_into_turns(messages);
+    let total_tok: usize = messages.iter().map(estimate_message_tokens).sum();
+    let num_turns = turns.len();
+
+    // Find where turns start so we can show pre-turn messages
+    let first_turn_start = turns.first().map(|(_, members)| members[0].0).unwrap_or(0);
+
+    println!(
+        "{DIM}  Conversation ({} messages, {} turns, {}):",
+        messages.len(),
+        num_turns,
+        format_token_estimate(total_tok)
+    );
+
+    // Show any messages before the first turn (e.g. system prompts, extensions)
+    for (i, msg) in messages.iter().enumerate().take(first_turn_start) {
+        let (role, preview) = summarize_message(msg);
+        let tok = estimate_message_tokens(msg);
+        let idx = i + 1;
+        println!(
+            "    {idx:>3}. [{role}] {preview}  {DIM}{}{RESET}",
+            format_token_estimate(tok)
+        );
+    }
+
+    // Show each turn
+    for (turn_num, members) in &turns {
+        let turn_tok: usize = members
+            .iter()
+            .map(|(_, m)| estimate_message_tokens(m))
+            .sum();
+        println!(
+            "  {BOLD}Turn {turn_num}{RESET}{DIM} ({})",
+            format_token_estimate(turn_tok)
+        );
+        for (i, msg) in members {
+            let (role, preview) = summarize_message(msg);
+            let tok = estimate_message_tokens(msg);
+            let idx = i + 1;
+            println!(
+                "    {idx:>3}. [{role}] {preview}  {DIM}{}{RESET}",
+                format_token_estimate(tok)
+            );
+        }
+    }
+    println!("{RESET}");
+}
+
+// ── /drop ────────────────────────────────────────────────────────────────
+
+/// Handle the `/drop` command — selective turn removal from conversation.
+pub fn handle_drop(agent: &mut Agent, args: &str) {
+    let messages = agent.messages();
+    let turns = group_into_turns(messages);
+
+    if turns.is_empty() {
+        println!("{DIM}  No turns to drop.{RESET}\n");
+        return;
+    }
+
+    let args = args.trim();
+    if args.is_empty() {
+        println!("{DIM}  usage: /drop last      — drop the last turn");
+        println!("         /drop N         — drop turn N");
+        println!("         /drop N-M       — drop turns N through M");
+        println!("  Use /history to see turn numbers.{RESET}\n");
+        return;
+    }
+
+    // Parse target
+    let (start_turn, end_turn) = if args == "last" {
+        let last = turns.len();
+        (last, last)
+    } else if let Some((a, b)) = args.split_once('-') {
+        match (a.trim().parse::<usize>(), b.trim().parse::<usize>()) {
+            (Ok(s), Ok(e)) if s >= 1 && e >= s && e <= turns.len() => (s, e),
+            _ => {
+                println!(
+                    "{DIM}  Invalid range. Turns are 1–{}.{RESET}\n",
+                    turns.len()
+                );
+                return;
+            }
+        }
+    } else {
+        match args.parse::<usize>() {
+            Ok(n) if n >= 1 && n <= turns.len() => (n, n),
+            _ => {
+                println!(
+                    "{DIM}  Invalid turn number. Turns are 1–{}.{RESET}\n",
+                    turns.len()
+                );
+                return;
+            }
+        }
+    };
+
+    // Collect message indices to remove
+    let mut remove_indices = std::collections::HashSet::new();
+    for turn_num in start_turn..=end_turn {
+        if let Some((_, members)) = turns.iter().find(|(t, _)| *t == turn_num) {
+            for (idx, _) in members {
+                remove_indices.insert(*idx);
+            }
+        }
+    }
+
+    let removed_count = remove_indices.len();
+    let kept: Vec<AgentMessage> = messages
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !remove_indices.contains(i))
+        .map(|(_, m)| m.clone())
+        .collect();
+
+    agent.replace_messages(kept);
+
+    let range_str = if start_turn == end_turn {
+        format!("turn {start_turn}")
+    } else {
+        format!("turns {start_turn}–{end_turn}")
+    };
+    println!("{DIM}  Dropped {range_str} ({removed_count} messages removed).{RESET}\n");
 }
 
 // ── /search ──────────────────────────────────────────────────────────────
@@ -2000,5 +2180,149 @@ mod tests {
         assert!(jump_matches("/jump checkpoint"));
         assert!(!jump_matches("/jumping"));
         assert!(!jump_matches("/jumped"));
+    }
+
+    // ── /history turn grouping tests ─────────────────────────────────────
+
+    fn make_user_msg(text: &str) -> AgentMessage {
+        AgentMessage::Llm(Message::User {
+            content: vec![Content::Text {
+                text: text.to_string(),
+            }],
+            timestamp: 0,
+        })
+    }
+
+    fn make_assistant_msg(text: &str) -> AgentMessage {
+        use yoagent::types::{StopReason, Usage};
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::Text {
+                text: text.to_string(),
+            }],
+            stop_reason: StopReason::Stop,
+            model: "test".to_string(),
+            provider: "test".to_string(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        })
+    }
+
+    fn make_tool_result_msg(name: &str) -> AgentMessage {
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "id-1".to_string(),
+            tool_name: name.to_string(),
+            content: vec![Content::Text {
+                text: "ok".to_string(),
+            }],
+            is_error: false,
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn test_history_turn_grouping_basic() {
+        // Two turns: user+assistant, user+assistant
+        let messages = vec![
+            make_user_msg("Hello"),
+            make_assistant_msg("Hi there"),
+            make_user_msg("Do something"),
+            make_assistant_msg("Done"),
+        ];
+
+        let turns = group_into_turns(&messages);
+        assert_eq!(turns.len(), 2);
+
+        // Turn 1: messages 0, 1
+        assert_eq!(turns[0].0, 1); // turn number
+        assert_eq!(turns[0].1.len(), 2);
+        assert_eq!(turns[0].1[0].0, 0); // msg index
+        assert_eq!(turns[0].1[1].0, 1);
+
+        // Turn 2: messages 2, 3
+        assert_eq!(turns[1].0, 2);
+        assert_eq!(turns[1].1.len(), 2);
+        assert_eq!(turns[1].1[0].0, 2);
+        assert_eq!(turns[1].1[1].0, 3);
+    }
+
+    #[test]
+    fn test_history_turn_grouping_with_tool_results() {
+        // A turn with tool use: user, assistant, tool_result, assistant
+        let messages = vec![
+            make_user_msg("Search for foo"),
+            make_assistant_msg("Let me search..."),
+            make_tool_result_msg("bash"),
+            make_assistant_msg("Found it!"),
+        ];
+
+        let turns = group_into_turns(&messages);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].1.len(), 4); // all 4 messages in one turn
+    }
+
+    #[test]
+    fn test_history_turn_grouping_consecutive_user_messages() {
+        // Two consecutive user messages should be in the same turn
+        let messages = vec![
+            make_user_msg("First part"),
+            make_user_msg("Second part"),
+            make_assistant_msg("Response"),
+        ];
+
+        let turns = group_into_turns(&messages);
+        // First user starts turn 1, second user is also "user" following "user",
+        // so it doesn't start a new turn
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].1.len(), 3);
+    }
+
+    #[test]
+    fn test_history_empty() {
+        let messages: Vec<AgentMessage> = vec![];
+        let turns = group_into_turns(&messages);
+        assert!(turns.is_empty());
+    }
+
+    #[test]
+    fn test_history_single_user_message() {
+        let messages = vec![make_user_msg("Hello")];
+        let turns = group_into_turns(&messages);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].0, 1);
+        assert_eq!(turns[0].1.len(), 1);
+    }
+
+    #[test]
+    fn test_history_token_estimation() {
+        // Token estimation uses yoagent's ~4 chars per token heuristic
+        let short_msg = make_user_msg("Hi");
+        let long_msg = make_user_msg(&"x".repeat(4000));
+
+        let short_tok = estimate_message_tokens(&short_msg);
+        let long_tok = estimate_message_tokens(&long_msg);
+
+        // Short message: "Hi" = 2 chars → ~1 token + 4 overhead ≈ 5
+        assert!(short_tok > 0, "token estimate should be positive");
+        assert!(short_tok < 20, "short message should have few tokens");
+
+        // Long message: 4000 chars → ~1000 tokens + overhead
+        assert!(
+            long_tok >= 900,
+            "long message should have ~1000+ tokens, got {long_tok}"
+        );
+        assert!(
+            long_tok <= 1200,
+            "long message tokens should be reasonable, got {long_tok}"
+        );
+    }
+
+    #[test]
+    fn test_history_format_token_estimate() {
+        assert_eq!(format_token_estimate(0), "~0 tokens");
+        assert_eq!(format_token_estimate(500), "~500 tokens");
+        assert_eq!(format_token_estimate(1000), "~1,000 tokens");
+        assert_eq!(format_token_estimate(3200), "~3,200 tokens");
+        assert_eq!(format_token_estimate(12450), "~12,450 tokens");
     }
 }

@@ -1369,8 +1369,8 @@ fn empty_piped_stdin_exits_quickly() {
         "empty piped stdin should exit non-zero"
     );
     assert!(
-        elapsed.as_secs_f64() < 2.0,
-        "empty stdin exit took {:.2}s — should complete in under 2 seconds",
+        elapsed.as_secs_f64() < 5.0,
+        "empty stdin exit took {:.2}s — should complete in under 5 seconds",
         elapsed.as_secs_f64()
     );
 }

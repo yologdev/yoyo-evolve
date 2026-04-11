@@ -109,6 +109,15 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /docs serde\n\
              \x20 /docs tokio spawn",
         ),
+        "drop" => Some(
+            "/drop [last|N|N-M] — Selectively remove turns from conversation\n\n\
+             Remove one or more turns to free up context space.\n\
+             Use /history to see turn numbers and token counts.\n\n\
+             Usage:\n\
+             \x20 /drop last    Drop the most recent turn\n\
+             \x20 /drop 3       Drop turn 3\n\
+             \x20 /drop 2-4     Drop turns 2 through 4",
+        ),
         "doctor" => Some(
             "/doctor — Run environment diagnostics\n\n\
              Checks your development environment and reports what's working,\n\
@@ -327,10 +336,13 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              a response was interrupted or you want a different answer.",
         ),
         "history" => Some(
-            "/history — Show summary of conversation messages\n\n\
-             Displays a compact list of all messages in the current\n\
-             conversation: role, length, and a preview of each message.\n\
-             Useful for understanding conversation flow.",
+            "/history — Show conversation with token counts and turn grouping\n\n\
+             Displays messages grouped by turn, with per-message and per-turn\n\
+             token estimates. A turn starts with each user message (plus any\n\
+             assistant replies and tool results that follow).\n\n\
+             Turn numbers align with `/drop` so you can identify which turn to\n\
+             remove to free up context space.\n\n\
+             Token counts are estimates (~4 chars per token).",
         ),
         "hooks" => Some(
             "/hooks — Show active hooks (pre/post tool execution)\n\n\
@@ -732,6 +744,7 @@ pub fn help_text() -> String {
     out.push_str("  /clear             Clear conversation history (confirms if >4 messages)\n");
     out.push_str("  /clear!            Force-clear without confirmation\n");
     out.push_str("  /compact           Compact conversation to save context space\n");
+    out.push_str("  /drop [last|N|N-M] Selectively remove turns from conversation\n");
     out.push_str("  /save [path]       Save session to file (default: yoyo-session.json)\n");
     out.push_str("  /load [path]       Load session from file\n");
     out.push_str("  /retry             Re-send the last user input\n");
@@ -746,7 +759,7 @@ pub fn help_text() -> String {
     out.push_str("  /permissions       Show active security and permission configuration\n");
     out.push_str("  /version           Show yoyo version\n");
     out.push_str("  /update            Check for and install the latest version\n");
-    out.push_str("  /history           Show summary of conversation messages\n");
+    out.push_str("  /history           Show conversation with token counts and turn grouping\n");
     out.push_str("  /search <query>    Search conversation history for matching messages\n");
     out.push_str("  /mark <name>       Bookmark current conversation state\n");
     out.push_str(
@@ -898,6 +911,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "diff" => Some("Show git changes"),
         "doctor" => Some("Run environment diagnostics"),
         "docs" => Some("Look up crate documentation"),
+        "drop" => Some("Selectively remove turns from conversation"),
         "exit" => Some("Exit yoyo"),
         "export" => Some("Export conversation as markdown"),
         "extract" => Some("Extract a function/block to a new file"),
@@ -908,7 +922,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "grep" => Some("Search file contents"),
         "health" => Some("Run project health checks"),
         "help" => Some("Show help for commands"),
-        "history" => Some("Show conversation message summary"),
+        "history" => Some("Show conversation with token counts and turn grouping"),
         "hooks" => Some("Show active hooks (pre/post tool execution)"),
         "index" => Some("Show project file index"),
         "init" => Some("Generate a YOYO.md context file"),

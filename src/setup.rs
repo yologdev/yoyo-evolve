@@ -539,6 +539,7 @@ pub fn needs_setup(provider: &str) -> bool {
 mod tests {
     use super::*;
     use crate::cli::KNOWN_PROVIDERS;
+    use serial_test::serial;
 
     #[test]
     fn test_parse_provider_choice_by_number() {
@@ -730,6 +731,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_save_config_to_file() {
         // Use a temp dir to avoid polluting the project
         let dir = std::env::temp_dir().join("yoyo_test_wizard");

@@ -1080,6 +1080,7 @@ pub async fn handle_review(
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+    use serial_test::serial;
 
     // ── parse_diff_stat tests ───────────────────────────────────────────
 
@@ -2138,6 +2139,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn undo_last_commit_in_real_repo() {
         use std::fs;
 
@@ -2198,19 +2200,12 @@ mod tests {
             .trim()
             .to_string();
 
-        // Use a static mutex to serialize tests that change cwd,
-        // preventing races with other tests that depend on cwd.
-        use std::sync::Mutex;
-        static CWD_MUTEX: Mutex<()> = Mutex::new(());
-        let _lock = CWD_MUTEX.lock().unwrap();
-
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(repo).unwrap();
 
         let result = handle_undo_last_commit();
 
         std::env::set_current_dir(&original_dir).unwrap();
-        // Release lock after cwd is restored (drop happens at end of scope)
 
         // The revert should succeed
         assert!(

@@ -51,6 +51,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/cost",
     "/doctor",
     "/docs",
+    "/drop",
     "/export",
     "/find",
     "/fix",
@@ -162,6 +163,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/watch" => filter_candidates(crate::commands_dev::WATCH_SUBCOMMANDS, &partial_lower),
         "/ast" => filter_candidates(crate::commands_search::AST_GREP_FLAGS, &partial_lower),
         "/apply" => filter_candidates(crate::commands_file::APPLY_FLAGS, &partial_lower),
+        "/drop" => filter_candidates(&["last"], &partial_lower),
         "/context" => filter_candidates(
             crate::commands_project::context_subcommands(),
             &partial_lower,
@@ -298,8 +300,8 @@ pub use crate::commands_file::{
 // Session-related handlers
 pub use crate::commands_session::{
     auto_compact_if_needed, auto_save_on_exit, clear_confirmation_message, handle_compact,
-    handle_export, handle_history, handle_jump, handle_load, handle_mark, handle_marks,
-    handle_save, handle_search, handle_spawn, handle_stash, last_session_exists,
+    handle_drop, handle_export, handle_history, handle_jump, handle_load, handle_mark,
+    handle_marks, handle_save, handle_search, handle_spawn, handle_stash, last_session_exists,
     reset_compact_thrash, Bookmarks, SpawnTracker,
 };
 

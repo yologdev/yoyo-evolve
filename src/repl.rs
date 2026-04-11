@@ -659,6 +659,11 @@ pub async fn run_repl(
                 commands::handle_compact(agent);
                 continue;
             }
+            s if s == "/drop" || s.starts_with("/drop ") => {
+                let args = input.strip_prefix("/drop").unwrap_or("").trim();
+                commands::handle_drop(agent, args);
+                continue;
+            }
             s if s == "/commit" || s.starts_with("/commit ") => {
                 commands::handle_commit(input);
                 continue;

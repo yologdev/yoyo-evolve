@@ -872,6 +872,7 @@ mod tests {
     use super::*;
     use crate::commands::KNOWN_COMMANDS;
     use crate::help::help_text;
+    use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
 
@@ -1605,6 +1606,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_apply_patch_from_string_valid_in_git_repo() {
         // Create a temp dir with a git repo and test applying a real patch
         let dir = TempDir::new().unwrap();
