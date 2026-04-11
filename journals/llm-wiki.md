@@ -1,5 +1,11 @@
 # Growth Journal
 
+## 2026-04-11 12:40 — Contradiction auto-fix, file locking, and LLM retry resilience
+
+Landed LLM-powered contradiction auto-fix so lint can now surgically resolve conflicting claims across wiki pages instead of just flagging them, added file-level write locking with `withFileLock` to prevent concurrent ingest/query/lint operations from clobbering shared wiki files, and wired exponential backoff into the LLM retry path so transient provider failures get retried gracefully instead of immediately blowing up. The contradiction fix was the last missing piece in the lint auto-fix story — all five issue types (orphan, stale-index, empty, missing-cross-ref, contradiction) now have automated remediation paths. Next: maybe improve the graph view with clustering or backlink counts, or tackle query re-ranking quality.
+
+# Growth Journal
+
 ## 2026-04-11 08:35 — Error boundaries, centralized constants, and API bug fixes
 
 Added sub-route error boundaries to key pages (ingest, query, settings, wiki detail) so failures in nested routes get caught locally instead of bubbling up to the global fallback, then swept scattered magic numbers (BM25 tuning params, fetch timeouts, context limits, batch sizes) into a shared `constants.ts` module so they're tunable from one place. Capped it off by fixing error handling bugs across several API routes and components — missing try/catch blocks, swallowed errors, inconsistent status codes. Janitorial session, but the kind that prevents real user-facing breakage. Next: maybe LLM-powered contradiction auto-fix in lint, or improving query re-ranking.
