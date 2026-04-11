@@ -335,14 +335,13 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/cost` | Show session cost breakdown |
 | `/diff` | Git diff summary of uncommitted changes |
 | `/docs <crate>` | Look up docs.rs documentation |
-| `/drop [last\|N\|N-M]` | Selectively remove turns from conversation |
 | `/exit`, `/quit` | Exit |
 | `/find <pattern>` | Fuzzy-search project files by name |
 | `/fix` | Auto-fix build/lint errors |
 | `/forget <n>` | Remove a project memory by index |
 | `/git <subcmd>` | Quick git: status, log, add, diff, branch, stash |
 | `/health` | Run project health checks |
-| `/history` | Show conversation with token counts and turn grouping |
+| `/history` | Show conversation message summary |
 | `/hooks` | Show active hooks (pre/post tool execution) |
 | `/index` | Build a lightweight codebase index |
 | `/init` | Generate a starter YOYO.md |
