@@ -377,6 +377,7 @@ pub fn help_text() -> String {
         "    /tokens            Show token usage and context window"
     );
     let _ = writeln!(s, "    /cost              Show estimated session cost");
+    let _ = writeln!(s, "    /profile           Show unified session statistics");
     let _ = writeln!(s, "    /config            Show all current settings");
     let _ = writeln!(s, "    /hooks             Show active hooks");
     let _ = writeln!(s, "    /permissions       Show security/permission config");

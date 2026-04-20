@@ -283,6 +283,13 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              active model, message count, git branch (if in a repo), and\n\
              context window usage percentage.",
         ),
+        "profile" => Some(
+            "/profile — Show unified session statistics\n\n\
+             Displays a single-glance summary of the current session:\n\
+             model, provider, duration, turns, tokens, cost, and\n\
+             context window usage — all in a compact bordered box.\n\n\
+             Combines the essentials of /status, /tokens, and /cost.",
+        ),
         "tokens" => Some(
             "/tokens — Show token usage and context window\n\n\
              Displays current token usage (input/output), the model's context\n\
@@ -827,6 +834,9 @@ pub fn help_text() -> String {
     out.push_str("  /status            Show session info\n");
     out.push_str("  /tokens            Show token usage and context window\n");
     out.push_str("  /cost              Show estimated session cost\n");
+    out.push_str(
+        "  /profile           Show unified session statistics (model, tokens, cost, time)\n",
+    );
     out.push_str("  /config            Show all current settings\n");
     out.push_str(
         "  /config show       Show loaded config file path and merged key-value pairs (secrets masked)\n",
@@ -1025,6 +1035,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "plan" => Some("AI-generate a task plan"),
         "permissions" => Some("Show active security and permission configuration"),
         "pr" => Some("List, view, or create pull requests"),
+        "profile" => Some("Show session statistics (tokens, cost, time, turns)"),
         "provider" => Some("Switch or show current provider"),
         "quit" => Some("Exit yoyo"),
         "refactor" => Some("Refactoring tools (extract, rename, move)"),
@@ -1111,6 +1122,7 @@ mod tests {
             "/changes",
             "/stash",
             "/todo",
+            "/profile",
         ];
         for cmd in &expected {
             assert!(text.contains(cmd), "help text should contain {cmd}");
@@ -1164,6 +1176,7 @@ mod tests {
             "/stash",
             "/todo",
             "/permissions",
+            "/profile",
         ] {
             assert!(
                 session_section.contains(cmd),

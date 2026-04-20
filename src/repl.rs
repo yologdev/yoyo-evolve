@@ -442,6 +442,16 @@ pub async fn run_repl(
                 commands::handle_cost(&session_total, &agent_config.model, agent.messages());
                 continue;
             }
+            "/profile" => {
+                commands::handle_profile(
+                    agent,
+                    &agent_config.model,
+                    &agent_config.provider,
+                    session_start,
+                    &session_total,
+                );
+                continue;
+            }
             s if s == "/changelog" || s.starts_with("/changelog ") => {
                 commands::handle_changelog(input);
                 continue;

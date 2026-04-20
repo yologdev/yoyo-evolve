@@ -18,8 +18,8 @@ pub use crate::commands_bg::{handle_bg, BackgroundJobTracker};
 // Explicit re-exports keep the public API of `commands` unchanged so REPL
 // dispatch sites in main.rs / repl.rs don't need to know about the split.
 pub use crate::commands_info::{
-    handle_changelog, handle_cost, handle_model_show, handle_provider_show, handle_status,
-    handle_think_show, handle_tokens, handle_version,
+    handle_changelog, handle_cost, handle_model_show, handle_profile, handle_provider_show,
+    handle_status, handle_think_show, handle_tokens, handle_version,
 };
 
 // Re-export /retry and /changes handlers extracted to commands_retry.rs
@@ -113,6 +113,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/todo",
     "/mcp",
     "/permissions",
+    "/profile",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.

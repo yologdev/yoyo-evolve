@@ -1,8 +1,8 @@
 //! Read-only "info" REPL command handlers.
 //!
 //! These handlers print state without mutating anything: `/version`, `/status`,
-//! `/tokens`, `/cost`, `/model` (show), `/provider` (show), `/think` (show),
-//! `/changelog`.
+//! `/tokens`, `/cost`, `/profile`, `/model` (show), `/provider` (show),
+//! `/think` (show), `/changelog`.
 //!
 //! Extracted from `commands.rs` as the first slice of issue #260, which tracks
 //! splitting the 3,500-line `commands.rs` into focused modules. Read-only
@@ -176,6 +176,107 @@ pub fn handle_think_show(thinking: ThinkingLevel) {
 }
 
 // ── /changelog ──────────────────────────────────────────────────────────
+
+pub fn handle_profile(
+    agent: &Agent,
+    model: &str,
+    provider: &str,
+    session_start: std::time::Instant,
+    session_total: &Usage,
+) {
+    let max_context = crate::cli::effective_context_tokens();
+    let messages = agent.messages();
+    let context_used = total_tokens(messages) as u64;
+    // Count assistant turns
+    let turns = messages
+        .iter()
+        .filter(|m| {
+            matches!(
+                m,
+                yoagent::AgentMessage::Llm(yoagent::Message::Assistant { .. })
+            )
+        })
+        .count();
+    let elapsed = session_start.elapsed();
+
+    // Cost string
+    let cost_str = estimate_cost(session_total, model)
+        .map(|c| format!("~{}", format_cost(c)))
+        .unwrap_or_else(|| "n/a".to_string());
+
+    // Token strings
+    let tokens_str = format!(
+        "{} in / {} out",
+        format_token_count(session_total.input),
+        format_token_count(session_total.output)
+    );
+
+    // Context string (plain, for width calculation)
+    let ctx_plain = if max_context > 0 {
+        let pct = ((context_used as f64 / max_context as f64) * 100.0) as u32;
+        format!(
+            "{} / {} ({}%)",
+            format_token_count(context_used),
+            format_token_count(max_context),
+            pct
+        )
+    } else {
+        format_token_count(context_used)
+    };
+
+    // Context color for the display version
+    let pct_val = if max_context > 0 {
+        ((context_used as f64 / max_context as f64) * 100.0) as u32
+    } else {
+        0
+    };
+    let ctx_color = context_usage_color(pct_val);
+
+    let label = "Session Profile";
+    // Build content lines: (key, plain_value, display_value)
+    // plain_value is for width calculation, display_value may contain ANSI
+    let duration_str = format_duration(elapsed);
+    let turns_str = format!("{turns}");
+    let lines: Vec<(&str, &str, String)> = vec![
+        ("Model", model, model.to_string()),
+        ("Provider", provider, provider.to_string()),
+        ("Duration", &duration_str, duration_str.clone()),
+        ("Turns", &turns_str, turns_str.clone()),
+        ("Tokens", &tokens_str, tokens_str.clone()),
+        ("Cost", &cost_str, cost_str.clone()),
+        (
+            "Context",
+            &ctx_plain,
+            format!("{ctx_color}{ctx_plain}{DIM}"),
+        ),
+    ];
+
+    // Use fixed label column of 10 chars (longest key is "Provider" = 8 + ":  " = 11)
+    let label_col = 10;
+    // Find the longest value for box width
+    let max_val_width = lines.iter().map(|(_, pv, _)| pv.len()).max().unwrap_or(20);
+    // inner_width = "│ " + label_col + value + " │"
+    let inner_width = (label_col + max_val_width + 2).max(label.len() + 4);
+
+    // Top border
+    let top_pad = inner_width - label.len() - 2;
+    println!("{DIM}  ╭─ {label} {}╮", "─".repeat(top_pad));
+
+    // Content lines
+    for (key, plain_val, display_val) in &lines {
+        let key_pad = label_col - key.len() - 1; // -1 for the colon
+        let val_pad = inner_width - label_col - plain_val.len() - 2;
+        println!(
+            "  │ {key}:{}{display_val}{} │",
+            " ".repeat(key_pad),
+            " ".repeat(val_pad)
+        );
+    }
+
+    // Bottom border
+    println!("  ╰{}╯{RESET}", "─".repeat(inner_width));
+    println!();
+}
 
 /// Parse the optional count argument from `/changelog [N]` input.
 /// Returns a count clamped to 1..=100, defaulting to 15.
@@ -376,5 +477,49 @@ mod tests {
         // Should not panic regardless of git availability
         handle_changelog("/changelog");
         handle_changelog("/changelog 5");
+    }
+
+    #[test]
+    fn test_handle_profile_no_panic() {
+        use std::time::Instant;
+        let agent = Agent::new(AnthropicProvider)
+            .with_system_prompt("test")
+            .with_model("test-model")
+            .with_api_key("test-key");
+
+        let usage = Usage::default();
+        // Should not panic with empty agent and zero usage
+        handle_profile(
+            &agent,
+            "claude-sonnet-4-20250514",
+            "anthropic",
+            Instant::now(),
+            &usage,
+        );
+    }
+
+    #[test]
+    fn test_handle_profile_with_usage() {
+        use std::time::Instant;
+        let agent = Agent::new(AnthropicProvider)
+            .with_system_prompt("test")
+            .with_model("test-model")
+            .with_api_key("test-key");
+
+        let usage = Usage {
+            input: 45_231,
+            output: 12_890,
+            cache_read: 5_000,
+            cache_write: 2_000,
+            total_tokens: 65_121,
+        };
+        // Should not panic with real-ish usage
+        handle_profile(
+            &agent,
+            "claude-sonnet-4-20250514",
+            "anthropic",
+            Instant::now(),
+            &usage,
+        );
     }
 }
