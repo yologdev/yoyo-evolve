@@ -1535,14 +1535,16 @@ fn empty_model_string_without_help_proceeds_gracefully() {
 #[test]
 fn yes_flag_with_prompt_accepted_without_error() {
     // --yes with --prompt should be accepted (auto-approve + single-shot mode)
-    // Without a valid API key it'll fail on the API side, but the flags
-    // themselves should not conflict or produce warnings
+    // We add --print-system-prompt so the binary exits after flag parsing
+    // without attempting an API connection (which would timeout against a
+    // non-existent ollama instance and waste ~60s per test).
     let output = yoyo_cmd()
         .arg("--yes")
         .arg("--prompt")
         .arg("say hello")
         .arg("--provider")
         .arg("ollama")
+        .arg("--print-system-prompt")
         .stdin(Stdio::null())
         .output()
         .expect("failed to run yoyo");
@@ -1601,7 +1603,10 @@ fn piped_stdin_with_help_flag_shows_help() {
 
 #[test]
 fn allow_deny_yes_prompt_all_combine_cleanly() {
-    // The full permission + auto-approve + single-shot combo a power user might use
+    // The full permission + auto-approve + single-shot combo a power user might use.
+    // We add --print-system-prompt so the binary exits after flag parsing
+    // without attempting an API connection (which would timeout against a
+    // non-existent ollama instance and waste ~60s per test).
     let output = yoyo_cmd()
         .arg("--allow")
         .arg("cargo *")
@@ -1612,6 +1617,7 @@ fn allow_deny_yes_prompt_all_combine_cleanly() {
         .arg("run tests")
         .arg("--provider")
         .arg("ollama")
+        .arg("--print-system-prompt")
         .stdin(Stdio::null())
         .output()
         .expect("failed to run yoyo");
