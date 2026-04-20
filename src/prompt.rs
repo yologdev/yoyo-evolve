@@ -1151,7 +1151,7 @@ async fn handle_prompt_events(
                         if io::stdout().is_terminal() {
                             let text = extract_result_text(&partial_result);
                             if !text.is_empty() {
-                                let tail = format_partial_tail(&text, 3);
+                                let tail = format_partial_tail(&text, 6);
                                 if !tail.is_empty() {
                                     println!();
                                     println!("{tail}");

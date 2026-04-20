@@ -98,7 +98,7 @@ const TOOL_LABEL_MAX_CHARS: usize = 40;
 /// Examples:
 /// - Without label: `  ⠹ bash ⏱ 12s`
 /// - With label: `  ⠹ bash: ls -la src/ ⏱ 12s`
-/// - With label + lines: `  ⠹ bash: cargo test ⏱ 1m 5s (142 lines)`
+/// - With label + lines: `  ⠹ bash: cargo test ⏱ 1m 5s ─ 142 lines captured`
 pub fn format_tool_progress(
     tool_name: &str,
     elapsed: Duration,
@@ -111,7 +111,7 @@ pub fn format_tool_progress(
     let lines_str = match line_count {
         Some(n) if n > 0 => {
             let word = pluralize(n, "line", "lines");
-            format!(" ({n} {word})")
+            format!(" ─ {n} {word} captured")
         }
         _ => String::new(),
     };
@@ -169,9 +169,10 @@ pub fn format_partial_tail(output: &str, max_lines: usize) -> String {
 
     let mut result = String::new();
     if start > 0 {
-        let skipped = start;
-        let word = pluralize(skipped, "line", "lines");
-        result.push_str(&format!("{DIM}    ┆ ... {skipped} {word} above{RESET}\n"));
+        let shown = tail.len();
+        result.push_str(&format!(
+            "{DIM}    │ (showing last {shown} of {total} lines){RESET}\n"
+        ));
     }
     for line in tail {
         let truncated = truncate_with_ellipsis(line, 120);
@@ -493,13 +494,19 @@ mod tests {
         let output = format_tool_progress("bash", Duration::from_secs(12), 3, Some(142), None);
         assert!(output.contains("bash"), "should contain tool name");
         assert!(output.contains("12s"), "should contain elapsed time");
-        assert!(output.contains("142 lines"), "should contain line count");
+        assert!(
+            output.contains("─ 142 lines captured"),
+            "should contain line count with dash separator"
+        );
     }
 
     #[test]
     fn test_format_tool_progress_single_line() {
         let output = format_tool_progress("bash", Duration::from_secs(1), 0, Some(1), None);
-        assert!(output.contains("1 line"), "should use singular 'line'");
+        assert!(
+            output.contains("─ 1 line captured"),
+            "should use singular 'line'"
+        );
         assert!(!output.contains("1 lines"), "should not use plural for 1");
     }
 
@@ -524,7 +531,10 @@ mod tests {
             "should contain label after colon"
         );
         assert!(output.contains("5s"), "should contain elapsed time");
-        assert!(output.contains("42 lines"), "should contain line count");
+        assert!(
+            output.contains("─ 42 lines captured"),
+            "should contain line count"
+        );
     }
 
     #[test]
@@ -579,7 +589,10 @@ mod tests {
         assert!(!output.contains("line3"), "should not show line3");
         assert!(output.contains("line4"), "should show tail lines");
         assert!(output.contains("line5"), "should show tail lines");
-        assert!(output.contains("3 lines above"), "should show skip count");
+        assert!(
+            output.contains("showing last 2 of 5 lines"),
+            "should show truncation header"
+        );
     }
 
     #[test]
@@ -588,6 +601,46 @@ mod tests {
         assert!(
             output.contains("┆"),
             "should use dotted pipe for indentation"
+        );
+    }
+
+    #[test]
+    fn test_format_partial_tail_truncation_header_with_six_lines() {
+        // Simulate what the live display now shows (6 lines from a longer output)
+        let input = (1..=20)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let output = format_partial_tail(&input, 6);
+        assert!(
+            output.contains("showing last 6 of 20 lines"),
+            "should show truncation header for 20-line output with max 6"
+        );
+        assert!(output.contains("line15"), "should show 6th-from-last");
+        assert!(output.contains("line20"), "should show last line");
+        assert!(
+            !output.contains("line14"),
+            "should not show lines before window"
+        );
+    }
+
+    #[test]
+    fn test_format_partial_tail_no_header_when_all_fit() {
+        let output = format_partial_tail("a\nb\nc", 6);
+        assert!(
+            !output.contains("showing last"),
+            "no header when all lines fit"
+        );
+        assert!(output.contains("a"), "should show first line");
+        assert!(output.contains("c"), "should show last line");
+    }
+
+    #[test]
+    fn test_format_partial_tail_exact_match_no_header() {
+        let output = format_partial_tail("a\nb\nc", 3);
+        assert!(
+            !output.contains("showing last"),
+            "no header when lines == max_lines"
         );
     }
 
