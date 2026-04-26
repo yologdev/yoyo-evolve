@@ -1,0 +1,632 @@
+  config: .yoyo.toml
+  context: CLAUDE.md
+  context: recently changed files
+  context: git status (branch: main)
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --quiet / -q flag. Let me start by understanding the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disable_color\|NOCOLOR\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "eprintln.*context:" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "eprintln.*config:" src/… ✓ (3ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  ▶ read src/format/mod.rs:1..81  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disable_bell\|bell_enab… ✓ (2ms)
+ ✓ (4ms)
+  5 tools completed in 5.9s (5 ✓)
+
+Now let me understand the existing patterns for the Config struct and flag parsing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Config" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no.color\|no_color\|no.… ✓ (4ms)
+ ✓ (4ms)
+  ▶ read src/cli.rs:62..162 ✓ (1ms)
+  3 tools completed in 5.8s (3 ✓)
+
+Now let me look at how --no-color and --no-bell are parsed in `parse_args`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--no-color"\|"--no-bel… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no-color\|no-bell\|disa… ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Hmm, --no-color and --no-bell are in a known flags list but where are they actually handled? Let me search more broadly:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disable_color\|disable_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1005,1040p' src/main.rs ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I see the pattern. apply_cli_flags is called in main.rs early. But I shouldn't modify main.rs. The task says to handle it in parse_args() or in cli.rs. Let me check where apply_cli_flags is called:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "apply_cli_flags" src/ma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1115,1130p' src/main.rs ✓ (3ms)
+  2 tools completed in 4.2s (2 ✓)
+
+OK so apply_cli_flags handles the raw args before parse_args. The task says I can handle --quiet in parse_args (similar to how other flags are set). But actually, looking at the pattern, the cleanest approach is:
+
+1. Add enable_quiet/is_quiet to `format/mod.rs (like disable_color`)
+2. Add quiet: bool to Config in cli.rs, parse -q/--quiet
+3. Since main.rs already calls apply_cli_flags before parse_args, I should handle the quiet flag there too for consistency. But the task says NOT to modify main.rs.
+
+Actually, looking more carefully: the --no-color is handled in apply_cli_flags (in main.rs) not in parse_args. But the task says to call enable_quiet() from parse_args(). Let me look at how parse_args handles flags:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS" src/cli.rs… ✓ (4ms)
+  ▶ read src/cli.rs:171..241 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me see how flags like --verbose are parsed in parse_args:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--verbose"\|"--no-colo… ✓ (4ms)
+  ▶ read src/cli.rs:540..570 ✓ (1ms)
+  ▶ read src/cli.rs:569..599 ✓ (1ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Now let me see where parse_args constructs the Config:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn parse_args" src/… ✓ (3ms)
+  ▶ read src/cli.rs:661..681 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Some(Config" src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:855..905 ✓ (1ms)
+  4 tools completed in 10.1s (4 ✓)
+
+Now let me look at what the context.rs lines look like for gating:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:120..180 ✓ (1ms)
+  ▶ read src/context.rs:179..189 ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me check the config loading lines:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:360..390 ✓ (1ms)
+
+Now let me check the existing tests to understand the pattern:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_bell_enabled\|test… ✓ (3ms)
+  ▶ read src/format/mod.rs:1000..1025 ✓ (0ms)
+  2 tools completed in 9.9s (2 ✓)
+
+Now I have a solid understanding of the codebase. Let me also check the help text to see where I need to add the flag:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no-color\|no-bell\|--js… ✓ (3ms)
+  ▶ read src/help.rs:1000..1015 ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now I also need to check how main.rs uses the banner/piped-mode output:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "piped mode\|piped_mode\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '948,955p' src/main.rs ✓ (3ms)
+  2 tools completed in 6.0s (2 ✓)
+
+OK, the piped mode info line is in main.rs — the task doesn't ask me to gate that one. Let me now implement. I have a clear plan:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 19.0s (7 ✓)
+
+Let me start implementing. First, the tests (test-first approach), then the implementation.
+
+### Step 1: Add `enable_quiet()`/`is_quiet()` to `format/mod.rs`
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/format/mod.rs (4 → 20 lines)
+  + // --- Quiet mode support with --quiet / -q ---
+  + 
+  + /// Whether informational stderr output has been suppressed (via --quiet/-q flag or
+  + /// YOYO_QUIET env). Suppresses `config:` and `context:` progress lines for scripted usage.
+  + static QUIET: OnceLock<bool> = OnceLock::new();
+  + 
+  + /// Enable quiet mode. Call from CLI arg parsing when -q/--quiet is encountered.
+  + pub fn enable_quiet() {
+  +     let _ = QUIET.set(true);
+  + }
+  + 
+  + /// Check if quiet mode is active. Respects YOYO_QUIET env var.
+  + pub fn is_quiet() -> bool {
+  +     *QUIET.get_or_init(|| std::env::var("YOYO_QUIET").is_ok())
+  + }
+  + 
+    // --- Bell notification support with YOYO_NO_BELL and --no-bell ---
+    
+    /// Whether bell notification has been disabled (via --no-bell flag or YOYO_NO_BELL env).
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 11.7s (3 ✓)
+
+### Step 2: Add quiet to Config and parse in cli.rs
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Add quiet: bool to Config struct:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 3 lines)
+        pub auto_watch: bool,
+  +     pub quiet: bool,
+    }
+ ✓ (1ms)
+
+Add -q and --quiet to KNOWN_FLAGS:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (4 → 6 lines)
+        "--audit",
+        "--auto-commit",
+        "--print-system-prompt",
+  +     "--quiet",
+  +     "-q",
+        "--help",
+ ✓ (0ms)
+
+Now add quiet parsing to the OutputFlags struct and `parse_output_flags`:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:533..543 ✓ (1ms)
+  ▶ edit src/cli.rs (10 → 11 lines)
+        json_output: bool,
+        audit: bool,
+        print_system_prompt: bool,
+  +     quiet: bool,
+    }
+ ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now add the quiet flag parsing in parse_output_flags:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:568..598 ✓ (0ms)
+  ▶ edit src/cli.rs (12 → 27 lines)
+        let print_system_prompt = args.iter().any(|a| a == "--print-system-prompt");
+  + 
+  +     let quiet = args.iter().any(|a| a == "--quiet" || a == "-q")
+  +         || std::env::var("YOYO_QUIET")
+  +             .map(|v| v == "1")
+  +             .unwrap_or(false)
+  +         || file_config
+  +             .get("quiet")
+  +             .map(|v| v == "true")
+  +             .unwrap_or(false);
+  + 
+  +     // Enable quiet mode globally so context/config loading can check it
+  +     if quiet {
+  +         crate::format::enable_quiet();
+  +     }
+    
+        OutputFlags {
+            verbose,
+  ···
+            json_output,
+  ... (5 more lines)
+ ✓ (0ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now add `quiet to the Config construction in parse_args`:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_watch:" src/cli.rs ✓ (3ms)
+  ▶ edit src/cli.rs (1 → 2 lines)
+            auto_watch: crate::config::parse_auto_watch_from_config(&file_config),
+  +         quiet: of.quiet,
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.0s (3 ✓)
+
+### Step 3: Gate context eprintln! lines in context.rs
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me see all the eprintln lines in context.rs:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "eprintln!" src/context.… ✓ (3ms)
+
+Let me check the imports at the top of context.rs:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:1..16 ✓ (0ms)
+
+Now gate each eprintln line. I need to import is_quiet:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (1 → 1 lines)
+  - use crate::format::{DIM, RESET};
+  + use crate::format::{is_quiet, DIM, RESET};
+ ✓ (0ms)
+
+Now let me read the full block with all the eprintln lines to gate them:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:126..141 ✓ (0ms)
+  ▶ edit src/context.rs (4 → 4 lines)
+  -         if found.is_empty() {
+  +         if found.is_empty() && !is_quiet() {
+                // Even without context files, file listing alone is useful
+                eprintln!("{DIM}  context: project file listing{RESET}");
+            }
+ ✓ (0ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now the block at lines 164-181:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:164..189 ✓ (0ms)
+  ▶ edit src/context.rs (20 → 22 lines)
+        if found.is_empty() && context.is_empty() {
+            None
+        } else {
+  -         for name in &found {
+  -             eprintln!("{DIM}  context: {name}{RESET}");
+  -         }
+  -         if context.contains("## Recently Changed Files") {
+  -             eprintln!("{DIM}  context: recently changed files{RESET}");
+  -         }
+  -         if let Some(branch) = &git_branch_name {
+  -             eprintln!("{DIM}  context: git status (branch: {branch}){RESET}");
+  -         }
+  -         if !memory.entries.is_empty() {
+  -             eprintln!(
+  -                 "{DIM}  context: {} project memories{RESET}",
+  -                 memory.entries.len()
+  -             );
+  +         if !is_quiet() {
+  +             for name in &found {
+  +                 eprintln!("{DIM}  context: {name}{RESET}");
+  ... (16 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 16.6s (3 ✓)
+
+### Step 4: Gate config eprintln! lines in cli.rs
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+The tricky part here: `load_config_file() is called by parse_args(), and parse_output_flags()` happens after that. So the quiet flag won't be set yet when config loading happens. Let me check the order:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:663..693 ✓ (1ms)
+
+So `load_config_file() runs before parse_output_flags(). But the is_quiet()` function checks the env var YOYO_QUIET as a fallback. And for the CLI flag, I could do a quick pre-check of the args before calling load_config_file, similar to how apply_cli_flags works in main.rs.
+
+Actually the simplest approach: check for -q/--quiet in the args before load_config_file() is called, and call enable_quiet() right there. Then the config loading will already respect it.
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (9 → 20 lines)
+        // Handle early-exit subcommands (--help, --version) before anything else.
+        if let Some(result) = crate::dispatch::try_dispatch_subcommand(args) {
+            return result;
+  +     }
+  + 
+  +     // Enable quiet mode early so config/context loading can check it.
+  +     // Also auto-enable when both stdin and stdout are non-terminal (fully piped).
+  +     if args.iter().any(|a| a == "--quiet" || a == "-q")
+  +         || std::env::var("YOYO_QUIET")
+  +             .map(|v| v == "1")
+  +             .unwrap_or(false)
+  +         || (!std::io::stdin().is_terminal() && !std::io::stdout().is_terminal())
+  +     {
+  +         crate::format::enable_quiet();
+        }
+    
+        // Load config file defaults (CLI flags override these)
+ ✓ (1ms)
+
+Wait — I need to add the IsTerminal import. Let me check what's already imported:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:1..11 ✓ (1ms)
+  2 tools completed in 7.6s (2 ✓)
+
+`std::io::IsTerminal is already imported, and crate::format::*` is imported which will include enable_quiet. Good.
+
+Now gate the config loading eprintln lines. Since `enable_quiet() is called before load_config_file(), is_quiet()` will be true by the time those lines execute:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:380..410 ✓ (1ms)
+  ▶ read src/cli.rs:368..383 ✓ (1ms)
+  ▶ edit src/cli.rs (24 → 30 lines)
+        // Check project-level config first
+        for name in CONFIG_FILE_NAMES {
+            if let Ok(content) = std::fs::read_to_string(name) {
+  -             eprintln!("{DIM}  config: {name}{RESET}");
+  +             if !is_quiet() {
+  +                 eprintln!("{DIM}  config: {name}{RESET}");
+  +             }
+                return (parse_config_file(&content), content);
+            }
+        }
+        // Check ~/.yoyo.toml (home directory shorthand)
+        if let Some(path) = home_config_path() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+  -             eprintln!("{DIM}  config: {}{RESET}", path.display());
+  +             if !is_quiet() {
+  +                 eprintln!("{DIM}  config: {}{RESET}", path.display());
+  +             }
+                return (parse_config_file(&content), content);
+            }
+        }
+  ... (10 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 17.2s (4 ✓)
+
+### Step 5: Add --quiet to help text
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/help.rs:1026..1036 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+I'll add --quiet after --verbose:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (4 → 12 lines)
+        let _ = writeln!(
+            s,
+            "  --verbose, -v     Show debug info (API errors, request details)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --quiet, -q       Suppress informational stderr output (config/context loading messages)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    Auto-enabled when both stdin and stdout are piped. Also respects YOYO_QUIET=1 env"
+        );
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.4s (2 ✓)
+
+### Step 6: Write tests
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me find the existing tests in format/mod.rs to add the quiet tests:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/format/mod.rs ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Add tests for quiet mode:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (10 → 32 lines)
+            let result = stderr_is_terminal();
+            // Call again to verify caching works (OnceLock returns same value)
+            assert_eq!(result, stderr_is_terminal());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_is_quiet_returns_bool() {
+  +         // is_quiet() should return a bool without panicking.
+  +         // Since OnceLock is global and test ordering is non-deterministic,
+  +         // we just verify it's callable and stable.
+  +         let result = is_quiet();
+  +         assert_eq!(result, is_quiet());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_enable_quiet_is_callable() {
+  +         // enable_quiet() should not panic even if called after is_quiet()
+  +         // has already initialized the OnceLock. The set() is a no-op if
+  +         // the lock is already initialized.
+  +         enable_quiet();
+  ... (7 more lines)
+ ✓ (1ms)
+
+Now add tests in cli.rs for the flag parsing:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_no_bell_flag" src/… ✓ (3ms)
+  ▶ read src/cli.rs:1254..1269 ✓ (1ms)
+  ▶ edit src/cli.rs (5 → 19 lines)
+            let args = ["yoyo".to_string(), "--no-bell".to_string()];
+            assert!(args.iter().any(|a| a == "--no-bell"));
+            assert!(KNOWN_FLAGS.contains(&"--no-bell"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_quiet_flag_recognized() {
+  +         let args_long = ["yoyo".to_string(), "--quiet".to_string()];
+  +         assert!(args_long.iter().any(|a| a == "--quiet" || a == "-q"));
+  +         assert!(KNOWN_FLAGS.contains(&"--quiet"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_quiet_short_flag_recognized() {
+  +         let args_short = ["yoyo".to_string(), "-q".to_string()];
+  +         assert!(args_short.iter().any(|a| a == "--quiet" || a == "-q"));
+  +         assert!(KNOWN_FLAGS.contains(&"-q"));
+        }
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 12.6s (4 ✓)
+
+### Step 7: Build and test
+  ╭─ Turn 79 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (452ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.5s)
+  3 tools completed in 16.4s (3 ✓)
+
+The quiet field on Config is never read because the quiet state is managed globally through is_quiet(). I have two options: either remove the field or read it somewhere. Since the global state is already set during `parse_args`, the Config field is redundant. Let me remove it to keep things clean:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 2 lines)
+        pub auto_watch: bool,
+  -     pub quiet: bool,
+    }
+ ✓ (1ms)
+
+And remove quiet from the Config construction and OutputFlags:
+  ╭─ Turn 83 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 1 lines)
+            auto_watch: crate::config::parse_auto_watch_from_config(&file_config),
+  -         quiet: of.quiet,
+ ✓ (0ms)
+
+Now remove the quiet field from OutputFlags and the parsing in `parse_output_flags (since we already call enable_quiet()` early in parse_args):
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (11 → 10 lines)
+        json_output: bool,
+        audit: bool,
+        print_system_prompt: bool,
+  -     quiet: bool,
+    }
+ ✓ (1ms)
+
+Now remove the quiet parsing from parse_output_flags and the quiet field from the struct construction:
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quiet" src/cli.rs ✓ (3ms)
+
+I see the quiet parsing is duplicated — once in parse_output_flags and once in `parse_args. Let me remove it from parse_output_flags since the early call in parse_args` is the one that matters:
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:572..607 ✓ (1ms)
+  ▶ edit src/cli.rs (27 → 12 lines)
+        let print_system_prompt = args.iter().any(|a| a == "--print-system-prompt");
+  - 
+  -     let quiet = args.iter().any(|a| a == "--quiet" || a == "-q")
+  -         || std::env::var("YOYO_QUIET")
+  -             .map(|v| v == "1")
+  -             .unwrap_or(false)
+  -         || file_config
+  -             .get("quiet")
+  -             .map(|v| v == "true")
+  -             .unwrap_or(false);
+  - 
+  -     // Enable quiet mode globally so context/context loading can check it
+  -     if quiet {
+  -         crate::format::enable_quiet();
+  -     }
+    
+        OutputFlags {
+            verbose,
+  ···
+            json_output,
+  ... (5 more lines)
+ ✗ (0ms)
+    │ old_text not found in src/cli.rs.
+  ▶ read src/cli.rs:576..606 ✓ (1ms)
+  ▶ edit src/cli.rs (25 → 10 lines)
+  -     let quiet = args.iter().any(|a| a == "--quiet" || a == "-q")
+  -         || std::env::var("YOYO_QUIET")
+  -             .map(|v| v == "1")
+  -             .unwrap_or(false)
+  -         || file_config
+  -             .get("quiet")
+  -             .map(|v| v == "true")
+  -             .unwrap_or(false);
+  - 
+  -     // Enable quiet mode globally so context/config loading can check it
+  -     if quiet {
+  -         crate::format::enable_quiet();
+  -     }
+  - 
+        OutputFlags {
+            verbose,
+            auto_approve,
+  ···
+            json_output,
+            audit,
+  ... (4 more lines)
+ ✓ (1ms)
+  4 tools completed in 14.2s (3 ✓, 1 ✗)
+
+Now let's try building again:
+  ╭─ Turn 90 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.8s)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 91 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (38.2s)
+  2 tools completed in 48.3s (2 ✓)
+
+All 2233 tests pass. Let me also verify the integration tests recognize the new flag:
+  ╭─ Turn 93 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quiet" tests/integratio… ✓ (3ms)
+
+No existing integration tests for quiet - that's fine, we have the unit tests.
+
+Let me also check we handle the --quiet flag in the `KNOWN_FLAGS` comprehensive test:
+  ╭─ Turn 94 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Every flag in the code"… ✓ (3ms)
+  ▶ read src/cli.rs:1410..1460 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+The flags-with-values test only checks flags that take values. `-q/--quiet` are boolean flags so they don't need to be there, just in KNOWN_FLAGS.
+
+Now let me do a final check — the format check:
+  ╭─ Turn 96 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (468ms)
+
+All checks pass. Let me verify the changes look right by reviewing what changed:
+  ╭─ Turn 97 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (10ms)
+
+There are uncommitted changes from other tasks. Let me see what my specific changes are (only the files I touched: cli.rs, format/mod.rs, context.rs, help.rs):
+  ╭─ Turn 98 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/cli.rs src/format/m… ✓ (8ms)
+
+Everything looks correct. Now let me commit:
+  ╭─ Turn 99 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (13 lines) ✓ (16ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me check if docs need updating. The CLAUDE.md mentions cli.rs and format/mod.rs architecture — let me verify:
+  ╭─ Turn 101 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format/mod.rs\|cli.rs.*… ✓ (3ms)
+
+These descriptions are still accurate — cli.rs does argument parsing, `format/mod.rs` has constants and utility functions. The quiet flag is consistent with both descriptions.
+
+Let me also check if README mentions anything about flags:
+  ╭─ Turn 102 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quiet\|--no-color\|--ve… ✓ (3ms)
+
+No mentions of specific flags in README — nothing to update there.
+  ╭─ Turn 103 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quiet\|piped" docs/src/… ✓ (4ms)
+
+Let me add a note about --quiet to the piped mode docs:
+  ╭─ Turn 104 ───────────────────────────────────────────────────────────╮
+  ▶ read docs/src/usage/piped-mode.md ✓ (1ms)
+  ▶ edit docs/src/usage/piped-mode.md (1 → 12 lines)
+  + ## Quiet mode
+  + 
+  + When both stdin and stdout are piped (fully scripted usage), yoyo automatically enables quiet mode, suppressing informational `config:` and `context:` loading messages on stderr. You can also enable this explicitly with `--quiet` or `-q`:
+  + 
+  + ```bash
+  + echo "fix the test" | yoyo -q > result.md  # explicit quiet
+  + echo "fix the test" | yoyo > result.md     # auto-quiet (both pipes detected)
+  + ```
+  + 
+  + The `YOYO_QUIET=1` environment variable also enables quiet mode.
+  + 
+    ## Slash commands aren't dispatched in piped mode
+ ✓ (0ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Now let me amend the commit with the doc update:
+  ╭─ Turn 106 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add docs/src/usage/piped-mod… ✓ (12ms)
+
+Let me do a final verify that everything still passes:
+  ╭─ Turn 107 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (36.9s)
+
+All checks pass. Let me verify the final state:
+  ╭─ Turn 108 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+All done. Here's what I implemented:
+
+## Summary
+
+Added `--quiet / -q` flag to suppress informational stderr output for scripted usage:
+
+1. `src/format/mod.rs` — Added enable_quiet() / is_quiet() global flag using the same OnceLock pattern as disable_color() and disable_bell(). Respects `YOYO_QUIET` env var. Added tests for both functions.
+
+2. `src/cli.rs` —
+   • Added --quiet and -q to KNOWN_FLAGS
+   • Early quiet detection in parse_args() before load_config_file() runs, so config loading messages are also gated
+   • Auto-enables quiet when both stdin and stdout are non-terminal (fully piped mode)
+   • Gated all 3 config: eprintln lines in load_config_file() on !is_quiet()
+   • Added tests for flag recognition
+
+3. `src/context.rs` — Gated all 5 context: eprintln lines in load_project_context() on !is_quiet(), wrapped in a single if !is_quiet() block for cleanliness.
+
+4. `src/help.rs` — Added --quiet, -q to CLI help text with description of auto-enable behavior.
+
+5. **`docs/src/usage/piped-mode.md`** — Added "Quiet mode" section documenting the feature.
+
+  ↳ 8m 53s · 32266→16714 tokens · $3.48
+  ⬤ 18% of context window used
+
+  ✓ Watch passed: `cargo test`
+

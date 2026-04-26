@@ -1,0 +1,55 @@
+  config: .yoyo.toml
+  context: CLAUDE.md
+  context: recently changed files
+  context: git status (branch: main)
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate this task by checking if the changes were actually implemented.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+ ✓ (8ms)
+  2 tools completed in 2.3s (2 ✓)
+
+The diff shows changes to src/prompt.rs and src/main.rs but notably **no changes to src/repl.rs**. The diff is also from a different task (TTY spinner suppression). Let me check the actual state of the files for watch-related changes.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_watch_after_prompt"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_watch_after_prompt"… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (7ms)
+  3 tools completed in 1.9s (3 ✓)
+
+So `run_watch_after_prompt exists in src/prompt.rs but is **never called from src/repl.rs`**. The task explicitly requires calling it from handle_quick(), handle_extended(), and the piped-mode path. Let me check more closely.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "watch_after\|run_watch_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,220p' src/prompt.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2485,2540p' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_quick\|handle_ex… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,1130p' src/repl.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_watch\|watch" src/… ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 8.1s (6 ✓)
+
+Now I can see the full picture. The task required:
+
+1. ✅ run_watch_after_prompt() function in src/prompt.rs — DONE
+2. ❌ Call it from handle_quick() and handle_extended() in `src/repl.rs` — NOT DONE
+3. ❌ Auto-detect watch command in piped-mode path in src/repl.rs — NOT DONE
+4. ⚠️ Tests — partially done (guard condition test, but not actual async test)
+
+The core deliverable — making watch mode work in non-REPL modes — is incomplete. The function was created but never wired into the non-REPL code paths. The feature literally cannot work as described.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (22.0s)
+
+Tests pass, but the feature doesn't work because the function is never called from the non-REPL paths.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (0ms)
+
+**Verdict: FAIL**
+
+The function run_watch_after_prompt() was correctly implemented in src/prompt.rs, but the task explicitly required calling it from three places in src/repl.rs (handle_quick(), handle_extended(), and the piped-mode !is_interactive branch). None of those call sites were added. The function is dead code — the feature cannot work as described.
+
+  ↳ 1m 2s · 2890→1607 tokens · $0.248
+  ⬤ 1% of context window used
+
+  ✓ Watch passed: `cargo test`
+

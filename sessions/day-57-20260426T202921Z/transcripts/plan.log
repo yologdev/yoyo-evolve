@@ -1,0 +1,163 @@
+  config: .yoyo.toml
+  context: CLAUDE.md
+  context: recently changed files
+  context: git status (branch: main)
+  yoyo (piped mode) — model: claude-opus-4-6
+  ⠋ thinking...[K[K
+
+
+I'll start by reading the issues file and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…[K[K ✓ (3ms)
+[K[K ✓ (4ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -80  ▶ $ cat CHANGELOG.md 2>/dev/null | head -40[K[K ✓ (3ms)
+[K[K ✓ (5ms)
+  4 tools completed in 5.1s (4 ✓)
+
+Now let me check what's changed since the last release (v0.1.9) to understand the release readiness:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline v0.1.9..HEAD 2>/dev/null | head -40  ▶ $ git log --oneline v0.1.9..HEAD 2>/dev/null | wc -l[K[K ✓ (4ms)
+[K[K ✓ (4ms)
+  ▶ $ git tag --sort=-creatordate | head -5  ▶ $ git log --oneline --since="2026-04-21" | head -40[K[K ✓ (5ms)
+[K[K ✓ (5ms)
+  ▶ $ git log --oneline --since="2026-04-21" | wc -l[K[K ✓ (4ms)
+  5 tools completed in 7.9s (5 ✓)
+
+Good. 51 commits since v0.1.9 release (2026-04-21). That's enough for a release. Let me check the assessment's findings more carefully and plan the tasks.
+
+Now let me think about task allocation:
+
+Assessment findings:
+1. Biggest competitive gap: Auto lint-fix-test loop (Aider comparison) — the pieces exist but aren't integrated
+2. **Bug #1**: Spinner ANSI leak in piped mode — real UX issue for scripted usage
+3. Bug #2: Context loading noise in piped mode — same category
+4. Issue #226: Creator says loop closed (commits already shipped), just needs a comment
+5. Issue #215: TUI challenge — major effort, not a single-task thing
+
+Task allocation plan:
+• Task 1 (self-driven, capability gap): Suppress spinner ANSI escapes and context loading noise in non-TTY mode. This is a real bug affecting piped/scripted usage — the builder's environment blindspot from the assessment.
+• Task 2 (self-driven, competitive gap): Auto lint-fix loop integration — after agent edits, automatically run lint, feed errors back to agent for auto-fix. This is the single biggest Aider gap.
+• **Task 3 (self-driven)**: Update CLAUDE_CODE_GAP.md to reflect current state (stale since Day 54) and prepare release notes for v0.1.10 (51 commits accumulated).
+
+Wait — let me reconsider. Task 3 shouldn't be a code task. Let me think about what gives the most value:
+
+1. **Piped mode cleanup** (Bug fix, small, high impact for real users)
+2. Auto lint-fix-test loop (Biggest competitive gap, but might be too big for 20 min)
+3. Something else self-driven
+
+The auto lint-fix loop needs careful scoping. Let me think about what's feasible in 20 minutes. The assessment says yoyo has /watch all that chains lint+test, and /fix that can auto-fix. The missing piece is: after the agent makes edits via tool calls, automatically run lint → if errors, feed to agent → fix → re-run. This is fundamentally about the run_prompt flow in prompt.rs.
+
+Actually, let me scope it more tightly: a `/watch fix or enhancing the existing /watch` loop to auto-feed lint errors back to the agent. That's closer to what already exists.
+
+Let me look at what /watch currently does:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "watch" src/commands_dev.rs | head -20[K[K ✓ (4ms)
+  ▶ $ grep -n "watch" src/prompt.rs | head -30[K[K ✓ (4ms)
+  2 tools completed in 11.3s (2 ✓)
+
+Now let me check how the watch loop integrates with the prompt flow — specifically where the auto-fix happens:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "watch" src/prompt.rs | grep -v "test_" | grep -v "^24\|^26\|^29\|^30\|^…  ▶ $ grep -n "get_watch_command\|run_watch_command\|watch_fix" src/prompt.rs | grep -…[K[K ✓ (4ms)
+[K[K ✓ (5ms)
+  ▶ $ grep -n "get_watch_command\|watch_cmd\|watch_fix\|MAX_WATCH" src/prompt.rs | gre…[K[K ✓ (4ms)
+  ▶ $ grep -n "get_watch_command" src/repl.rs[K[K ✓ (3ms)
+  ▶ $ sed -n '650,720p' src/repl.rs[K[K ✓ (4ms)
+  5 tools completed in 13.6s (5 ✓)
+
+Good — so the watch loop already exists in repl.rs: after agent edits, it runs the watch command, and if it fails, it feeds the error back to the agent for auto-fix, up to MAX_WATCH_FIX_ATTEMPTS. This IS the auto-lint-fix-test loop. The gap from the assessment is that it requires the user to manually enable it with /watch.
+
+The real improvement would be making watch auto-enable or making the loop smarter. But actually, looking at line 374 — there's already auto_watch support! Let me check:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '370,385p' src/repl.rs[K[K ✓ (3ms)
+
+So auto_watch is a config option. The pieces are really all there. The assessment's "auto lint-fix-test loop" gap is more about polish than missing functionality.
+
+Let me reconsider my task priorities given this:
+
+1. Bug fix: piped mode cleanup (spinner ANSI leak + context loading noise) — real, impactful
+2. Auto lint-fix-test integration polish — enhance the watch loop, maybe add cargo clippy --fix auto-application
+3. Something else...
+
+Actually, let me look at what's most impactful. The piped mode bugs are real and affect real users. Let me check where spinner and context loading happen:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "is_terminal\|atty\|isatty" src/format/tools.rs src/format/mod.rs src/ma…[K[K ✓ (4ms)
+  ▶ $ grep -n "config:\|context:" src/main.rs | head -20[K[K ✓ (3ms)
+  ▶ $ grep -n "eprintln.*config:\|eprintln.*context:\|println.*config:\|println.*conte…[K[K ✓ (4ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Good — config loading already uses eprintln! (stderr), so it shouldn't leak to stdout in piped mode. Let me check the context loading lines:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "context:" src/context.rs | head -10[K[K ✓ (3ms)
+
+Those are also eprintln!. So maybe the assessment's "context loading noise in piped mode" isn't actually on stdout — it's on stderr. Let me verify the spinner:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "eprint\|print!" src/format/tools.rs | grep -i "spinner\|think\|\\\\x1b\…[K[K ✓ (4ms)
+
+These all use eprint! (stderr), which is good — but the assessment found `⠋ thinking...[K[K` leaking. This means the ANSI escape sequences appear in stderr when captured. The issue is: when stderr is captured/redirected (e.g., `yoyo 2>&1 | less`), the escape codes become visible garbage. The fix is to check if stderr is a terminal before emitting spinner/progress lines.
+
+OK, I have a clear picture now. Let me plan the tasks:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (39 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (56 lines) ✓ (0ms)
+  2 tools completed in 23.3s (2 ✓)
+
+Now for task 3. Let me think about what's most valuable. The assessment mentions we could update CLAUDE_CODE_GAP.md, but that's a doc-only task. Let me think about what competitive feature is most impactful and scoped to 20 minutes.
+
+Actually, looking at the assessment more carefully — the piped mode cleanup (task 1) and the watch integration (task 2) are both self-driven competitive improvements. For task 3, I should look at something else that's high impact.
+
+One thing that jumped out: "Context loading lines appear on every piped invocation." Even though they're on stderr, they're noise for scripted usage. But that's small — more of a polish item.
+
+Let me think about what else matters. The assessment says 51 commits since v0.1.9. That's a lot. A release prep task would be valuable — update CHANGELOG.md and tag. But that's more of a follow-up activity.
+
+What about the **tree-sitter repo map** gap? That's a bigger investment. What about something smaller but impactful...
+
+Let me look at what would make piped mode genuinely great — suppress the verbose loading output:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "is_interactive\|is_terminal\|piped" src/main.rs | head -20[K[K ✓ (4ms)
+
+Let me reconsider task 3. Looking at the trajectory, the most actionable competitive feature that's small enough for 20 minutes... Let me think about the verbose piped mode issue. The assessment found that config: and context: lines appear. They're on stderr. In many scripted usages, stderr is visible. Adding a --quiet/-q flag that suppresses informational stderr output would be a nice improvement.
+
+Actually, a simpler and more impactful task: **Add --watch CLI flag** so piped/single-prompt mode can use the watch loop without needing the REPL. This directly complements task 2.
+
+Wait, but task 2 already covers making watch work in non-REPL modes. Let me pick something different.
+
+How about: Quiet mode for scripted usage — a --quiet/-q flag that suppresses all informational stderr output (config loading, context loading, spinner, model info). This makes yoyo a much better tool for scripting pipelines.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_03.md (74 lines) ✓ (0ms)
+
+Now write the issue responses:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (28 lines) ✓ (0ms)
+
+Now commit:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com…[K[K ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git …[K[K ✓ (10ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Session plan committed. Here's a summary of what I planned:
+
+## Day 57 (19:37) Session Plan — 3 Tasks
+
+All three tasks are self-driven (no sponsor issues pending, no community issues ready for implementation). The theme is **piped/scripted mode polish** — making yoyo a better building block for shell pipelines and closing the auto-fix loop gap with Aider.
+
+### Task 1: Suppress spinner ANSI artifacts in non-TTY stderr
+Files: format/tools.rs, format/mod.rs  
+Fixes the ⠋ thinking...[K[K] garbage that leaks when stderr isn't a terminal. Adds a stderr_is_terminal() helper and gates all spinner/progress escape sequences on it.
+
+### Task 2: Auto-enable watch loop in piped/single-prompt mode  
+Files: prompt.rs, repl.rs  
+Extracts the watch-after-edit logic from the REPL loop into a reusable run_watch_after_prompt() function, then calls it from piped and single-prompt modes. Closes the biggest Aider gap: automatic lint+test after every AI edit, even outside the REPL.
+
+### Task 3: Add `--quiet` / `-q` flag for scripted usage  
+Files: cli.rs, format/mod.rs, context.rs  
+Suppresses informational stderr output (config loading, context loading, model info) for clean pipeline integration. Auto-enables in fully-piped mode.
+
+### Issue Dispositions
+• #226: Already resolved (creator confirmed)
+• #215: Deferred (major effort, needs layer separation)
+• All others: Tracking/stale/non-code — no action needed
+
+  ↳ 3m 19s · 19080→6966 tokens · $1.05
+  ⬤ 12% of context window used
+
+

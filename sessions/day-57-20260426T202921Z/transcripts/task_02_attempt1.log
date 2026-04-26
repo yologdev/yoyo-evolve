@@ -1,0 +1,441 @@
+  config: .yoyo.toml
+  context: CLAUDE.md
+  context: recently changed files
+  context: git status (branch: main)
+  yoyo (piped mode) — model: claude-opus-4-6
+
+
+
+I'll start by understanding the existing watch infrastructure in the REPL, then implement the changes.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 24.9s (7 ✓)
+
+Let me study the existing watch infrastructure:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn run_watch_command|fn build_watch_fix_prompt|fn set_watch_…' in src/prompt.rs ✓ (3ms)
+  ▶ search 'watch_command|watch_fix|MAX_WATCH' in src/prompt.rs ✓ (3ms)
+  ▶ search 'watch_command|watch_fix|MAX_WATCH|set_watch|get_watch' (*.rs) ✓ (19ms)
+  ▶ search 'watch' (*.rs) ✓ (20ms)
+  4 tools completed in 16.3s (4 ✓)
+
+Now let me read the key parts:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:24..99 ✓ (1ms)
+  ▶ read src/prompt.rs:98..148 ✓ (1ms)
+  ▶ read src/prompt.rs:147..157 ✓ (1ms)
+  3 tools completed in 8.8s (3 ✓)
+
+Now let me look at the REPL watch loop (around line 656):
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:640..720 ✓ (1ms)
+
+Now let me look at handle_quick() and handle_extended():
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_quick|fn handle_extended|fn handle_side' in src/repl.rs ✓ (3ms)
+  ▶ search 'pub async fn handle_quick|pub async fn handle_extended|pub a…' in src/repl.rs ✓ (2ms)
+  ▶ search 'handle_quick|handle_extended|handle_side' in src/repl.rs ✓ (2ms)
+  3 tools completed in 9.0s (3 ✓)
+
+Hmm, the task description mentions handle_quick() and handle_extended() but they may not exist. Let me look at how single-prompt and piped modes work:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_interactive|piped|single.prompt|quick|extended' in src/repl.rs ✓ (2ms)
+  ▶ search 'is_interactive|piped|single_prompt' in src/repl.rs ✓ (2ms)
+  ▶ search 'interactive' in src/repl.rs ✓ (2ms)
+  ▶ search 'pub async fn' in src/repl.rs ✓ (2ms)
+  4 tools completed in 11.6s (4 ✓)
+
+Let me look at how the non-REPL mode works. Let me check main.rs for how single-prompt mode is dispatched:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'run_prompt|run_repl|single.*prompt|piped' in src/main.rs ✓ (2ms)
+  ▶ search 'fn main' in src/main.rs ✓ (2ms)
+  ▶ read src/main.rs:1073..1153 ✓ (1ms)
+  ▶ read src/main.rs:1152..1212 ✓ (1ms)
+  4 tools completed in 14.8s (4 ✓)
+
+Now let me find run_single_prompt and run_piped_mode:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn run_single_prompt|fn run_piped_mode' in src/main.rs ✓ (2ms)
+  ▶ search 'fn run_single_prompt|fn run_piped_mode' (*.rs) ✓ (19ms)
+  ▶ search 'run_single_prompt|run_piped_mode' (*.rs) ✓ (18ms)
+  3 tools completed in 12.8s (3 ✓)
+
+They must be defined in main.rs but without the fn prefix matching. Let me search differently:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ search 'single_prompt|piped_mode' in src/main.rs ✓ (3ms)
+
+That's strange - main.rs calls run_single_prompt and run_piped_mode but they're not found. Let me look more carefully:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1143..1193 ✓ (1ms)
+  ▶ $ grep -n "run_single_prompt\|run_piped_mode" src/main.rs ✓ (3ms)
+  ▶ read src/main.rs:768..908 ✓ (1ms)
+  ▶ read src/main.rs:904..1004 ✓ (1ms)
+  4 tools completed in 14.4s (4 ✓)
+
+Now I have a clear picture. The task description mentions `handle_quick() and handle_extended() which don't exist — the actual functions are run_single_prompt() and run_piped_mode() in src/main.rs, not in src/repl.rs`. Let me also check the REPL auto-watch setup path:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:365..395 ✓ (1ms)
+
+Now let me understand the imports and look at what run_prompt_auto_retry returns:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub async fn run_prompt_auto_retry\b' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:1380..1410 ✓ (1ms)
+  ▶ read src/prompt.rs:1409..1449 ✓ (1ms)
+  3 tools completed in 9.2s (3 ✓)
+
+Now let me also look at the PromptOutcome struct:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct PromptOutcome' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:167..182 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me check imports in main.rs for the functions I need:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1..26 ✓ (1ms)
+  ▶ $ head -80 src/main.rs | grep -n 'use \|mod ' ✓ (3ms)
+  ▶ $ sed -n '80,95p' src/main.rs ✓ (3ms)
+  3 tools completed in 12.0s (3 ✓)
+
+Good. Now I have a full understanding. Let me also look at the SessionChanges import and how it's used:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ search 'SessionChanges' in src/main.rs ✓ (2ms)
+  ▶ search 'session_changes|session::SessionChanges' in src/main.rs ✓ (2ms)
+  2 tools completed in 7.8s (2 ✓)
+
+The run_single_prompt and run_piped_mode in main.rs don't use SessionChanges or run_prompt_auto_retry. They use run_prompt directly (which doesn't have auto-retry). Let me understand the difference:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub async fn run_prompt\b' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:1196..1221 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 15.5s (3 ✓)
+
+Now I have a clear picture. Here's my plan:
+
+1. **Add `run_watch_after_prompt()** in src/prompt.rs` — extracts the watch loop logic from the REPL. It needs `agent, session_total, model, and changes params to call run_prompt_auto_retry`.
+
+2. Wire into `run_single_prompt()` and **`run_piped_mode()** in src/main.rs — after the prompt completes, call run_watch_after_prompt()`.
+
+3. **Auto-detect watch command** in both non-REPL modes (same as the REPL does at line 374).
+
+4. Add tests for the new function.
+
+Let me start with the tests and function:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me look at what imports are already in prompt.rs:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1..23 ✓ (1ms)
+
+Now, let me check which session module items we need:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::session' in src/prompt.rs ✓ (2ms)
+
+Good, SessionChanges is re-exported from prompt.rs. Now let me write the run_watch_after_prompt function. It needs to be placed after the existing watch functions and before the re-exports:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:148..168 ✓ (1ms)
+
+Now I'll add the run_watch_after_prompt function. Let me place it right after run_watch_command:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (4 → 73 lines)
+        (status, combined)
+  + }
+  + 
+  + /// Run the watch command after a prompt completes (for non-REPL modes).
+  + ///
+  + /// If a watch command is active and the prompt modified files, this runs the
+  + /// watch command and auto-fixes failures up to [`MAX_WATCH_FIX_ATTEMPTS`] times.
+  + /// This is the extracted, reusable version of the watch loop that the REPL uses
+  + /// inline (see `repl.rs` ~line 656).
+  + ///
+  + /// Returns `true` if the watch command passed (or no watch command is set),
+  + /// `false` if it still fails after all fix attempts.
+  + pub async fn run_watch_after_prompt(
+  +     agent: &mut Agent,
+  +     session_total: &mut Usage,
+  +     model: &str,
+  +     changes: &SessionChanges,
+  + ) -> bool {
+  +     let watch_cmd = match get_watch_command() {
+  +         Some(cmd) => cmd,
+  ... (53 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/prompt.rs.
+  ▶ read src/prompt.rs:148..158 ✓ (1ms)
+  2 tools completed in 7.1s (1 ✓, 1 ✗)
+
+There seems to be a line 151 missing (the section header). Let me see the raw content:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '148,157p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '148,160p' src/prompt.rs | cat -A ✓ (3ms)
+  2 tools completed in 5.9s (2 ✓)
+
+I see — line 151 has unicode box-drawing characters. Let me use a more robust edit approach:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '149,153p' src/prompt.rs | xxd | head -10 ✓ (4ms)
+
+Let me just get the exact line 151 content:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '151p' src/prompt.rs ✓ (3ms)
+  ▶ $ awk 'NR==151' src/prompt.rs ✓ (4ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Hmm, line 151 seems empty or not rendering. Let me just use a different anchor:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Audit log + session budget" src/prompt.rs ✓ (3ms)
+  ▶ $ grep -n "Audit log" src/prompt.rs ✓ (3ms)
+  2 tools completed in 5.2s (2 ✓)
+
+OK so that unicode section header line is being weird. Let me just find a clean edit target. I'll use the closing } of `run_watch_command + the comment about prompt_budget`:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '149,152p' src/prompt.rs ✓ (3ms)
+
+Wait, that's only 3 lines but numbered 149-152. Line 150 is empty, line 151 is the unicode comment that's not showing, and line 152 starts "// Extracted".
+
+Let me try a different approach — I'll insert the new function via a sed command that adds it before the re-export comment:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "// Extracted into .prompt_budget. module" src/prompt.rs ✓ (3ms)
+
+I'll insert my new function between line 150 (empty line after }) and line 151 (the unicode section header). Let me use a Python script for the insertion to avoid encoding issues:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (81 lines) ✓ (20ms)
+  ▶ $ sed -n '148,230p' src/prompt.rs ✓ (4ms)
+  2 tools completed in 6.3s (2 ✓)
+
+I notice the \n in the truncation format string got interpreted literally. Let me fix that:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (2 → 1 lines)
+  -         format!("{}...
+  - (truncated)", safe_truncate(&output, 2000))
+  +         format!("{}...\n(truncated)", safe_truncate(&output, 2000))
+ ✓ (1ms)
+
+Good. Let me verify the function compiles:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (4.8s)
+
+It compiles. The warning about unused function will go away once I wire it into main.rs. Let me do that now.
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Now I need to wire run_watch_after_prompt into `run_single_prompt() and run_piped_mode() in src/main.rs`. I also need to add auto-watch detection for both modes.
+
+Let me look at run_single_prompt more carefully to understand the flow:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:768..898 ✓ (1ms)
+
+I need to:
+1. Add auto-watch detection at the start of both functions
+2. After the prompt/response, call run_watch_after_prompt
+
+For `run_single_prompt`, I need to add the auto-watch detection and then the watch-after-prompt call. The watch should run after the response is obtained but before the output is written (since the watch might fix things).
+
+Actually, looking more carefully — the watch should run after the prompt completes. The agent has already produced its response. The watch command checks if the agent's code changes broke anything. So it should go after the response is obtained but the response text is still valid for output. Let me add it right after the response is obtained and before the output/bell.
+
+For `run_single_prompt`:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (21 → 33 lines)
+                "{DIM}  yoyo (prompt mode) — model: {}{RESET}",
+                agent_config.model
+            );
+  +     }
+  + 
+  +     // Auto-enable watch mode if a project type is detected and config allows it
+  +     if get_watch_command().is_none() && agent_config.auto_watch {
+  +         if let Some(cmd) = commands_dev::auto_detect_watch_command() {
+  +             set_watch_command(&cmd);
+  +             eprintln!(
+  +                 "{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}"
+  +             );
+  +         }
+        }
+  + 
+        let mut session_total = Usage::default();
+  +     let session_changes = SessionChanges::new();
+        let prompt_start = Instant::now();
+ ✓ (1ms)
+
+Now add the watch-after-prompt call after the response is obtained, before the bell/output:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:886..906 ✓ (0ms)
+
+I need to add the watch call after the response is obtained and before the output. Line 891 has final_response → }; and line 892 has the bell:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (3 → 7 lines)
+            final_response
+        };
+  + 
+  +     // Run watch command after prompt if active (auto lint/test loop)
+  +     run_watch_after_prompt(agent, &mut session_total, &agent_config.model, &session_changes).await;
+  + 
+        format::maybe_ring_bell(prompt_start.elapsed());
+ ✓ (1ms)
+
+Now let me do the same for `run_piped_mode`:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:912..982 ✓ (2ms)
+
+Now let me edit run_piped_mode to add auto-watch detection and the watch-after-prompt call:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (17 → 36 lines)
+            "{DIM}  yoyo (piped mode) — model: {}{RESET}",
+            agent_config.model
+        );
+  + 
+  +     // Auto-enable watch mode if a project type is detected and config allows it
+  +     if get_watch_command().is_none() && agent_config.auto_watch {
+  +         if let Some(cmd) = commands_dev::auto_detect_watch_command() {
+  +             set_watch_command(&cmd);
+  +             eprintln!(
+  +                 "{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}"
+  +             );
+  +         }
+  +     }
+  + 
+        let mut session_total = Usage::default();
+  +     let session_changes = SessionChanges::new();
+        let prompt_start = Instant::now();
+        let initial = run_prompt(agent, input, &mut session_total, &agent_config.model).await;
+        // Fallback retry for piped mode
+  ···
+  ... (11 more lines)
+ ✓ (1ms)
+
+Now let me check that both SessionChanges and the other necessary imports are available:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (5.1s)
+
+Clean build, no warnings. The SessionChanges and other types are accessible via use prompt::* which re-exports them.
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now let me add tests. Let me look at existing watch tests to understand the pattern:
+  ╭─ Turn 79 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:2370..2450 ✓ (1ms)
+  ▶ read src/prompt.rs:2449..2479 ✓ (1ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Now I can't easily test the async run_watch_after_prompt directly because it requires an Agent instance (which needs an API key). But I can test the synchronous parts. The task says to test:
+• No watch command set → returns immediately
+• Passing watch command → returns true
+• Failing command → attempts fix (mock the prompt part, just test the loop structure)
+
+Since run_watch_after_prompt requires an Agent, I can't easily unit-test the full function. But I can:
+1. Test that get_watch_command() being None causes early return (test the logic)
+2. Test the integration of run_watch_command with get_watch_command/`set_watch_command`
+
+Let me add tests that verify the watch infrastructure for non-REPL modes works correctly. These test the building blocks:
+  ╭─ Turn 81 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (10 → 77 lines)
+            assert!(
+                !output.is_empty(),
+                "should have some error output: {output}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_watch_command_none_by_default() {
+  +         // After clearing, there should be no watch command
+  +         clear_watch_command();
+  +         assert!(
+  +             get_watch_command().is_none(),
+  +             "should have no watch command after clear"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_watch_command_roundtrip() {
+  +         // Set a command, get it back, clear it
+  +         set_watch_command("cargo test --release");
+  ... (53 more lines)
+ ✓ (1ms)
+
+Now let me build and test:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (5.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- test_watch 2>&1 | … ✓ (9.7s)
+  2 tools completed in 21.9s (2 ✓)
+
+Wait, only 2 tests ran but I added more. The test names might not start with test_watch. Let me check which tests are being filtered:
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- test_watch test_ru… ✓ (135ms)
+
+All 11 watch tests pass (the original ones plus my new ones).
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (4.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (37.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (460ms)
+  6 tools completed in 1m 12s (6 ✓)
+
+All checks pass: build, test (86 passed, 1 ignored, 0 failed), clippy (0 warnings), fmt (clean).
+  ╭─ Turn 91 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 11.1s (2 ✓)
+
+Now let me update the docs. Let me check what needs updating:
+
+1. CLAUDE.md — the architecture section mentions prompt.rs functions. Need to add run_watch_after_prompt.
+2. README.md — may mention watch mode.
+3. docs/src/ — user-facing docs about watch mode.
+  ╭─ Turn 93 ────────────────────────────────────────────────────────────╮
+  ▶ search 'prompt\.rs' in CLAUDE.md ✓ (2ms)
+  ▶ read CLAUDE.md:71..76 ✓ (0ms)
+  2 tools completed in 7.7s (2 ✓)
+
+The prompt.rs description should mention the watch-after-prompt function. Let me update it:
+  ╭─ Turn 95 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic
+  + - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic, watch-after-prompt for non-REPL modes
+ ✓ (0ms)
+
+Now let me check if the main.rs architecture description needs updating:
+  ╭─ Turn 96 ────────────────────────────────────────────────────────────╮
+  ▶ search 'main\.rs' in CLAUDE.md ✓ (3ms)
+
+Now let me check the README for watch mode mentions:
+  ╭─ Turn 97 ────────────────────────────────────────────────────────────╮
+  ▶ search 'watch' in README.md ✓ (2ms)
+  ▶ read README.md:398..408 ✓ (0ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Let me also check if the README mentions piped mode or single-prompt mode:
+  ╭─ Turn 99 ────────────────────────────────────────────────────────────╮
+  ▶ search 'piped|single.prompt|prompt mode|\-\-prompt|\-p' in README.md ✓ (2ms)
+  ▶ search 'pipe|--prompt|-p \"' in README.md ✓ (2ms)
+  ▶ $ grep -n "prompt\|pipe\|auto.watch\|watch" README.md ✓ (3ms)
+  ▶ read README.md:270..285 ✓ (0ms)
+  4 tools completed in 15.6s (4 ✓)
+
+The README mentions watch in the commands table and prompt.rs in the architecture. Let me update the prompt.rs description in README:
+  ╭─ Turn 103 ───────────────────────────────────────────────────────────╮
+  ▶ edit README.md (1 → 1 lines)
+  -   prompt.rs             System prompt construction, project context assembly
+  +   prompt.rs             System prompt construction, project context assembly, watch-after-prompt
+ ✓ (0ms)
+
+Now let me also add a mention that watch mode works in piped/single-prompt mode. Let me find the features list:
+  ╭─ Turn 104 ───────────────────────────────────────────────────────────╮
+  ▶ read README.md:210..225 ✓ (1ms)
+  ▶ search 'watch.*lint|auto.*fix|lint.*test' in README.md ✓ (2ms)
+  ▶ search 'Dev Workflow|watch|lint|auto-fix' in README.md ✓ (3ms)
+  ▶ $ grep -n "##" README.md | head -30 ✓ (3ms)
+  4 tools completed in 11.1s (4 ✓)
+
+  ↳ 10m 3s · 39013→14819 tokens · $3.56
+  ⬤ 20% of context window used
+
+

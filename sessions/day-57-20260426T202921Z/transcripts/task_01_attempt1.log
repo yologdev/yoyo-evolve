@@ -1,0 +1,331 @@
+  config: .yoyo.toml
+  context: CLAUDE.md
+  context: recently changed files
+  context: git status (branch: main)
+  yoyo (piped mode) — model: claude-opus-4-6
+[K[K
+
+
+I'll implement this task: suppress spinner and progress ANSI escape sequences when stderr is not a TTY.
+
+Let me start by understanding the current code.
+  ▶ read src/format/tools.rs  ▶ read src/format/mod.rs:1..51 ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me see the ToolProgressTimer struct and its methods:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/tools.rs:89..339 ✓ (1ms)
+
+Good. Now I have a clear picture. Let me plan my implementation:
+
+1. Add `stderr_is_terminal() helper in format/mod.rs with OnceLock` caching
+2. Gate Spinner::start() to skip the thread when not a TTY
+3. Gate Spinner::stop() and Drop to skip ANSI sequences
+4. Gate ToolProgressTimer::start() similarly
+5. Gate ToolProgressTimer::stop() and Drop similarly
+6. Write tests
+
+Let me start with the helper function and tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 13.9s (5 ✓)
+
+Now let me check what's already imported and the existing pattern in `format/mod.rs`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'is_terminal|IsTerminal' in src/ ✓ (6ms)
+  ▶ search 'OnceLock' in src/format/mod.rs ✓ (2ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Good — OnceLock is already imported. Let me also check what's re-exported from the format module:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub (mod|use|fn|static|const)"' in src/format/mod.rs ✓ (2ms)
+  ▶ search '^pub (mod|use|fn|static|const)' in src/format/mod.rs ✓ (2ms)
+  ▶ search '^pub "' in src/format/mod.rs ✓ (2ms)
+  ▶ read src/format/mod.rs:1270..1280 ✓ (1ms)
+  4 tools completed in 9.7s (4 ✓)
+
+Let me find the existing public functions in mod.rs to see the right spot to add the helper:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:36..51 ✓ (1ms)
+
+Now let me look at mod.rs public submodules to confirm tools.rs uses super::*:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search '^pub mod' in src/format/mod.rs ✓ (2ms)
+  ▶ search 'mod (cost|diff|highlight|markdown|output|tools)' in src/format/mod.rs ✓ (2ms)
+  ▶ search '^pub mod|^mod "' in src/format ✓ (2ms)
+  ▶ $ grep -n 'mod ' src/format/mod.rs | head -20[K[K ✓ (3ms)
+  ▶ read src/format/mod.rs:79..109 ✓ (1ms)
+  5 tools completed in 28.4s (5 ✓)
+
+Good. Since tools.rs does use super::*, anything pub in mod.rs is available in tools.rs. Now let me implement everything.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, add the stderr_is_terminal() helper to format/mod.rs. I'll place it right after the disable_color / color_enabled section:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (2 → 14 lines)
+  + // --- Stderr TTY detection (cached) ---
+  + 
+  + /// Whether stderr is connected to a terminal. Cached via `OnceLock` to avoid
+  + /// repeated syscalls. Used to suppress spinner/progress ANSI escape sequences
+  + /// when stderr is not a TTY (e.g., piped output, CI logs).
+  + static STDERR_IS_TTY: OnceLock<bool> = OnceLock::new();
+  + 
+  + /// Check if stderr is a terminal. Result is cached after first call.
+  + pub fn stderr_is_terminal() -> bool {
+  +     *STDERR_IS_TTY.get_or_init(|| std::io::IsTerminal::is_terminal(&std::io::stderr()))
+  + }
+  + 
+    /// A color code that respects the NO_COLOR convention.
+    /// When color is disabled, formats as an empty string.
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now gate the Spinner:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/format/tools.rs (33 → 45 lines)
+        /// Start a spinner that prints frames to stderr every 100ms.
+        /// The spinner shows `⠋ thinking...` cycling through braille characters.
+  +     /// When stderr is not a TTY, the spinner thread is skipped entirely to
+  +     /// prevent ANSI escape sequences from leaking into piped/captured output.
+        pub fn start() -> Self {
+            let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+  + 
+  +         // Skip the spinner thread when stderr isn't a terminal — ANSI escape
+  +         // sequences (\r, \x1b[K) would leak as garbage into piped output.
+  +         if !stderr_is_terminal() {
+  +             return Self {
+  +                 cancel: cancel_tx,
+  +                 handle: None,
+  +             };
+  +         }
+  + 
+            let handle = tokio::spawn(async move {
+                let mut tick: usize = 0;
+                loop {
+ ✓ (1ms)
+  2 tools completed in 14.3s (2 ✓)
+
+Now gate Spinner::stop():
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (18 → 19 lines)
+        /// to Drop to minimize latency on the critical path.
+        pub fn stop(self) {
+            let _ = self.cancel.send(true);
+  -         // Clear the spinner line from the calling thread — this is synchronous
+  -         // and guaranteed to complete before any subsequent stdout writes.
+  -         eprint!("\r\x1b[K");
+  -         let _ = io::stderr().flush();
+  +         // Only emit ANSI clear sequence when stderr is a terminal
+  +         if stderr_is_terminal() {
+  +             eprint!("\r\x1b[K");
+  +             let _ = io::stderr().flush();
+  +         }
+            // Defer handle.abort() to Drop — it interacts with the tokio runtime
+            // and doesn't need to complete before the first text token is printed.
+            // The cancel signal already ensures the spinner task won't write again.
+ ✓ (1ms)
+
+Now gate Spinner::Drop:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (11 → 13 lines)
+    impl Drop for Spinner {
+        fn drop(&mut self) {
+            let _ = self.cancel.send(true);
+  -         // Clear the spinner line synchronously on drop too
+  -         eprint!("\r\x1b[K");
+  -         let _ = io::stderr().flush();
+  +         // Only emit ANSI clear sequence when stderr is a terminal
+  +         if stderr_is_terminal() {
+  +             eprint!("\r\x1b[K");
+  +             let _ = io::stderr().flush();
+  +         }
+            if let Some(handle) = self.handle.take() {
+                handle.abort();
+            }
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now gate the ToolProgressTimer:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/format/tools.rs (9 → 22 lines)
+        /// Start a timer that shows elapsed time for a tool on stderr.
+        /// Updates every second with the current line count.
+  +     /// When stderr is not a TTY, the progress thread is skipped entirely to
+  +     /// prevent ANSI escape sequences from leaking into piped/captured output.
+        pub fn start(tool_name: String) -> Self {
+            let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+            let line_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+  -         let line_count_clone = Arc::clone(&line_count);
+            let label: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+  + 
+  +         // Skip the progress thread when stderr isn't a terminal
+  +         if !stderr_is_terminal() {
+  +             return Self {
+  +                 cancel: cancel_tx,
+  +                 line_count,
+  +                 label,
+  +                 handle: None,
+  +             };
+  +         }
+  + 
+  ... (3 more lines)
+ ✓ (1ms)
+  2 tools completed in 13.2s (2 ✓)
+
+Now gate `ToolProgressTimer::stop()`:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (6 → 8 lines)
+        /// Stop the timer and clear its output.
+        pub fn stop(self) {
+            let _ = self.cancel.send(true);
+  -         eprint!("\r\x1b[K");
+  -         let _ = io::stderr().flush();
+  +         if stderr_is_terminal() {
+  +             eprint!("\r\x1b[K");
+  +             let _ = io::stderr().flush();
+  +         }
+        }
+ ✓ (0ms)
+
+Now gate `ToolProgressTimer::Drop`:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (10 → 12 lines)
+    impl Drop for ToolProgressTimer {
+        fn drop(&mut self) {
+            let _ = self.cancel.send(true);
+  -         eprint!("\r\x1b[K");
+  -         let _ = io::stderr().flush();
+  +         if stderr_is_terminal() {
+  +             eprint!("\r\x1b[K");
+  +             let _ = io::stderr().flush();
+  +         }
+            if let Some(handle) = self.handle.take() {
+                handle.abort();
+            }
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now add tests. Let me see where the existing tests are in both files:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ search '^#\[cfg\(test\)\]' in src/format/tools.rs ✓ (2ms)
+  ▶ search 'cfg.test' in src/format/tools.rs ✓ (2ms)
+  ▶ read src/format/tools.rs:430..460 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 9.4s (4 ✓)
+
+Let me find the end of the test block in tools.rs to add new tests:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/tools.rs:460..490 ✓ (0ms)
+
+Now I need to find the end of the test module in tools.rs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/tools.rs:820..830 ✓ (0ms)
+
+I'll add my tests right before the closing } of the test module. Let me also check where in format/mod.rs tests are:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ search 'cfg.test' in src/format/mod.rs ✓ (2ms)
+  ▶ read src/format/mod.rs:498..518 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Good. Now let me add the tests. I'll add tests for stderr_is_terminal() in `format/mod.rs tests and tests for Spinner/Timer in format/tools.rs` tests:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1279..1289 ✓ (1ms)
+  ▶ edit src/format/mod.rs (6 → 16 lines)
+        fn test_context_budget_warning_zero_max_returns_none() {
+            reset_context_budget_warning();
+            assert!(context_budget_warning(100, 0).is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_stderr_is_terminal_returns_bool() {
+  +         // Basic smoke test — stderr_is_terminal() should return a bool without
+  +         // panicking. In CI/test environments stderr is typically not a TTY,
+  +         // so we just verify it runs and returns a deterministic result.
+  +         let result = stderr_is_terminal();
+  +         // Call again to verify caching works (OnceLock returns same value)
+  +         assert_eq!(result, stderr_is_terminal());
+        }
+    }
+ ✓ (1ms)
+  2 tools completed in 8.4s (2 ✓)
+
+Now add tests in tools.rs for the Spinner and Timer structural soundness:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (13 → 46 lines)
+            }
+            collected.push_str(&f.flush());
+            assert_eq!(collected, "Hi!");
+  +     }
+  + 
+  +     #[tokio::test]
+  +     async fn test_spinner_start_stop_no_panic() {
+  +         // Spinner should be creatable and stoppable without panicking,
+  +         // regardless of whether stderr is a TTY. When not a TTY (as in CI),
+  +         // the spinner thread is skipped entirely.
+  +         let spinner = Spinner::start();
+  +         spinner.stop();
+  +     }
+  + 
+  +     #[tokio::test]
+  +     async fn test_spinner_drop_no_panic() {
+  +         // Dropping a spinner without calling stop() should not panic.
+  +         let spinner = Spinner::start();
+  +         drop(spinner);
+  +     }
+  ... (18 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now let me verify the code compiles, passes linting, and tests pass:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1[K[K ✓ (456ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D…[K[K ✓ (8.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1[K[K ✓ (4.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1[K  ⠋ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 2s ─ 52 lines captured[K  ⠙ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 2s ─ 52 lines captured[K  ⠹ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 3s ─ 52 lines captured[K  ⠸ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 3s ─ 52 lines captured[K  ⠼ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 4s ─ 68 lines captured[K  ⠴ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 4s ─ 74 lines captured[K  ⠦ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 5s ─ 74 lines captured[K  ⠧ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 5s ─ 74 lines captured[K  ⠇ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 6s ─ 77 lines captured[K  ⠏ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 6s ─ 90 lines captured[K  ⠋ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 7s ─ 91 lines captured[K  ⠙ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 7s ─ 92 lines captured[K  ⠹ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 8s ─ 112 lines captured[K  ⠸ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 8s ─ 112 lines captured[K  ⠼ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 9s ─ 182 lines captured[K  ⠴ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 9s ─ 282 lines captured[K  ⠦ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 10s ─ 322 lines captured[K  ⠧ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 10s ─ 522 lines captured[K  ⠇ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 11s ─ 562 lines captured[K  ⠏ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 11s ─ 562 lines captured[K  ⠋ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 12s ─ 562 lines captured[K  ⠙ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 12s ─ 582 lines captured[K  ⠹ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 13s ─ 582 lines captured[K  ⠸ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 13s ─ 582 lines captured[K  ⠼ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 14s ─ 582 lines captured[K  ⠴ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 14s ─ 598 lines captured[K  ⠦ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 15s ─ 598 lines captured[K  ⠧ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 15s ─ 599 lines captured[K  ⠇ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 16s ─ 599 lines captured[K  ⠏ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 16s ─ 600 lines captured[K  ⠋ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 17s ─ 600 lines captured[K  ⠙ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 17s ─ 601 lines captured[K  ⠹ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 18s ─ 601 lines captured[K  ⠸ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 18s ─ 602 lines captured[K  ⠼ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 19s ─ 602 lines captured[K  ⠴ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 19s ─ 602 lines captured[K  ⠦ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 20s ─ 1103 lines captured[K  ⠧ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 20s ─ 1223 lines captured[K  ⠇ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 21s ─ 1456 lines captured[K  ⠏ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 21s ─ 2176 lines captured[K  ⠋ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 22s ─ 2176 lines captured[K  ⠙ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 22s ─ 2192 lines captured[K  ⠹ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 23s ─ 2192 lines captured[K  ⠸ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 23s ─ 2192 lines captured[K  ⠼ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 24s ─ 2192 lines captured[K  ⠴ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 24s ─ 2247 lines captured[K  ⠦ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 25s ─ 2247 lines captured[K  ⠧ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 25s ─ 2247 lines captured[K  ⠇ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 26s ─ 2247 lines captured[K  ⠏ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 26s ─ 2273 lines captured[K  ⠋ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 27s ─ 2273 lines captured[K  ⠙ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 27s ─ 2273 lines captured[K  ⠹ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 28s ─ 2273 lines captured[K  ⠸ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 28s ─ 2277 lines captured[K  ⠼ bash: cd /home/runner/work/yoyo-evolve/yoyo-ev… ⏱ 29s ─ 2277 lines captured[K[K ✓ (38.2s)
+  5 tools completed in 1m 11s (5 ✓)
+
+All 2224 tests pass (2138 unit + 86 integration). Let me verify the changes look correct by reviewing the final state:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat[K[K ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff[K[K ✓ (6ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Everything looks clean. Let me commit:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines)[K[K ✓ (13ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Done! Here's what I implemented:
+
+Problem: Spinner artifacts (⠋ thinking...[K[K) leaked into output when stderr was not a terminal (piped, captured, CI logs). The ANSI escape sequences \r and \x1b[K would appear as visible garbage.
+
+Solution:
+
+1. `stderr_is_terminal()` helper in format/mod.rs — caches the result of std::io::IsTerminal::is_terminal(&std::io::stderr()) in a OnceLock<bool>, following the same pattern as the existing color_enabled() / bell_enabled() helpers.
+
+2. `Spinner::start()` — when stderr isn't a TTY, returns immediately with `handle: None` (no thread spawned, no ANSI sequences ever emitted).
+
+3. `ToolProgressTimer::start()` — same early-return pattern, skipping the progress thread entirely.
+
+4. `stop()` and `Drop` impls for both types — gated the `eprint!("\r\x1b[K") calls behind stderr_is_terminal()`, since there's no line to clear if nothing was drawn.
+
+5. **Tests** — smoke test for stderr_is_terminal() (returns consistent bool), and async structural soundness tests for Spinner and ToolProgressTimer (start/stop/drop without panicking).
+
+  ↳ 4m 57s · 20369→8940 tokens · $1.63
+  ⬤ 12% of context window used
+
+
