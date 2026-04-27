@@ -1,0 +1,348 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure and what yoagent 0.8 provides.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SharedState\|shared_sta…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat Cargo.toml | grep yoagent  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "build_sub_agent_tool" … ✓ (5ms)
+ ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ~/.cargo/registry/src/*/yoag…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_shared_state\|Shar…  ▶ read src/tools.rs:1270..1350 ✓ (1ms)
+ ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_shared_state" ~/.c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "shared_state\|SharedSta… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo/registry/src/*/yoa… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo/registry/src/*/yoa… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "shared_state\|SharedSt… ✓ (4ms)
+  ▶ $ cat ~/.cargo/registry/src/*/yoagent-0.8.0/src/tools/shared_state_tool.rs  ▶ $ cat ~/.cargo/registry/src/*/yoagent-0.8.0/src/tools/sub_agent.rs ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ find ~/.cargo/registry/src/*/yoagent-0.8.0/src/ -name "sub*" -o -name "agent*" |… ✓ (4ms)
+  ▶ $ grep -n "shared_state\|SharedState\|with_shared" ~/.cargo/registry/src/*/yoagent… ✓ (3ms)
+  15 tools completed in 34.7s (15 ✓)
+
+Now I have a clear picture. Let me look at the SubAgentTool's full API and the caller in main.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "with_sub_agent\|build_sub_agent" /home/runner/work/yoyo-evolve/yoyo-evo…  ▶ read src/main.rs:510..525 ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now let me look at the BUILTIN_TOOL_NAMES:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:85..115 ✓ (1ms)
+  ▶ read src/main.rs:114..124 ✓ (1ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now let me look at the existing tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1350..1470 ✓ (1ms)
+
+Now let me also check the build_side_agent function to see if it uses build_sub_agent_tool:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "build_side_agent\|build_sub_agent" /home/runner/work/yoyo-evolve/yoyo-e… ✓ (4ms)
+  ▶ read src/main.rs:602..632 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Good — build_side_agent doesn't use build_sub_agent_tool, so the only caller is line 515 in main.rs.
+
+Now let me check the existing tests for BUILTIN_TOOL_NAMES:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "BUILTIN_TOOL_NAMES\|shared_state" /home/runner/work/yoyo-evolve/yoyo-ev…  ▶ $ grep -n "BUILTIN_TOOL_NAMES" /home/runner/work/yoyo-evolve/yoyo-evolve/tests/int… ✓ (3ms)
+ ✓ (4ms)
+  ▶ read src/main.rs:2388..2418 ✓ (1ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Now let me check what yoagent 0.8 exports — specifically whether SharedState is available at top level:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "^pub use\|^pub mod" ~/.cargo/registry/src/*/yoagent-0.8.0/src/lib.rs ✓ (3ms)
+
+Good — SharedState is re-exported at the top level (pub use shared_state::SharedState). 
+
+Now I have the full picture. Let me plan the changes:
+
+1. **`src/tools.rs**: Change build_sub_agent_tool to return (SubAgentTool, SharedState), calling .with_shared_state()`
+2. **`src/main.rs**: Add "shared_state" to BUILTIN_TOOL_NAMES`, update the call site at line 515
+3. Tests: Update existing tests, add new ones for SharedState
+
+Let me start:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 1.9s (7 ✓)
+
+Let me start with the implementation — I'll do tests and code together since the tests depend on the changed return type.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me check the imports at the top of src/tools.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1..41 ✓ (1ms)
+
+Now let me make the changes. First, add SharedState to imports and modify build_sub_agent_tool:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (1 → 2 lines)
+    use yoagent::sub_agent::SubAgentTool;
+  + use yoagent::SharedState;
+ ✓ (0ms)
+
+Now modify build_sub_agent_tool to return the tuple:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (45 → 55 lines)
+    /// Build a SubAgentTool that inherits the parent's provider/model/key.
+    /// The sub-agent gets basic tools with inherited directory restrictions
+    /// (no permission prompts, no sub-agent recursion).
+  - pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> SubAgentTool {
+  + ///
+  + /// Returns `(SubAgentTool, SharedState)` — the `SharedState` handle lets the
+  + /// parent agent pre-populate or read shared variables. The sub-agent
+  + /// automatically receives a `shared_state` tool (via yoagent's
+  + /// `SharedStateTool`) so it can read/write the same store.
+  + pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, SharedState) {
+  +     let shared_state = SharedState::new();
+  + 
+        // Sub-agent gets standard yoagent tools — no permission guards needed
+        // since the parent already authorized the delegation.
+        // Directory restrictions ARE inherited to prevent sub-agents from bypassing
+  ···
+            _ => Arc::new(OpenAiCompatProvider),
+        };
+    
+  -     SubAgentTool::new("sub_agent", provider)
+  ... (12 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 6.6s (3 ✓)
+
+Now add "shared_state" to BUILTIN_TOOL_NAMES:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (12 → 13 lines)
+        "ask_user",
+        "todo",
+        "sub_agent",
+  +     "shared_state",
+    ];
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Now update the caller in main.rs. The call at line 515:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (2 → 5 lines)
+  -         // Add sub-agent tool via the dedicated API (separate from build_tools count)
+  -         agent = agent.with_sub_agent(build_sub_agent_tool(self));
+  +         // Add sub-agent tool via the dedicated API (separate from build_tools count).
+  +         // The SharedState handle is kept for future use (e.g. pre-populating context
+  +         // before dispatching sub-agents like analyze-trajectory).
+  +         let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+  +         agent = agent.with_sub_agent(sub_agent_tool);
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Now update the existing tests in src/tools.rs to handle the tuple return type, and add new SharedState-specific tests:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (56 → 57 lines)
+        #[test]
+        fn test_build_sub_agent_tool_returns_correct_name() {
+            let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  -         let tool = build_sub_agent_tool(&config);
+  +         let (tool, _state) = build_sub_agent_tool(&config);
+            assert_eq!(tool.name(), "sub_agent");
+        }
+    
+        #[test]
+        fn test_build_sub_agent_tool_has_task_parameter() {
+            let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  -         let tool = build_sub_agent_tool(&config);
+  +         let (tool, _state) = build_sub_agent_tool(&config);
+            let schema = tool.parameters_schema();
+            assert!(
+                schema["properties"]["task"].is_object(),
+  ···
+        #[test]
+        fn test_build_sub_agent_tool_all_providers() {
+            // All provider paths should build without panic
+  ... (30 more lines)
+ ✓ (1ms)
+
+Now let me add the new SharedState-specific tests. Let me find where to add them — right after the existing sub-agent tests:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1435..1450 ✓ (0ms)
+
+I'll add the new SharedState tests between the sub-agent tests and the file operation tests:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (14 → 60 lines)
+                8,
+                "build_tools must stay at 8 — SubAgentTool is added via with_sub_agent"
+            );
+  +     }
+  + 
+  +     // === SharedState integration tests ===
+  + 
+  +     #[test]
+  +     fn test_build_sub_agent_tool_returns_shared_state() {
+  +         // The returned SharedState should be a valid, usable handle
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         let (_tool, shared_state) = build_sub_agent_tool(&config);
+  +         // SharedState starts empty — verify via the async API
+  +         let rt = tokio::runtime::Runtime::new().unwrap();
+  +         let keys = rt.block_on(shared_state.keys());
+  +         assert!(keys.is_empty(), "Fresh SharedState should have no keys");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_shared_state_parent_can_prepopulate() {
+  ... (32 more lines)
+ ✓ (1ms)
+
+Now let me also add a test in main.rs for BUILTIN_TOOL_NAMES containing "shared_state":
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:2410..2440 ✓ (1ms)
+  ▶ read src/main.rs:2438..2468 ✓ (1ms)
+  ▶ read src/main.rs:2466..2476 ✓ (1ms)
+  3 tools completed in 7.8s (3 ✓)
+
+Add the shared_state test at the end of the test module in main.rs:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (6 → 16 lines)
+                std::env::remove_var("AWS_SECRET_ACCESS_KEY");
+                std::env::remove_var("AWS_SESSION_TOKEN");
+            }
+  +     }
+  + 
+  +     #[test]
+  +     fn builtin_tool_names_includes_shared_state() {
+  +         // SharedStateTool registers as "shared_state" in sub-agents — MCP servers
+  +         // exposing the same name would cause a collision, so our guard must know it.
+  +         assert!(
+  +             BUILTIN_TOOL_NAMES.contains(&"shared_state"),
+  +             "BUILTIN_TOOL_NAMES must include 'shared_state' to guard against MCP collisions"
+  +         );
+        }
+    }
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (462ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.7s)
+  4 tools completed in 52.3s (4 ✓)
+
+All 2245 tests pass (2159 unit + 86 integration), no failures. Let me verify the format check too:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (464ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Now update the docs. The architecture section in CLAUDE.md mentions build_sub_agent_tool and the MCP collision list. Let me check what needs updating:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "build_sub_agent_tool\|SharedState\|shared_state\|BUILTIN_TOOL_NAMES" /h… ✓ (3ms)
+
+The CLAUDE.md mentions BUILTIN_TOOL_NAMES and instructs to keep it in sync — and we've done that. Let me update the tools.rs entry in the architecture section to mention SharedState:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "tools.rs" /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md | head -5 ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, tool builders, RTK proxy integration
+  + - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, tool builders, RTK proxy integration, SharedState wiring for sub-agents
+ ✓ (0ms)
+  2 tools completed in 7.9s (2 ✓)
+
+Now update the BUILTIN_TOOL_NAMES doc to mention shared_state:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - Keep `BUILTIN_TOOL_NAMES` in sync with `tools::build_tools` whenever a new builtin is added — the pure helper `detect_mcp_collisions` is unit-tested in `src/main.rs` against the filesystem server's known tool set as a regression guard.
+  + Keep `BUILTIN_TOOL_NAMES` in sync with `tools::build_tools` and the sub-agent's `SharedStateTool` whenever a new builtin is added — the pure helper `detect_mcp_collisions` is unit-tested in `src/main.rs` against the filesystem server's known tool set as a regression guard.
+ ✓ (0ms)
+
+Let me check if there's anything in the yoagent section that should mention SharedState:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "SubAgentTool\|sub_agent\|Sub.*Agent" /home/runner/work/yoyo-evolve/yoyo… ✓ (4ms)
+
+Update the MCP collisions doc to include shared_state:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - **Tool-name collisions (Day 39):** If an MCP server exposes a tool whose name matches one of yoyo's builtins (`bash`, `read_file`, `write_file`, `edit_file`, `list_files`, `search`, `rename_symbol`, `ask_user`, `todo`, `sub_agent`), the Anthropic API will reject the first turn with `"Tool names must be unique"` and the session dies. The flagship reference server `@modelcontextprotocol/server-filesystem` collides on `read_file` AND `write_file`, so the common case was broken until the guard landed.
+  + **Tool-name collisions (Day 39):** If an MCP server exposes a tool whose name matches one of yoyo's builtins (`bash`, `read_file`, `write_file`, `edit_file`, `list_files`, `search`, `rename_symbol`, `ask_user`, `todo`, `sub_agent`, `shared_state`), the Anthropic API will reject the first turn with `"Tool names must be unique"` and the session dies. The flagship reference server `@modelcontextprotocol/server-filesystem` collides on `read_file` AND `write_file`, so the common case was broken until the guard landed.
+ ✓ (1ms)
+
+Update the yoagent features list to mention SharedState:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - Key yoagent features available: `SubAgentTool`, `ContextConfig`, `ExecutionLimits`, `CompactionStrategy`, `AgentEvent` stream, `default_tools()`, `SkillSet`, `with_sub_agent()`.
+  + Key yoagent features available: `SubAgentTool`, `SharedState`, `SharedStateTool`, `ContextConfig`, `ExecutionLimits`, `CompactionStrategy`, `AgentEvent` stream, `default_tools()`, `SkillSet`, `with_sub_agent()`.
+ ✓ (1ms)
+
+Now let me check if the README or docs need updates:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "sub.agent\|SubAgent\|shared.state" /home/runner/work/yoyo-evolve/yoyo-e… ✓ (4ms)
+  ▶ $ grep -rn "sub.agent\|SubAgent\|shared.state" /home/runner/work/yoyo-evolve/yoyo-… ✓ (4ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Update the docs skills page too with the new tool name:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/skills.md (1 → 1 lines)
+  - yoyo's builtin tools (`bash`, `read_file`, `write_file`, `edit_file`, `list_files`, `search`, `rename_symbol`, `ask_user`, `todo`, `sub_agent`) take precedence over MCP tools. If an MCP server exposes a tool with one of those names, yoyo will skip the entire server at connect time with a warning on stderr — the colliding tool would otherwise cause the provider API to reject the first turn with `"Tool names must be unique"` and kill the session.
+  + yoyo's builtin tools (`bash`, `read_file`, `write_file`, `edit_file`, `list_files`, `search`, `rename_symbol`, `ask_user`, `todo`, `sub_agent`, `shared_state`) take precedence over MCP tools. If an MCP server exposes a tool with one of those names, yoyo will skip the entire server at connect time with a warning on stderr — the colliding tool would otherwise cause the provider API to reject the first turn with `"Tool names must be unique"` and kill the session.
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Let me do a final round of checks to make sure everything still compiles and passes:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (25.1s)
+
+All green. Let me verify the new tests specifically ran:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test shared_state 2>&1 | g… ✓ (143ms)
+
+All 4 new SharedState tests pass. Now let me commit:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (9ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Clean diff. Exactly what we need. Let me commit:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (22 lines) ✓ (17ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.3s (3 ✓)
+
+All done. Here's what I shipped:
+
+Summary of changes:
+
+1. `src/tools.rs` — build_sub_agent_tool now returns (SubAgentTool, SharedState) instead of just SubAgentTool. It creates a SharedState::new(), passes it to the SubAgentTool via .with_shared_state(shared_state.clone()), and returns both. The sub-agent automatically gets a shared_state tool (yoagent's SharedStateTool) to read/write the shared store.
+
+2. `src/main.rs` — Added "shared_state" to BUILTIN_TOOL_NAMES so the MCP collision guard knows about it. Updated the single call site to destructure the tuple: `let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self)`.
+
+3. 4 new tests:
+   • builtin_tool_names_includes_shared_state — guards the MCP collision list
+   • test_build_sub_agent_tool_returns_shared_state — fresh state has no keys
+   • test_shared_state_parent_can_prepopulate — parent writes, reads back
+   • test_shared_state_independent_per_build — each build gets isolated state
+
+4. Docs updated in CLAUDE.md (architecture, MCP gotchas, yoagent features) and `docs/src/configuration/skills.md` (tool collision list).
+
+All 2245 tests pass, clippy clean, fmt clean. The _shared_state handle is ready for the next task to wire into analyze-trajectory's recursive dispatch. 🐙
+
+  ↳ 6m 29s · 26439→13584 tokens · $2.24
+  ⬤ 17% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

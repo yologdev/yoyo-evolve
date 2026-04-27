@@ -1,0 +1,262 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant files to understand the watch-related code in prompt.rs.
+  ▶ read src/prompt.rs (200 lines)  ▶ $ grep -n "watch\|Watch\|WATCH" src/prompt.rs | head -60 ✓ (3ms)
+ ✓ (5ms)
+  ▶ read src/prompt.rs:200..230  ▶ $ grep -n "test_run_watch\|test_build_watch\|test_max_watch" src/prompt.rs ✓ (2ms)
+ ✓ (4ms)
+  4 tools completed in 9.9s (4 ✓)
+
+Now let me read the test section and understand the full scope of what needs to be extracted:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:2370..  ▶ $ grep -n "use crate::prompt::\|prompt::set_watch\|prompt::get_watch\|prompt::clea… ✓ (2ms)
+ ✓ (6ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now let me check what run_watch_after_prompt depends on:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "run_prompt_auto_retry\|session_budget_exhausted\|SessionChanges\|safe_t…  ▶ $ grep -n "run_watch_after_prompt\|run_watch_command\|set_watch_command\|get_watch… ✓ (5ms)
+ ✓ (9ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Good. Now I have a clear picture. The watch functions are used across repl.rs, main.rs, and commands_dev.rs — all via `crate::prompt::*. The run_watch_after_prompt function calls run_prompt_auto_retry` from prompt.rs, so it has coupling, but I can handle that with imports.
+
+Let me now look at the re-export pattern already used in prompt.rs (for session and prompt_budget) and at main.rs to see how modules are registered:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:217..237  ▶ $ grep -n "^mod \|^pub mod " src/main.rs ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now I have a very clear picture. Let me plan and execute:
+
+1. Create `src/watch.rs` with the watch functions and tests
+2. Remove those from src/prompt.rs and add re-exports
+3. Add mod watch; to src/main.rs
+
+Let me also check the commands_dev.rs references that use explicit crate::prompt:: paths:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "crate::prompt::set_watch\|crate::prompt::clear_watch" src/commands_dev.… ✓ (3ms)
+
+These explicit paths will continue to work via the re-export in prompt.rs. Good.
+
+Now let me read the full first 216 lines that need extracting, and also check what the run_watch_after_prompt function imports from prompt module:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1..217 ✓ (2ms)
+
+Now let me check what run_prompt_auto_retry needs — it's the key dependency for run_watch_after_prompt:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub.*fn run_prompt_auto_retry\b" src/prompt.rs ✓ (3ms)
+
+Good. run_watch_after_prompt depends on run_prompt_auto_retry from prompt.rs, and on `session_budget_exhausted from prompt_budget.rs (re-exported via prompt.rs), plus SessionChanges` from session.rs (also re-exported). All of these can be imported in the new module. Let me create the new watch.rs file:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/watch.rs (390 lines) ✓ (0ms)
+
+Now remove the watch functions and tests from prompt.rs and add re-exports:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (203 → 16 lines)
+    /// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
+    fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+        lock.write().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+  - // Global state for `/watch` — auto-run a test command after agent edits.
+  - 
+  - /// The currently active watch command (None = watch mode off).
+  - static WATCH_COMMAND: RwLock<Option<String>> = RwLock::new(None);
+  - 
+  - /// Set the watch command, enabling watch mode.
+  - pub fn set_watch_command(cmd: &str) {
+  -     let mut guard = rw_write_or_recover(&WATCH_COMMAND);
+  -     *guard = Some(cmd.to_string());
+  - }
+  - 
+  - /// Get the current watch command, if watch mode is active.
+  - pub fn get_watch_command() -> Option<String> {
+  -     let guard = rw_read_or_recover(&WATCH_COMMAND);
+  -     guard.clone()
+  ... (184 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/prompt.rs.
+
+The file has a slightly different comment. Let me read the exact text:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:13..18 ✓ (1ms)
+  ▶ $ sed -n '22,24p' src/prompt.rs | cat -A ✓ (4ms)
+  2 tools completed in 22.0s (2 ✓)
+
+There are special Unicode characters in the comment. Let me read the exact lines:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:22..25 ✓ (1ms)
+
+There's a line 23 missing in the display — it must be the section header with Unicode. Let me use a different approach — read as bytes:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '22,25p' src/prompt.rs ✓ (3ms)
+
+Wait, that only outputs one line at 22. Let me check exactly:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ awk 'NR>=12 && NR<=30' src/prompt.rs ✓ (4ms)
+
+OK so the read_file output showed line 23 as containing a section header with box-drawing chars, but awk/sed show it doesn't exist. It seems `read_file` is renumbering because of the section header comment that was on a line that's actually merged. Let me just count what actually exists. The awk output is reliable. Lines 12-30 as above show the block I need to replace starts at line 22 (the empty line before the comment). Let me use a different strategy — read the whole block and match carefully:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/prompt.rs ✓ (3ms)
+  ▶ $ awk 'NR>=21 && NR<=22' src/prompt.rs | cat -v ✓ (5ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Wait, only one line. Let me check more carefully:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ awk 'NR>=20 && NR<=28 { printf "%d: %s\n", NR, $0 }' src/prompt.rs ✓ (4ms)
+
+So line 23 is indeed missing from the output — it contains a special character that's not showing. Let me hex dump it:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '23p' src/prompt.rs | xxd | head -5 ✓ (4ms)
+  ▶ $ sed -n '23p' src/prompt.rs ✓ (3ms)
+  ▶ $ python3 -c " (5 lines) ✓ (20ms)
+  ▶ $ python3 -c " (5 lines) ✓ (20ms)
+  4 tools completed in 14.4s (4 ✓)
+
+OK, line 23 is // ── Watch mode state ──────.... Now I know the exact content. Let me use Python to do the replacement precisely:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (57 lines) ✓ (22ms)
+
+Now I also need to check if rw_read_or_recover and rw_write_or_recover are still used in prompt.rs after removing the watch functions:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "rw_read_or_recover\|rw_write_or_recover" src/prompt.rs ✓ (3ms)
+
+They're no longer used in prompt.rs itself (only definitions remain). Let me check if anything else in the crate uses them:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "rw_read_or_recover\|rw_write_or_recover" src/ --include="*.rs" | grep … ✓ (7ms)
+
+These are independent copies in other files. The ones in prompt.rs are dead now. Let me remove them:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (11 → 1 lines)
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  -     lock.read().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+  - /// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+  -     lock.write().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+    // Extracted into `watch` module (Day 58). Re-exported here so
+ ✓ (1ms)
+
+Now check if RwLock is still used in prompt.rs (it was imported for the watch state):
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "RwLock" src/prompt.rs ✓ (3ms)
+
+It's imported but no longer used. Let me remove it:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (2 → 1 lines)
+  - use std::sync::RwLock;
+    use std::time::{Duration, Instant};
+ ✓ (1ms)
+
+Now let me remove the watch tests from prompt.rs. Let me find them:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_build_watch\|test_max_watch\|test_run_watch\|test_watch_command" s… ✓ (4ms)
+  ▶ read src/prompt.rs:2174.. ✓ (2ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now let me look at what's just before the watch tests (line 2174) to find a clean cut point:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:2170..2178 ✓ (1ms)
+  ▶ edit src/prompt.rs (169 → 3 lines)
+            assert!(outcome_no_error.last_api_error.is_none());
+  -     }
+  - 
+  -     #[test]
+  -     fn test_build_watch_fix_prompt() {
+  -         let prompt = build_watch_fix_prompt("cargo test", "error[E0308]: mismatched types");
+  -         assert!(
+  -             prompt.contains("cargo test"),
+  -             "prompt should include the command name"
+  -         );
+  -         assert!(
+  -             prompt.contains("error[E0308]: mismatched types"),
+  -             "prompt should include the output"
+  -         );
+  -         assert!(prompt.contains("Please fix"), "prompt should ask for a fix");
+  -         assert!(
+  -             prompt.contains("```"),
+  -             "prompt should wrap output in code fence"
+  -         );
+  -     }
+  ... (149 more lines)
+ ✓ (1ms)
+  2 tools completed in 19.9s (2 ✓)
+
+Good. Now add mod watch; to main.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (2 → 3 lines)
+    mod tools;
+    mod update;
+  + mod watch;
+ ✓ (1ms)
+
+Now let's build and test:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.9s)
+
+Build passes. Let's run tests:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.2s)
+
+All 2159 unit tests + 86 integration tests pass. Now let's run clippy and fmt:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.8s)
+
+All clean. Let me verify the line counts to confirm the extraction happened properly:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/prompt.rs src/watch.rs ✓ (3ms)
+
+`prompt.rs went from 2,539 → 2,174 lines (365 lines removed). watch.rs` is 390 lines (the functions plus module-level imports and doc comments). The extraction moved ~365 lines of logic to a clean new module.
+
+Let me also verify the re-exports are correct by checking a couple callers:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "use crate::prompt::\|use crate::watch::" src/prompt.rs ✓ (3ms)
+
+Good — the re-exports are in place. All callers that do use crate::prompt::* will pick up the watch functions transparently.
+
+Now let me update CLAUDE.md to reflect the new module:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "watch" CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+  - - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic, watch-after-prompt for non-REPL modes
+  + - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic
+  + - `watch.rs` — watch mode: set/get/clear watch command, run watch command with streaming output, auto-fix loop after prompts (extracted from `prompt.rs`)
+ ✓ (0ms)
+  2 tools completed in 10.1s (2 ✓)
+
+Now let's commit:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (17ms)
+
+Clean extraction. Here's what happened:
+
+**Created `src/watch.rs`** (390 lines) containing all watch mode logic:
+• Global state (`WATCH_COMMAND RwLock, set_watch_command, get_watch_command, clear_watch_command`)
+• Constants (WATCH_OUTPUT_MAX, `MAX_WATCH_FIX_ATTEMPTS`)
+• Core functions (build_watch_fix_prompt, run_watch_command, run_watch_after_prompt)
+• All 14 watch-related tests
+
+Updated `src/prompt.rs` (2,539 → 2,174 lines, -365):
+• Removed all watch functions, constants, state, and tests
+• Added `pub use crate::watch::{...} re-export block (same pattern as the existing prompt_budget and session` extractions)
+• Removed now-unused RwLock import and dead `rw_read_or_recover/rw_write_or_recover` helpers
+
+Updated `src/main.rs`: Added mod watch;
+
+Updated `CLAUDE.md`: Architecture section now lists watch.rs separately.
+
+Zero behavior changes — all 2,159 unit tests + 86 integration tests pass, clippy clean, fmt clean.
+
+  ↳ 6m 33s · 26056→14894 tokens · $1.85
+  ⬤ 18% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

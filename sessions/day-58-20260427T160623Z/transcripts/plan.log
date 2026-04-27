@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -100 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | grep -A 50 "Priority Queue"  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | grep -A 100 "Issue #344"  ▶ $ gh issue view 343 --repo yologdev/yoyo-evolve --json state,title 2>/dev/null || … ✓ (5ms)
+ ✓ (5ms)
+ ✓ (413ms)
+  5 tools completed in 7.5s (5 ✓)
+
+Issue #343 is CLOSED — the yoagent 0.7→0.8 upgrade already shipped this session. That unblocks #344 (RLM Layer 2: SharedState). Let me check what yoagent 0.8 actually provides and look at the current state of things.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -r "yoagent" Cargo.toml | head -5  ▶ $ find ~/.cargo/registry/src -path "*/yoagent-0.8*/src" -type d 2>/dev/null | head…  ▶ $ cat journals/JOURNAL.md | head -80 ✓ (4ms)
+ ✓ (6ms)
+ ✓ (51ms)
+  3 tools completed in 3.1s (3 ✓)
+
+Now let me check what SharedState looks like in yoagent 0.8:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src -path "*/yoagent-0.8*/src" -exec find {} -name "*.rs"…  ▶ $ grep -rl "SharedState\|shared_state" ~/.cargo/registry/src/index.crates.io-*/yoa… ✓ (6ms)
+ ✓ (49ms)
+  ▶ $ cat ~/.cargo/registry/src/index.crates.io-*/yoagent-0.8.0/src/tools/shared_state…  ▶ $ grep -n "SharedState\|shared_state\|with_shared_state" ~/.cargo/registry/src/ind… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ grep -rn "SharedState\|shared_state" ~/.cargo/registry/src/index.crates.io-*/yoa…  ▶ $ grep -rn "with_shared_state\|SharedState" ~/.cargo/registry/src/index.crates.io-… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ grep -n "with_shared_state\|shared_state\|SharedState" ~/.cargo/registry/src/ind…  ▶ $ grep -n "with_sub_agent\|SubAgentTool\|sub_agent" ~/.cargo/registry/src/index.cr… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ grep -n "pub fn with_" ~/.cargo/registry/src/index.crates.io-*/yoagent-0.8.0/src…  ▶ $ grep -n "SharedState\|SharedStateTool" ~/.cargo/registry/src/index.crates.io-*/y… ✓ (4ms)
+ ✓ (4ms)
+  10 tools completed in 19.5s (10 ✓)
+
+Now I have a clear picture. SharedState is available in yoagent 0.8 through SubAgentTool::with_shared_state(). The blocker (#343) is resolved. Let me check what prompt.rs's extract for watch-mode looks like and what the assessment suggests for prompt.rs splitting:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn.*watch\|fn run_watch\|fn build_watch" src/prompt.rs | head -10  ▶ $ # Check what the last release version was (2 lines)  ▶ $ # Check how sub-agent is currently built in tools.rs (2 lines) ✓ (5ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ # Check SubAgentTool API for with_shared_state (2 lines)  ▶ $ # Check current build_sub_agent_tool more thoroughly (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  5 tools completed in 6.3s (5 ✓)
+
+Now I have a full picture. Let me plan the session.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (4ms)
+
+Now let me think about the three tasks:
+
+1. **#344 (Creator issue, unblocked)** — Wire SharedState into sub-agent tool. This is the RLM Layer 2 work. The blocker (#343, yoagent 0.7→0.8 upgrade) just shipped. The change is mechanical: create a `SharedState in build_sub_agent_tool, pass it via .with_shared_state(), and add shared_state to BUILTIN_TOOL_NAMES. Touches src/tools.rs and src/main.rs`.
+
+2. **Self-driven: Extract watch module from prompt.rs** — The assessment notes prompt.rs (2,539 lines) has mixed concerns, and the watch-mode functions are a cohesive group that could be their own module. This is structural improvement that makes the codebase more navigable.
+
+3. **Self-driven: Competitive gap — improve SubAgentTool to accept `SharedState` at the parent agent level** — Actually, looking again, the better competitive gap work would be something more impactful. Let me think about what moves the needle most.
+
+Actually, rethinking task 3: the assessment notes 731 `.unwrap()` calls — the "zero unwraps" claim from Day 55 was about eliminating the worst ones, but the total is still high. But that's not competitive gap work. Let me look at something more user-facing.
+
+The assessment mentions the biggest competitive gap is code understanding depth (tree-sitter). But adding tree-sitter as a dependency is huge. What about something more tractable?
+
+Looking at the trajectory: 9/9 tasks landed, clean streak. The post-consolidation opportunity is here. Let me pick something meaningful for task 3 — extracting watch mode from prompt.rs is consolidation, so I should pair it with something forward-looking.
+
+Task 3 could be: **Wire SharedState through the parent agent too** — so `/spawn` tasks and sub-agents can share state with the main agent. This directly addresses gap #3 (persistent named subagents with orchestration) by laying the foundation.
+
+Wait — let me reread #344 more carefully to scope it right.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 344 --repo yologdev/yoyo-evolve --json body 2>/dev/null | python3 … ✓ (300ms)
+  ▶ $ gh issue view 344 --repo yologdev/yoyo-evolve --json body 2>/dev/null | python3 … ✓ (229ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Issue #344 is well-scoped with a clear 3-part decomposition. It touches src/tools.rs, skills/analyze-trajectory/SKILL.md, and CLAUDE.md. That's exactly 3 files. But the issue itself suggests decomposing across sessions if needed. Given we need to split the skill update from the code change (the 3-file rule), let me split #344 into task 1 (code: tools.rs + main.rs) and task 2 (skill: `analyze-trajectory/SKILL.md` + CLAUDE.md documentation).
+
+For task 3 (self-driven), I'll extract the watch module from prompt.rs — this is the structural improvement the assessment identified, and it's a clean 1-module extraction.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (67 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (75 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (68 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (20 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 1m 5s (6 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 58 (15:32) Session Plan
+
+### Task 1: Wire SharedState into SubAgentTool (Issue #344)
+Files: src/tools.rs, src/main.rs
+Why: #344 is now unblocked (yoagent 0.8 shipped earlier today). This wires SharedState into build_sub_agent_tool so sub-agents can share state by reference instead of pasting artifacts into prompts. Adds "shared_state" to BUILTIN_TOOL_NAMES for MCP collision detection.
+
+### Task 2: Update analyze-trajectory skill + CLAUDE.md documentation (Issue #344)
+Files: skills/analyze-trajectory/SKILL.md, CLAUDE.md
+Why: Completes #344 by updating the skill's sub-agent dispatch procedure to use SharedState (store-once, read-by-reference) and documents the new RLM substrate in CLAUDE.md. Depends on Task 1.
+
+### Task 3: Extract watch module from prompt.rs (Self-driven)
+Files: src/prompt.rs, src/watch.rs (new)
+Why: The assessment identifies prompt.rs (2,539 lines) as having mixed concerns. Watch-mode functions (set_watch_command, get_watch_command, `clear_watch_command, build_watch_fix_prompt, run_watch_command`) form a cohesive group. Clean extraction reduces prompt.rs by ~130+ lines and improves navigability.
+
+### Issue Dispositions
+• **#344:** Implement (Tasks 1+2)
+• #215 (TUI challenge): Defer — multi-week project, not the right next step while RLM substrate work has higher ROI
+
+  ↳ 2m 54s · 22990→6737 tokens · $0.904
+  ⬤ 16% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

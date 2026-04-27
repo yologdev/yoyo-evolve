@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by checking if Task 01 completed successfully (SharedState wiring into `build_sub_agent_tool`), then update the analyze-trajectory skill and CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SharedState\|shared_sta… ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Task 01 completed successfully. Now let me read the current analyze-trajectory skill and the relevant CLAUDE.md sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read skills/analyze-trajectory/SKILL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SubAgentTool\|sub_agent… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Good. Now I have a clear picture. Let me look at the specific area in CLAUDE.md where I should add the SharedState substrate note.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SubAgentTool\|build_sub… ✓ (4ms)
+  ▶ read CLAUDE.md:176..196 ✓ (0ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I have all the context I need. Let me make both changes.
+
+### 1. Update analyze-trajectory SKILL.md
+
+The key change is in Step 4 (dispatch sub-agent) — replace the "paste artifact into prompt" pattern with SharedState.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit skills/analyze-trajectory/SKILL.md (7 → 7 lines)
+    ---
+    name: analyze-trajectory
+    description: Diagnose a recurring failure (STUCK task, clustered CI error, frequent reverts) by dispatching sub-agents to digest CI logs without bloating main context. Returns one root-cause diagnosis.
+  - tools: [bash, read_file, sub_agent]
+  + tools: [bash, read_file, sub_agent, shared_state]
+    core: true
+    origin: creator
+    ---
+ ✓ (0ms)
+
+Now update Step 4 — the sub-agent dispatch procedure:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit skills/analyze-trajectory/SKILL.md (27 → 39 lines)
+    ### 4. Dispatch a sub-agent (if needed)
+    
+  - Use the `sub_agent` tool with this template. The sub-agent must return JSON conforming to this exact schema — note the `null` examples (JSON null, not the string `"null"`):
+  + **Store the artifact in shared state first** — don't paste large logs into the sub-agent prompt. Sub-agents automatically have access to the `shared_state` tool and share the same key-value store as their parent.
+  + 
+  + Use the namespace convention `trajectory.<key>` for all artifacts stored by this skill.
+  + 
+  + ```bash
+  + # 1. Fetch the artifact into a shell variable
+  + LOG=$(gh run view <id> --log-failed 2>/dev/null)
+  + 
+  + # 2. Store it in shared state (the parent agent calls this directly)
+  + shared_state set key="trajectory.run-<id>" value="$LOG"
+  + ```
+  + 
+  + Then dispatch the sub-agent with a **reference**, not the artifact itself:
+    
+    ```
+    Question: <your single-sentence question from step 1>
+    
+  ... (13 more lines)
+ ✓ (1ms)
+
+Now update the sub-agent failure fallback section to mention SharedState:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit skills/analyze-trajectory/SKILL.md (6 → 6 lines)
+    **Sub-agent failure fallback** — if the sub-agent (a) errors, (b) returns non-JSON, (c) returns truncated JSON, or (d) is unavailable as a tool:
+    
+    1. Append the raw response to `memory/learnings.jsonl` as a learning entry with `pattern_key: trajectory.subagent_malformed_response` so we can debug later.
+  - 2. Downgrade to a direct read of the artifact: `read_file` or `bash`-tail the last 50-100 lines of the log into your main context.
+  + 2. Downgrade to a direct read of the artifact: use `shared_state get key="trajectory.run-<id>"` to retrieve the stored log, then read the last 50-100 lines in your main context.
+    3. Produce a low-confidence diagnosis from what you can see directly. Skip recursion (no point — sub-agent path is broken).
+    4. Mark the diagnosis with `confidence: low (sub-agent unavailable)` so downstream decisions know to be cautious.
+ ✓ (0ms)
+
+Now update the Pitfalls section — replace the line about pasting into sub-agent prompts:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit skills/analyze-trajectory/SKILL.md (2 → 2 lines)
+  - - **Don't dump multiple artifacts to one sub-agent.** One artifact per dispatch keeps the sub-agent focused and the JSON output reliable.
+  - - **Skills do not chain.** Sub-agents don't load this skill or any other; you must paste the question + artifact into the sub-agent's prompt directly.
+  + - **Don't dump multiple artifacts to one sub-agent.** One artifact per dispatch keeps the sub-agent focused and the JSON output reliable. Store each artifact under a separate `trajectory.<key>` in shared state.
+  + - **Skills do not chain.** Sub-agents don't load this skill or any other; you must include the question and shared-state key reference in the sub-agent's prompt directly.
+ ✗ (0ms)
+    │ old_text not found in skills/analyze-trajectory/SKILL.md.
+  ▶ edit skills/analyze-trajectory/SKILL.md (3 → 3 lines)
+  - - **Don't dump multiple artifacts to one sub-agent.** One artifact per dispatch keeps the sub-agent focused and the JSON output reliable.
+  + - **Don't dump multiple artifacts to one sub-agent.** One artifact per dispatch keeps the sub-agent focused and the JSON output reliable. Store each artifact under a separate `trajectory.<key>` in shared state.
+    - **Don't forget the recursion cap.** 3 is the hard limit. If you find yourself wanting depth 4, your initial question was probably too vague — go back to step 1.
+  - - **Skills do not chain.** Sub-agents don't load this skill or any other; you must paste the question + artifact into the sub-agent's prompt directly.
+  + - **Skills do not chain.** Sub-agents don't load this skill or any other; you must include the question and shared-state key reference in the sub-agent's prompt directly.
+ ✓ (0ms)
+  2 tools completed in 6.2s (1 ✓, 1 ✗)
+
+### 2. Update CLAUDE.md with SharedState substrate note
+
+I'll add it right after the "Key yoagent features available" line, since that's where SubAgentTool and SharedState are mentioned:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 3 lines)
+    Key yoagent features available: `SubAgentTool`, `SharedState`, `SharedStateTool`, `ContextConfig`, `ExecutionLimits`, `CompactionStrategy`, `AgentEvent` stream, `default_tools()`, `SkillSet`, `with_sub_agent()`.
+  + 
+  + **SharedState substrate** (Day 58): Sub-agents created via `build_sub_agent_tool` share a `yoagent::SharedState` key-value store with their parent. Artifacts are stored once and read by reference (`shared_state` tool) instead of being pasted into each sub-agent's prompt. The `shared_state` tool name is in `BUILTIN_TOOL_NAMES` for MCP collision detection.
+ ✓ (0ms)
+
+Now let me verify the final state of both files looks correct:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read skills/analyze-trajectory/SKILL.md  ▶ read CLAUDE.md:181..191 ✓ (2ms)
+ ✓ (2ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Both files look great. Now let me verify the build passes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (15.9s)
+  2 tools completed in 34.0s (2 ✓)
+
+All 86 tests pass, clippy clean, build good. Let me also verify the CLAUDE.md description of the analyze-trajectory skill is still accurate:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "analyze-trajectory" CLAUDE… ✓ (3ms)
+
+The existing CLAUDE.md descriptions of analyze-trajectory are still accurate — they describe what it does at a high level, and the SharedState change is an implementation detail of *how it dispatches sub-agents, not what* it does. Good.
+
+Now commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (9 lines) ✓ (12ms)
+
+Done. Here's what I did:
+
+skills/analyze-trajectory/SKILL.md changes:
+• Added `shared_state to the tools:` frontmatter list
+• Rewrote Step 4 (sub-agent dispatch) to use the SharedState store-by-reference pattern: parent stores artifacts under trajectory.<key> keys, sub-agent reads them via shared_state get
+• Updated the failure fallback to retrieve stored artifacts from shared state instead of re-reading files
+• Updated Pitfalls section to reference shared-state key references instead of artifact pasting
+
+CLAUDE.md changes:
+• Added a concise "SharedState substrate (Day 58)" note right after the yoagent features list, documenting the parent↔sub-agent shared store and MCP collision detection
+
+All guards preserved: depth cap 3, recursion rules, fallback procedure, frontmatter (core: true, origin: creator). Build passes, 86 tests green, clippy clean.
+
+  ↳ 1m 58s · 13683→4352 tokens · $0.583
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
