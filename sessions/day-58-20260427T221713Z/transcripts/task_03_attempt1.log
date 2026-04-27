@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current extract_trajectory.py to understand the existing fingerprinting logic.
+  ▶ read scripts/extract_trajectory.py ✓ (3ms)
+
+Let me see the key functions - `fingerprint_error_line and collect_failed_ci_fingerprints`:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read scripts/extract_trajectory.py:280..400 ✓ (1ms)
+
+Now let me see the `fingerprint_error_line` function and the ERROR_LINE_RE:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read scripts/extract_trajectory.py:244..294 ✓ (0ms)
+
+Now let me see the fingerprint_error_line function and `ERROR_LINE_RE` more fully:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read scripts/extract_trajectory.py:230..260 ✓ (1ms)
+
+Now I understand the problem clearly. Let me analyze what needs to change:
+
+1. **The current timestamp regex* (`^\d{4}-\d{2}-\d{2}T?[\d:.,Z+ ]\s*`) only matches timestamps at the start of the line. GitHub Actions log lines have the format `<workflow> <job> <step> <timestamp> <actual error>`, so the timestamp is NOT at the start.
+
+2. **Subsecond suffixes** like .5342991z — the current regex character class [\d:.,Z+ ] should match . and digits and Z, but since GH Actions puts words before the timestamp, the regex never fires for those lines.
+
+3. **Need to normalize hex addresses/UUIDs** too.
+
+Let me implement the fix:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (11 → 26 lines)
+    def fingerprint_error_line(line: str) -> str:
+        """Normalize an error line to a clusterable fingerprint."""
+        s = strip_ansi(line).strip()
+  -     # Strip leading log timestamps and noisy prefixes
+  +     # Strip GitHub Actions log prefix: <word> <word> ... <timestamp>
+  +     # e.g. "social unknown step 2026-04-15T15:31:42.5342991Z error: auth"
+  +     # The timestamp has format YYYY-MM-DDTHH:MM:SS[.fraction]Z
+  +     s = re.sub(
+  +         r"^(?:[A-Za-z_][\w-]*\s+)*"              # zero or more word prefixes
+  +         r"\d{4}-\d{2}-\d{2}T[\d:.]+Z?\s*",        # ISO timestamp with subseconds
+  +         "", s
+  +     )
+  +     # Strip leading log timestamps (standalone, at start of line)
+        s = re.sub(r"^\d{4}-\d{2}-\d{2}T?[\d:.,Z+ ]*\s*", "", s)
+  +     # Strip CI step prefixes like "build |" or "test │"
+        s = re.sub(r"^[A-Za-z_-]+\s*[\|│]\s*", "", s)
+        # Normalize file:line:column to file:N:N
+        s = re.sub(r":\d+:\d+", ":N:N", s)
+        s = re.sub(r":\d+\b", ":N", s)
+  +     # Normalize hex addresses (0x7fff1234abcd) and UUIDs
+  ... (7 more lines)
+ ✓ (1ms)
+
+Now let me add the self-tests at the bottom of the script. Let me see the current __main__ block:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read scripts/extract_trajectory.py:465..475 ✓ (0ms)
+  ▶ edit scripts/extract_trajectory.py (2 → 81 lines)
+    if __name__ == "__main__":
+  +     if "--test" in sys.argv:
+  +         sys.exit(run_self_tests())
+        sys.exit(main())
+  + 
+  + 
+  + def run_self_tests() -> int:
+  +     """Self-tests for fingerprint clustering. Run with --test flag."""
+  +     failures = 0
+  + 
+  +     def assert_eq(label: str, got: str, want: str) -> None:
+  +         nonlocal failures
+  +         if got != want:
+  +             print(f"  FAIL: {label}")
+  +             print(f"    got:  {got!r}")
+  +             print(f"    want: {want!r}")
+  +             failures += 1
+  +         else:
+  +             print(f"  ok: {label}")
+  + 
+  ... (61 more lines)
+ ✓ (1ms)
+  2 tools completed in 23.5s (2 ✓)
+
+Now let me run the self-tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (113ms)
+
+The function definition comes after the if __name__ block. I need to move the function before the if block:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (81 → 81 lines)
+  - if __name__ == "__main__":
+  -     if "--test" in sys.argv:
+  -         sys.exit(run_self_tests())
+  -     sys.exit(main())
+  - 
+  - 
+    def run_self_tests() -> int:
+        """Self-tests for fingerprint clustering. Run with --test flag."""
+        failures = 0
+  ···
+    
+        print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
+        return 1 if failures else 0
+  + 
+  + 
+  + if __name__ == "__main__":
+  +     if "--test" in sys.argv:
+  +         sys.exit(run_self_tests())
+  +     sys.exit(main())
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (36ms)
+  2 tools completed in 4.7s (2 ✓)
+
+All 10 tests pass. Now let me verify the Rust build and tests still pass:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (123ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (8.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 && car… ✓ (8.5s)
+  3 tools completed in 36.9s (3 ✓)
+
+All checks pass. Let me verify the final state of the changed file looks right:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read scripts/extract_trajectory.py:241..271 ✓ (1ms)
+
+Now let me commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (23 lines) ✓ (11ms)
+
+Done! Here's what I did:
+
+Problem: `fingerprint_error_line() in extract_trajectory.py` couldn't cluster identical errors across different CI runs because:
+1. GitHub Actions log lines have <workflow> <job> <step> <timestamp> prefixes that vary per run
+2. Subsecond timestamp suffixes (.5342991Z) weren't stripped when behind GH Actions prefixes
+3. Hex addresses and UUIDs created false uniqueness
+
+**Fix (3 changes to fingerprint_error_line()):**
+1. **New GH Actions prefix regex** — strips `^(?:[A-Za-z_][\w-]\s+)\d{4}-\d{2}-\d{2}T[\d:.]+Z?\s*` which matches zero or more word prefixes followed by an ISO timestamp with optional subseconds. This runs before the existing standalone timestamp regex.
+2. **Hex normalization** — 0x[0-9a-fA-F]{4,} → <HEX>
+3. UUID normalization — standard UUID pattern → <UUID>
+
+**Self-tests:** Added run_self_tests() with 10 assertions, runnable via python3 scripts/extract_trajectory.py --test. All pass. ✓
+
+  ↳ 2m 46s · 17450→6950 tokens · $0.667
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

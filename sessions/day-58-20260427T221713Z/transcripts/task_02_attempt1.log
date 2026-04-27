@@ -1,0 +1,545 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of main.rs and identifying exactly what needs to be extracted.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "BUILTIN_TOOL_NAMES\|de… ✓ (5ms)
+ ✓ (10ms)
+  ▶ read src/main.rs:1..101 ✓ (1ms)
+  ▶ read src/main.rs:100..350 ✓ (2ms)
+  ▶ read src/main.rs:349..749 ✓ (3ms)
+  ▶ read src/main.rs:748..1048 ✓ (2ms)
+  ▶ read src/main.rs:1047..1347 ✓ (2ms)
+  7 tools completed in 18.6s (7 ✓)
+
+Now let me see the rest of the file — the AgentConfig struct and its impl, plus remaining tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:450..650 ✓ (2ms)
+  ▶ read src/main.rs:648..698 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me read the tests section:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1346.. ✓ (7ms)
+
+Now I have a complete picture. Let me plan the extraction carefully. I need to identify which tests belong to agent_builder items and which stay in main.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 35.6s (6 ✓)
+
+Let me first identify exactly which tests should move to agent_builder.rs:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_\|fn builtin_\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_\|fn builtin_" … ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Let me see what tests use detect_mcp_collisions:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_mcp_collisions\|… ✓ (3ms)
+
+Now let me look at the MCP collision tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:2360.. ✓ (1ms)
+
+Now let me see the remaining tests in the middle area that I need to classify:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:2060..2370 ✓ (2ms)
+
+Now I have a clear picture. Let me also check if `tools.rs references AgentConfig`:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentConfig\|create_mod… ✓ (4ms)
+
+Good, `tools.rs also uses AgentConfig. Let me check prompt.rs`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "crate::AgentConfig\|use… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "crate::create_model_con… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "create_model_config" sr… ✓ (5ms)
+  3 tools completed in 11.3s (3 ✓)
+
+Good — create_model_config is only used within main.rs itself. Now let me check how commands.rs line 395 uses AgentConfig:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '390,400p' src/commands.r… ✓ (3ms)
+
+OK. Now I understand the full picture. These files reference crate::AgentConfig directly:
+• src/repl.rs (via use crate::AgentConfig)
+• `src/dispatch.rs (via use crate::AgentConfig`)
+• src/tools.rs (via use crate::AgentConfig)
+• src/commands.rs (via crate::AgentConfig)
+• src/commands_config.rs (via crate::AgentConfig)
+• src/commands_spawn.rs (via crate::AgentConfig)
+
+After the extraction, AgentConfig will live in agent_builder.rs and be re-exported from the crate root. The path crate::AgentConfig should still work if I add `pub use agent_builder::AgentConfig; in main.rs`.
+
+Let me now create the new module. I'll extract:
+1. yoyo_user_agent() 
+2. BUILTIN_TOOL_NAMES
+3. detect_mcp_collisions()
+4. fetch_mcp_tool_names()
+5. connect_external_servers()
+6. `insert_client_headers()`
+7. create_model_config()
+8. AgentConfig struct + impl
+9. FallbackRetry enum
+10. try_fallback_prompt()
+11. Related tests
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 35s)
+  2 tools completed in 1m 43s (2 ✓)
+
+Good, I have a complete picture now. Let me create the agent_builder.rs file. The key insight is:
+
+**Tests that go to agent_builder.rs** — those testing: `AgentConfig, create_model_config, insert_client_headers, yoyo_user_agent, detect_mcp_collisions, BUILTIN_TOOL_NAMES, configure_agent, build_agent, try_switch_to_fallback, FallbackRetry/try_fallback_prompt` (the non-async contract tests).
+
+Tests that stay in main.rs — those testing: looks_like_slash_command, `CHECKPOINT_TRIGGERED, always-approve flag tests, build_json_output, apply_bedrock_credentials`.
+
+Now let me create the new file:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '96,673p' src/main.rs ✓ (8ms)
+
+Now let me write the agent_builder.rs file. I'll include all the extracted items plus the tests that belong to them:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '96,673p' src/main.rs | w… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '675,746p' src/main.rs ✓ (3ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now I have all the pieces. Let me create the file:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ write ? ✗ (0ms)
+    │ Invalid arguments: missing 'path' parameter
+
+The content was too long. Let me write the file in pieces using a different approach:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (24 lines) ✓ (2ms)
+
+Let me take a different approach - create the file by extracting sections from main.rs using sed:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (33 lines) ✓ (5ms)
+
+Now I need to fix the configure_agent method — it references `io::stdin(), CHECKPOINT_TRIGGERED, and Ordering` which were available via use in main.rs. Let me check what imports are needed and fix them:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CHECKPOINT_TRIGGERED\|O… ✓ (3ms)
+  ▶ edit src/agent_builder.rs (1 → 1 lines)
+  -                 if io::stdin().is_terminal() {
+  +                 if std::io::stdin().is_terminal() {
+ ✓ (0ms)
+  ▶ edit src/agent_builder.rs (1 → 1 lines)
+  -                     CHECKPOINT_TRIGGERED.store(true, Ordering::SeqCst);
+  +                     crate::CHECKPOINT_TRIGGERED.store(true, std::sync::atomic::Ordering::SeqCst);
+ ✓ (0ms)
+  3 tools completed in 16.1s (3 ✓)
+
+Now I need to make the items pub(crate) that were private in main.rs but need to be accessible. Let me check:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn \|^async fn \|^enum… ✓ (3ms)
+
+I need to make several items pub(crate):
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '24,26p' src/agent_builde… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (22 lines) ✓ (12ms)
+  2 tools completed in 11.1s (2 ✓)
+
+Good. Now I need to remove the use std::io::IsTerminal; at the top since I replaced io::stdin() with std::io::stdin():
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "std::io::stdin" src/age… ✓ (3ms)
+
+Actually, IsTerminal is a trait import needed for `.is_terminal()` method. Let me keep it but check if it's used properly:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "is_terminal" src/agent_bui… ✓ (3ms)
+
+Good, IsTerminal is still needed. Now let me add the test module. I need to carefully extract the right tests from main.rs:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (157 lines) ✓ (56ms)
+
+Now let me update main.rs — add the module declaration, re-export, remove the extracted code, and update the tests:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.2s (2 ✓)
+
+Now update main.rs. First, add the module declaration and re-export:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (2 → 3 lines)
+  + mod agent_builder;
+    mod cli;
+    mod commands;
+ ✓ (1ms)
+
+Now add a re-export so crate::AgentConfig still works for all the other files:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (4 → 10 lines)
+    use format::*;
+    use prompt::*;
+    use tools::{build_sub_agent_tool, build_tools};
+  + 
+  + pub(crate) use agent_builder::{
+  +     connect_external_servers, create_model_config, detect_mcp_collisions, insert_client_headers,
+  +     yoyo_user_agent, AgentConfig, FallbackRetry, BUILTIN_TOOL_NAMES,
+  + };
+  + use agent_builder::try_fallback_prompt;
+ ✓ (1ms)
+
+Now remove the extracted code from main.rs. The extracted code spans lines 96 (yoyo_user_agent) through 746 (end of try_fallback_prompt). Let me find the exact line numbers after the edit:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// Return the User-Ag… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// Build a JSON outpu… ✓ (3ms)
+  2 tools completed in 6.0s (2 ✓)
+
+So I need to remove lines 103-754 from main.rs. Let me do this with sed:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (8 lines) ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (4ms)
+  2 tools completed in 9.8s (2 ✓)
+
+Good, that's a reduction of ~645 lines so far. Now I need to remove the tests that were moved. Let me find the test module:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/ma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_\|fn looks_\|fn… ✓ (4ms)
+  2 tools completed in 21.0s (2 ✓)
+
+I need to remove all the tests that were moved to agent_builder.rs, keeping only:
+• `looks_like_slash_command_*` tests (594-622)
+• `test_always_approve_*` tests (625-737)
+• test_checkpoint_triggered_flag_starts_false (632)
+• `test_build_json_output_*` tests (1662-1716)
+• bedrock_credentials_* tests (1779-1828)
+
+Let me identify exact line ranges of tests to remove. The approach: keep the main test module shell but remove individual test functions that belong to agent_builder. Let me be surgical here.
+
+The cleanest approach is to rewrite the tests section of main.rs. Let me see what stays:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:586..746 ✓ (1ms)
+
+I need to remove everything from line 738 onwards (start of test_agent_config_struct_fields) to the end, EXCEPT:
+• test_build_json_output_* tests
+• `bedrock_credentials_*` tests
+
+Let me find those exact boundaries:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (9 lines) ✓ (7ms)
+
+OK, the simplest approach: delete from line 738 to the end (line 1839), then re-add the tests I want to keep. Let me first save the tests I want to keep:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (12 lines) ✓ (8ms)
+
+Wait, the bedrock tests reference test_agent_config helper which will be in agent_builder now. Also builtin_tool_names_includes_shared_state should move to agent_builder. Let me check what tests in the "keep" area reference things from agent_builder:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (3 lines) ✓ (4ms)
+
+The bedrock tests use test_agent_config helper (which was moved to agent_builder), `apply_bedrock_credentials (which stays in main.rs), and BUILTIN_TOOL_NAMES` (which is re-exported). The builtin_tool_names_includes_shared_state test is already in agent_builder.rs.
+
+I need to:
+1. Add a local test_agent_config helper in main.rs tests too (since the bedrock tests need it)
+2. Remove builtin_tool_names_includes_shared_state from what stays (it's already in agent_builder)
+
+Now let me delete lines 738 to end and reconstruct what stays:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (6 lines) ✓ (6ms)
+
+Now append the tests that stay:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (142 lines) ✓ (5ms)
+
+Excellent! main.rs went from 2484 to 872 lines — a reduction of ~1,612 lines. Now let me check for unused imports in main.rs:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/main.rs ✓ (4ms)
+
+Now main.rs still has use imports that were only needed by the extracted code. Let me check which ones are still needed:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AnthropicProvider\|ApiP… ✓ (3ms)
+
+None of those are used in main.rs anymore. Let me also check build_sub_agent_tool, build_tools:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "build_sub_agent_tool\|buil… ✓ (3ms)
+
+Not used in main.rs. Let me check ContextConfig, ExecutionLimits:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "ContextConfig\|ExecutionLi… ✓ (3ms)
+
+  ↳ 10m 1s · 61611→21074 tokens · $3.59
+  ⬤ 32% of context window used
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.9 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unused imports: `build_sub_agent_tool` and `build_tools`[0m
+  [1m[94m--> [0msrc/main.rs:79:13
+   [1m[94m|[0m
+[1m[94m79[0m [1m[94m|[0m use tools::{build_sub_agent_tool, build_tools};
+   [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^[0m  [1m[91m^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D unused-imports` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_imports)]`
+
+[1m[91merror[0m[1m: unused imports: `BUILTIN_TOOL_NAMES`, `create_model_config`, `detect_mcp_collisions`, `insert_client_headers`, and `yoyo_user_agent`[0m
+  [1m[94m--> [0msrc/main.rs:82:31
+   [1m[94m|[0m
+[1m[94m82[0m [1m[94m|[0m     connect_external_servers, create_model_config, detect_mcp_collisions, insert_client_headers,
+   [1m[94m|[0m                               [1m[91m^^^^^^^^^^^^^^^^^^^[0m  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m83[0m [1m[94m|[0m     yoyo_user_agent, AgentConfig, FallbackRetry, BUILTIN_TOOL_NAMES,
+   [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^[0m                              [1m[91m^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: unused imports: `ContextConfig` and `ExecutionLimits`[0m
+  [1m[94m--> [0msrc/main.rs:91:24
+   [1m[94m|[0m
+[1m[94m91[0m [1m[94m|[0m use yoagent::context::{ContextConfig, ExecutionLimits};
+   [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^^[0m  [1m[91m^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: unused imports: `OpenApiConfig` and `OperationFilter`[0m
+  [1m[94m--> [0msrc/main.rs:92:24
+   [1m[94m|[0m
+[1m[94m92[0m [1m[94m|[0m use yoagent::openapi::{OpenApiConfig, OperationFilter};
+   [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^^[0m  [1m[91m^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: unused imports: `AnthropicProvider`, `...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix all the issues systematically.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.2s)
+
+There are three categories of issues:
+
+1. Unused imports in main.rs — need to remove imports that moved to agent_builder
+2. **Missing #[test] attributes in agent_builder.rs** — the test functions aren't annotated
+3. Empty line after doc comment in agent_builder.rs — clippy lint
+
+Let me fix all of them:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:75..105 ✓ (0ms)
+
+Fix 1: Remove unused imports from main.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (22 → 14 lines)
+    use cli::*;
+    use format::*;
+    use prompt::*;
+  - use tools::{build_sub_agent_tool, build_tools};
+    
+    pub(crate) use agent_builder::{
+  -     connect_external_servers, create_model_config, detect_mcp_collisions, insert_client_headers,
+  -     yoyo_user_agent, AgentConfig, FallbackRetry, BUILTIN_TOOL_NAMES,
+  +     connect_external_servers, AgentConfig, FallbackRetry, BUILTIN_TOOL_NAMES,
+    };
+    use agent_builder::try_fallback_prompt;
+    
+  ···
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Instant;
+    use yoagent::agent::Agent;
+  - use yoagent::context::{ContextConfig, ExecutionLimits};
+  - use yoagent::openapi::{OpenApiConfig, OperationFilter};
+  - use yoagent::provider::{
+  -     AnthropicProvider, ApiProtocol, BedrockProvider, GoogleProvider, ModelConfig, OpenAiCompat,
+  ... (3 more lines)
+ ✓ (1ms)
+
+Now let me check which re-exports are actually needed by other files:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "crate::BUILTIN_TOOL_NA… ✓ (6ms)
+
+Good — AgentConfig is needed as a re-export. `BUILTIN_TOOL_NAMES and connect_external_servers and FallbackRetry` are used only in main.rs (checked below):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "BUILTIN_TOOL_NAMES" sr… ✓ (5ms)
+
+The commands_config.rs reference is just a comment. Let me also check connect_external_servers usage:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "connect_external_server… ✓ (3ms)
+
+OK so connect_external_servers, FallbackRetry, and try_fallback_prompt are all used in main.rs. But `BUILTIN_TOOL_NAMES is only in a comment in commands_config.rs`. Let me keep the re-exports that are actually needed:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (4 → 2 lines)
+  - pub(crate) use agent_builder::{
+  -     connect_external_servers, AgentConfig, FallbackRetry, BUILTIN_TOOL_NAMES,
+  - };
+  + pub(crate) use agent_builder::{connect_external_servers, AgentConfig, FallbackRetry};
+    use agent_builder::try_fallback_prompt;
+ ✓ (1ms)
+
+Now fix 2: The agent_builder.rs tests are missing #[test] attributes because the sed extraction grabbed the function bodies but many test functions didn't have #[test] on the same line — it was on the preceding line. Let me look at the issue:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]\|fn test_\|fn… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]\|fn test_\|fn… ✓ (4ms)
+  2 tools completed in 7.2s (2 ✓)
+
+So the tests missing #[test] are:
+• test_agent_config_struct_fields (line 707)
+• test_agent_config_build_agent_anthropic (line 744)
+• `test_configure_agent_applies_all_settings` (line 1285)
+
+This happened because when I extracted from main.rs, the #[test] was on the line BEFORE what I extracted (e.g., the test had a #[test] on the previous line, and my sed extraction picked up from the fn line). Let me fix these:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '705,710p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '742,746p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1281,1288p' src/agent_bu… ✓ (3ms)
+  3 tools completed in 11.0s (3 ✓)
+
+OK, this one has a stray doc comment from test_agent_config that ended up on the wrong function. Let me fix all three issues:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (1 → 2 lines)
+  +     #[test]
+        fn test_agent_config_struct_fields() {
+ ✓ (1ms)
+  ▶ edit src/agent_builder.rs (1 → 2 lines)
+  +     #[test]
+        fn test_agent_config_build_agent_anthropic() {
+ ✓ (1ms)
+  2 tools completed in 8.2s (2 ✓)
+
+Now fix the doc comment / empty line issue and the missing #[test]:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (5 → 4 lines)
+        }
+  - 
+  -     /// Helper to create a default AgentConfig for tests, varying only the provider.
+    
+  +     #[test]
+        fn test_configure_agent_applies_all_settings() {
+ ✓ (0ms)
+
+Now let's try building:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.7s)
+
+Build passes. Now clippy:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.2s)
+
+Now tests:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (24.9s)
+
+There's an integration test that checks for BUILTIN_TOOL_NAMES in `src/main.rs`. Let me find and fix it:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BUILTIN_TOOL_NAMES\|bui… ✓ (4ms)
+  ▶ read tests/integration.rs:2314..2344 ✓ (1ms)
+  ▶ read tests/integration.rs:2340..2350 ✓ (0ms)
+  3 tools completed in 11.6s (3 ✓)
+
+The integration test reads src/main.rs and checks for "shared_state" — now it's in src/agent_builder.rs. I need to update this test:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit tests/integration.rs (12 → 12 lines)
+        // Cross-check: read the source to verify BUILTIN_TOOL_NAMES contains it.
+        // This is a source-level assertion — fragile by design, so it catches drift.
+  -     let main_src = std::fs::read_to_string(
+  -         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+  +     let agent_builder_src = std::fs::read_to_string(
+  +         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agent_builder.rs"),
+        )
+  -     .expect("should be able to read src/main.rs");
+  +     .expect("should be able to read src/agent_builder.rs");
+    
+        assert!(
+  -         main_src.contains(r#""shared_state""#),
+  -         "src/main.rs BUILTIN_TOOL_NAMES must contain \"shared_state\" — \
+  +         agent_builder_src.contains(r#""shared_state""#),
+  +         "src/agent_builder.rs BUILTIN_TOOL_NAMES must contain \"shared_state\" — \
+             MCP collision detection depends on this"
+        );
+ ✓ (1ms)
+
+Now run the full test/lint suite:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (26.1s)
+  2 tools completed in 3m 3s (2 ✓)
+
+All green. Let me also run fmt check:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (458ms)
+
+Let me verify the line count reduction:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "main.rs: $(wc -l < src/mai… ✓ (5ms)
+
+main.rs went from 2,484 to 861 lines — a reduction of 1,623 lines. Now update CLAUDE.md:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_builder\|main.rs … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "main.rs" CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+  - - `main.rs` — agent core, REPL, streaming event handling, rendering with ANSI colors, sub-agent tool integration, AskUserTool (interactive question-asking)
+  + - `main.rs` — entry point, CLI flag handling, run modes (single-prompt, piped, REPL), setup/restore helpers
+  + - `agent_builder.rs` — AgentConfig, build_agent, build_side_agent, create_model_config, MCP collision detection (BUILTIN_TOOL_NAMES, detect_mcp_collisions), connect_external_servers, fallback retry logic
+ ✓ (0ms)
+  ▶ edit CLAUDE.md (3 → 3 lines)
+  - yoyo now runs a pre-flight tool listing (via a short-lived `yoagent::mcp::McpClient`) before every `with_mcp_server_stdio` call. If any MCP tool name appears in `BUILTIN_TOOL_NAMES` (defined in `src/main.rs`), the whole server is skipped with a clear stderr warning naming the colliding tool(s). Non-colliding servers connect normally. If the pre-flight itself fails (e.g. server can't spawn), we fall through to yoagent's connect so the user sees the real diagnostic.
+  + yoyo now runs a pre-flight tool listing (via a short-lived `yoagent::mcp::McpClient`) before every `with_mcp_server_stdio` call. If any MCP tool name appears in `BUILTIN_TOOL_NAMES` (defined in `src/agent_builder.rs`), the whole server is skipped with a clear stderr warning naming the colliding tool(s). Non-colliding servers connect normally. If the pre-flight itself fails (e.g. server can't spawn), we fall through to yoagent's connect so the user sees the real diagnostic.
+    
+  - Keep `BUILTIN_TOOL_NAMES` in sync with `tools::build_tools` and the sub-agent's `SharedStateTool` whenever a new builtin is added — the pure helper `detect_mcp_collisions` is unit-tested in `src/main.rs` against the filesystem server's known tool set as a regression guard.
+  + Keep `BUILTIN_TOOL_NAMES` in sync with `tools::build_tools` and the sub-agent's `SharedStateTool` whenever a new builtin is added — the pure helper `detect_mcp_collisions` is unit-tested in `src/agent_builder.rs` against the filesystem server's known tool set as a regression guard.
+ ✓ (0ms)
+  4 tools completed in 22.8s (4 ✓)
+
+Now update the Project Files section to include agent_builder.rs:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/cli.rs" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^src/" CLAUDE.md | head… ✓ (3ms)
+  2 tools completed in 5.7s (2 ✓)
+
+The Project Files section doesn't list individual src files by filename prefix. Let me check the Repository Structure section:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "main.rs\|Repository Str… ✓ (3ms)
+
+Good, the Architecture section update is done. Now let me also update the Repository Structure section which has line counts:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/main.rs" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^src/main.rs\|^  fn bui… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "main.rs (" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "2484 lines\|main.rs" CL… ✓ (3ms)
+  4 tools completed in 12.4s (4 ✓)
+
+Good, the only reference is in the architecture section which I already updated. Now let me run the full CI check one more time:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build && cargo test && car… ✓ (16.8s)
+
+All 2,247 tests pass, clippy clean, fmt clean. Now commit:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git status ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (25 lines) ✓ (10ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 36.1s (8 ✓)
+
+Done. Here's what I did:
+
+**Extracted `src/agent_builder.rs** (1,692 lines) from src/main.rs` (2,484 → 861 lines, a 65% reduction):
+
+What moved:
+• AgentConfig struct + full impl (`build_agent, build_side_agent, configure_agent, try_switch_to_fallback`)
+• create_model_config — provider-specific ModelConfig construction
+• insert_client_headers, yoyo_user_agent — HTTP header helpers
+• BUILTIN_TOOL_NAMES, detect_mcp_collisions — MCP collision guard
+• fetch_mcp_tool_names, connect_external_servers — MCP/OpenAPI wiring
+• FallbackRetry enum + try_fallback_prompt — fallback retry logic
+• ~1,000 lines of associated tests
+
+What stayed in main.rs:
+• Module declarations and main() entry point
+• Run modes (run_single_prompt, run_piped_mode, looks_like_slash_command)
+• CLI flag helpers, setup/restore helpers
+• build_json_output, CHECKPOINT_TRIGGERED
+
+Other changes:
+• Re-exported AgentConfig from crate root so `crate::AgentConfig` still works everywhere
+• Updated integration test that reads `BUILTIN_TOOL_NAMES` source location
+• Updated CLAUDE.md architecture section
+• All 2,247 tests pass, clippy clean, fmt clean
+
+  ↳ 7m 56s · 11210→7261 tokens · $2.95
+  ⬤ 38% of context window used
+
+  ✓ Watch passed after fix (attempt 1)
+
