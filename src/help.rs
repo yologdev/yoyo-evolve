@@ -851,19 +851,22 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              CI workflow runs (via gh CLI, if available).",
         ),
         "watch" => Some(
-            "/watch [command|all|off|status] — Auto-run tests after agent edits\n\n\
+            "/watch [command|all|lint|off|status] — Auto-run lint+test after agent edits\n\n\
              Usage:\n\
-             \x20 /watch              Auto-detect and enable test watching\n\
-             \x20 /watch all          Auto-detect lint + test, run both in sequence\n\
+             \x20 /watch              Auto-detect lint+test and enable watching\n\
+             \x20 /watch all          Same as /watch (lint + test combined)\n\
+             \x20 /watch lint         Watch with lint only (no tests)\n\
              \x20 /watch cargo test   Watch with a specific command\n\
              \x20 /watch off          Disable watching\n\
              \x20 /watch status       Show current watch state\n\n\
              When enabled, yoyo automatically runs the watch command after every\n\
              agent turn that modifies files. On failure, yoyo auto-fixes up to 3 times.\n\n\
-             `/watch all` chains the project's lint and test commands with `&&` so the\n\
-             first failure stops execution — e.g. `cargo clippy -- -D warnings && cargo test`.\n\n\
+             By default, `/watch` detects both the lint and test commands for your\n\
+             project and chains them with `&&` (e.g. `cargo clippy -- -D warnings && cargo test`).\n\
+             Use `/watch lint` for lint-only or `/watch <cmd>` for any custom command.\n\n\
              Examples:\n\
              \x20 /watch\n\
+             \x20 /watch lint\n\
              \x20 /watch all\n\
              \x20 /watch npm test\n\
              \x20 /watch pytest -x\n\
@@ -1163,7 +1166,7 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "  watch             Toggle watch mode (e.g. yoyo watch all, yoyo watch cargo test)"
+        "  watch             Toggle watch mode (e.g. yoyo watch, yoyo watch lint)"
     );
     let _ = writeln!(
         s,
@@ -1356,7 +1359,7 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "    /watch [cmd|all]   Auto-run tests (or lint+test) after agent edits"
+        "    /watch [cmd|all|lint]  Auto-run lint+test after agent edits"
     );
     let _ = writeln!(
         s,
@@ -1573,7 +1576,9 @@ pub fn help_text() -> String {
     out.push_str("  /outline <query|file>  Search for symbols or show file structure\n");
     out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
     out.push_str("  /web <url>         Fetch a web page and display clean readable text content\n");
-    out.push_str("  /watch [cmd|all]   Auto-run tests (or lint+test) after agent edits (off/status to control)\n");
+    out.push_str(
+        "  /watch [cmd|all|lint]  Auto-run lint+test after agent edits (off/status to control)\n",
+    );
     out.push_str(
         "  /ast <pattern>     Structural code search using ast-grep (--lang, --in flags)\n",
     );
@@ -1745,7 +1750,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "undo" => Some("Undo last turn's changes, all uncommitted, or last commit"),
         "update" => Some("Check for and install the latest version"),
         "version" => Some("Show yoyo version"),
-        "watch" => Some("Auto-run command after file changes"),
+        "watch" => Some("Auto-run lint+test after file changes"),
         "web" => Some("Fetch a web page"),
         _ => None,
     }

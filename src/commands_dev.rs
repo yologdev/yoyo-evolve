@@ -1366,17 +1366,18 @@ pub fn handle_lint_unsafe() -> Option<String> {
 
 /// Auto-detect the test command for the current project.
 /// Returns the command string (e.g. "cargo test") if a project type is detected.
-pub fn detect_test_command() -> Option<String> {
+#[allow(dead_code)]
+fn detect_test_command() -> Option<String> {
     let dir = std::env::current_dir().unwrap_or_default();
     let project_type = detect_project_type(&dir);
     test_command_for_project(&project_type).map(|(label, _args)| label.to_string())
 }
 
 /// Auto-detect the appropriate watch command for the current project.
-/// Returns the test command string if a known project type is detected,
-/// or `None` for unknown project types.
+/// Returns a lint+test combo command (e.g. `cargo clippy … && cargo test`) when
+/// both are available, falls back to test-only, or `None` for unknown project types.
 pub fn auto_detect_watch_command() -> Option<String> {
-    detect_test_command()
+    detect_watch_all_command()
 }
 
 /// Auto-detect a combined lint + test command for the current project.
@@ -1399,7 +1400,7 @@ pub fn detect_watch_all_command() -> Option<String> {
 }
 
 /// Watch subcommand names for tab completion.
-pub const WATCH_SUBCOMMANDS: &[&str] = &["off", "status", "all"];
+pub const WATCH_SUBCOMMANDS: &[&str] = &["off", "status", "all", "lint"];
 
 /// Handle the /watch command: toggle auto-test-on-edit mode.
 pub fn handle_watch(input: &str) {
@@ -1407,8 +1408,8 @@ pub fn handle_watch(input: &str) {
 
     match arg {
         "" => {
-            // Auto-detect and toggle on
-            match detect_test_command() {
+            // Auto-detect lint+test combo and toggle on
+            match detect_watch_all_command() {
                 Some(cmd) => {
                     crate::prompt::set_watch_command(&cmd);
                     println!(
@@ -1416,9 +1417,9 @@ pub fn handle_watch(input: &str) {
                     );
                 }
                 None => {
-                    println!("{DIM}  No test command detected. Specify one:{RESET}");
-                    println!("{DIM}    /watch cargo test{RESET}");
-                    println!("{DIM}    /watch npm test{RESET}\n");
+                    println!("{DIM}  No lint or test command detected. Specify one:{RESET}");
+                    println!("{DIM}    /watch cargo clippy && cargo test{RESET}");
+                    println!("{DIM}    /watch npm run lint && npm test{RESET}\n");
                 }
             }
         }
@@ -1448,6 +1449,22 @@ pub fn handle_watch(input: &str) {
                     println!("{DIM}  No lint or test command detected. Specify one:{RESET}");
                     println!("{DIM}    /watch cargo clippy && cargo test{RESET}");
                     println!("{DIM}    /watch npm run lint && npm test{RESET}\n");
+                }
+            }
+        }
+        "lint" => {
+            // Auto-detect lint-only command
+            let dir = std::env::current_dir().unwrap_or_default();
+            let project_type = detect_project_type(&dir);
+            match lint_command_for_project(&project_type, LintStrictness::Default) {
+                Some((lint_label, _)) => {
+                    crate::prompt::set_watch_command(&lint_label);
+                    println!("{GREEN}  👀 Watch set to: {lint_label}{RESET}\n");
+                }
+                None => {
+                    println!("{DIM}  No lint command detected for this project type.{RESET}");
+                    println!("{DIM}    /watch cargo clippy{RESET}");
+                    println!("{DIM}    /watch npx eslint .{RESET}\n");
                 }
             }
         }
@@ -1642,16 +1659,26 @@ mod tests {
     }
 
     #[test]
-    fn auto_detect_watch_command_returns_cargo_test_in_rust_project() {
+    fn auto_detect_watch_command_returns_lint_and_test_in_rust_project() {
         // We're running from a directory with Cargo.toml, so this should detect Rust
+        // After the Day 58 change, auto-detect defaults to lint+test (not test-only)
         let cmd = auto_detect_watch_command();
         assert!(
             cmd.is_some(),
-            "should detect a test command in a Rust project"
+            "should detect a watch command in a Rust project"
+        );
+        let cmd = cmd.unwrap();
+        assert!(
+            cmd.contains("clippy"),
+            "auto-detect should include lint (clippy): {cmd}"
         );
         assert!(
-            cmd.unwrap().contains("cargo test"),
-            "should detect 'cargo test' for Rust projects"
+            cmd.contains("cargo test"),
+            "auto-detect should include test: {cmd}"
+        );
+        assert!(
+            cmd.contains("&&"),
+            "auto-detect should chain lint && test: {cmd}"
         );
     }
 
@@ -1701,6 +1728,58 @@ mod tests {
         assert!(
             cmd.contains("clippy") && cmd.contains("cargo test"),
             "watch all should set lint && test: {cmd}"
+        );
+        // Cleanup
+        crate::prompt::clear_watch_command();
+    }
+
+    #[test]
+    fn watch_subcommands_includes_lint() {
+        assert!(
+            WATCH_SUBCOMMANDS.contains(&"lint"),
+            "WATCH_SUBCOMMANDS should include 'lint'"
+        );
+    }
+
+    #[test]
+    fn handle_watch_lint_sets_lint_only_command() {
+        // Clear any previous watch command
+        crate::prompt::clear_watch_command();
+        // Run /watch lint — since we're in a Rust project, it should set clippy only
+        handle_watch("/watch lint");
+        let cmd = crate::prompt::get_watch_command();
+        assert!(
+            cmd.is_some(),
+            "watch command should be set after /watch lint"
+        );
+        let cmd = cmd.unwrap();
+        assert!(
+            cmd.contains("clippy"),
+            "watch lint should set lint command: {cmd}"
+        );
+        assert!(
+            !cmd.contains("cargo test"),
+            "watch lint should NOT include test: {cmd}"
+        );
+        // Cleanup
+        crate::prompt::clear_watch_command();
+    }
+
+    #[test]
+    fn handle_watch_bare_sets_lint_and_test() {
+        // Clear any previous watch command
+        crate::prompt::clear_watch_command();
+        // Run bare /watch — should now set lint+test, not just test
+        handle_watch("/watch");
+        let cmd = crate::prompt::get_watch_command();
+        assert!(
+            cmd.is_some(),
+            "watch command should be set after bare /watch"
+        );
+        let cmd = cmd.unwrap();
+        assert!(
+            cmd.contains("clippy") && cmd.contains("cargo test"),
+            "bare /watch should set lint && test: {cmd}"
         );
         // Cleanup
         crate::prompt::clear_watch_command();
