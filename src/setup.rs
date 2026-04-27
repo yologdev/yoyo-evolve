@@ -545,6 +545,7 @@ pub fn needs_setup(provider: &str) -> bool {
 mod tests {
     use super::*;
     use crate::cli::KNOWN_PROVIDERS;
+    use serial_test::serial;
 
     #[test]
     fn test_parse_provider_choice_by_number() {
@@ -872,6 +873,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_save_config_to_user_file() {
         // Use a temp dir to simulate XDG_CONFIG_HOME
         let dir = std::env::temp_dir().join("yoyo_test_xdg_save");
@@ -909,6 +911,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_save_config_to_user_file_creates_parent_dirs() {
         // Use a temp dir with nested path to verify parent creation
         let dir = std::env::temp_dir().join("yoyo_test_xdg_nested");
@@ -964,6 +967,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_wizard_save_to_user_level() {
         // Set up a temp XDG dir so saving actually works
         let dir = std::env::temp_dir().join("yoyo_test_wizard_user_save");
