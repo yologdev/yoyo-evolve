@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by reading the issues and checking the current state.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -100  ▶ $ cat CHANGELOG.md 2>/dev/null | head -60 ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ git log --oneline -20📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git tag --sort=-creatordate | head -5 ✓ (3ms)
+ ✓ (14ms)
+  ▶ $ # Check how many commits since last release tag v0.1.9 (2 lines)  ▶ $ # What's in /outline to understand the UX mismatch (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Check how many commits since last release (2 lines)  ▶ $ # Check if there's a release tag with v prefix (2 lines) ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ # Check what the release tags look like (2 lines)  ▶ $ # Check the lock recovery duplication pattern from the asses… (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ grep -rn "lock_or_recover" src/commands_spawn.rs src/session.rs src/commands_ses… ✓ (3ms)
+  13 tools completed in 28.5s (13 ✓)
+
+Now I have a clear picture. Let me plan three tasks:
+
+1. Self-driven (capability gap): Fix the `/outline` UX mismatch — when given a file path, show that file's symbols instead of treating it as a symbol name search. This is a concrete bug found in self-test.
+
+2. Self-driven (competitive gap): Deduplicate lock-recovery helpers — extract them into a shared module. This is the highest-value structural fix (5 copies across the codebase).
+
+3. Self-driven (competitive gap): Fix /outline to also accept file paths — this was self-test item #10 that failed. Actually, let me reconsider — the lint-then-fix loop is the assessment's top competitive recommendation. But that's a bigger feature. Let me think about what's most impactful in 3 slots.
+
+Let me focus on:
+1. /outline file path support — bug fix, improves self-test score 9/10→10/10
+2. Deduplicate lock-recovery helpers into shared module — structural debt, 5 copies → 1
+3. Lazy regex compilation in commands_map.rs — 25 `Regex::new().unwrap() calls → LazyLock<Regex>`
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (52 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (45 lines) ✓ (0ms)
+  ▶ $ # Verify the Regex::new pattern count in commands_map.rs (2 lines) ✓ (3ms)
+  ▶ $ # Check if LazyLock is already used elsewhere (2 lines) ✓ (7ms)
+  ▶ $ # Check Rust edition for LazyLock availability (2 lines) ✓ (3ms)
+  ▶ $ # Check rustc version — LazyLock stabilized in 1.80 (2 lines) ✓ (14ms)
+  6 tools completed in 37.7s (6 ✓)
+
+Good — std::sync::LazyLock is available. 25 regex recompilations per call in commands_map.rs is a real performance issue.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_03.md (53 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (26 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  4 tools completed in 21.9s (4 ✓)
+
+Plan committed. Here's the Day 58 session summary:
+
+## Day 58 Session Plan — 3 Tasks
+
+### Task 1: `/outline` file path support (bug fix)
+Files: src/commands_search.rs
+Self-test found that yoyo outline src/main.rs fails with "no symbols found" because it treats the argument as a symbol name, not a file path. Fix: detect file paths, show all symbols from that file. Moves self-test score from 9/10 → 10/10.
+
+### Task 2: Deduplicate lock-recovery helpers (structural debt)
+Files: new src/sync_util.rs, src/commands_bg.rs, src/session.rs (+1 line in `main.rs`)
+5 identical copies of lock_or_recover across the codebase → 1 shared definition. Pure deduplication.
+
+### Task 3: Lazy-compile 25 regexes in `commands_map.rs` (performance)
+Files: src/commands_map.rs
+25 Regex::new().unwrap() calls recompile constant patterns on every invocation. Convert to LazyLock<Regex> statics — compile once, match many.
+
+### Issue triage
+• #215 (TUI): Deferred — too large, community still discussing
+• #156 (Benchmarks): Deferred — needs external coordination
+• #229 (RTK): Already integrated, could close
+
+  ↳ 2m 15s · 15919→4696 tokens · $0.722
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo test`
+

@@ -1,0 +1,261 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current commands_map.rs to understand all the Regex::new calls and their patterns.
+  ▶ read src/commands_map.rs ✓ (9ms)
+
+Let me read the full file to see all the regex patterns:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'Regex::new' src/commands_map.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+
+Good, 25 matches. Now let me read the specific sections with all the regex patterns:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1..11  ▶ $ grep -n 'Regex::new' src/commands_map.rs | cat ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Let me see the full Java section and the parse_symbol_from_text function too:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:395..430  ▶ read src/commands_map.rs:200..360 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me also check if there's a parse_symbol_from_text function that uses regexes:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn parse_symbol_from_text' src/commands_map.rs ✓ (8ms)
+  ▶ read src/commands_map.rs:560..610 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Good — parse_symbol_from_text doesn't use Regex::new, it uses string operations. Now let me also check if LazyLock is already used elsewhere in the project for the pattern:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'LazyLock' src/ | head -20 ✓ (4ms)
+  ▶ $ grep -rn 'lazy_static\|once_cell\|OnceLock\|LazyLock' src/ | head -20 ✓ (8ms)
+  2 tools completed in 6.6s (2 ✓)
+
+OK, no LazyLock yet but OnceLock is used. Let me check the Rust edition to make sure LazyLock is available:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep 'edition' Cargo.toml | head -3 ✓ (3ms)
+  ▶ $ grep 'rust-version\|msrv' Cargo.toml | head -3 ✓ (3ms)
+  ▶ $ rustc --version ✓ (49ms)
+  3 tools completed in 6.9s (3 ✓)
+
+`LazyLock` is stable since Rust 1.80. Perfect. Now I have a clear picture. Let me build the complete set of static regexes and do the refactor.
+
+Let me catalog all 25 regexes grouped by language:
+
+Rust (8):
+1. `r"^\s*(pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)"`
+2. r"^\s*(pub(?:\(crate\))?\s+)?struct\s+(\w+)"
+3. r"^\s*(pub(?:\(crate\))?\s+)?enum\s+(\w+)"
+4. r"^\s*(pub(?:\(crate\))?\s+)?trait\s+(\w+)"
+5. `r"^\s*impl(?:<[^>]>)?\s+(.+?)(?:\s\{|$)"`
+6. `r"^\s*(pub(?:\(crate\))?\s+)?(?:const|static)\s+(\w+)"`
+7. r"^\s*(pub(?:\(crate\))?\s+)?mod\s+(\w+)"
+8. `r"#\[cfg\(test\)\]"`
+
+Python (3):
+9. r"^class\s+(\w+)"
+10. `r"^(?:async\s+)?def\s+(\w+)"`
+11. `r"^([A-Z][A-Z0-9_])\s="`
+
+JavaScript (3):
+12. r"^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)"
+13. r"^(?:export\s+(?:default\s+)?)?class\s+(\w+)"
+14. r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*="
+
+**TypeScript (2):**
+15. r"^(?:export\s+)?interface\s+(\w+)"
+16. r"^(?:export\s+)?type\s+(\w+)\s*[=<]"
+
+Go (5):
+17. r"^func\s+(\w+)\s*\("
+18. r"^func\s+\([^)]+\)\s+(\w+)\s*\("
+19. r"^type\s+(\w+)\s+struct\b"
+20. r"^type\s+(\w+)\s+interface\b"
+21. r"^(?:const|var)\s+(\w+)"
+
+**Java (4):**
+22. r"^\s*(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+(\w+)"
+23. r"^\s*(?:public\s+)?interface\s+(\w+)"
+24. r"^\s*(?:public\s+)?enum\s+(\w+)"
+25. `r"^\s(?:public|private|protected)?\s(?:static\s+)?(?:final\s+)?(?:[\w<>\[\],\s]+)\s+(\w+)\s*\("`
+
+Now let me do the refactor. I'll add the statics at the top and then update each function.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (4 → 73 lines)
+    use crate::format::*;
+    use regex::Regex;
+    use std::path::Path;
+  + use std::sync::LazyLock;
+  + 
+  + // ── Rust symbol regexes ──────────────────────────────────────────────
+  + static RE_RUST_FN: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)").unwrap());
+  + static RE_RUST_STRUCT: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?struct\s+(\w+)").unwrap());
+  + static RE_RUST_ENUM: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?enum\s+(\w+)").unwrap());
+  + static RE_RUST_TRAIT: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?trait\s+(\w+)").unwrap());
+  + static RE_RUST_IMPL: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*impl(?:<[^>]*>)?\s+(.+?)(?:\s*\{|$)").unwrap());
+  + static RE_RUST_CONST: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:const|static)\s+(\w+)").unwrap());
+  + static RE_RUST_MOD: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?mod\s+(\w+)").unwrap());
+  ... (52 more lines)
+ ✓ (1ms)
+
+Now update the Rust extract_rust_symbols function to use the statics:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:140..155 ✓ (0ms)
+  ▶ edit src/commands_map.rs (13 → 13 lines)
+        let mut in_test_module = false;
+        let mut test_brace_depth: i32 = 0;
+    
+  -     let re_fn = Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:async\s+)?fn\s+(\w+)").unwrap();
+  -     let re_struct = Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?struct\s+(\w+)").unwrap();
+  -     let re_enum = Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?enum\s+(\w+)").unwrap();
+  -     let re_trait = Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?trait\s+(\w+)").unwrap();
+  -     let re_impl = Regex::new(r"^\s*impl(?:<[^>]*>)?\s+(.+?)(?:\s*\{|$)").unwrap();
+  -     let re_const = Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?(?:const|static)\s+(\w+)").unwrap();
+  -     let re_mod = Regex::new(r"^\s*(pub(?:\(crate\))?\s+)?mod\s+(\w+)").unwrap();
+  -     let re_cfg_test = Regex::new(r"#\[cfg\(test\)\]").unwrap();
+  +     let re_fn = &*RE_RUST_FN;
+  +     let re_struct = &*RE_RUST_STRUCT;
+  +     let re_enum = &*RE_RUST_ENUM;
+  +     let re_trait = &*RE_RUST_TRAIT;
+  +     let re_impl = &*RE_RUST_IMPL;
+  +     let re_const = &*RE_RUST_CONST;
+  +     let re_mod = &*RE_RUST_MOD;
+  +     let re_cfg_test = &*RE_RUST_CFG_TEST;
+ ✓ (1ms)
+  2 tools completed in 9.4s (2 ✓)
+
+Now update `extract_python_symbols`:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (6 → 6 lines)
+    fn extract_python_symbols(code: &str) -> Vec<Symbol> {
+        let mut symbols = Vec::new();
+    
+  -     let re_class = Regex::new(r"^class\s+(\w+)").unwrap();
+  -     let re_func = Regex::new(r"^(?:async\s+)?def\s+(\w+)").unwrap();
+  -     let re_const = Regex::new(r"^([A-Z][A-Z0-9_]*)\s*=").unwrap();
+  +     let re_class = &*RE_PY_CLASS;
+  +     let re_func = &*RE_PY_DEF;
+  +     let re_const = &*RE_PY_CONST;
+ ✓ (1ms)
+
+Now update `extract_js_symbols`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (7 → 6 lines)
+    fn extract_js_symbols(code: &str) -> Vec<Symbol> {
+        let mut symbols = Vec::new();
+    
+  -     let re_export_func =
+  -         Regex::new(r"^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)").unwrap();
+  -     let re_class = Regex::new(r"^(?:export\s+(?:default\s+)?)?class\s+(\w+)").unwrap();
+  -     let re_const = Regex::new(r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=").unwrap();
+  +     let re_export_func = &*RE_JS_FUNCTION;
+  +     let re_class = &*RE_JS_CLASS;
+  +     let re_const = &*RE_JS_CONST;
+ ✓ (1ms)
+
+Now update `extract_ts_symbols`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:365..375 ✓ (0ms)
+  ▶ edit src/commands_map.rs (2 → 2 lines)
+  -     let re_interface = Regex::new(r"^(?:export\s+)?interface\s+(\w+)").unwrap();
+  -     let re_type = Regex::new(r"^(?:export\s+)?type\s+(\w+)\s*[=<]").unwrap();
+  +     let re_interface = &*RE_TS_INTERFACE;
+  +     let re_type = &*RE_TS_TYPE;
+ ✓ (0ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now update `extract_go_symbols`:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:400..410 ✓ (1ms)
+  ▶ read src/commands_map.rs:407..412 ✓ (0ms)
+  ▶ edit src/commands_map.rs (5 → 5 lines)
+  -     let re_func = Regex::new(r"^func\s+(\w+)\s*\(").unwrap();
+  -     let re_method = Regex::new(r"^func\s+\([^)]+\)\s+(\w+)\s*\(").unwrap();
+  -     let re_type_struct = Regex::new(r"^type\s+(\w+)\s+struct\b").unwrap();
+  -     let re_type_interface = Regex::new(r"^type\s+(\w+)\s+interface\b").unwrap();
+  -     let re_const = Regex::new(r"^(?:const|var)\s+(\w+)").unwrap();
+  +     let re_func = &*RE_GO_FUNC;
+  +     let re_method = &*RE_GO_METHOD;
+  +     let re_type_struct = &*RE_GO_STRUCT;
+  +     let re_type_interface = &*RE_GO_INTERFACE;
+  +     let re_const = &*RE_GO_CONST;
+ ✓ (1ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Now update `extract_java_symbols`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:465..480 ✓ (0ms)
+  ▶ edit src/commands_map.rs (8 → 4 lines)
+  -     let re_class =
+  -         Regex::new(r"^\s*(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+(\w+)").unwrap();
+  -     let re_interface = Regex::new(r"^\s*(?:public\s+)?interface\s+(\w+)").unwrap();
+  -     let re_enum = Regex::new(r"^\s*(?:public\s+)?enum\s+(\w+)").unwrap();
+  -     let re_method = Regex::new(
+  -         r"^\s*(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?(?:[\w<>\[\],\s]+)\s+(\w+)\s*\(",
+  -     )
+  -     .unwrap();
+  +     let re_class = &*RE_JAVA_CLASS;
+  +     let re_interface = &*RE_JAVA_INTERFACE;
+  +     let re_enum = &*RE_JAVA_ENUM;
+  +     let re_method = &*RE_JAVA_METHOD;
+ ✓ (1ms)
+  2 tools completed in 7.3s (2 ✓)
+
+Good. Now let me verify no `Regex::new calls remain in function bodies (they should only be in the static LazyLock` initializers at the top):
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'Regex::new' src/commands_map.rs ✓ (8ms)
+
+All 25 Regex::new calls are now in the static LazyLock initializers (lines 11-71). None remain in function bodies. Let me verify that all references are correct by running a build:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.6s)
+
+Build passes. Now run tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (24.3s)
+
+All 2152 unit tests + 86 integration tests pass. Now run clippy and fmt:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.5s)
+
+All checks pass clean. Let me verify the final state — all `Regex::new` calls are in statics, none in function bodies:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Regex::new' src/command… ✓ (3ms)
+
+All 25 on lines 11-69 (static initializers). Let me also verify the function bodies have no Regex::new:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^fn |^pub fn |^    fn |^pu… ✓ (4ms)
+
+No Regex::new calls inside any function body. Now commit:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (11ms)
+
+Done. Here's what I did:
+
+**Converted all 25 `Regex::new() calls in commands_map.rs from per-invocation compilation to LazyLock<Regex>` statics** that compile once on first use and are reused forever after.
+
+The 25 regexes, grouped by language:
+• **Rust (8):** RE_RUST_FN, `RE_RUST_STRUCT, RE_RUST_ENUM, RE_RUST_TRAIT, RE_RUST_IMPL, RE_RUST_CONST, RE_RUST_MOD, RE_RUST_CFG_TEST`
+• Python (3): RE_PY_CLASS, `RE_PY_DEF, RE_PY_CONST`
+• JavaScript (3): RE_JS_FUNCTION, `RE_JS_CLASS, RE_JS_CONST`
+• TypeScript (2): RE_TS_INTERFACE, RE_TS_TYPE
+• Go (5): `RE_GO_FUNC, RE_GO_METHOD, RE_GO_STRUCT, RE_GO_INTERFACE, RE_GO_CONST`
+• **Java (4):** RE_JAVA_CLASS, RE_JAVA_INTERFACE, RE_JAVA_ENUM, RE_JAVA_METHOD
+
+**Why this matters:** Every /map and /outline invocation was recompiling all 25 regexes from scratch. Regex compilation is orders of magnitude more expensive than matching. Now they compile once, on first use, and subsequent calls go straight to matching. Pure performance refactor — zero behavior change, all 2152 unit tests + 86 integration tests pass, clippy clean.
+
+  ↳ 3m 10s · 23549→7957 tokens · $1.17
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo test`
+

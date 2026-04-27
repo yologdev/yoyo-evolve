@@ -1,0 +1,284 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current handle_outline implementation, then write tests, implement the feature, and verify.
+  ▶ search 'fn handle_outline' (*.rs)  ▶ search 'handle_outline' (*.rs) ✓ (20ms)
+ ✓ (18ms)
+  ▶ read src/commands_search.rs:524..724 ✓ (2ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Now let me look at the supporting functions - collect_outline_matches, format_outline_match, and build_repo_map:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn collect_outline_matches' (src/commands_search.rs)  ▶ search 'fn format_outline_match' (src/commands_search.rs)  ▶ search 'OUTLINE_DEFAULT_LIMIT' (src/commands_search.rs) ✓ (14ms)
+ ✓ (18ms)
+ ✓ (17ms)
+  ▶ search 'collect_outline_matches|format_outline_match|OUTLINE_DEFAULT…' (src/commands_search.rs) ✓ (14ms)
+  ▶ search 'collect_outline|format_outline|OUTLINE_DEFAULT' (*.rs) ✓ (18ms)
+  5 tools completed in 7.3s (5 ✓)
+
+Hmm, the function references things that don't exist as named items. Let me re-read more carefully around handle_outline:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:460..540 ✓ (2ms)
+
+Good, now I can see the full picture. Let me also look at the OutlineMatch struct and OUTLINE_DEFAULT_LIMIT:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'OutlineMatch|OUTLINE_DEFAULT_LIMIT' (src/commands_search.rs) ✓ (14ms)
+  ▶ search 'OutlineMatch' (src/commands_search.rs) ✓ (14ms)
+  ▶ $ grep -n "OutlineMatch\|OUTLINE_DEFAULT\|struct Outline" src/commands_search.rs |… ✓ (5ms)
+  ▶ read src/commands_search.rs:420..470 ✓ (1ms)
+  4 tools completed in 10.9s (4 ✓)
+
+Now let me also look at FileSymbols and build_repo_map:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct FileSymbols' (src/commands_map.rs) ✓ (14ms)
+  ▶ $ grep -n "struct FileSymbols\|pub struct FileSymbols\|pub fn build_repo_map" src/… ✓ (3ms)
+  ▶ read src/commands_map.rs:36..56 ✓ (1ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now let me look at the existing tests in commands_search.rs to understand the test patterns:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1870..1970 ✓ (1ms)
+  ▶ read src/commands_search.rs:1969..2034 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I have a complete picture. Let me also check what looks_like_file_path needs to handle. I need to understand the helper function I'll need to create:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1..11 ✓ (1ms)
+
+Now let me check where the test module starts:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "^#\[cfg(test)\]" src/commands_search.rs ✓ (8ms)
+  ▶ read src/commands_search.rs:949..959 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Good. Now I have everything I need. Let me implement this step by step:
+
+1. First, write the test
+2. Then implement the feature
+3. Run checks
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 13.0s (5 ✓)
+
+Let me first write a helper function looks_like_file_path and a function that collects all symbols from a specific file, then write tests. Let me also look at how the --all flag is currently parsed to ensure the file-path mode integrates properly:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:524..584 ✓ (1ms)
+
+Now let me write tests first. I need to write tests that exercise the new file-path mode. Since handle_outline prints to stdout, I'll test the underlying logic functions instead. Let me add:
+
+1. A helper function looks_like_file_path that can be unit tested
+2. A helper collect_file_outline that filters entries by file path
+3. Tests for both
+
+Let me write the tests first:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1860..1880 ✓ (0ms)
+
+Now let me add the tests at the end of the test module (before the closing }). I'll add tests for the new `looks_like_file_path and collect_file_outline` functions:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (23 → 135 lines)
+            // The limit is applied in handle_outline, not collect_outline_matches
+            let limit = matches.len().min(OUTLINE_DEFAULT_LIMIT);
+            assert_eq!(limit, 30);
+  +     }
+  + 
+  +     #[test]
+  +     fn looks_like_file_path_with_slash() {
+  +         assert!(looks_like_file_path("src/main.rs"));
+  +         assert!(looks_like_file_path("src/format/mod.rs"));
+  +         assert!(looks_like_file_path("lib/utils.py"));
+  +     }
+  + 
+  +     #[test]
+  +     fn looks_like_file_path_with_known_extension() {
+  +         assert!(looks_like_file_path("main.rs"));
+  +         assert!(looks_like_file_path("utils.py"));
+  +         assert!(looks_like_file_path("index.ts"));
+  +         assert!(looks_like_file_path("app.js"));
+  +         assert!(looks_like_file_path("server.go"));
+  +         assert!(looks_like_file_path("Main.java"));
+  ... (97 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Now let me implement the two helper functions (looks_like_file_path and collect_file_outline) and modify handle_outline:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (1 → 36 lines)
+  + /// Check if a query looks like a file path (contains `/` or has a known code extension).
+  + fn looks_like_file_path(query: &str) -> bool {
+  +     if query.contains('/') {
+  +         return true;
+  +     }
+  +     // Check for known source file extensions
+  +     let known_extensions = [
+  +         ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".go", ".java", ".c", ".cpp", ".cc",
+  +         ".h", ".hpp", ".rb", ".swift", ".kt", ".scala", ".zig", ".lua", ".sh", ".bash", ".zsh",
+  +         ".toml", ".json", ".yaml", ".yml", ".xml", ".html", ".css", ".scss", ".md",
+  +     ];
+  +     let lower = query.to_lowercase();
+  +     known_extensions.iter().any(|ext| lower.ends_with(ext))
+  + }
+  + 
+  + /// Collect ALL symbols from a specific file path, sorted by line number.
+  + fn collect_file_outline(entries: &[FileSymbols], path: &str) -> Vec<OutlineMatch> {
+  +     let mut matches = Vec::new();
+  +     for entry in entries {
+  +         if entry.path == path || entry.path.ends_with(&format!("/{path}")) {
+  ... (16 more lines)
+ ✓ (0ms)
+
+Now modify handle_outline to check for file paths before the symbol-search logic:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:558..618 ✓ (1ms)
+  ▶ edit src/commands_search.rs (56 → 76 lines)
+  - /// Handle the `/outline <query> [--all]` command.
+  + /// Handle the `/outline <query|filepath> [--all]` command.
+    pub fn handle_outline(input: &str) {
+        let rest = input.strip_prefix("/outline").unwrap_or(input).trim();
+    
+  ···
+    
+        if query.is_empty() {
+            println!(
+  -             "{DIM}  Usage: /outline <query> [--all]{RESET}\n  \
+  -              Search for functions, structs, enums, and traits across the project.\n\n  \
+  +             "{DIM}  Usage: /outline <query|filepath> [--all]{RESET}\n  \
+  +              Search for symbols across the project, or show all symbols in a file.\n\n  \
+                 Examples:\n    \
+  -              /outline parse\n    \
+  -              /outline Config\n    \
+  -              /outline handle --all"
+  +              /outline parse            {DIM}# search for symbols matching \"parse\"{RESET}\n    \
+  +              /outline Config            {DIM}# search for symbols matching \"Config\"{RESET}\n    \
+  +              /outline src/main.rs       {DIM}# show all symbols in src/main.rs{RESET}\n    \
+  ... (29 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 25.0s (4 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (451ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (4.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (36.9s)
+  4 tools completed in 1m 1s (4 ✓)
+
+All 86 tests pass, clippy is clean, fmt is clean. Let me verify my new tests are actually running:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (154ms)
+
+All my new tests are there and passing. Let me verify specifically:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- "collect_file_outl… ✓ (127ms)
+
+The -- filter syntax is different. Let me try:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test collect_file_outline … ✓ (126ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test looks_like_file_path … ✓ (125ms)
+  2 tools completed in 4.3s (2 ✓)
+
+All 5 new tests pass. Now let me also update the help text in `help.rs` since the outline command now supports file paths:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ grep -n "outline" src/help.rs | head -20 ✓ (3ms)
+  ▶ read src/help.rs:309..329 ✓ (1ms)
+  ▶ edit src/help.rs (12 → 14 lines)
+            "outline" => Some(
+  -             "/outline <query> [--all] — Search for symbols across the project\n\n\
+  +             "/outline <query|filepath> [--all] — Search for symbols or show file structure\n\n\
+                 Finds functions, structs, enums, traits, and other symbols whose names\n\
+                 match the query. Like VS Code's \"Go to Symbol in Workspace\" (Ctrl+T).\n\n\
+  +              When given a file path, shows all symbols in that file sorted by line number.\n\n\
+                 Results are ranked by relevance: exact match > prefix > substring.\n\
+                 Shows up to 30 results by default.\n\n\
+                 Usage:\n\
+  -              \x20 /outline parse          Find symbols containing \"parse\"\n\
+  -              \x20 /outline Config         Find symbols containing \"Config\"\n\
+  -              \x20 /outline handle --all   Show all matches (no limit)\n\n\
+  +              \x20 /outline parse            Find symbols containing \"parse\"\n\
+  +              \x20 /outline Config           Find symbols containing \"Config\"\n\
+  +              \x20 /outline src/main.rs      Show all symbols in src/main.rs\n\
+  +              \x20 /outline handle --all     Show all matches (no limit)\n\n\
+                 Uses the same symbol extraction as /map (regex or ast-grep).",
+            ),
+ ✓ (1ms)
+  5 tools completed in 23.0s (5 ✓)
+
+Now update the short description references:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1148..1151 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "  outline           Search for symbols by name (e.g. yoyo outline parse)"
+  +         "  outline           Search for symbols or show file structure (e.g. yoyo outline src/main.rs)"
+ ✓ (1ms)
+  ▶ read src/help.rs:1350..1353 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "    /outline <query>   Search for symbols by name across the project"
+  +         "    /outline <query|file>  Search for symbols or show file structure"
+ ✓ (1ms)
+  ▶ read src/help.rs:1573..1576 ✓ (0ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     out.push_str("  /outline <query>   Search for symbols by name across the project\n");
+  +     out.push_str("  /outline <query|file>  Search for symbols or show file structure\n");
+ ✓ (0ms)
+  ▶ read src/help.rs:1718..1721 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "outline" => Some("Search for symbols by name across the project"),
+  +         "outline" => Some("Search for symbols or show file structure"),
+ ✓ (1ms)
+  8 tools completed in 27.3s (8 ✓)
+
+Now let me run all checks again to make sure everything still works:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build && cargo test 2>&1 |… ✓ (41.0s)
+  2 tools completed in 54.2s (2 ✓)
+
+All 86 tests pass, clippy clean, fmt clean. Now let me check if CLAUDE.md needs updating — the `handle_outline` description in the repository structure section:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_outline" CLAUDE.md ✓ (10ms)
+  ▶ $ grep -n "outline" CLAUDE.md ✓ (7ms)
+  2 tools completed in 5.2s (2 ✓)
+
+No mention of outline in CLAUDE.md. Let me check README.md:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "outline" README.md ✓ (7ms)
+  ▶ $ grep -in "outline" docs/src/*.md docs/src/**/*.md 2>/dev/null ✓ (4ms)
+  ▶ $ grep -rn "outline" docs/src/ 2>/dev/null ✓ (3ms)
+  3 tools completed in 7.0s (3 ✓)
+
+No docs mention outline, so no stale docs to fix. The help.rs updates I already made are the right place for this change. Let me commit:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (12 lines) ✓ (9ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 13.3s (3 ✓)
+
+Done. Here's what I shipped:
+
+**/outline now accepts file paths** — running /outline src/main.rs shows all symbols in that file sorted by line number, instead of the old behavior of treating it as a failed symbol-name search.
+
+What changed:
+• src/commands_search.rs: Added looks_like_file_path() (checks for / or known code extensions) and `collect_file_outline()` (filters repo map to one file, sorts by line). Modified handle_outline() to try file-path mode first when the query looks like a path and the file exists on disk, falling through to symbol search otherwise.
+• src/help.rs: Updated all four help surfaces (detailed /help outline, REPL help, CLI subcommand help, short description) to reflect the new `<query|filepath>` syntax.
+• 5 new tests: `looks_like_file_path_with_slash, looks_like_file_path_with_known_extension, looks_like_file_path_rejects_symbol_names, collect_file_outline_filters_by_path, collect_file_outline_sorts_by_line`.
+
+All 86 tests pass, clippy clean, fmt clean.
+
+  ↳ 6m 4s · 23177→10717 tokens · $2.00
+  ⬤ 13% of context window used
+
+  ✓ Watch passed: `cargo test`
+

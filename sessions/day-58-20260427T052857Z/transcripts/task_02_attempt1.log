@@ -1,0 +1,242 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the codebase - finding all copies of lock_or_recover and understanding their implementations.
+  ▶ $ grep -rn "fn lock_or_recover" src/📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -rn "fn rw_read_or_recover\|fn rw_write_or_recover" src/ ✓ (44ms)
+ ✓ (48ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Good, I can see exactly what's there. Let me look at the implementations to confirm they're identical:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 5 "fn lock_or_recover" src/commands_bg.rs  ▶ $ grep -A 5 "fn lock_or_recover" src/session.rs  ▶ $ grep -A 5 "fn lock_or_recover" src/commands_spawn.rs ✓ (40ms)
+ ✓ (49ms)
+ ✓ (52ms)
+  3 tools completed in 2.2s (3 ✓)
+
+All three are identical. Now let me check for existing tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_lock_or_recover" src/commands_bg.rs  ▶ $ grep -n "test_lock_or_recover" src/session.rs src/commands_spawn.rs ✓ (8ms)
+ ✓ (8ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Let me see the tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '600,640p' src/commands_bg.rs ✓ (3ms)
+
+Now let me check the mod declarations in main.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^mod \|^pub mod " src/main.rs | head -30 ✓ (3ms)
+  ▶ $ grep -n "^mod \|^pub mod " src/main.rs ✓ (8ms)
+  ▶ $ sed -n '60,75p' src/main.rs ✓ (3ms)
+  ▶ $ sed -n '60,72p' src/main.rs ✓ (3ms)
+  4 tools completed in 11.0s (4 ✓)
+
+Let me get the full list:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '38,72p' src/main.rs ✓ (3ms)
+
+Hmm, the tool is collapsing similar lines. Let me use read_file:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:38..78 ✓ (1ms)
+
+Good. Now let me check the exact imports at the top of the files I need to modify:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:1..26  ▶ read src/session.rs:1..26  ▶ read src/commands_spawn.rs:1..26 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (3ms)
+  3 tools completed in 2.4s (3 ✓)
+
+Now I have the full picture. Let me create the plan:
+
+1. Create `src/sync_util.rs with the shared lock_or_recover` function + tests
+2. Add mod sync_util; in main.rs
+3. Remove local lock_or_recover from commands_bg.rs, session.rs, and commands_spawn.rs, replacing with `use crate::sync_util::lock_or_recover;`
+
+Let's start:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write src/sync_util.rs (59 lines) ✓ (0ms)
+
+Now add the module declaration in main.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (3 → 4 lines)
+    mod setup;
+  + mod sync_util;
+    mod tools;
+    mod update;
+ ✓ (0ms)
+
+Now update commands_bg.rs — remove the local definition and add the import:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_bg.rs (12 → 4 lines)
+    use crate::format::{BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW};
+  - 
+  - /// Acquire a `std::sync::Mutex` lock, recovering from poison if a thread panicked.
+  - ///
+  - /// When a thread panics while holding a lock the mutex becomes "poisoned".
+  - /// Rather than cascading the panic to every subsequent caller we recover the
+  - /// inner data — the data itself is still valid, and for our use-cases (counters, output buffers) that is acceptable.
+  - fn lock_or_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+  -     mutex.lock().unwrap_or_else(|e| e.into_inner())
+  - }
+  + use crate::sync_util::lock_or_recover;
+    
+    /// Maximum bytes of output to buffer per background job (256KB, same as StreamingBashTool).
+ ✗ (0ms)
+    │ old_text not found in src/commands_bg.rs.
+  ▶ edit src/commands_bg.rs (13 → 4 lines)
+    use crate::format::{BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW};
+  - 
+  - /// Acquire a `std::sync::Mutex` lock, recovering from poison if a thread panicked.
+  - ///
+  - /// When a thread panics while holding a lock the mutex becomes "poisoned".
+  - /// Rather than cascading the panic to every subsequent caller we recover the
+  - /// inner data — the data itself is still valid, only the invariant *might* be
+  - /// broken, and for our use-cases (counters, output buffers) that is acceptable.
+  - fn lock_or_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+  -     mutex.lock().unwrap_or_else(|e| e.into_inner())
+  - }
+  + use crate::sync_util::lock_or_recover;
+    
+    /// Maximum bytes of output to buffer per background job (256KB, same as StreamingBashTool).
+ ✓ (1ms)
+  2 tools completed in 6.5s (1 ✓, 1 ✗)
+
+Now remove the duplicate tests from commands_bg.rs. Let me find them:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_lock_or_recover" src/commands_bg.rs ✓ (7ms)
+  ▶ read src/commands_bg.rs:599..634 ✓ (1ms)
+  ▶ edit src/commands_bg.rs (30 → 3 lines)
+            assert_eq!(jobs[0].exit_code, Some(42));
+  -     }
+  - 
+  -     #[test]
+  -     fn test_lock_or_recover_normal() {
+  -         let mutex = std::sync::Mutex::new(42);
+  -         let guard = lock_or_recover(&mutex);
+  -         assert_eq!(*guard, 42);
+  -     }
+  - 
+  -     #[test]
+  -     fn test_lock_or_recover_poisoned() {
+  -         let mutex = std::sync::Arc::new(std::sync::Mutex::new(vec![1, 2, 3]));
+  -         let m2 = std::sync::Arc::clone(&mutex);
+  - 
+  -         // Poison the mutex by panicking while holding the lock
+  -         let _ = std::thread::spawn(move || {
+  -             let _guard = m2.lock().unwrap();
+  -             panic!("intentional panic to poison mutex");
+  -         })
+  ... (10 more lines)
+ ✓ (1ms)
+  3 tools completed in 13.3s (3 ✓)
+
+Now update `session.rs`:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/session.rs (10 → 6 lines)
+    use crate::format::pluralize;
+  + use crate::sync_util::lock_or_recover;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+  - 
+  - /// Acquire a Mutex guard, recovering from a poisoned Mutex instead of panicking.
+  - fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+  -     mutex.lock().unwrap_or_else(|e| e.into_inner())
+  - }
+    
+    /// Tracks files modified during a session via write_file and edit_file tool calls.
+ ✓ (0ms)
+
+Now update `commands_spawn.rs`:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (14 → 6 lines)
+    use crate::format::*;
+    use crate::prompt::*;
+  + use crate::sync_util::lock_or_recover;
+    
+    use std::sync::{Arc, Mutex};
+    use yoagent::types::{AgentMessage, Usage};
+  - 
+  - /// Acquire a `std::sync::Mutex` lock, recovering from poison if a thread panicked.
+  - ///
+  - /// See `commands_bg::lock_or_recover` for rationale — spawn tasks run in
+  - /// sub-agents that may panic, and we must not cascade a poisoned lock into the
+  - /// parent REPL.
+  - fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+  -     mutex.lock().unwrap_or_else(|e| e.into_inner())
+  - }
+ ✓ (1ms)
+
+Now let's verify: there should be exactly ONE definition of lock_or_recover:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "fn lock_or_recover" src/ ✓ (40ms)
+
+One definition. Now let's run the full check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (450ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (37.5s)
+  4 tools completed in 1m 2s (4 ✓)
+
+All 2238 tests pass (2152 + 86), zero failures. Let me verify the deduplication is clean:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "lock_or_recover" src/ | grep -v "test_" | grep -v "//.*lock_or_recover… ✓ (6ms)
+
+Clean — one definition in sync_util.rs, three imports in the consumer modules, all call sites work. Now let me update CLAUDE.md to reflect the new module:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "sync_util\|session.rs" CLAUDE.md | head -10 ✓ (3ms)
+
+I need to add sync_util.rs to the Architecture section:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE.md:71..76 ✓ (0ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
+  + - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` for poisoned `Mutex` recovery (deduplicated Day 58)
+ ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now add src/sync_util.rs to the Project Files section:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "src/session.rs" CLAUDE.md ✓ (7ms)
+  ▶ $ grep -n "src/setup.rs" CLAUDE.md ✓ (7ms)
+  2 tools completed in 7.5s (2 ✓)
+
+The Project Files section appears to be auto-generated, not manually maintained. Let me check:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^## Project Files" CLAUDE.md ✓ (7ms)
+  ▶ $ grep -n "Project Files" CLAUDE.md ✓ (7ms)
+  2 tools completed in 4.1s (2 ✓)
+
+The Project Files section must be in the system prompt, not CLAUDE.md. The architecture update is sufficient. Let me also check the Repository Structure section that was in the system prompt to see if that's in CLAUDE.md:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Repository Structure" CLAUDE.md ✓ (7ms)
+
+Those sections are injected by the system prompt, not in CLAUDE.md. My CLAUDE.md update is complete.
+
+Now commit:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (11ms)
+
+Clean diff — 51 lines of duplication replaced by 59 lines in one canonical location (with proper docs and tests). Net is roughly neutral in lines but the duplication is gone.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (7 lines) ✓ (9ms)
+
+Done. Clean commit, all checks pass.
+
+What I did:
+1. Created src/sync_util.rs — a new small module with a single `pub fn lock_or_recover<T>` and two tests (normal + poisoned mutex recovery)
+2. Added mod sync_util; to src/main.rs
+3. Removed the local lock_or_recover definition from src/commands_bg.rs, src/session.rs, and src/commands_spawn.rs — replaced with use crate::sync_util::lock_or_recover;
+4. Moved the tests from commands_bg.rs to the canonical `sync_util.rs` module
+5. Updated CLAUDE.md architecture section to document the new module
+
+Result: `grep -rn "fn lock_or_recover" src/` shows exactly 1 definition. All 2238 tests pass, clippy clean, fmt clean.
+
+  ↳ 3m 25s · 15645→6126 tokens · $0.972
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo test`
+
