@@ -1207,6 +1207,7 @@ mod tests {
                     id: "tc_1".to_string(),
                     name: "bash".to_string(),
                     arguments: serde_json::json!({"command": "ls"}),
+                    provider_metadata: None,
                 },
             ],
             stop_reason: yoagent::types::StopReason::Stop,
