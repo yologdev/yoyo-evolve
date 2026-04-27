@@ -449,29 +449,29 @@ pub async fn run_repl(
         };
         let input = input.trim();
 
-        let cmd_result = crate::dispatch::dispatch_command(
+        let mut dispatch_ctx = crate::dispatch::DispatchContext {
             input,
             agent,
             agent_config,
-            &mut session_total,
-            &session_changes,
-            &mut turn_history,
-            &bg_tracker,
-            &spawn_tracker,
-            &mut undo_context,
-            &mut last_input,
-            &mut last_error,
-            &mut bookmarks,
-            &mut checkpoint_store,
+            session_total: &mut session_total,
+            session_changes: &session_changes,
+            turn_history: &mut turn_history,
+            bg_tracker: &bg_tracker,
+            spawn_tracker: &spawn_tracker,
+            undo_context: &mut undo_context,
+            last_input: &mut last_input,
+            last_error: &mut last_error,
+            bookmarks: &mut bookmarks,
+            checkpoint_store: &mut checkpoint_store,
             session_start,
             turn_count,
-            &cwd,
-            &mcp_cli_servers,
-            &mcp_server_configs,
+            cwd: &cwd,
+            mcp_cli_servers: &mcp_cli_servers,
+            mcp_server_configs: &mcp_server_configs,
             mcp_count,
             openapi_count,
-        )
-        .await;
+        };
+        let cmd_result = crate::dispatch::dispatch_command(&mut dispatch_ctx).await;
         match cmd_result {
             CommandResult::Quit => break,
             CommandResult::Continue => continue,
