@@ -1,0 +1,176 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 2.5s (2 ✓)
+
+Now let me check the current yoagent version and what the upgrade path looks like, and also understand the dispatch_command situation mentioned in the assessment:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep 'yoagent' Cargo.toml  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn dispatch_command' sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'pub.*fn dispatch_comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^pub.*fn dispatch_comma… ✓ (4ms)
+ ✓ (3ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  4 tools completed in 2.0s (4 ✓)
+
+Now let me check what the auto-lint-after-edit feature would involve - this is the biggest competitive gap from the assessment:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'on_after_turn\|on_befor…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'auto_watch\|watch_comma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'parse_auto_watch' src/c… ✓ (3ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'auto_watch' src/cli.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'auto_watch' src/repl.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'auto_watch' src/ | hea… ✓ (4ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  6 tools completed in 9.1s (6 ✓)
+
+Now let me check the last release to see if we should consider a release:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag --sort=-creatordate | he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline v0.5.0..HEAD |… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag | grep '^v' | sort -V | … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag | head -20 ✓ (4ms)
+  4 tools completed in 11.0s (4 ✓)
+
+No release tags yet. Let me look at what `DispatchContext` would need to bundle — this is a high-impact structural cleanup:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'dispatch_command(' src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'dispatch_command(' src/… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Good — dispatch_command is only called from one place. Now let me understand what a DispatchContext refactor would look like in terms of file touches:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'dispatch_command\|try_d… ✓ (3ms)
+
+OK, now I have a clear picture. Let me plan the three tasks:
+
+1. Task 1 (Self-driven, competitive gap): DispatchContext struct — bundle the 20 parameters of dispatch_command into a context struct. This is the biggest structural smell found in assessment, touches 2 files (dispatch.rs + repl.rs), and unblocks easier future command additions.
+
+2. **Task 2 (Community issue #343):** Upgrade yoagent 0.7 → 0.8. Mechanical dependency bump as requested by @yuanhao. Touches Cargo.toml + any API changes in src/.
+
+3. **Task 3 (Self-driven, competitive gap):** Auto-lint-after-edit — the single most impactful workflow gap vs Aider. When the agent edits a file, automatically run the project's lint command and feed errors back. This leverages the existing `/watch` infrastructure.
+
+Wait, let me reconsider task 3. Auto-lint-after-edit is a significant feature that may be hard to scope into 20 minutes and ≤3 files. Let me think about what's more tractable.
+
+Actually, re-reading the assessment more carefully — the `dispatch_command` 20-parameter refactor is exactly the kind of consolidation work that prepares for future features. And the yoagent upgrade is a concrete community ask that unblocks #344. For the third slot, I should pick something that directly improves user experience or closes a competitive gap.
+
+Let me check if there's something concrete for auto-lint:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'lint_command_for_projec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'detect_test_command\|te… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Auto-lint-after-edit would need hooking into the tool execution pipeline — the HookedTool system in hooks.rs. That's feasible: create a LintHook that triggers after edit_file or write_file tool calls. But it needs careful scoping — it'd touch hooks.rs, tools.rs or main.rs, and possibly prompt.rs. Let me think if there's a simpler approach...
+
+Actually, the auto-lint feature as Aider implements it is: after every edit, run lint on the changed file, and if there are errors, automatically feed them back as a new user message. This is more of an agent-loop feature than a hook. It would need changes in the prompt execution loop.
+
+This is a significant feature. Let me scope it to just the first step: detect the lint command and run it after edits, reporting errors. That still might be too broad.
+
+Let me pick something more tractable for slot 3. The CLAUDE_CODE_GAP.md stats being stale is mentioned — but that's not high impact. What about something competitive?
+
+Actually, let me reconsider. The DispatchContext refactor is important but it's purely structural — it doesn't directly close a competitive gap. The yoagent upgrade is important and community-requested. For the third task, I should pick something that a real user would notice.
+
+Let me look at what would make the biggest visible difference. The assessment mentions "no persistent semantic index" — that's big. "IDE integration" — that's Issue #215, too big. 
+
+What about improving the existing watch-after-prompt to be more like Aider's auto-lint? The infrastructure is already there — run_watch_after_prompt already runs a command after each prompt and feeds errors back. The gap is: it only runs if the user explicitly sets a watch command. We could make it auto-detect the lint command and set it as the default watch command when auto_watch is true. Let me check what the current auto_watch does:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,400p' src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn auto_detect_watch_co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '$(grep -n "fn auto_detec… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1378,1410p' src/commands… ✓ (3ms)
+  4 tools completed in 11.1s (4 ✓)
+
+Interesting — auto_detect_watch_command() currently only returns the test command, not lint. But detect_watch_all_command() returns lint+test. The auto-watch feature auto-detects the test command but misses lint. Making auto-watch use detect_watch_all_command() instead of detect_test_command() would be a one-line change that gives every project automatic lint+test after each prompt — closing the Aider gap significantly.
+
+But wait — that's almost too small for a task. Let me think about what else to pair it with... Actually, the auto-watch currently uses detect_test_command(). Changing it to use detect_watch_all_command() would auto-lint+test. That IS the Aider-competitive feature. But it's a one-line change.
+
+Let me instead think about the DispatchContext refactor vs. a more impactful third task.
+
+The three best candidates:
+1. **yoagent 0.7→0.8 upgrade** (Issue #343, community ask, unblocks #344)
+2. DispatchContext struct (20-param smell, structural improvement, unblocks future commands)  
+3. **Auto-watch includes lint** (competitive gap closer vs Aider, small but high-impact change)
+
+Actually, task 3 is too small. Let me combine it into something bigger or pick something more substantial. Let me look for a better third task:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch.rs ✓ (3ms)
+
+The DispatchContext is a big refactor — dispatch.rs is 1609 lines and every arm of the match statement passes subsets of those 20 params to handler functions. Let me check how many handler calls there are:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'handle_\|commands::' sr… ✓ (3ms)
+
+That's a LOT of handler calls. The DispatchContext refactor would touch dispatch.rs heavily plus repl.rs (the call site). But the handler functions themselves don't need to change — they take individual params. So the refactor is: define the struct in dispatch.rs, create it in repl.rs, and update dispatch_command to take `&mut DispatchContext` instead of 20 params. The match arms inside dispatch.rs would use ctx.agent, `ctx.session_changes`, etc. 
+
+This is within scope for 20 minutes if scoped carefully. But 1609 lines of match arms to update is risky. Let me reconsider.
+
+Actually, let me think about what has the most impact for a real user TODAY. The yoagent upgrade is important infrastructure. The DispatchContext is internal cleanup. What about something users actually feel?
+
+Let me think about auto-lint-on-watch as a broader improvement:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1378,1380p' src/commands… ✓ (3ms)
+
+OK here's my plan. Three tasks:
+
+**Task 1: Upgrade yoagent 0.7 → 0.8 (Issue #343)** — Community issue from @yuanhao. Mechanical bump. Touches Cargo.toml and any API-breaking changes in src/.
+
+**Task 2: DispatchContext struct** — Bundle the 20 params of dispatch_command into a context struct. Self-driven structural improvement. Touches dispatch.rs and repl.rs.
+
+Task 3: Auto-watch defaults to lint+test — Change `auto_detect_watch_command()` to use lint+test instead of test-only, closing the biggest competitive gap vs Aider. Also add a /watch lint subcommand. Touches commands_dev.rs.
+
+Wait — task 2 is risky. 1609 lines, many match arms to update. If the agent messes up one arm, it fails. Let me reconsider the sizing.
+
+Actually, the refactor for DispatchContext is: define struct, change function signature, update the single call site in repl.rs, and inside dispatch_command the 20 params become `ctx.field`. The match arms call handler functions with individual fields from ctx — so agent becomes ctx.agent, etc. That's a lot of mechanical find-replace but conceptually simple. The risk is the sheer number of replacements.
+
+Let me check how many unique parameter names are used in match arms:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '408,430p' src/dispatch.r… ✓ (3ms)
+
+This is 20 parameters. Inside the match body, each arm uses a subset. The DispatchContext struct definition + signature change is straightforward, but updating every reference inside the 1200-line match body is tedious. An agent has 20 minutes. With careful use of rename/find-replace, it could work.
+
+Actually, let me think more carefully. The implementation agent can use rename_symbol or targeted find-replace. The risk is real but manageable. Let me keep this task but add clear instructions about approach.
+
+Alternatively, I could pick a different self-driven task. What about improving error messages or UX? Let me think about what's highest impact...
+
+Actually, let me reconsider. The DispatchContext refactor is the kind of thing that makes every future session more productive — it directly reduces friction for adding new commands. And the assessment specifically called it out as a structural smell. Let me keep it but be very clear about the approach.
+
+Now let me write the plan:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (46 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (86 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (59 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (16 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 1m 7s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 58 Session Plan (14:15)
+
+### Task 1: Upgrade yoagent 0.7 → 0.8 (Issue #343)
+• Type: Community issue from @yuanhao
+• Files: Cargo.toml, src/ (if API breaks)
+• Why: Mechanical dependency bump that unblocks RLM Layer 2 (#344). Clean, low-risk, community-requested.
+
+### Task 2: Introduce DispatchContext struct
+• Type: Self-driven structural improvement
+• Files: src/dispatch.rs, src/repl.rs
+• Why: dispatch_command() takes 20 parameters — the biggest structural smell in the codebase. A context struct eliminates this friction and makes every future command easier to add.
+
+### Task 3: Auto-watch defaults to lint+test
+• Type: Self-driven competitive gap closer
+• Files: src/commands_dev.rs
+• Why: Closes the single biggest workflow gap vs Aider. The infrastructure already exists (`detect_watch_all_command(), run_watch_after_prompt()`). Just need to connect the right pipe so auto-watch runs lint+test instead of test-only. Also adds /watch lint subcommand.
+
+### Issue Responses
+• #343: Implementing this session
+• #215: Deferred (long-term challenge, no new input to respond to)
+• #344: Unblocked once #343 lands; next session candidate
+
+  ↳ 3m 41s · 16420→8006 tokens · $0.944
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo test`
+

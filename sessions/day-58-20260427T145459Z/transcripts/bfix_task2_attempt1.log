@@ -1,0 +1,143 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the failing tests and understand what's going wrong.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_save_config_to_use… ✓ (5ms)
+  ▶ read src/setup.rs:870..950 ✓ (1ms)
+  2 tools completed in 7.3s (2 ✓)
+
+These tests are manipulating XDG_CONFIG_HOME env var. The issue is likely a race condition between tests running in parallel, since both modify the same env var. But the error message says the assertion on content fails, which suggests the file isn't being written correctly. Let me look at the save_config_to_user_file function:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn save_config_to_user_… ✓ (3ms)
+  ▶ read src/setup.rs:74..124 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me check user_config_path:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn user_config_path" sr… ✓ (3ms)
+  ▶ read src/cli.rs:246..266 ✓ (1ms)
+  2 tools completed in 5.7s (2 ✓)
+
+OK, the functions themselves look correct and unchanged. The test failures are in `setup.rs` tests that modify environment variables. These tests are likely failing due to parallel test execution interfering with each other (both tests set XDG_CONFIG_HOME). But the task description says these broke after the dispatch refactoring. Let me check if any changes were made to setup.rs or cli.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/setup.rs … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 916e7ff..55ed9ee -- src… ✓ (4ms)
+  3 tools completed in 9.8s (3 ✓)
+
+No changes to setup.rs. Let me check if the yoagent 0.7→0.8 upgrade changed something:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 2d2c8a4..916e7ff -- Car… ✓ (4ms)
+
+Let me run the specific failing tests to reproduce:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test setup::tests::test_sa… ✓ (158ms)
+
+The tests pass in isolation. This is a parallel test execution race condition — both tests modify XDG_CONFIG_HOME and run concurrently. Let me check if there are other tests also touching this env var:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "XDG_CONFIG_HOME" src/se… ✓ (3ms)
+
+Three tests all racing on XDG_CONFIG_HOME. Also check if the wizard test might interfere:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "XDG_CONFIG_HOME\|HOME" … ✓ (3ms)
+
+This is a classic env var race condition in parallel tests. The fix is to use #[serial] or unique temp dirs that don't collide. Since the tests already use unique temp dirs for the file paths, the real issue is that two tests running in parallel both set XDG_CONFIG_HOME to different values, and one test reads the other's value.
+
+The most robust fix without adding a dependency is to use `std::sync::Mutex` to serialize these tests, or to use the serial_test crate. Let me check if that crate is already available:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "serial" Cargo.toml ✓ (3ms)
+
+`serial_test` is already a dependency. Let me check if it's used elsewhere:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "serial" src/ --include… ✓ (6ms)
+
+The pattern is well-established. The fix is to add #[serial] to the three setup tests that modify XDG_CONFIG_HOME. Let me check all setup tests that touch env vars:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/setup.rs:960..980 ✓ (0ms)
+  ▶ read src/setup.rs:979..999 ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me check the imports section of the test module:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/setup.rs ✓ (3ms)
+  ▶ read src/setup.rs:545..560 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I'll add #[serial] to the three tests that modify XDG_CONFIG_HOME:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/setup.rs (3 → 4 lines)
+    mod tests {
+        use super::*;
+        use crate::cli::KNOWN_PROVIDERS;
+  +     use serial_test::serial;
+ ✓ (0ms)
+
+Now add #[serial] to each of the three tests that modify XDG_CONFIG_HOME:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/setup.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_save_config_to_user_file() {
+ ✓ (1ms)
+  ▶ edit src/setup.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_save_config_to_user_file_creates_parent_dirs() {
+ ✓ (1ms)
+  ▶ edit src/setup.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_wizard_save_to_user_level() {
+ ✓ (0ms)
+  3 tools completed in 11.8s (3 ✓)
+
+Now let me also check if there are any other tests in setup.rs that touch env vars but don't have #[serial]:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_var\|remove_var" sr… ✓ (3ms)
+
+There's also a test at line 725 that touches ANTHROPIC_API_KEY. Let me check that one:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/setup.rs:718..738 ✓ (0ms)
+
+That one should also be #[serial]. Let me check which test that is:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/setup.rs … ✓ (3ms)
+  ▶ read src/setup.rs:715..718 ✓ (0ms)
+  2 tools completed in 5.4s (2 ✓)
+
+That test touches ANTHROPIC_API_KEY, not XDG_CONFIG_HOME, so it's a separate concern. The failing tests are specifically about XDG_CONFIG_HOME. I've already added #[serial] to all three. Let me also check the tests in cli.rs that touch env vars, since they could race with the setup tests:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 "set_var.*XDG_CONFIG_HO… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B5 "set_var.*\"HOME\"" src… ✓ (3ms)
+  2 tools completed in 5.3s (2 ✓)
+
+These cli.rs tests touch HOME, which could affect `dirs_hint() since it falls back to HOME`. Let me check if they have #[serial]:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B3 "fn test_home_config_pa… ✓ (3ms)
+
+Those cli.rs tests don't have #[serial] either, and they modify `HOME. If XDG_CONFIG_HOME` is not set (because a setup test just removed it), dirs_hint() falls back to HOME — and if a cli.rs test is modifying HOME at that moment, the setup test would get the wrong path. However, the failing tests are the setup tests that explicitly set XDG_CONFIG_HOME, so the HOME fallback shouldn't be used.
+
+The most likely race is between the three setup tests that all set XDG_CONFIG_HOME to different temp dirs. Adding #[serial] to all three should fix it. Let me now run the full test suite:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (5.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (25.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (173ms)
+  3 tools completed in 40.8s (3 ✓)
+
+All passing. Let me run the full test suite one more time to confirm no flaky races:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (8.4s)
+
+All 2153 unit tests + 86 integration tests pass. Here's what I fixed:
+
+Root cause: The three tests in `src/setup.rs that modify the XDG_CONFIG_HOME environment variable (test_save_config_to_user_file, test_save_config_to_user_file_creates_parent_dirs, test_wizard_save_to_user_level) were running in parallel, causing race conditions where one test's set_var/remove_var` would interfere with another test's read of the env var.
+
+Fix: Added #[serial] attribute (from the already-depended-upon serial_test crate) to all three tests, plus the use serial_test::serial; import to the test module. This ensures they run sequentially, matching the established pattern used throughout the codebase (e.g., in src/main.rs, src/tools.rs, src/prompt_budget.rs, `src/commands_project.rs`).
+
+  ↳ 3m 13s · 9008→4532 tokens · $0.753
+  ⬤ 4% of context window used
+
+  ✓ Watch passed: `cargo test`
+
