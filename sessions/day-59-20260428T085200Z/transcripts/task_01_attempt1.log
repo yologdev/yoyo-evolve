@@ -1,0 +1,506 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /loop command. Let me start by understanding the codebase structure.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 1s)
+
+Now let me look at the specific dispatch patterns more closely and the actual code I need to modify:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Prompted" src/dispatch.rs | head -20  ▶ $ grep -n "CommandResult" src/dispatch.rs | head -30 ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ grep -n "SendToAgent" src/dispatch.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "handle_fix\|handle_lint_fix\|handle_health\|run_prompt" src/dispatch.rs… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ sed -n '940,1010p' src/dispatch.rs ✓ (4ms)
+  5 tools completed in 7.8s (5 ✓)
+
+Now let me look at how run_prompt_auto_retry is called with its full signature:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "run_prompt_auto_retry\b" src/prompt.rs | head -5  ▶ $ sed -n '1248,1260p' src/prompt.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now let me look at how /fix dispatches since it's async and uses the agent:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '660,690p' src/dispatch.rs ✓ (3ms)
+
+Good. Now I have a clear understanding of the patterns. Let me also check what AgentConfig looks like:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub struct AgentConfig" src/agent_builder.rs  ▶ $ sed -n '/pub struct AgentConfig/,/^}/p' src/agent_builder.rs ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Now let me check how commands re-export:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub use crate::commands_dev" src/commands.rs  ▶ $ sed -n '450,465p' src/commands.rs ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Now let me check the exact imports at the top of commands_dev.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1,20p' src/commands_dev.rs ✓ (3ms)
+
+Now let me check what KNOWN_COMMANDS looks like precisely:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '45,125p' src/commands.rs ✓ (4ms)
+
+Now let me check the command_arg_hint function for the pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '170,240p' src/commands.rs ✓ (4ms)
+
+Now I have full understanding. Let me check the help sections:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "AI\|Development\|Dev\|Session\|Project" src/help.rs | grep -i "category…  ▶ $ grep -n "push_str.*─\|push_str.*━\|section\|AI\|Development" src/help.rs | head … ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ grep -n "─ AI\|─ Session\|─ Git\|─ Project\|─ Input\|─ Dev" src/help.rs | head -… ✓ (4ms)
+  3 tools completed in 14.4s (3 ✓)
+
+Let me see the AI section in help_text:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1588,1630p' src/help.rs ✓ (3ms)
+
+Now let me check the Project section which contains /test, /lint, /watch - that's where /loop fits:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1538,1590p' src/help.rs ✓ (4ms)
+
+Now let me also check the command_short_description:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1676,1760p' src/help.rs ✓ (4ms)
+
+Now let me check the cli_help_text for CLI subcommands:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Subcommands\|subcommand\|test\|lint\|fix\|run\b" src/help.rs | grep -i …  ▶ $ sed -n '1260,1320p' src/help.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ sed -n '1320,1360p' src/help.rs ✓ (4ms)
+  ▶ $ sed -n '1358,1400p' src/help.rs ✓ (4ms)
+  4 tools completed in 10.9s (4 ✓)
+
+Now let me check try_dispatch_subcommand for CLI subcommand routing:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '101,200p' src/dispatch.rs ✓ (4ms)
+
+Now I have the full picture. Let me also look at how watch commands detect exit code 0 to understand how to check bash tool exit codes:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "exit.*0\|exit_code\|last_tool\|tool_error\|ToolResult\|tool_result" src…  ▶ $ grep -n "last_tool_error\|exit.*code\|exit_status" src/watch.rs | head -20 ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.1s (2 ✓)
+
+The PromptOutcome.last_tool_error is None when the last tool succeeded (exit 0). That's what I'll check for until-pass mode. Let me now implement this.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 18.1s (6 ✓)
+
+Let me start with the implementation. First, let me write the code in `commands_dev.rs`:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ tail -30 src/commands_dev.rs ✓ (40ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I need to find the right place to add the loop code. Let me add it near the end but before the tests:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^#\[cfg(test)\]" src/commands_dev.rs ✓ (8ms)
+
+Now let me check what imports I need — `Agent, AgentConfig, SessionChanges, Usage`:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "use crate\|use yoagent\|use std" src/commands_dev.rs | head -20 ✓ (4ms)
+  ▶ $ sed -n '1,10p' src/commands_dev.rs ✓ (3ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Good — Agent is imported, `prompt::* brings in SessionChanges, run_prompt_auto_retry, etc. I need AgentConfig from agent_builder`:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "AgentConfig" src/commands_dev.rs | head -5 ✓ (4ms)
+  ▶ $ grep "AgentConfig" src/dispatch.rs | head -5 ✓ (3ms)
+  2 tools completed in 8.8s (2 ✓)
+
+OK, I'll need to import AgentConfig. Now let me also look at how `auto_compact_if_needed` is used:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "auto_compact_if_needed" src/dispatch.rs | head -5 ✓ (4ms)
+
+Now let me implement. I'll add the enum, parse function, and handler:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:1635..1645 ✓ (1ms)
+  ▶ edit src/commands_dev.rs (3 → 4 lines)
+  - //! Dev workflow command handlers: /doctor, /health, /fix, /test, /lint, /watch, /tree, /run.
+  + //! Dev workflow command handlers: /doctor, /health, /fix, /test, /lint, /watch, /tree, /run, /loop.
+    
+  + use crate::agent_builder::AgentConfig;
+    use crate::cli;
+ ✓ (1ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Now add the loop implementation before #[cfg(test)]:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (6 → 129 lines)
+    pub fn handle_run_usage() {
+        println!("{DIM}  usage: /run <command>  or  !<command>");
+        println!("  Runs a shell command directly (no AI, no tokens).{RESET}\n");
+  + }
+  + 
+  + // ── /loop ──────────────────────────────────────────────────────────────────
+  + 
+  + /// How many times to iterate in a `/loop` command.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub enum LoopMode {
+  +     /// Run exactly N times (1..=100).
+  +     Count(usize),
+  +     /// Run until the last tool call succeeds (max 20 iterations).
+  +     UntilPass,
+  + }
+  + 
+  + const MAX_UNTIL_PASS: usize = 20;
+  + const MAX_LOOP_COUNT: usize = 100;
+  + 
+  + /// Parse `/loop <N|until-pass> <prompt>`.
+  ... (109 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me add the tests:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ grep -n "fn lint_unsafe_in_subcommands" src/commands_dev.rs ✓ (8ms)
+  ▶ $ tail -5 src/commands_dev.rs ✓ (39ms)
+  ▶ edit src/commands_dev.rs (5 → 75 lines)
+                LINT_SUBCOMMANDS.contains(&"unsafe"),
+                "LINT_SUBCOMMANDS should contain 'unsafe'"
+  +         );
+  +     }
+  + 
+  +     // ── /loop parse tests ────────────────────────────────────────────
+  + 
+  +     #[test]
+  +     fn parse_loop_count_with_prompt() {
+  +         let result = parse_loop_args("/loop 5 fix the tests");
+  +         assert_eq!(
+  +             result,
+  +             Some((LoopMode::Count(5), "fix the tests".to_string()))
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_loop_until_pass() {
+  +         let result = parse_loop_args("/loop until-pass cargo test");
+  +         assert_eq!(
+  ... (55 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 28.8s (5 ✓)
+
+Now add to dispatch table:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+I need to find a good place in the dispatch table. Let me put it near other dev commands like /watch, /test, /lint:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"/watch"\|"/test"\|"/lint"\|"/run"\|"/fix"' src/dispatch.rs | head -10 ✓ (4ms)
+
+Let me see the area around /watch and /run:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '875,935p' src/dispatch.rs ✓ (4ms)
+
+Good. I'll add the /loop handler right after /watch, since they're related (repeating/watching). The handler needs agent access since it calls `run_prompt_auto_retry`:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 15 lines)
+            s if s == "/watch" || s.starts_with("/watch ") => {
+                commands::handle_watch(ctx.input);
+  +             CommandResult::Continue
+  +         }
+  +         s if s == "/loop" || s.starts_with("/loop ") => {
+  +             commands::handle_loop(
+  +                 ctx.input,
+  +                 ctx.agent,
+  +                 ctx.session_total,
+  +                 ctx.agent_config,
+  +                 ctx.session_changes,
+  +             )
+  +             .await;
+                CommandResult::Continue
+            }
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now add to KNOWN_COMMANDS and re-exports:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands.rs (2 → 3 lines)
+        "/lint",
+  +     "/loop",
+        "/spawn",
+ ✓ (1ms)
+  2 tools completed in 8.8s (2 ✓)
+
+Now add the re-export:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (4 → 5 lines)
+    pub use crate::commands_dev::{
+  -     handle_doctor, handle_fix, handle_health, handle_lint, handle_lint_fix, handle_run,
+  -     handle_run_usage, handle_test, handle_tree, handle_update, handle_watch,
+  +     handle_doctor, handle_fix, handle_health, handle_lint, handle_lint_fix, handle_loop,
+  +     handle_run, handle_run_usage, handle_test, handle_tree, handle_update, handle_watch,
+  +     parse_loop_args, LoopMode,
+    };
+ ✓ (0ms)
+
+Now add the arg hint:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (2 → 3 lines)
+            "lint" => Some("fix | pedantic | strict | unsafe"),
+  +         "loop" => Some("<N|until-pass> <prompt>"),
+            "provider" => Some("<provider-name>"),
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 10.6s (2 ✓)
+
+Now update help:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, command_help():
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"lint" =>' src/help.rs | head -5 ✓ (4ms)
+  ▶ $ sed -n '659,700p' src/help.rs ✓ (3ms)
+  2 tools completed in 7.5s (2 ✓)
+
+I'll add the /loop help entry right after lint:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (3 → 17 lines)
+                 use their default linter regardless of strictness level.\n\n\
+                 Output is displayed directly in the terminal.",
+  +         ),
+  +         "loop" => Some(
+  +             "/loop <N|until-pass> <prompt> — Repeat a prompt in a polling loop\n\n\
+  +              Usage:\n\
+  +              \x20 /loop <N> <prompt>          Run the prompt exactly N times (1-100)\n\
+  +              \x20 /loop until-pass <prompt>   Run until the last tool call succeeds (max 20)\n\n\
+  +              Each iteration runs the prompt through the normal agent path with auto-retry.\n\
+  +              A 1-second pause between iterations gives you time to Ctrl+C.\n\n\
+  +              In until-pass mode, the loop stops as soon as the last tool call exits\n\
+  +              without error (e.g. a bash command that returns exit code 0).\n\n\
+  +              Examples:\n\
+  +              \x20 /loop 5 run the tests and fix any failures\n\
+  +              \x20 /loop until-pass run cargo test\n\
+  +              \x20 /loop 3 check if the server is responding",
+            ),
+ ✓ (2ms)
+
+Now add to help_text() — in the Project section:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "watch.*Auto-run\|ast.*Structural\|skill.*List" src/help.rs | head -5 ✓ (4ms)
+  ▶ $ grep -n "watch.*Auto-run.*after" src/help.rs | head -5 ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+In help_text() function (the inline listing), I'll add /loop right after /watch:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1594,1602p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (5 → 8 lines)
+            "  /watch [cmd|all|lint]  Auto-run lint+test after agent edits (off/status to control)\n",
+  +     );
+  +     out.push_str(
+  +         "  /loop <N|until-pass>   Repeat a prompt in a polling loop (stop early on success)\n",
+        );
+        out.push_str(
+            "  /ast <pattern>     Structural code search using ast-grep (--lang, --in flags)\n",
+ ✓ (1ms)
+  2 tools completed in 14.1s (2 ✓)
+
+Now add to cli_help_text():
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "watch.*Auto-run.*after.*agent" src/help.rs | head -5 ✓ (4ms)
+  ▶ $ sed -n '1374,1385p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (8 → 12 lines)
+        let _ = writeln!(
+            s,
+            "    /watch [cmd|all|lint]  Auto-run lint+test after agent edits"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /loop <N|until-pass>   Repeat a prompt in a polling loop"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (1ms)
+  3 tools completed in 13.1s (3 ✓)
+
+Now add to `command_short_description()`:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (2 → 3 lines)
+            "load" => Some("Load session from file"),
+  +         "loop" => Some("Repeat a prompt in a polling loop"),
+            "map" => Some("Show project symbol map"),
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me also check for the help test that validates all commands are in help:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "loop\|/loop" src/help.rs | grep -i "test\|assert\|project_commands\|sho… ✓ (4ms)
+
+Let me check what tests exist in help.rs that might need updating:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn .*test\|fn .*should\|#\[test\]" src/help.rs | head -30 ✓ (4ms)
+
+There's a test test_help_text_contains_all_commands that checks all commands appear in help. Let me check what it does:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1788,1848p' src/help.rs ✓ (4ms)
+
+I should add /loop to this test:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (2 → 3 lines)
+                "/lint",
+  +             "/loop",
+                "/run",
+ ✓ (1ms)
+
+Now let me check what test validates all KNOWN_COMMANDS have a help entry:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '2004,2040p' src/help.rs ✓ (4ms)
+
+This test will automatically cover /loop since I added it to KNOWN_COMMANDS and command_help. Let me also check `test_help_text_project_commands_under_project_header`:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1922,1960p' src/help.rs ✓ (3ms)
+
+I should add /loop to the project section test:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (2 → 2 lines)
+  -             "/context", "/init", "/health", "/fix", "/test", "/lint", "/run", "/docs", "/find",
+  -             "/index", "/tree",
+  +             "/context", "/init", "/health", "/fix", "/test", "/lint", "/loop", "/run", "/docs",
+  +             "/find", "/index", "/tree",
+ ✓ (1ms)
+
+Now let me also check the help_command_completions to make sure `/help loop` will work:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "help_command_completions\|fn help_" src/help.rs | head -10 ✓ (4ms)
+  ▶ $ sed -n '13,36p' src/help.rs ✓ (4ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Good — this uses KNOWN_COMMANDS dynamically, so it'll pick up `/loop` automatically.
+
+Now let me run the build and test:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (459ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.7s)
+  3 tools completed in 18.7s (3 ✓)
+
+The re-exports of parse_loop_args and LoopMode aren't used anywhere outside the module. Let me remove them from the public re-export (they're only used internally in the dispatch):
+  ╭─ Turn 80 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (5 → 4 lines)
+    pub use crate::commands_dev::{
+        handle_doctor, handle_fix, handle_health, handle_lint, handle_lint_fix, handle_loop,
+        handle_run, handle_run_usage, handle_test, handle_tree, handle_update, handle_watch,
+  -     parse_loop_args, LoopMode,
+    };
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.4s)
+  4 tools completed in 56.0s (4 ✓)
+
+All 2168+88 tests pass. Let me also verify the format check:
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (466ms)
+
+All checks pass. Let me verify the tests I added actually ran:
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_loop 2>&1 ✓ (136ms)
+
+All 9 parse_loop tests pass. Now let me commit:
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me update the docs. Let me check what needs updating:
+  ╭─ Turn 87 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "/watch\|/loop\|/test\|/lint\|/fix" docs/src/usage/commands.md | head -2… ✓ (4ms)
+  ▶ $ grep -n "watch" docs/src/usage/commands.md | head -10 ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Let me look at the commands table where I need to add /loop:
+  ╭─ Turn 89 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '325,365p' docs/src/usage/commands.md ✓ (3ms)
+  ▶ $ sed -n '335,350p' docs/src/usage/commands.md ✓ (4ms)
+  2 tools completed in 11.7s (2 ✓)
+
+I need to add /loop to the commands table. Let me find the right place:
+  ╭─ Turn 91 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "watch\|/lint\|/test\|/run\|/health\|/fix" docs/src/usage/commands.md | … ✓ (4ms)
+  ▶ edit docs/src/usage/commands.md (1 → 2 lines)
+    | `/fix` | Auto-fix build/lint errors — runs health checks, sends failures to the AI agent for fixing |
+  + | `/loop <N\|until-pass> <prompt>` | Repeat a prompt in a polling loop — runs N times or until the last tool call succeeds |
+ ✓ (0ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Now let me add a description section. Let me find where /fix is described:
+  ╭─ Turn 93 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '407,430p' docs/src/usage/commands.md ✓ (3ms)
+
+I'll add a section for /loop right after /fix:
+  ╭─ Turn 94 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/usage/commands.md (4 → 21 lines)
+      Sending 1 failure(s) to AI for fixing...
+  + ```
+  + 
+  + ### `/loop` — Repeat a prompt in a polling loop
+  + 
+  + The `/loop` command runs a prompt repeatedly — either a fixed number of times or until the last tool call succeeds. This is useful for iterative fix-and-test cycles, polling checks, or any task that needs repeated attempts.
+  + 
+  + ```
+  + /loop 5 run the tests and fix any failures
+  + /loop until-pass run cargo test
+  + /loop 3 check if the server is responding
+    ```
+  + 
+  + **Syntax:** `/loop <N|until-pass> <prompt>`
+  + 
+  + - **N** (1–100): Run the prompt exactly N times, with a 1-second pause between iterations so you can Ctrl+C to stop early.
+  + - **until-pass**: Run repeatedly until the last tool call exits without error (e.g. a bash command that returns exit code 0). Safety-capped at 20 iterations.
+  + 
+  + Each iteration prints a separator showing the current iteration number. In `until-pass` mode, the loop also shows a success message when it stops.
+    
+  ... (1 more lines)
+ ✓ (1ms)
+
+Now let me check if README.md has a commands table:
+  ╭─ Turn 95 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "/watch\|/loop\|/lint\|/test\|/fix\|command" README.md | head -20 ✓ (4ms)
+
+I need to update the README table and the architecture list:
+  ╭─ Turn 96 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '343,360p' README.md ✓ (4ms)
+  ▶ $ grep -n "fix.*Auto-fix" README.md | head -3 ✓ (3ms)
+  ▶ edit README.md (1 → 2 lines)
+    | `/fix` | Auto-fix build/lint errors |
+  + | `/loop <N\|until-pass> <prompt>` | Repeat a prompt in a polling loop |
+ ✓ (1ms)
+  3 tools completed in 11.9s (3 ✓)
+
+Also update the architecture section which mentions what's in commands_dev:
+  ╭─ Turn 99 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "commands_dev" README.md ✓ (8ms)
+  ▶ $ grep -n "commands_dev" CLAUDE.md ✓ (21ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Let me check the CLAUDE.md architecture section for the dev commands module:
+  ╭─ Turn 101 ───────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "commands_dev\|/doctor.*health.*fix.*test\|/loop" CLAUDE.md | head -10 ✓ (4ms)
+
+The CLAUDE.md doesn't seem to have an explicit mention of commands_dev. Let me check the "Repository Structure" section:
+  ╭─ Turn 102 ───────────────────────────────────────────────────────────╮
+  ▶ $ grep "commands_dev" CLAUDE.md ✓ (9ms)
+
+  ↳ 10m 2s · 32439→13639 tokens · $3.34
+  ⬤ 18% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
