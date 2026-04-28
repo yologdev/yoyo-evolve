@@ -1,0 +1,290 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement support for bare positional prompts (yoyo "fix this bug" without --prompt). Let me start by understanding the current code.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 34s)
+
+Now let me look at the specific parsing details more closely:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "flag_value\|flags_needing_values\|prompt_arg\|warn_unknown_flags\|fn fl… ✓ (6ms)
+  ▶ $ grep -n "fn flag_value\|fn require_flag_value\|fn warn_unknown_flags" src/dispat…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (8ms)
+  ▶ read src/dispatch.rs:370..440 ✓ (1ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Now let me look at the `warn_unknown_flags` function to understand what it considers "consumed" args:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:221..281 ✓ (1ms)
+
+Now let me see KNOWN_FLAGS and the full flags_needing_values list:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "KNOWN_FLAGS" src/cli.rs | head -5 ✓ (3ms)
+  ▶ read src/cli.rs:171..226 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me look at the `flags_needing_values list and the full parse_args` from the prompt_arg line forward:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:688..918 ✓ (2ms)
+
+Now let me look at how try_dispatch_subcommand handles recognized subcommands to understand the full list:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:101..381 ✓ (2ms)
+
+Now let me look at the existing tests in cli.rs to understand the test pattern:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[cfg(test)\]\|#\[test\]\|fn test_" src/cli.rs | head -40 ✓ (4ms)
+  ▶ read src/cli.rs:1106..1156 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I have a clear picture. Let me also check how subcommands are identified — I need to make sure that bare positional args that happen to match subcommand names don't get treated as prompts:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "KNOWN_SUBCOMMANDS\|known_subcommands\|is_subcommand\|subcommand_names" … ✓ (4ms)
+
+There's no explicit subcommand list. The subcommands are matched in the `match block in try_dispatch_subcommand. Let me check how parse_args is called from main.rs`:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "parse_args\|prompt_arg\|Config" src/main.rs | head -30 ✓ (3ms)
+  ▶ read src/main.rs:465..495 ✓ (1ms)
+  ▶ read src/main.rs:530..590 ✓ (1ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Now I understand the full flow. Let me plan my implementation:
+
+1. In `src/cli.rs`: After `prompt_arg is determined from --prompt/-p`, add logic to collect bare positional args (not flags, not flag values, not subcommands) and use them as prompt_arg if none was set via --prompt.
+
+2. Tests first: Write tests for the new positional prompt behavior.
+
+3. Update help text in `src/help.rs`.
+
+Let me also look at the subcommands in try_dispatch_subcommand to build a list for exclusion:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -oP '"(\w+)" =>' src/dispatch.rs | sort -u ✓ (4ms)
+
+Now let me write the implementation. The key insight is: try_dispatch_subcommand(args) runs FIRST inside parse_args. If args[1] matches a known subcommand, it returns Some(None) and parse_args returns `None. So by the time we reach the prompt_arg` logic, any subcommand has already been dispatched. This means I just need to collect positional args that:
+• Are not `args[0]` (binary name)
+• Are not flags (don't start with -)
+• Are not values consumed by flags that need values
+
+Let me write this:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 20.0s (7 ✓)
+
+First, let me write tests. I need to understand what helper I'll be building. The function collect_positional_args will:
+1. Walk through args (skip args[0])
+2. Track which args are consumed by flags (flag itself + its value)
+3. Collect anything that's not a flag, not a flag value, and not a known boolean flag
+4. Return those as positional args
+
+Let me write the tests first, then the implementation:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^#\[cfg(test)\]" src/cli.rs ✓ (7ms)
+  ▶ read src/cli.rs:953..983 ✓ (1ms)
+  2 tools completed in 10.1s (2 ✓)
+
+Now let me find the end of the test module to add tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -50 src/cli.rs ✓ (39ms)
+
+Now let me implement the feature. I'll create a collect_positional_args function and add it, then write tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:669..679 ✓ (0ms)
+
+Now I'll add the `collect_positional_args` function and wire it in. Let me first add the helper function, then add the positional arg collection after prompt_arg is parsed:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:215..220 ✓ (1ms)
+
+I'll add the function just before `warn_unknown_flags. Let me add collect_positional_args`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 84 lines)
+  + /// Collect positional arguments that aren't flags, flag values, or known subcommands.
+  + ///
+  + /// Walks `args` (skipping `args[0]` — the binary name) and collects any token
+  + /// that is not a flag (`--foo` / `-x`), not consumed as a flag's value, and
+  + /// not a known bare subcommand (e.g. `doctor`, `help`, `setup`).
+  + ///
+  + /// Used to support bare positional prompts: `yoyo "fix this bug"` without
+  + /// requiring `--prompt`. The caller joins the result with spaces.
+  + pub(crate) fn collect_positional_args(
+  +     args: &[String],
+  +     flags_needing_values: &[&str],
+  + ) -> Vec<String> {
+  +     // Subcommands dispatched by try_dispatch_subcommand — if args[1] is one of
+  +     // these, the subcommand handler already ran and parse_args was never reached.
+  +     // But we list them defensively so that a typo like `yoyo doctor something`
+  +     // (which falls through because "doctor" was already dispatched) never
+  +     // accidentally treats a subcommand name as a prompt token.
+  +     const KNOWN_SUBCOMMANDS: &[&str] = &[
+  +         "blame",
+  +         "changelog",
+  ... (64 more lines)
+ ✓ (1ms)
+
+Now wire it into parse_args — after prompt_arg is parsed, if it's `None`, try to collect positional args:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:819..834 ✓ (1ms)
+  ▶ edit src/cli.rs (4 → 13 lines)
+        // Parse prompt and image flags early so we can validate --image before API key check
+  -     let prompt_arg = flag_value(args, &["--prompt", "-p"]);
+  +     let mut prompt_arg = flag_value(args, &["--prompt", "-p"]);
+  + 
+  +     // Support bare positional prompts: `yoyo "fix this bug"` without --prompt.
+  +     // Only if --prompt/-p wasn't explicitly provided.
+  +     if prompt_arg.is_none() {
+  +         let positional = collect_positional_args(args, &flags_needing_values);
+  +         if !positional.is_empty() {
+  +             prompt_arg = Some(positional.join(" "));
+  +         }
+  +     }
+    
+        let image_path_raw = flag_value(args, &["--image"]);
+ ✓ (1ms)
+  2 tools completed in 9.3s (2 ✓)
+
+Now I need to also update the --image validation — it uses `prompt_arg.is_none() which now would work correctly since prompt_arg` is set from positional args too. Let me verify:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:830..855 ✓ (1ms)
+
+Good — the image validation already checks prompt_arg.is_none() which now properly accounts for both --prompt/-p and bare positional args.
+
+Now let me write tests:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2856..2861 ✓ (0ms)
+  ▶ read src/cli.rs:2858..2866 ✓ (1ms)
+  ▶ edit src/cli.rs (8 → 148 lines)
+            // When built externally, option_env! returns None gracefully.
+            // Either way, it must not panic.
+            print_banner();
+  +     }
+  + 
+  +     // ── bare positional prompt tests ──────────────────────────────────
+  + 
+  +     #[test]
+  +     fn test_collect_positional_bare_prompt() {
+  +         let flags = ["--model", "--prompt", "-p"];
+  +         let args: Vec<String> = vec!["yoyo", "fix this bug"]
+  +             .into_iter()
+  +             .map(String::from)
+  +             .collect();
+  +         let pos = collect_positional_args(&args, &flags);
+  +         assert_eq!(pos, vec!["fix this bug"]);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_collect_positional_with_flags() {
+  ... (125 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 35.4s (5 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (475ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.9s)
+  5 tools completed in 55.7s (5 ✓)
+
+All 2273 tests pass (2185 unit + 88 integration), 0 failures. Let me also verify my new tests actually ran:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_collect_position… ✓ (132ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_bare_prompt 2>&1 ✓ (488ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_explicit_prompt_… ✓ (441ms)
+  3 tools completed in 9.4s (3 ✓)
+
+All tests pass. Now let me update the help text:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ grep -n "Usage:" src/help.rs ✓ (9ms)
+  ▶ read src/help.rs:979..994 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 14 lines)
+  -     let _ = writeln!(s, "Usage: yoyo [OPTIONS]");
+  +     let _ = writeln!(s, "Usage: yoyo [OPTIONS] [PROMPT]");
+  +     let _ = writeln!(s);
+  +     let _ = writeln!(
+  +         s,
+  +         "  Run with a bare prompt:  yoyo \"fix this bug\""
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  Or with --prompt flag:   yoyo -p \"fix this bug\""
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  Interactive REPL:        yoyo"
+  +     );
+ ✓ (1ms)
+  5 tools completed in 22.3s (5 ✓)
+
+Now update the test that checks for the usage line — the test `help_text_documents_all_subcommands` uses the help text:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Usage:" src/cli.rs ✓ (8ms)
+
+Good — no tests check for the exact "Usage:" string in cli.rs. Let me also check help.rs tests:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Usage:" src/help.rs ✓ (9ms)
+
+That's just the help text for commands. Let me run the tests again after the help text change:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (26.9s)
+  2 tools completed in 40.9s (2 ✓)
+
+All passing. Now let me update the docs:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Let me check what docs need updating:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\-\-prompt\|single-prompt\|prompt mode\|single.shot" README.md | head -… ✓ (3ms)
+  ▶ $ grep -n "\-p \|--prompt" README.md | head -20 ✓ (3ms)
+  ▶ read README.md:270..285 ✓ (0ms)
+  ▶ edit README.md (2 → 3 lines)
+  - # Single prompt
+  + # Single prompt (bare or with flag)
+  + yoyo "explain this codebase"
+    yoyo -p "explain this codebase"
+ ✓ (1ms)
+  ▶ read README.md:292..297 ✓ (1ms)
+  5 tools completed in 14.5s (5 ✓)
+
+Now update the docs:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "\-p \|--prompt\|single-prompt\|prompt mode" docs/src/ | head -20 ✓ (4ms)
+  ▶ read docs/src/usage/single-prompt.md ✓ (1ms)
+  ▶ write docs/src/usage/single-prompt.md (48 lines) ✓ (0ms)
+  3 tools completed in 13.0s (3 ✓)
+
+Now check the quick-start docs:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\-p \|--prompt" docs/src/getting-started/quick-start.md ✓ (8ms)
+  ▶ $ grep -n "yoyo " docs/src/getting-started/quick-start.md | head -10 ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Good — no prompt flags in quick-start. Now let me check the CLAUDE.md architecture section:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cli.rs\|prompt_arg\|parse_args\|bare.*prompt\|positional" CLAUDE.md | h… ✓ (3ms)
+
+The CLAUDE.md description is at a higher level and doesn't mention specific flag details, so it doesn't need updating. The architecture doc in docs/src/:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cli.rs\|parse_args\|prompt_arg\|single.prompt" docs/src/architecture.md… ✓ (3ms)
+
+  ↳ 10m 2s · 36680→10341 tokens · $2.55
+  ⬤ 18% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
