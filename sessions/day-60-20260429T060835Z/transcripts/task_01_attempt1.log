@@ -1,0 +1,402 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code in both files, then implement the consolidation.
+  ▶ read src/watch.rs  ▶ $ grep -n "watch\|Watch\|fix\|last_error\|files_modified" src/repl.rs | head -80 ✓ (6ms)
+ ✓ (7ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Now let me see the exact inline watch loop in repl.rs and the current run_watch_after_prompt function:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:780..855  ▶ read src/watch.rs:175..335 ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now let me see the full run_watch_after_prompt function signature and the area around it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:140..205 ✓ (1ms)
+
+Now I can see the key difference. The inline version in `repl.rs captures fix_outcome.last_tool_error into last_error, while run_watch_after_prompt discards the fix outcome with _fix_outcome` and only returns bool.
+
+Let me also check where run_watch_after_prompt is called from elsewhere:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'run_watch_after_prompt' ✗ (6.7s)
+    │ Search error: grep: ./target/debug/yoyo: binary file matches
+  ▶ search 'run_watch_after_prompt' (*.rs) ✓ (18ms)
+  2 tools completed in 12.6s (1 ✓, 1 ✗)
+
+Let me check the call sites in main.rs and prompt.rs to understand how the return value is used:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n -B2 -A5 "run_watch_after_prompt" src/main.rs  ▶ $ grep -n -B2 -A5 "run_watch_after_prompt" src/prompt.rs  ▶ $ grep -n -B2 -A5 "run_watch_after_prompt" src/repl.rs ✓ (42ms)
+ ✓ (50ms)
+ ✓ (56ms)
+  3 tools completed in 2.3s (3 ✓)
+
+Good. The existing call sites in main.rs and the `/side handler in repl.rs just use the bool` return (or ignore it). Those callers don't need last_error. Only the main REPL loop needs it.
+
+Now let me also look at `PromptOutcome to understand last_tool_error`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "PromptOutcome\|last_tool_error" src/prompt.rs | head -20 ✓ (4ms)
+
+Now I have full picture. Let me plan the implementation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 17.1s (6 ✓)
+
+Let's start. First, add the WatchResult struct and modify run_watch_after_prompt:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/watch.rs (2 → 12 lines)
+    /// Maximum number of auto-fix attempts when watch mode detects failures.
+    pub const MAX_WATCH_FIX_ATTEMPTS: usize = 3;
+  + 
+  + /// Result from [`run_watch_after_prompt`] — carries pass/fail status plus
+  + /// the last tool error from any auto-fix attempts (if the watch failed).
+  + #[derive(Debug, Clone)]
+  + pub struct WatchResult {
+  +     /// Whether the watch command ultimately passed.
+  +     pub passed: bool,
+  +     /// The last tool error from auto-fix attempts, if any.
+  +     pub last_tool_error: Option<String>,
+  + }
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 15.6s (3 ✓)
+
+Now modify run_watch_after_prompt to return WatchResult and capture last_tool_error:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/watch.rs (66 → 85 lines)
+  - /// Run the watch command after a prompt completes (for non-REPL modes).
+  + /// Run the watch command after a prompt completes.
+    ///
+    /// If a watch command is active, this runs the watch command and auto-fixes
+  - /// failures up to [`MAX_WATCH_FIX_ATTEMPTS`] times. This is the extracted,
+  - /// reusable version of the watch loop that the REPL uses inline (see
+  - /// `repl.rs` ~line 656).
+  + /// failures up to [`MAX_WATCH_FIX_ATTEMPTS`] times. Used by the REPL main
+  + /// loop, `/side` handler, single-prompt mode, and piped mode.
+    ///
+  - /// Returns `true` if the watch command passed (or no watch command is set),
+  - /// `false` if it still fails after all fix attempts.
+  + /// Returns a [`WatchResult`] with pass/fail status and the last tool error
+  + /// from any fix attempts. If no watch command is set, returns
+  + /// `WatchResult { passed: true, last_tool_error: None }`.
+    pub async fn run_watch_after_prompt(
+        agent: &mut Agent,
+        session_total: &mut Usage,
+        model: &str,
+        changes: &SessionChanges,
+  ... (70 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 25.5s (3 ✓)
+
+Now update the re-export in prompt.rs to include WatchResult:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/prompt.rs (4 → 4 lines)
+    pub use crate::watch::{
+        build_watch_fix_prompt, clear_watch_command, get_watch_command, run_watch_after_prompt,
+  -     run_watch_command, set_watch_command, MAX_WATCH_FIX_ATTEMPTS,
+  +     run_watch_command, set_watch_command, WatchResult, MAX_WATCH_FIX_ATTEMPTS,
+    };
+ ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now update the call sites in main.rs. Let me see them:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:238..258  ▶ read src/main.rs:325..345 ✓ (0ms)
+ ✓ (1ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Both sites in main.rs don't use the return value at all (they're fire-and-forget). I just need to make sure the return type change compiles. Since they used -> bool but didn't capture it, they'll need no change — Rust allows ignoring return values.
+
+Now let me check the /side handler call:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1334..1344 ✓ (1ms)
+
+Also fire-and-forget. Good.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now for the main task — replace the inline watch loop in repl.rs:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/repl.rs:784..854 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I need to check what imports are already in repl.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "use crate::watch\|use crate::prompt\|run_watch\|build_watch\|MAX_WATCH\… ✓ (5ms)
+
+Good — use crate::prompt::*; already pulls in everything via the re-exports. Now replace the inline block:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (59 → 13 lines)
+            let files_modified = changes_after.len() > changes_before.len();
+            if files_modified {
+  -             if let Some(watch_cmd) = get_watch_command() {
+  -                 let (ok, output) = run_watch_command(&watch_cmd);
+  -                 if ok {
+  -                     eprintln!("{GREEN}  ✓ Watch passed: `{watch_cmd}`{RESET}");
+  -                 } else {
+  -                     eprintln!("{RED}  ✗ Watch failed: `{watch_cmd}`{RESET}");
+  -                     // Show truncated output
+  -                     let display_output = if output.len() > 2000 {
+  -                         format!("{}...\n(truncated)", safe_truncate(&output, 2000))
+  -                     } else {
+  -                         output.clone()
+  -                     };
+  -                     eprintln!("{DIM}{display_output}{RESET}");
+  -                     // Multi-attempt auto-fix loop
+  -                     let mut current_output = output;
+  -                     for attempt in 1..=MAX_WATCH_FIX_ATTEMPTS {
+  -                         if session_budget_exhausted(30) {
+  -                             eprintln!(
+  ... (48 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now add tests for WatchResult:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/watch.rs:380..410 ✓ (0ms)
+  ▶ read src/watch.rs:414..424 ✓ (0ms)
+  ▶ edit src/watch.rs (3 → 48 lines)
+            clear_watch_command();
+  +     }
+  + 
+  +     #[test]
+  +     fn test_watch_result_passed() {
+  +         let result = WatchResult {
+  +             passed: true,
+  +             last_tool_error: None,
+  +         };
+  +         assert!(result.passed);
+  +         assert!(result.last_tool_error.is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_watch_result_failed_with_error() {
+  +         let result = WatchResult {
+  +             passed: false,
+  +             last_tool_error: Some("compilation error".to_string()),
+  +         };
+  +         assert!(!result.passed);
+  ... (28 more lines)
+ ✓ (0ms)
+  4 tools completed in 17.0s (4 ✓)
+
+Now update the existing test that checks the no-watch early return:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (14 → 14 lines)
+        #[test]
+  -     fn test_run_watch_after_prompt_no_watch_returns_true() {
+  -         // When no watch command is set, run_watch_after_prompt should return true
+  -         // immediately. We verify this by checking get_watch_command() is None,
+  -         // which is the guard condition at the top of run_watch_after_prompt.
+  +     fn test_run_watch_after_prompt_no_watch_returns_passed() {
+  +         // When no watch command is set, run_watch_after_prompt should return
+  +         // WatchResult { passed: true, last_tool_error: None } immediately.
+  +         // We verify the guard condition that makes it return early.
+            clear_watch_command();
+            assert!(
+                get_watch_command().is_none(),
+                "precondition: no watch command set"
+            );
+  -         // The function checks get_watch_command() first and returns true if None.
+  -         // We can't call the async function in a sync test, but we verify the
+  -         // guard condition that makes it return early.
+  +         // The function checks get_watch_command() first and returns a passing
+  +         // WatchResult if None. We can't call the async function in a sync test,
+  +         // but we verify the guard condition that makes it return early.
+  ... (1 more lines)
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let's build and test:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (477ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.8s)
+  3 tools completed in 17.4s (3 ✓)
+
+Two issues:
+1. Unused re-exports in prompt.rs — items that were only used by the inline code in repl.rs are now unused from prompt.rs perspective (but repl.rs uses `use crate::prompt::*`)
+2. passed field is never read outside of tests
+
+Let me check what's actually used from the re-exports:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "build_watch_fix_prompt\|run_watch_command\|MAX_WATCH_FIX_ATTEMPTS\|Wat… ✓ (8ms)
+
+None of those are used outside of watch.rs and prompt.rs anymore! The inline code was the only consumer. Let me check what IS still needed:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "run_watch_after_prompt\|get_watch_command\|set_watch_command\|clear_wa… ✓ (6ms)
+
+OK so WatchResult IS actually used — it's read in repl.rs line 789. But the issue is passed field is not read there. Let me check:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:787..802 ✓ (1ms)
+
+Indeed, passed isn't read in the non-test code. But it IS a public field of a public struct — it's meant to be used. The issue is that clippy's dead-code check is flagging it because no binary code reads it. But it's part of the API. The cleanest fix: also use watch_result.passed somewhere meaningful, OR just read the field. Actually, the existing tests DO read it, but clippy's dead-code analysis ignores test code.
+
+The right approach: the passed field is genuinely useful for callers. The main.rs call sites currently ignore the return value entirely. Let me make repl.rs actually use the passed field too — the original inline code just didn't track this, but the non-REPL callers might want it. Or I can just acknowledge this is a public API and keep the field.
+
+Actually, looking at the `main.rs` call sites more carefully — they don't even bind the return value. The simplest clean fix: use passed in the repl.rs code. Currently, we update `last_error only if last_tool_error.is_some()`. But the original code always updated last_error from fix outcomes. Let me refine this to also clear last_error when watch passes, matching the original semantics more precisely:
+
+Wait — actually, the original inline code only ever set last_error inside the fix loop. If the watch passed on first try, last_error was NOT touched. If the watch failed and fixes ran, last_error was set from each fix outcome. So my current code is correct.
+
+But passed is still dead code. Let me think about this differently. The field IS public and useful, and clippy warns about dead code in the library sense. The cleanest option is just make passed read somewhere. Or, since the `main.rs` callers already ignore the result, I can just keep the unused re-exports trimmed and handle the passed issue.
+
+Let me fix both issues:
+
+1. Remove the now-unnecessary re-exports from prompt.rs
+2. Actually use watch_result.passed in repl.rs — it makes semantic sense to only update last_error if watch failed
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (4 → 4 lines)
+    pub use crate::watch::{
+  -     build_watch_fix_prompt, clear_watch_command, get_watch_command, run_watch_after_prompt,
+  -     run_watch_command, set_watch_command, WatchResult, MAX_WATCH_FIX_ATTEMPTS,
+  +     clear_watch_command, get_watch_command, run_watch_after_prompt, run_watch_command,
+  +     set_watch_command, WatchResult, MAX_WATCH_FIX_ATTEMPTS,
+    };
+ ✓ (1ms)
+
+Now let me check if build_watch_fix_prompt, run_watch_command, `MAX_WATCH_FIX_ATTEMPTS` are actually used from the re-exports elsewhere:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "build_watch_fix_prompt\b" src/ --include="*.rs" | grep -v "watch.rs" ✓ (5ms)
+  ▶ $ grep -rn "\brun_watch_command\b" src/ --include="*.rs" | grep -v "watch.rs" ✓ (5ms)
+  ▶ $ grep -rn "\bMAX_WATCH_FIX_ATTEMPTS\b" src/ --include="*.rs" | grep -v "watch.rs" ✓ (5ms)
+  ▶ $ grep -rn "\bWatchResult\b" src/ --include="*.rs" | grep -v "watch.rs" ✓ (6ms)
+  ▶ $ grep -rn "\brun_watch_command\b\|\bMAX_WATCH_FIX_ATTEMPTS\b\|\bWatchResult\b" sr… ✓ (8ms)
+  5 tools completed in 18.7s (5 ✓)
+
+None of run_watch_command, MAX_WATCH_FIX_ATTEMPTS, or WatchResult are used outside of watch.rs and prompt.rs. But wait — repl.rs does use crate::prompt::*; so it uses `run_watch_after_prompt and WatchResult` through that glob import. Let me verify:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "\bWatchResult\b\|\brun_watch_after_prompt\b" src/repl.rs ✓ (40ms)
+
+`WatchResult is used implicitly through type inference (the let watch_result = ...`). The type isn't named explicitly but the struct's fields are accessed. So WatchResult IS needed in the re-export. Let me trim only the truly unused ones:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (4 → 3 lines)
+    pub use crate::watch::{
+  -     clear_watch_command, get_watch_command, run_watch_after_prompt, run_watch_command,
+  -     set_watch_command, WatchResult, MAX_WATCH_FIX_ATTEMPTS,
+  +     clear_watch_command, get_watch_command, run_watch_after_prompt, set_watch_command,
+    };
+ ✓ (1ms)
+
+Wait, but commands_dev.rs uses crate::prompt::set_watch_command and crate::prompt::clear_watch_command:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "crate::prompt::" src/commands_dev.rs | head -10 ✓ (3ms)
+
+Those are still needed. And main.rs also:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "get_watch_command\|set_watch_command\|run_watch_after_prompt\|clear_wa… ✓ (39ms)
+  ▶ $ grep "use crate::prompt" src/main.rs ✓ (8ms)
+  ▶ $ grep "^use\|^pub use\|^mod " src/main.rs | head -30 ✓ (3ms)
+  ▶ $ grep "^use \|^    use " src/main.rs | head -20 ✓ (3ms)
+  ▶ $ grep "^use " src/main.rs ✓ (8ms)
+  ▶ read src/main.rs:75..90 ✓ (1ms)
+  6 tools completed in 18.5s (6 ✓)
+
+OK so main.rs uses use prompt::*; which brings in everything from the re-exports. The items I kept in the re-export are correct — `clear_watch_command, get_watch_command, run_watch_after_prompt, set_watch_command` are all still needed.
+
+Now about the `passed` field dead code warning — the field is accessed in tests but not in any non-test code path. Let me check: in main.rs, the return value of run_watch_after_prompt is completely ignored (not even bound):
+
+```rust
+run_watch_after_prompt(...).await;
+```
+
+And in repl.rs line 1294 it's also ignored. Only line 789 binds it but only checks last_tool_error, not passed.
+
+The passed field is genuinely useful API — callers that need to know if watch passed can check it. But since nobody currently reads it, clippy complains. The cleanest fix is to actually use it somewhere meaningful. In the repl.rs REPL loop, let me see if it makes sense to use passed:
+
+Looking at the original code, passed wasn't explicitly tracked — the inline loop just fell through. But actually, there's no real need to use passed in the current logic since `last_tool_error` is the only value propagated. However, to make the API clean and usable, I should keep the field. Let me just read passed so clippy is happy — the most natural place is the main.rs calls that currently ignore the result:
+
+Actually, the simplest clean approach: repl.rs already has the watch_result, let me just use passed in a meaningful way. Looking at the original code more carefully — after the watch block, there's the auto-commit block which uses files_modified. If the watch failed, maybe we should NOT auto-commit? Let me check the original:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:798..818 ✓ (1ms)
+
+In the original code, auto-commit happened even if watch failed. That's the existing behavior — I shouldn't change it. So I won't add a passed guard on auto-commit.
+
+The simplest fix that's NOT a behavior change: just have the `last_error update also consider passed`. This is semantically correct — if the watch didn't pass but there's no explicit tool error, we could still propagate the info. But that changes behavior.
+
+Actually, the simplest and cleanest fix: make passed used by having main.rs log watch failures. But that's a behavior change too.
+
+Let me just use _ = watch_result.passed; — no, that's ugly.
+
+The best approach: make passed genuinely used. The current code does `if watch_result.last_tool_error.is_some()` — but it would be cleaner and more correct to update last_error based on passed status:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (13 → 13 lines)
+                    &session_changes,
+                )
+                .await;
+  -             if watch_result.last_tool_error.is_some() {
+  +             if !watch_result.passed {
+                    last_error = watch_result.last_tool_error;
+                }
+            }
+ ✓ (1ms)
+
+This is actually slightly better semantically — update last_error only when the watch failed, which is when last_tool_error is meaningful. In the original code, last_error was set inside the fix loop which only ran when watch failed, so this preserves the same semantics.
+
+Now let's try building again:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.9s)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.9s)
+  2 tools completed in 38.7s (2 ✓)
+
+All 2277 tests pass (2189 unit + 88 integration). Let me also run fmt check:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (482ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.8s (2 ✓)
+
+All checks pass. Let me verify the final state of the changes:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/repl.rs ✓ (5ms)
+  2 tools completed in 6.5s (2 ✓)
+
+The inline 55-line watch loop is replaced with a clean 10-line call. Let me also verify the watch.rs changes look right:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/watch.rs | head -80 ✓ (5ms)
+
+Everything looks clean. Now commit:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (15ms)
+
+Done! Here's a summary of what I did:
+
+## Summary
+
+Problem: The main REPL loop in repl.rs had a ~55-line inline watch-fix loop that duplicated the run_watch_after_prompt() function in watch.rs. The only difference was the inline version captured last_tool_error from fix attempts, which the shared function discarded.
+
+Changes:
+
+1. `src/watch.rs` — Added WatchResult struct with passed: bool and last_tool_error: Option<String>. Changed `run_watch_after_prompt to return WatchResult instead of bool`, capturing the fix outcome's last_tool_error at each attempt (previously discarded with `_fix_outcome`). Added 4 tests for the new struct.
+
+2. `src/repl.rs` — Replaced the 55-line inline watch loop (lines 788-844) with a 10-line call to run_watch_after_prompt, using the returned WatchResult to update last_error when the watch fails.
+
+3. `src/prompt.rs` — Trimmed re-exports to only items still used outside watch.rs (removed `build_watch_fix_prompt, run_watch_command, WatchResult, MAX_WATCH_FIX_ATTEMPTS` which were only consumed by the now-removed inline code).
+
+Net result: -77 lines from the inline duplication, +101 lines including the richer return type, tests, and improved docs. The inline 55-line block became a clean 10-line call with identical behavior.
+
+  ↳ 6m 29s · 23548→12676 tokens · $2.27
+  ⬤ 15% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,571 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current watch system, then implement the two-phase watch feature.
+  ▶ read src/watch.rs  ▶ read src/commands_dev.rs ✓ (3ms)
+ ✓ (12ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Let me see the key sections more carefully — the run_watch_after_prompt function and the /watch all handling:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:150..410  ▶ search 'watch all|detect_watch_all|set_watch_command' in src/commands_dev.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ search 'watch' in src/commands_dev.rs ✓ (3ms)
+  ▶ read src/commands_dev.rs:843..953 ✓ (1ms)
+  4 tools completed in 8.9s (4 ✓)
+
+Now let me check where set_watch_command and get_watch_command are re-exported from `prompt.rs`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'watch_command|watch' in src/prompt.rs  ▶ search 'use crate::prompt::(set_watch|get_watch|clear_watch|run_watc…' in src ✓ (3ms)
+ ✓ (5ms)
+  ▶ search 'crate::prompt::(set_watch|get_watch|clear_watch|run_watch)' in src ✓ (5ms)
+  ▶ search 'set_watch_command|get_watch_command|clear_watch_command|run_…' in src ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_watch_command\|get… ✓ (8ms)
+  5 tools completed in 10.6s (5 ✓)
+
+Now I see the full picture. Let me check the re-export in prompt.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1..31 ✓ (1ms)
+
+Now let me check how crate::prompt::set_watch_command is used from `commands_dev.rs`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "crate::prompt::" src/co… ✓ (4ms)
+
+Now let me also check the commands_lint module for the lint/test detection:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lint_command_for_projec… ✓ (3ms)
+  ▶ read src/commands_lint.rs:12..42 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I have a complete picture. Let me plan the implementation:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 21.5s (7 ✓)
+
+Let me start with tests first, then implement. Let me first write the tests and the new storage/API in watch.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me implement the core changes in watch.rs. I'll add the WATCH_COMMANDS storage alongside the existing WATCH_COMMAND, and refactor the existing functions to use the new storage while maintaining backward compatibility.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (22 → 47 lines)
+    // Global state for `/watch` — auto-run a test command after agent edits.
+    
+  - /// The currently active watch command (None = watch mode off).
+  - static WATCH_COMMAND: RwLock<Option<String>> = RwLock::new(None);
+  + /// The currently active watch commands (empty = watch mode off).
+  + /// When multiple commands are stored, each is run as its own phase with
+  + /// its own fix loop (e.g. lint → fix lint → test → fix test).
+  + static WATCH_COMMANDS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+    
+  - /// Set the watch command, enabling watch mode.
+  + /// Set a single watch command, enabling watch mode.
+  + /// This is the backward-compatible API — stores a single-element vec internally.
+    pub fn set_watch_command(cmd: &str) {
+  -     let mut guard = rw_write_or_recover(&WATCH_COMMAND);
+  -     *guard = Some(cmd.to_string());
+  +     let mut guard = rw_write_or_recover(&WATCH_COMMANDS);
+  +     *guard = vec![cmd.to_string()];
+    }
+    
+  - /// Get the current watch command, if watch mode is active.
+  ... (36 more lines)
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me update build_watch_fix_prompt to include a command-type hint:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/watch.rs (13 → 53 lines)
+  + /// Classify a watch command as "lint", "test", or "command" for fix prompt hints.
+  + fn classify_watch_command(cmd: &str) -> &'static str {
+  +     let lower = cmd.to_lowercase();
+  +     // Check for lint-like commands
+  +     if lower.contains("clippy")
+  +         || lower.contains("eslint")
+  +         || lower.contains("pylint")
+  +         || lower.contains("flake8")
+  +         || lower.contains("ruff")
+  +         || lower.contains("golint")
+  +         || lower.contains("lint")
+  +     {
+  +         "lint"
+  +     // Check for test-like commands
+  +     } else if lower.contains("test")
+  +         || lower.contains("pytest")
+  +         || lower.contains("jest")
+  +         || lower.contains("vitest")
+  +         || lower.contains("mocha")
+  +     {
+  ... (35 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 18.0s (3 ✓)
+
+Now the big one — modify run_watch_after_prompt to iterate through phases:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/watch.rs (85 → 100 lines)
+  - /// Run the watch command after a prompt completes.
+  + /// Run the watch command(s) after a prompt completes.
+    ///
+  - /// If a watch command is active, this runs the watch command and auto-fixes
+  - /// failures up to [`MAX_WATCH_FIX_ATTEMPTS`] times. Used by the REPL main
+  - /// loop, `/side` handler, single-prompt mode, and piped mode.
+  + /// If watch commands are active, iterates through each phase in order.
+  + /// For each phase: runs the command, and if it fails, enters the fix loop
+  + /// (up to [`MAX_WATCH_FIX_ATTEMPTS`] times). Only proceeds to the next
+  + /// phase if the current one passes. This means lint gets fixed before tests
+  + /// even run.
+    ///
+    /// Returns a [`WatchResult`] with pass/fail status and the last tool error
+    /// from any fix attempts. If no watch command is set, returns
+  ···
+        model: &str,
+        changes: &SessionChanges,
+    ) -> WatchResult {
+  -     let watch_cmd = match get_watch_command() {
+  -         Some(cmd) => cmd,
+  ... (131 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 32.6s (3 ✓)
+
+Now update commands_dev.rs to use set_watch_commands for /watch all:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, I need to add a new function detect_watch_all_commands (plural) that returns the separate phases:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (18 → 36 lines)
+            }
+            (None, Some((test_label, _))) => Some(test_label.to_string()),
+            (Some((lint_label, _)), None) => Some(lint_label),
+  +         (None, None) => None,
+  +     }
+  + }
+  + 
+  + /// Auto-detect separate lint and test commands for two-phase watch.
+  + /// Returns a vec of individual commands (lint first, then test).
+  + /// Falls back to a single-element vec if only one is available.
+  + pub fn detect_watch_all_phases() -> Option<Vec<String>> {
+  +     let dir = std::env::current_dir().unwrap_or_default();
+  +     let project_type = detect_project_type(&dir);
+  +     let lint = lint_command_for_project(&project_type, LintStrictness::Default);
+  +     let test = test_command_for_project(&project_type);
+  +     match (lint, test) {
+  +         (Some((lint_label, _)), Some((test_label, _))) => {
+  +             Some(vec![lint_label.to_string(), test_label.to_string()])
+  +         }
+  +         (None, Some((test_label, _))) => Some(vec![test_label.to_string()]),
+  ... (4 more lines)
+ ✓ (1ms)
+
+Now update the handle_watch function. The key changes are:
+1. /watch (bare) and /watch all should use set_watch_commands with separate phases
+2. All other modes (single command, lint-only) continue using set_watch_command
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (74 → 101 lines)
+    
+        match arg {
+            "" => {
+  -             // Auto-detect lint+test combo and toggle on
+  -             match detect_watch_all_command() {
+  -                 Some(cmd) => {
+  -                     crate::prompt::set_watch_command(&cmd);
+  -                     println!(
+  -                         "{GREEN}  👀 Watch mode ON — will run `{cmd}` after agent edits{RESET}\n"
+  -                     );
+  +             // Auto-detect lint+test as separate phases
+  +             match detect_watch_all_phases() {
+  +                 Some(phases) => {
+  +                     let display = phases.join(" && ");
+  +                     let phase_refs: Vec<&str> = phases.iter().map(|s| s.as_str()).collect();
+  +                     crate::prompt::set_watch_commands(&phase_refs);
+  +                     if phases.len() > 1 {
+  +                         println!(
+  +                             "{GREEN}  👀 Watch mode ON — {n} phases: `{display}`{RESET}\n",
+  +                             n = phases.len()
+  ... (57 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now add the re-exports in prompt.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/prompt.rs (3 → 4 lines)
+    pub use crate::watch::{
+  -     clear_watch_command, get_watch_command, run_watch_after_prompt, set_watch_command,
+  +     clear_watch_command, get_watch_command, get_watch_commands, run_watch_after_prompt,
+  +     set_watch_command, set_watch_commands,
+    };
+ ✓ (1ms)
+  2 tools completed in 10.8s (2 ✓)
+
+Now let's try to build to see if things compile:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -30 ✓ (5.3s)
+
+Compiles cleanly. Now let me update the tests. First, let me update existing tests that need changes, and add new tests:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me read the existing tests in watch.rs to update them:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:293.. ✓ (2ms)
+
+Now let me add the new tests at the end of the test module. I need to add tests for:
+1. `set_watch_commands + get_watch_commands` round-trip
+2. get_watch_command (singular) returns joined string for multi-phase
+3. Single-command mode still works
+4. Fix prompt includes command type hint
+5. `classify_watch_command` tests
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (11 → 140 lines)
+            let debug = format!("{:?}", result);
+            assert!(debug.contains("passed: true"));
+            assert!(debug.contains("last_tool_error: None"));
+  +     }
+  + 
+  +     // --- Multi-phase watch tests ---
+  + 
+  +     #[test]
+  +     fn test_set_get_watch_commands_roundtrip() {
+  +         set_watch_commands(&["cargo clippy", "cargo test"]);
+  +         let cmds = get_watch_commands();
+  +         assert_eq!(cmds.len(), 2);
+  +         assert_eq!(cmds[0], "cargo clippy");
+  +         assert_eq!(cmds[1], "cargo test");
+  +         clear_watch_command();
+  +         assert!(get_watch_commands().is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_get_watch_command_joins_multi_phase() {
+  ... (114 more lines)
+ ✓ (1ms)
+
+Now I need to update the existing test in commands_dev.rs that checks /watch all sets a combined command. It now sets separate phases:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:1083..1163 ✓ (1ms)
+  ▶ read src/commands_dev.rs:1155..1195 ✓ (1ms)
+  ▶ read src/commands_dev.rs:1193..1213 ✓ (1ms)
+  3 tools completed in 11.7s (3 ✓)
+
+Now update the test handle_watch_all_sets_combined_command to also verify it sets multi-phase:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (19 → 36 lines)
+        fn handle_watch_all_sets_combined_command() {
+            // Clear any previous watch command
+            crate::prompt::clear_watch_command();
+  -         // Run /watch all — since we're in a Rust project, it should set a combined command
+  +         // Run /watch all — since we're in a Rust project, it should set separate phases
+            handle_watch("/watch all");
+            let cmd = crate::prompt::get_watch_command();
+            assert!(
+  ···
+            assert!(
+                cmd.contains("clippy") && cmd.contains("cargo test"),
+                "watch all should set lint && test: {cmd}"
+  +         );
+  +         // Verify multi-phase: should have 2 separate commands
+  +         let phases = crate::prompt::get_watch_commands();
+  +         assert_eq!(
+  +             phases.len(),
+  +             2,
+  +             "watch all should set 2 separate phases: {phases:?}"
+  +         );
+  ... (12 more lines)
+ ✓ (1ms)
+
+Now update the handle_watch_bare_sets_lint_and_test test too:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (19 → 26 lines)
+        fn handle_watch_bare_sets_lint_and_test() {
+            // Clear any previous watch command
+            crate::prompt::clear_watch_command();
+  -         // Run bare /watch — should now set lint+test, not just test
+  +         // Run bare /watch — should now set lint+test as separate phases
+            handle_watch("/watch");
+            let cmd = crate::prompt::get_watch_command();
+            assert!(
+  ···
+            assert!(
+                cmd.contains("clippy") && cmd.contains("cargo test"),
+                "bare /watch should set lint && test: {cmd}"
+  +         );
+  +         // Verify multi-phase
+  +         let phases = crate::prompt::get_watch_commands();
+  +         assert_eq!(
+  +             phases.len(),
+  +             2,
+  +             "bare /watch should set 2 phases: {phases:?}"
+            );
+  ... (2 more lines)
+ ✓ (1ms)
+
+Now add a test for detect_watch_all_phases and add a test for custom command still using single-phase:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:1216..1231 ✓ (1ms)
+  ▶ edit src/commands_dev.rs (4 → 36 lines)
+            // Cleanup
+            crate::prompt::clear_watch_command();
+  +     }
+  + 
+  +     #[test]
+  +     fn detect_watch_all_phases_returns_separate_commands() {
+  +         // In a Rust project, should return 2 separate commands
+  +         let phases = detect_watch_all_phases();
+  +         assert!(phases.is_some(), "should detect phases in a Rust project");
+  +         let phases = phases.unwrap();
+  +         assert_eq!(phases.len(), 2, "should have lint + test phases: {phases:?}");
+  +         assert!(
+  +             phases[0].contains("clippy"),
+  +             "first phase should be lint: {}",
+  +             phases[0]
+  +         );
+  +         assert!(
+  +             phases[1].contains("test"),
+  +             "second phase should be test: {}",
+  +             phases[1]
+  ... (16 more lines)
+ ✗ (0ms)
+    │ old_text matches 3 locations in src/commands_dev.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/commands_dev.rs (6 → 39 lines)
+            // Cleanup
+  +         crate::prompt::clear_watch_command();
+  +     }
+  + 
+  +     #[test]
+  +     fn detect_watch_all_phases_returns_separate_commands() {
+  +         // In a Rust project, should return 2 separate commands
+  +         let phases = detect_watch_all_phases();
+  +         assert!(phases.is_some(), "should detect phases in a Rust project");
+  +         let phases = phases.unwrap();
+  +         assert_eq!(phases.len(), 2, "should have lint + test phases: {phases:?}");
+  +         assert!(
+  +             phases[0].contains("clippy"),
+  +             "first phase should be lint: {}",
+  +             phases[0]
+  +         );
+  +         assert!(
+  +             phases[1].contains("test"),
+  +             "second phase should be test: {}",
+  +             phases[1]
+  ... (17 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_dev.rs.
+  ▶ read src/commands_dev.rs:1218..1238 ✓ (1ms)
+  4 tools completed in 18.3s (2 ✓, 2 ✗)
+
+There's a non-printable character on line 1224. Let me be more precise:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1222,1227p' src/commands… ✓ (3ms)
+
+I see — there's a line with some special Unicode characters. Let me use sed to make the edit:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (50 lines) ✓ (21ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.2s (2 ✓)
+
+Now let's try building and running tests:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (485ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (5.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (27.3s)
+  3 tools completed in 40.9s (3 ✓)
+
+All 88 tests pass. Let's run clippy:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.9s)
+
+All clean. Let me verify the format check:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (472ms)
+
+All four CI checks pass. Now let me update the documentation:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me check what CLAUDE.md says about watch.rs currently:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ search 'watch' in CLAUDE.md ✓ (2ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `watch.rs` — watch mode: set/get/clear watch command, run watch command with streaming output, auto-fix loop after prompts (extracted from `prompt.rs`)
+  + - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts (extracted from `prompt.rs`)
+ ✓ (1ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Now update the Project Files section — I need to check what's listed for watch.rs functions:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ search 'watch\.rs' in CLAUDE.md ✓ (3ms)
+  ▶ search 'fn set_watch_command$|fn get_watch_command$|fn clear_watch_c…' in CLAUDE.md ✓ (3ms)
+  ▶ search 'set_watch_command' in CLAUDE.md ✓ (2ms)
+  ▶ search 'src/watch.rs' in CLAUDE.md ✓ (2ms)
+  4 tools completed in 12.0s (4 ✓)
+
+Let me check the structure section at the end of CLAUDE.md:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "watch" CLAUDE.md ✓ (3ms)
+
+Let me find the file structure listing at the bottom:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "watch\|fn set_watch\|fn… ✓ (3ms)
+
+The Repository Structure section at the bottom has function listings. Let me find the watch.rs section:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 15 "^src/watch.rs" CL… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 CLAUDE.md ✓ (3ms)
+  2 tools completed in 7.1s (2 ✓)
+
+The Repository Structure is already at the top of the file. The function listing appears to be generated separately. Let me update the function listing for watch.rs and commands_dev.rs in the structure section:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "watch.rs\|auto_detect_w… ✓ (3ms)
+
+The function listing isn't in the CLAUDE.md file structure — it seems the function listing is only in a separate section. Let me find where detect_watch_all_command is listed:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "detect_watch_all_comman… ✓ (3ms)
+
+The function listings are in the task prompt, not in CLAUDE.md itself. The CLAUDE.md architecture section is what I need to update, which I've already done. Now let me check if there are docs that need updating:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "watch" docs/src/ --inc… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "watch\|Watch" README.m… ✓ (3ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Let me update the README watch description to mention the two-phase capability:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ read README.md:404..419 ✓ (0ms)
+
+Let me also check the commands table for /watch:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/watch" README.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A2 "watch" README.md |… ✓ (3ms)
+  2 tools completed in 6.2s (2 ✓)
+
+The README's file listing doesn't mention watch.rs separately since it was extracted. Let me also check for feature descriptions:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "watch" README.md ✓ (3ms)
+
+The docs mention is minimal. Let me update the docs/src/usage/commands.md:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/usage/commands.md:27..37 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - > | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for lint+test, `yoyo watch cargo test`) |
+  + > | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for two-phase lint→test, `yoyo watch cargo test`) |
+ ✓ (0ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now let me check if there's a more detailed watch section in the docs:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "watch" docs/src/usag… ✓ (3ms)
+
+There's also the help.rs which contains the help text for /watch:
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "watch" src/help.rs | he… ✓ (4ms)
+  ▶ read src/help.rs:886..916 ✓ (1ms)
+  ▶ edit src/help.rs (22 → 26 lines)
+            "watch" => Some(
+                "/watch [command|all|lint|off|status] — Auto-run lint+test after agent edits\n\n\
+                 Usage:\n\
+  -              \x20 /watch              Auto-detect lint+test and enable watching\n\
+  -              \x20 /watch all          Same as /watch (lint + test combined)\n\
+  +              \x20 /watch              Auto-detect lint+test as separate phases\n\
+  +              \x20 /watch all          Same as /watch (two-phase: lint → test)\n\
+                 \x20 /watch lint         Watch with lint only (no tests)\n\
+  -              \x20 /watch cargo test   Watch with a specific command\n\
+  +              \x20 /watch cargo test   Watch with a specific command (single phase)\n\
+                 \x20 /watch off          Disable watching\n\
+  -              \x20 /watch status       Show current watch state\n\n\
+  +              \x20 /watch status       Show current watch state and phases\n\n\
+                 When enabled, yoyo automatically runs the watch command after every\n\
+                 agent turn that modifies files. On failure, yoyo auto-fixes up to 3 times.\n\n\
+  -              By default, `/watch` detects both the lint and test commands for your\n\
+  -              project and chains them with `&&` (e.g. `cargo clippy -- -D warnings && cargo test`).\n\
+  +              By default, `/watch` and `/watch all` detect both the lint and test commands\n\
+  +              for your project and run them as **separate phases** — lint is fixed first,\n\
+  +              then tests run. This is more efficient than chaining with `&&` because lint\n\
+  ... (6 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 24.2s (4 ✓)
+
+Now let's do the final build/test/lint/format check:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (26.2s)
+  4 tools completed in 54.2s (4 ✓)
+
+Wait, 88 tests — same count. Let me check if my new tests are being compiled. The test count might include both unit tests and integration tests. Let me filter to just the watch tests:
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- watch 2>&1 | tail … ✓ (139ms)
+
+Ah, there's a test ordering issue. The handle_watch_custom_command_single_phase test sets "make check" and doesn't clean up before the handle_watch_bare_sets_lint_and_test test runs. Actually wait — looking at the error: bare /watch should set lint && test: make check. The global WATCH_COMMANDS static is being contaminated between tests.
+
+The issue is that these tests run in parallel and share the global static. The handle_watch_custom_command_single_phase test sets "make check" and then the handle_watch_bare_sets_lint_and_test test reads it before its own handle_watch call can overwrite it.
+
+Actually no — the test IS calling `clear_watch_command() first. But then handle_watch("/watch")` runs, and it appears to be reading back "make check" from another test running concurrently. Since these tests share global state and run in parallel, there's a race condition.
+
+This was always a risk with the existing tests but they happened to work. The fix is: the tests need to be serialized. Let me look at how existing tests handle this:
+  ╭─ Turn 87 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- watch 2>&1 | grep … ✓ (137ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- watch 2>&1 | head … ✓ (145ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Interesting — it passed this time. The failure was intermittent due to test parallelism and global state. Let me run it several times to see if it's flaky:
+  ╭─ Turn 89 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do cargo tes… ✓ (694ms)
+
+Yes, it's flaky — sometimes handle_watch_custom_command_single_phase fails and sometimes handle_watch_bare_sets_lint_and_test fails. This is the global state race. I need to add a serial test mechanism.
+
+The simplest fix is to use a mutex to serialize tests that touch the global watch state. Let me check if there's already a pattern for this:
+  ╭─ Turn 90 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial\|SERIAL\|test_lo… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "serial_test" Cargo.toml ✓ (3ms)
+  2 tools completed in 5.9s (2 ✓)
+
+There's already serial_test as a dependency. Let me use #[serial] on the tests that touch global watch state. This was actually already a pre-existing problem with the existing tests too, but my new test made it more likely to manifest.
+
+Let me add #[serial] to all watch-related tests in both watch.rs and commands_dev.rs:
+  ╭─ Turn 92 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:330..335 ✓ (1ms)
+  ▶ edit src/watch.rs (3 → 4 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+ ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now add #[serial] to all tests in watch.rs that touch global state:
+  ╭─ Turn 94 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]" src/watch.rs ✓ (3ms)
+
+That's a lot of tests. The ones that touch global state (set/get/clear_watch_command) need #[serial]. Let me identify which ones:
+
+Tests that touch global state: `test_watch_command_none_by_default, test_watch_command_roundtrip, test_run_watch_after_prompt_no_watch_returns_passed, test_run_watch_command_pass_with_set_watch, test_run_watch_command_fail_with_set_watch, test_set_get_watch_commands_roundtrip, test_get_watch_command_joins_multi_phase, test_single_command_still_works, test_clear_clears_multi_phase, test_run_watch_after_prompt_empty_commands_returns_passed`.
+
+Tests that DON'T touch global state: the ones that only call run_watch_command, `build_watch_fix_prompt, classify_watch_command, WatchResult constructors, and MAX_WATCH_FIX_ATTEMPTS`.
+
+Rather than adding #[serial] to each individual test, let me use a simpler approach: add #[serial] to only the tests that use the global state:
+  ╭─ Turn 95 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 21s)
+
+  ↳ 12m 31s · 31605→22027 tokens · $3.80
+  ⬤ 23% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
