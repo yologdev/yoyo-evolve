@@ -1,0 +1,457 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the functions I need to move, then execute the migration.
+  ▶ $ grep -n "fn user_config_path\|fn home_config_path\|fn history_file_path\|fn pars…📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -rn "cli::user_config_path\|cli::home_config_path\|cli::history_file_path\|… ✓ (8ms)
+ ✓ (13ms)
+  ▶ $ sed -n '320,500p' src/cli.rs ✓ (4ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Now let me see all references more carefully:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "cli::user_config_path\|cli::home_config_path\|cli::history_file_path\|…  ▶ $ grep -rn "use crate::cli" src/ --include="*.rs" | head -30 ✓ (5ms)
+ ✓ (41ms)
+  ▶ $ grep -rn "history_file_path" src/ --include="*.rs"  ▶ $ sed -n '38,65p' src/cli.rs ✓ (3ms)
+ ✓ (41ms)
+  4 tools completed in 5.4s (4 ✓)
+
+I can see the pattern — cli.rs already re-exports from config.rs and providers.rs. I'll follow the same pattern. Let me see the existing imports in repl.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1,10p' src/repl.rs  ▶ $ grep -n "use crate::cli::\|use crate::cli;" src/dispatch.rs ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ sed -n '14,20p' src/dispatch.rs ✓ (3ms)
+  3 tools completed in 9.5s (3 ✓)
+
+Now let me see the existing config.rs to understand its structure:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1,30p' src/config.rs  ▶ $ sed -n '540,560p' src/config.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me see what tests exist in cli.rs for these functions:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_history_file_path\|test_user_config_path\|test_home_config_path\|t… ✓ (8ms)
+
+Let me read all the tests I need to move:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1340,1440p' src/cli.rs  ▶ $ sed -n '1585,1650p' src/cli.rs  ▶ $ sed -n '1710,1760p' src/cli.rs ✓ (3ms)
+ ✓ (3ms)
+ ✓ (6ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Now let me see what else references CONFIG_FILE_NAMES, `dirs_hint, data_dir_hint`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "CONFIG_FILE_NAMES\|dirs_hint\|data_dir_hint" src/ --include="*.rs" ✓ (42ms)
+
+Good — CONFIG_FILE_NAMES, dirs_hint, and data_dir_hint are only used within cli.rs. They're helpers for the functions I'm moving. I'll move them too.
+
+Let me also see the full range of tests I need to move:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1620,1665p' src/cli.rs  ▶ $ sed -n '1745,1770p' src/cli.rs ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ sed -n '1665,1720p' src/cli.rs ✓ (3ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Now I have a complete picture. Let me plan the work:
+
+1. Move CONFIG_FILE_NAMES, `dirs_hint(), data_dir_hint(), user_config_path(), home_config_path(), history_file_path(), parse_config_file(), load_config_file() from cli.rs to config.rs`
+2. Add re-exports in cli.rs (following the existing pattern)
+3. Move the related tests too
+4. Update direct references in other files
+
+Let me do this step by step. First, let me read the exact lines to extract:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '318,330p' src/cli.rs ✓ (3ms)
+  ▶ $ sed -n '480,505p' src/cli.rs ✓ (3ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Good. Now let me see the end of config.rs to know where to append:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -60 src/config.rs ✓ (39ms)
+
+Now let me check what imports config.rs uses:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ head -5 src/config.rs ✓ (38ms)
+
+The load_config_file function uses is_quiet, `DIM, and RESET from format/mod.rs`. Let me check what's imported:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "use crate::" src/config.rs | head -20 ✓ (3ms)
+  ▶ $ grep -n "use " src/config.rs | head -20 ✓ (3ms)
+  2 tools completed in 8.7s (2 ✓)
+
+So config.rs doesn't import anything currently. The moved `load_config_file function uses is_quiet, DIM, RESET` from format. Let me check the exact usage:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '451,480p' src/cli.rs ✓ (3ms)
+
+It uses HashMap, is_quiet(), DIM, RESET. Let me also check what the config.rs reference to crate::cli::home_config_path looks like:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '535,560p' src/config.rs ✓ (3ms)
+
+After the move, config.rs will have home_config_path locally so this will simplify to just home_config_path().
+
+Now I have the full picture. Let me execute. I'll do this in a careful sequence:
+
+Step 1: Add the functions to config.rs
+Step 2: Remove them from cli.rs and add re-exports
+Step 3: Update config.rs internal reference from crate::cli::home_config_path() to just home_config_path()
+Step 4: Move the tests
+Step 5: Build and test
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 33.6s (6 ✓)
+
+Let me read the exact text blocks I need to extract from cli.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '320,480p' src/cli.rs ✓ (5ms)
+
+Now, let me add the functions to config.rs. I'll insert them before the existing test module at the end:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^#\[cfg(test)\]" src/config.rs ✓ (7ms)
+  ▶ $ sed -n '635,650p' src/config.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I'll add the functions to config.rs just before the #[cfg(test)] section:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (6 → 134 lines)
+  + // ---------------------------------------------------------------------------
+  + // Config-file path resolution and loading
+  + // ---------------------------------------------------------------------------
+  + 
+  + use std::collections::HashMap;
+  + 
+  + use crate::format::{is_quiet, DIM, RESET};
+  + 
+  + /// Config file search paths, checked in order (first found wins).
+  + /// - `.yoyo.toml` (project-level)
+  + /// - `~/.yoyo.toml` (home-level shorthand)
+  + /// - `~/.config/yoyo/config.toml` (XDG user-level)
+  + const CONFIG_FILE_NAMES: &[&str] = &[".yoyo.toml"];
+  + 
+  + /// XDG user-level config path: `~/.config/yoyo/config.toml`.
+  + pub fn user_config_path() -> Option<std::path::PathBuf> {
+  +     dirs_hint().map(|dir| dir.join("yoyo").join("config.toml"))
+  + }
+  + 
+  + /// Home directory config path: `~/.yoyo.toml`.
+  ... (111 more lines)
+ ✓ (1ms)
+
+Now update the internal crate::cli::home_config_path() reference in `config.rs` to use the local function:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (2 → 2 lines)
+  -         crate::cli::home_config_path()
+  +         home_config_path()
+                .ok_or_else(|| "could not determine home directory".to_string())?
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 14.6s (4 ✓)
+
+Now remove the functions from cli.rs and add re-exports:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, remove the function definitions from cli.rs. The block spans from line 320 to line 480 (before `parse_numeric_flag`):
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (83 → 2 lines)
+  - /// Config file search paths, checked in order (first found wins).
+  - /// - `.yoyo.toml` (project-level)
+  - /// - `~/.yoyo.toml` (home-level shorthand)
+  - /// - `~/.config/yoyo/config.toml` (XDG user-level)
+  - const CONFIG_FILE_NAMES: &[&str] = &[".yoyo.toml"];
+  - 
+  - pub fn user_config_path() -> Option<std::path::PathBuf> {
+  -     dirs_hint().map(|dir| dir.join("yoyo").join("config.toml"))
+  - }
+  - 
+  - /// Home directory config path: ~/.yoyo.toml
+  - pub fn home_config_path() -> Option<std::path::PathBuf> {
+  -     std::env::var("HOME")
+  -         .ok()
+  -         .map(|h| std::path::PathBuf::from(h).join(".yoyo.toml"))
+  - }
+  - 
+  - /// Best-effort XDG config dir (~/.config on Linux/macOS).
+  - fn dirs_hint() -> Option<std::path::PathBuf> {
+  -     std::env::var("XDG_CONFIG_HOME")
+  ... (65 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/cli.rs.
+
+The doc comment lines have slightly different wording. Let me read the exact text:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '320,325p' src/cli.rs | cat -A ✓ (3ms)
+  ▶ read src/cli.rs:320..402 ✓ (1ms)
+  ▶ read src/cli.rs:399..484 ✓ (1ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Now I'll do the replacement precisely:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (85 → 4 lines)
+  - /// Config file search paths, checked in order (first found wins).
+  - /// - `.yoyo.toml` in the current directory (project-level)
+  - /// - `~/.yoyo.toml` (home directory shorthand)
+  - /// - `~/.config/yoyo/config.toml` (XDG user-level)
+  - const CONFIG_FILE_NAMES: &[&str] = &[".yoyo.toml"];
+  - 
+  - pub fn user_config_path() -> Option<std::path::PathBuf> {
+  -     dirs_hint().map(|dir| dir.join("yoyo").join("config.toml"))
+  - }
+  - 
+  - /// Home directory config path: ~/.yoyo.toml
+  - pub fn home_config_path() -> Option<std::path::PathBuf> {
+  -     std::env::var("HOME")
+  -         .ok()
+  -         .map(|h| std::path::PathBuf::from(h).join(".yoyo.toml"))
+  - }
+  - 
+  - /// Best-effort XDG config dir (~/.config on Linux/macOS).
+  - fn dirs_hint() -> Option<std::path::PathBuf> {
+  -     std::env::var("XDG_CONFIG_HOME")
+  ... (67 more lines)
+ ✓ (1ms)
+
+Now remove the load_config_file function from cli.rs:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (37 → 2 lines)
+  - /// Load config from file, checking project-level, home-level, then user-level paths.
+  - /// Returns an empty map if no config file is found.
+  - /// Read the config file once, returning both the parsed key-value map and the raw content.
+  - /// Checks project-level, home-level (~/.yoyo.toml), then user-level (XDG) paths.
+  - /// Returns `(HashMap, raw_content)` or `(empty HashMap, empty string)` if no config found.
+  - pub(crate) fn load_config_file() -> (HashMap<String, String>, String) {
+  -     // Check project-level config first
+  -     for name in CONFIG_FILE_NAMES {
+  -         if let Ok(content) = std::fs::read_to_string(name) {
+  -             if !is_quiet() {
+  -                 eprintln!("{DIM}  config: {name}{RESET}");
+  -             }
+  -             return (parse_config_file(&content), content);
+  -         }
+  -     }
+  -     // Check ~/.yoyo.toml (home directory shorthand)
+  -     if let Some(path) = home_config_path() {
+  -         if let Ok(content) = std::fs::read_to_string(&path) {
+  -             if !is_quiet() {
+  -                 eprintln!("{DIM}  config: {}{RESET}", path.display());
+  ... (17 more lines)
+ ✓ (1ms)
+
+Now add the re-exports to the existing config re-export block in cli.rs:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:55..63 ✓ (1ms)
+  ▶ edit src/cli.rs (5 → 6 lines)
+    // Re-exported from config module so existing `use crate::cli::` imports keep working.
+    pub use crate::config::{
+  +     home_config_path, history_file_path, load_config_file, parse_config_file,
+        parse_directories_from_config, parse_mcp_servers_from_config, parse_permissions_from_config,
+  -     parse_toml_array, DirectoryRestrictions, McpServerConfig, PermissionConfig,
+  +     parse_toml_array, user_config_path, DirectoryRestrictions, McpServerConfig, PermissionConfig,
+    };
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Now let me do a quick build to see if the basics work before moving tests:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -30 ✓ (4.8s)
+
+Build passes. Now let's move the tests. Let me identify all the tests that should move:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ grep -n "fn test_parse_config_file\|fn test_home_config_path\|fn test_history_fi… ✓ (8ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Let me read them all precisely:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1230..1320 ✓ (1ms)
+  ▶ read src/cli.rs:1473..1573 ✓ (1ms)
+  ▶ read src/cli.rs:1595..1655 ✓ (1ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Now I know exactly which tests to move and which to leave. The test_config_search_order_documented test references `CONFIG_FILE_NAMES which is now in config.rs` — that needs to move. The test_data_dir_hint_returns_path test references data_dir_hint which is private in config.rs.
+
+Let me move the tests. First, remove from cli.rs:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (91 → 2 lines)
+  - 
+  -     #[test]
+  -     fn test_parse_config_file_basic() {
+  -         let content = r#"
+  - model = "claude-sonnet-4-20250514"
+  - thinking = "medium"
+  - max_tokens = 4096
+  - "#;
+  -         let config = parse_config_file(content);
+  -         assert_eq!(config.get("model").unwrap(), "claude-sonnet-4-20250514");
+  -         assert_eq!(config.get("thinking").unwrap(), "medium");
+  -         assert_eq!(config.get("max_tokens").unwrap(), "4096");
+  -     }
+  - 
+  -     #[test]
+  -     fn test_parse_config_file_comments_and_blanks() {
+  -         let content = r#"
+  - # This is a comment
+  - model = "claude-opus-4-6"
+  - 
+  ... (71 more lines)
+ ✓ (1ms)
+
+Now remove the home_config_path tests, config_precedence, config_search_order, history_file_path, and data_dir_hint tests:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_home_config_path\|fn test_config_precedence\|fn test_config_sea… ✓ (8ms)
+  ▶ read src/cli.rs:1383..1473 ✓ (1ms)
+  ▶ read src/cli.rs:1505..1570 ✓ (1ms)
+  3 tools completed in 9.6s (3 ✓)
+
+Now I need to remove the blocks. Let me remove the home_config_path tests, config precedence, config search order, history file path, and data dir hint tests:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (172 → 2 lines)
+  - 
+  -     #[test]
+  -     fn test_home_config_path_returns_yoyo_toml_in_home() {
+  -         // home_config_path() should return $HOME/.yoyo.toml
+  -         let original_home = std::env::var("HOME").ok();
+  -         let tmp = tempfile::tempdir().unwrap();
+  -         std::env::set_var("HOME", tmp.path());
+  - 
+  -         let path = home_config_path();
+  -         assert!(path.is_some());
+  -         let path = path.unwrap();
+  -         assert_eq!(path, tmp.path().join(".yoyo.toml"));
+  - 
+  -         // Restore
+  -         if let Some(h) = original_home {
+  -             std::env::set_var("HOME", h);
+  -         }
+  -     }
+  - 
+  -     #[test]
+  ... (152 more lines)
+ ✓ (2ms)
+
+Wait — I accidentally removed the help_text tests that should stay! Let me add those back:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 43 lines)
+  + 
+  +     #[test]
+  +     fn test_help_text_mentions_home_config() {
+  +         // The help output should mention all three config paths.
+  +         let welcome = get_welcome_text();
+  +         assert!(
+  +             welcome.contains(".yoyo.toml"),
+  +             "welcome should mention .yoyo.toml"
+  +         );
+  +         assert!(
+  +             welcome.contains("config/yoyo/config.toml"),
+  +             "welcome should mention XDG config path"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn help_text_documents_session_budget_env_var() {
+  +         // YOYO_SESSION_BUDGET_SECS is a live behavior-modifying knob (retry loops
+  +         // bail early when the budget is near zero). The only way operators can
+  +         // discover it should be `yoyo --help`, not spelunking src/prompt_budget.rs.
+  ... (23 more lines)
+ ✓ (1ms)
+
+Now add the tests to config.rs. Let me find the test module in config.rs:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[cfg(test)\]" src/config.rs ✓ (8ms)
+  ▶ read src/config.rs:771..786 ✓ (1ms)
+  2 tools completed in 19.5s (2 ✓)
+
+Now add the moved tests at the end of the test module (before the closing }):
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -10 src/config.rs ✓ (38ms)
+  ▶ edit src/config.rs (3 → 223 lines)
+            assert!(validate_config_value("auto_watch", "maybe").is_err());
+  +     }
+  + 
+  +     // === Config-file path resolution tests (moved from cli.rs) ===
+  + 
+  +     #[test]
+  +     fn test_parse_config_file_basic() {
+  +         let content = r#"
+  + model = "claude-sonnet-4-20250514"
+  + thinking = "medium"
+  + max_tokens = 4096
+  + "#;
+  +         let config = parse_config_file(content);
+  +         assert_eq!(config.get("model").unwrap(), "claude-sonnet-4-20250514");
+  +         assert_eq!(config.get("thinking").unwrap(), "medium");
+  +         assert_eq!(config.get("max_tokens").unwrap(), "4096");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_config_file_comments_and_blanks() {
+  ... (203 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 43.4s (3 ✓)
+
+Now let's build and test:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (4.7s)
+  2 tools completed in 12.2s (2 ✓)
+
+Build passes. Now let's run tests:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (26.6s)
+
+All 88 tests pass. Now clippy and fmt:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.1s)
+
+All clean. Let me verify the migration is complete:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "cli::user_config_path\|cli::home_config_path\|cli::history_file_path\|… ✓ (5ms)
+
+These all still work because the functions are re-exported through cli.rs. That's correct — the re-exports maintain backward compatibility. Let me verify:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub use crate::config" src/cli.rs ✓ (7ms)
+  ▶ read src/cli.rs:55..61 ✓ (0ms)
+  2 tools completed in 8.6s (2 ✓)
+
+All call sites using crate::cli::user_config_path etc. will continue to work through the re-exports. Let me also check that repl.rs still works — it uses `use crate::cli::*` which will pick up the re-exports:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "history_file_path" src/repl.rs ✓ (8ms)
+
+Good — it uses use crate::cli::* so the re-export covers it. Let me check file sizes:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/cli.rs src/config.rs ✓ (8ms)
+
+`cli.rs dropped from 3,008 to 2,674 lines (−334 lines). config.rs` grew from 967 to 1,314 lines (+347 lines). The net difference is the re-export lines in cli.rs — a clean move.
+
+Let me do one final verification — run the full suite once more:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (31.7s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 37.1s (2 ✓)
+
+All checks pass — fmt clean, clippy clean, build passes, all 88 tests pass. Now commit:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (10ms)
+
+Clean two-file diff — code moved from cli.rs to `config.rs` with re-exports keeping all call sites working.
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (14 lines) ✓ (9ms)
+
+Done. Clean extraction — five config-file functions plus their helpers and tests moved from cli.rs to config.rs. Re-exports keep all 10+ call sites working without any changes. cli.rs sheds 334 lines, config.rs gains the code that belongs with its existing config infrastructure. All 88 tests pass.
+
+  ↳ 9m 55s · 33297→18831 tokens · $2.85
+  ⬤ 21% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

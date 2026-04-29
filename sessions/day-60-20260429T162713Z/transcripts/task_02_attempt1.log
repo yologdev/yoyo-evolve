@@ -1,0 +1,382 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current /skill command implementation, then write tests, implement the feature, and verify everything.
+  ▶ $ grep -n "handle_skill\|SKILL_SUBCOMMANDS\|fn skill" src/commands_project.rs | he…📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "SKILL_SUBCOMMANDS" src/commands_project.rs ✓ (6ms)
+ ✓ (10ms)
+  ▶ read src/commands_project.rs:924..1044 ✓ (1ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Now let me look at the existing tests and the imports at the top of the file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1..21  ▶ $ grep -n "^use \|^mod " src/commands_project.rs | head -20 ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me look at the existing tests for handle_skill:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2260.. ✓ (1ms)
+
+Now let me check what TempDir and fs they're using in tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1042..1072 ✓ (1ms)
+
+Good. Now let me check the format imports for color constants:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub const YELLOW\|pub const RED\|pub const GREEN\|pub const DIM\|pub co… ✓ (3ms)
+  ▶ $ grep -n "YELLOW\|RED\|GREEN\|DIM\|RESET\|BOLD\|CYAN" src/format/mod.rs | head -2… ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me understand the plan. I need to:
+
+1. Add `skill_install` function and helper for parsing frontmatter name
+2. Wire it into handle_skill
+3. Update `SKILL_SUBCOMMANDS`
+4. Write tests first
+
+Let me write the tests and implementation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 14.4s (5 ✓)
+
+Let me first check where the help text for /skill is:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "skill" src/help.rs | head -20 ✓ (4ms)
+
+Now let me also check the dispatch for skill:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "skill" src/dispatch.rs | head -20 ✓ (3ms)
+
+Good — the dispatch already routes /skill commands. Now let me start by implementing the feature. I'll write tests first, then the implementation.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me first add the implementation code, then the tests, since the tests need to call the functions. I'll add both together. First, let me understand the structure better — where to place the new functions:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1035..1045 ✓ (1ms)
+
+Now I'll implement everything. Let me add the functions right before the #[cfg(test)] block:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (1 → 1 lines)
+  - pub const SKILL_SUBCOMMANDS: &[&str] = &["list", "show", "path"];
+  + pub const SKILL_SUBCOMMANDS: &[&str] = &["list", "show", "path", "install"];
+ ✓ (1ms)
+
+Now update handle_skill to route the install subcommand:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (7 → 20 lines)
+        } else if sub == "show" {
+            eprintln!("{YELLOW}  usage: /skill show <name>{RESET}");
+            eprintln!("{DIM}  try /skill list to see available skills{RESET}\n");
+  +     } else if let Some(source) = sub.strip_prefix("install ") {
+  +         let source = source.trim();
+  +         if source.is_empty() {
+  +             eprintln!("{YELLOW}  usage: /skill install <path>{RESET}");
+  +             eprintln!(
+  +                 "{DIM}  install a skill from a local directory containing SKILL.md{RESET}\n"
+  +             );
+  +         } else {
+  +             skill_install(source);
+  +         }
+  +     } else if sub == "install" {
+  +         eprintln!("{YELLOW}  usage: /skill install <path>{RESET}");
+  +         eprintln!("{DIM}  install a skill from a local directory containing SKILL.md{RESET}\n");
+        } else {
+            eprintln!("{RED}  unknown subcommand: {sub}{RESET}");
+  -         eprintln!("{DIM}  try: /skill list, /skill show <name>, /skill path{RESET}\n");
+  +         eprintln!("{DIM}  try: /skill list, /skill show <name>, /skill path, /skill install <path>{RESET}\n");
+  ... (1 more lines)
+ ✓ (1ms)
+
+Now add the implementation functions before the #[cfg(test)] block:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1045..1055 ✓ (0ms)
+  ▶ edit src/commands_project.rs (4 → 189 lines)
+  +     }
+  + }
+  + 
+  + /// Extract the skill name from SKILL.md YAML frontmatter.
+  + ///
+  + /// Looks for a `name:` field in the YAML frontmatter delimited by `---`.
+  + /// Returns `None` if there's no valid frontmatter or no name field.
+  + fn extract_skill_name_from_frontmatter(content: &str) -> Option<String> {
+  +     let content = content.trim_start();
+  +     if !content.starts_with("---") {
+  +         return None;
+  +     }
+  +     // Find the closing ---
+  +     let after_first = &content[3..];
+  +     let end_idx = after_first.find("\n---")?;
+  +     let frontmatter = &after_first[..end_idx];
+  + 
+  +     for line in frontmatter.lines() {
+  +         let line = line.trim();
+  +         if let Some(value) = line.strip_prefix("name:") {
+  ... (168 more lines)
+ ✓ (1ms)
+  2 tools completed in 26.0s (2 ✓)
+
+Now let me add the tests at the end of the test module:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2520..2540 ✓ (1ms)
+  ▶ read src/commands_project.rs:2538..2548 ✓ (1ms)
+  ▶ edit src/commands_project.rs (4 → 189 lines)
+            // Path should work
+            handle_skill("/skill path", &skills);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_extract_skill_name_valid() {
+  +         let content = "---\nname: my-cool-skill\ndescription: Does things\n---\n\n# Content\n";
+  +         assert_eq!(
+  +             extract_skill_name_from_frontmatter(content),
+  +             Some("my-cool-skill".to_string())
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_extract_skill_name_quoted() {
+  +         let content = "---\nname: \"quoted-name\"\ndescription: test\n---\n\nBody\n";
+  +         assert_eq!(
+  +             extract_skill_name_from_frontmatter(content),
+  +             Some("quoted-name".to_string())
+  +         );
+  ... (169 more lines)
+ ✓ (1ms)
+  3 tools completed in 27.9s (3 ✓)
+
+Now check if we need the dirs crate (for dirs::config_dir()):
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "dirs" Cargo.toml ✓ (8ms)
+  ▶ $ grep -rn "dirs::" src/ | head -10 ✓ (5ms)
+  ▶ $ grep -rn "home_dir\|config_dir\|data_dir" src/ | head -10 ✓ (6ms)
+  3 tools completed in 7.4s (3 ✓)
+
+The dirs crate isn't available. Let me see how data_dir_hint works:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:351..381 ✓ (1ms)
+
+Also check how the user_config_path works:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "config_dir\|user_config\|\.config/yoyo" src/cli.rs | head -20 ✓ (3ms)
+  ▶ read src/cli.rs:324..349 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+I should use the same pattern as dirs_hint() — no external crate needed. Let me fix my `default_skill_install_dir` to use the same approach:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (4 → 14 lines)
+    /// Default skill install directory: `~/.config/yoyo/skills/`
+  + ///
+  + /// Uses `XDG_CONFIG_HOME` if set, otherwise falls back to `~/.config`.
+    fn default_skill_install_dir() -> Option<std::path::PathBuf> {
+  -     dirs::config_dir().map(|c| c.join("yoyo").join("skills"))
+  +     let config_dir = std::env::var("XDG_CONFIG_HOME")
+  +         .ok()
+  +         .map(std::path::PathBuf::from)
+  +         .or_else(|| {
+  +             std::env::var("HOME")
+  +                 .ok()
+  +                 .map(|h| std::path::PathBuf::from(h).join(".config"))
+  +         })?;
+  +     Some(config_dir.join("yoyo").join("skills"))
+    }
+ ✓ (1ms)
+
+Now let me try building and testing:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (474ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.5s)
+  2 tools completed in 14.4s (2 ✓)
+
+The skill_install_to function is only used in tests. I need to gate it with `#[cfg(test)]` or reference it from non-test code. Since it's a testable variant, let me mark it for test use only:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (3 → 4 lines)
+    /// Install a skill to a specific directory (used for testing).
+    /// Same logic as `skill_install` but allows specifying the destination base dir.
+  + #[cfg(test)]
+    fn skill_install_to(source: &str, install_dir: &std::path::Path) -> Result<String, String> {
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.4s)
+  2 tools completed in 13.2s (2 ✓)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.8s)
+  2 tools completed in 35.6s (2 ✓)
+
+All 2216 unit tests and 88 integration tests pass. Let me mark the tasks done:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 11.3s (4 ✓)
+
+Now let me update the docs. First, the help text in `src/help.rs`:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:516..536 ✓ (1ms)
+  ▶ edit src/help.rs (16 → 20 lines)
+            "skill" => Some(
+  -             "/skill [subcommand] — List and inspect loaded skills\n\n\
+  +             "/skill [subcommand] — List, inspect, and install skills\n\n\
+                 Usage:\n\
+                 \x20 /skill              List all loaded skills (same as /skill list)\n\
+                 \x20 /skill list         List loaded skills with name and description\n\
+                 \x20 /skill show <name>  Show the full content of a skill\n\
+  -              \x20 /skill path         Show the skills directory path(s)\n\n\
+  +              \x20 /skill path         Show the skills directory path(s)\n\
+  +              \x20 /skill install <path>  Install a skill from a local directory\n\n\
+                 Skills are loaded from directories specified with --skills <dir>.\n\
+                 Each skill is a directory containing a SKILL.md file with YAML\n\
+                 frontmatter (name + description) and markdown instructions.\n\n\
+  +              The install subcommand copies a skill directory into\n\
+  +              ~/.config/yoyo/skills/<name>/ for permanent availability.\n\n\
+                 Examples:\n\
+                 \x20 /skill\n\
+                 \x20 /skill list\n\
+                 \x20 /skill show evolve\n\
+  -              \x20 /skill path",
+  ... (3 more lines)
+ ✓ (1ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now update the short description for skill:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "skill" src/help.rs | grep -i "list and inspect\|List and inspect" ✓ (3ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "  skill             List and inspect loaded skills (e.g. yoyo skill list --skills ./skills)"
+  +         "  skill             List, inspect, and install skills (e.g. yoyo skill list --skills ./skills)"
+ ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     let _ = writeln!(s, "    /skill [subcmd]    List and inspect loaded skills");
+  +     let _ = writeln!(s, "    /skill [subcmd]    List, inspect, and install skills");
+ ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     out.push_str("  /skill [subcmd]    List and inspect loaded skills (list/show/path)\n");
+  +     out.push_str("  /skill [subcmd]    List, inspect, and install skills (list/show/path/install)\n");
+ ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "skill" => Some("List and inspect loaded skills"),
+  +         "skill" => Some("List, inspect, and install skills"),
+ ✓ (1ms)
+  5 tools completed in 18.6s (5 ✓)
+
+Now update CLAUDE.md — the architecture section mentions /skill:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "skill" CLAUDE.md | head -20 ✓ (3ms)
+
+The CLAUDE.md architecture section describes commands_project.rs:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "commands_project" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "handle_skill\|/skill\|skill_install" CLAUDE.md ✓ (8ms)
+  2 tools completed in 5.2s (2 ✓)
+
+The CLAUDE.md doesn't specifically describe /skill subcommands, so the architecture section is fine. Let me check if the commands_project.rs file signature section needs updating:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_skill\|SKILL_SUBCOMMANDS" CLAUDE.md ✓ (7ms)
+
+Let me check if the project file listing in CLAUDE.md has function signatures for `commands_project.rs`:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_skill\|fn skill_" CLAUDE.md ✓ (8ms)
+
+Now let me check the README:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "skill" README.md | head -20 ✓ (3ms)
+  ▶ $ grep -n "/skill" README.md ✓ (8ms)
+  2 tools completed in 5.6s (2 ✓)
+
+The README doesn't list /skill subcommands specifically, so no update needed there. Let me check the docs:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "skill" docs/src/ | grep -i "install\|subcommand\|list.*show.*path" | h… ✓ (4ms)
+  ▶ $ grep -rn "/skill" docs/src/ | head -10 ✓ (3ms)
+  ▶ read docs/src/configuration/skills.md ✓ (1ms)
+  3 tools completed in 7.5s (3 ✓)
+
+I should add a section about managing skills with the REPL command. Let me add it after the "Built-in skills" section:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/skills.md (9 → 34 lines)
+    - **self-assess** — analyzing its own capabilities
+    - **research** — searching the web and reading docs
+    - **release** — evaluating readiness for publishing
+  + 
+  + ## Managing skills
+  + 
+  + From the REPL, use the `/skill` command to manage skills:
+  + 
+  + ```
+  + /skill              List all loaded skills
+  + /skill list         List loaded skills with name and description
+  + /skill show <name>  Show the full content of a skill
+  + /skill path         Show the skills directory path(s)
+  + /skill install <path>  Install a skill from a local directory
+  + ```
+  + 
+  + The `install` subcommand copies a skill directory into `~/.config/yoyo/skills/<name>/`. The source directory must contain a `SKILL.md` file with YAML frontmatter including a `name:` field. For example:
+  + 
+  + ```bash
+  + # Install a local skill
+  ... (8 more lines)
+ ✓ (1ms)
+
+Now update the commands docs:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "skill" docs/src/usage/commands.md | head -10 ✓ (3ms)
+  ▶ $ grep -n "/skill" docs/src/usage/commands.md ✓ (7ms)
+  ▶ $ grep -n "skill" docs/src/usage/commands.md ✓ (7ms)
+  3 tools completed in 7.1s (3 ✓)
+
+The commands doc doesn't mention /skill at all, so nothing to update there.
+
+Now let me run the full verification:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 && cargo test 2… ✓ (30.9s)
+  2 tools completed in 44.5s (2 ✓)
+
+All 2216 tests pass, plus 88 integration tests. Let me also verify the specific new tests ran:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test skill_install 2>&1 ✓ (130ms)
+
+All 8 new skill_install tests pass. Let me also run the frontmatter extraction tests:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test extract_skill_name 2>… ✓ (129ms)
+
+All 14 new tests pass. Now let me commit:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (19 lines) ✓ (10ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.5s (3 ✓)
+
+Done. Here's what I shipped:
+
+`/skill install <path>` — the first step toward a skills marketplace. It copies a local skill directory into ~/.config/yoyo/skills/<name>/ so users can permanently install skills they find or create.
+
+Implementation details:
+• extract_skill_name_from_frontmatter() — parses YAML frontmatter for the name: field, handles quoted/unquoted values
+• `skill_install()` — full validation pipeline: checks path exists → is a directory → contains SKILL.md → has valid frontmatter with name → not already installed → copies recursively
+• copy_dir_recursive() — walks the source tree and copies all files/subdirs
+• skill_install_to() — test-only variant with configurable destination directory
+• Rolls back partial installs on copy failure
+• Uses the same XDG config pattern as the rest of yoyo (XDG_CONFIG_HOME → ~/.config)
+
+14 new tests covering:
+• Frontmatter parsing (valid, quoted, single-quoted, no frontmatter, no name, empty name)
+• Install errors (nonexistent path, not a directory, missing SKILL.md, bad frontmatter, already exists)
+• Successful install with file verification
+• Subdirectory copying
+• Subcommand routing
+
+  ↳ 6m 31s · 25774→13172 tokens · $2.15
+  ⬤ 15% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

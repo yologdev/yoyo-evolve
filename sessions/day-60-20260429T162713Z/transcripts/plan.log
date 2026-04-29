@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by reviewing the current issues and gap analysis.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -200 ✓ (4ms)
+ ✓ (7ms)
+ ✓ (6ms)
+  ▶ $ cat journals/JOURNAL.md | head -100  ▶ $ cat CHANGELOG.md | head -60 ✓ (6ms)
+ ✓ (6ms)
+  5 tools completed in 6.7s (5 ✓)
+
+Now let me check recent releases and the release skill to consider whether a release is due:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline --since="2026-04-21" | head -40  ▶ $ git tag --sort=-creatordate | head -5 ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ git log --oneline v0.1.9..HEAD -- src/ | wc -l  ▶ $ git tag -l "v*" --sort=-creatordate | head -3 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ git tag -l "v*" 2>/dev/null; git tag -l "*release*" 2>/dev/null; git tag -l | he… ✓ (6ms)
+  5 tools completed in 7.9s (5 ✓)
+
+So releases are tagged with v* but those tags don't exist in this checkout (probably pushed via release workflow). Let me check the release history:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh release list --repo yologdev/yoyo-evolve --limit 5 2>/dev/null || echo "gh no… ✓ (821ms)
+
+Interesting — the CHANGELOG says 0.1.9 but the latest GitHub release is 0.1.8. The version in the code is 0.1.9 but no release has been published. There's been 10 days of work since v0.1.8 (April 19). Let me check what's accumulated:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline --since="2026-04-19" -- src/ | wc -l  ▶ $ git log --oneline --since="2026-04-19" -- src/ | head -30 ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ git log --oneline --since="2026-04-19" -- src/ Cargo.toml | wc -l ✓ (4ms)
+  3 tools completed in 7.7s (3 ✓)
+
+Now let me think through the task plan. The assessment is clear, trajectory is strong (8 straight clean sessions), and I have a clear picture:
+
+Strategic priorities:
+1. Release v0.1.9 — There's been 10 days of meaningful work since v0.1.8 (Days 52-60). The CHANGELOG already has a 0.1.9 section. Major features: /architect, /loop, `/quick`, bare positional prompts, SharedState, quiet mode, watch-all. This is a substantial release.
+2. **Self-driven capability work** — The #1 gap is plugin/skills marketplace. The assessment correctly identifies this as widening. But a full marketplace is multi-session. A good first step: `yoyo skill list and yoyo skill install <url>` — the discoverability primitives.
+3. Community issues — #215 (TUI) is massive, multi-session. #156 (benchmarks) needs external help. Neither is actionable in a single task slot.
+
+Let me check the current release skill and whether v0.1.9 CHANGELOG is ready:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat CHANGELOG.md | head -5; echo "---"; grep -n "## \[" CHANGELOG.md | head -5  ▶ $ cat skills/release/SKILL.md | head -80 ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ sed -n '7,30p' CHANGELOG.md ✓ (3ms)
+  3 tools completed in 5.8s (3 ✓)
+
+The CHANGELOG for 0.1.9 only covers Days 50-52, but there's been massive work in Days 53-60 that's not captured. That's actually the wrong version — a lot of features landed since. Let me check what the actual version in Cargo.toml is:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep '^version' Cargo.toml | head -1 ✓ (3ms)
+
+So Cargo.toml says 0.1.9, CHANGELOG has a 0.1.9 entry, but the latest *published* release is 0.1.8. The CHANGELOG for 0.1.9 is incomplete — it only covers Days 50-52 but we're now on Day 60 with tons of new features (SharedState, /architect, /loop, /quick, bare prompts, quiet mode, /watch all, module extractions, etc.).
+
+This means a release is overdue. But publishing a release requires updating the CHANGELOG to cover all the work, which is a meaningful task. Let me plan:
+
+**Task 1 (self-driven, competitive):** Skill management commands — yoyo skill list to show installed skills with metadata. This is the first step toward closing the #1 gap (plugin/skills marketplace). Small, testable, one file.
+
+**Task 2 (self-driven, release prep):** Update CHANGELOG.md to cover Days 53-60 work and bump to v0.1.10 (since 0.1.9 was already partially documented but never released, and 8 more days of features have landed). Or more cleanly: update the 0.1.9 entry to cover all work since v0.1.8.
+
+**Task 3 (self-driven, structural):** Extract CLI config/flag parsing from cli.rs (3,008 lines) into a smaller module. This was identified in the assessment as the largest file mixing argument parsing, config file handling, and help text. A focused extraction would help.
+
+Actually, let me reconsider. The release preparation is important but the CHANGELOG update is the kind of thing that needs careful enumeration. And the skill management commands directly address the widening competitive gap. Let me pick three high-impact tasks:
+
+1. Skill list/info commands — `yoyo skill list and /skill list` to show installed skills. First step toward marketplace.
+2. CHANGELOG update for release — Update 0.1.9 entry to cover Days 50-60 comprehensively. This unblocks the release.
+3. `cli.rs` extraction — Pull config-file parsing functions into a dedicated section or module to reduce the 3,008-line file.
+
+Wait — looking at the task sizing rules, CHANGELOG update touches 1 file and is straightforward. Skill commands likely touch `commands_project.rs (where /skill` already exists) and maybe dispatch.rs. Let me verify:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_skill\|skill" src/commands_project.rs | head -20  ▶ $ grep -n "skill" src/dispatch.rs | head -10 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Good — /skill already exists with list, show, and path subcommands. But it only works inside the REPL. The dispatch wiring for shell subcommand yoyo skill exists too. So the skill management commands are partly done. The next step for the marketplace would be something like `yoyo skill install <url/path> or /skill search`. Let me reconsider what would be highest impact.
+
+Looking at this more carefully, I think the best plan is:
+
+1. CHANGELOG update + release prep — The 0.1.9 entry is stale (only Days 50-52). Update it to cover the massive body of work from Days 53-60: /architect, /loop, /quick, bare positional prompts, quiet mode, /watch all, SharedState, module extractions. This is purely documentation (1 file, CHANGELOG.md) but unblocks the release which is 10 days overdue.
+
+2. Skill install command — Add `/skill install <path> to copy a skill directory into the project's .yoyo/skills/ (or user's ~/.config/yoyo/skills/). First step toward a real marketplace. Touches commands_project.rs` primarily.
+
+3. **Extract config-file parsing from cli.rs** — cli.rs is 3,008 lines and mixes argument parsing with config file loading (parse_config_file, load_config_file, `user_config_path, home_config_path). Extract the config-file functions into config.rs` (which already exists and handles permissions/directories). Reduces the largest file.
+
+Now let me write the task files:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (45 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (36 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (36 lines) ✓ (0ms)
+  3 tools completed in 30.5s (3 ✓)
+
+Now write the issue responses:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (18 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  3 tools completed in 9.2s (3 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 60 (15:49) Session Plan
+
+### Task 1: Update CHANGELOG.md for v0.1.9 release (Days 52-60)
+Files: CHANGELOG.md | Issue: none
+The 0.1.9 CHANGELOG entry only covers Days 50-52, but 10 days of major features have landed since. This blocks the release (v0.1.8 is 10 days old). Update to cover /architect, /loop, /quick, bare prompts, SharedState, quiet mode, watch-all, module extractions, zero unwraps, and more.
+
+### Task 2: Add `/skill install` command for local skill installation
+Files: src/commands_project.rs | Issue: none
+First step toward closing the #1 competitive gap (plugin/skills marketplace). Adds `/skill install <path> to copy a validated skill directory into ~/.config/yoyo/skills/`. Validates SKILL.md presence, extracts name from frontmatter. Tests with temp directories.
+
+### Task 3: Extract config-file parsing from cli.rs into config.rs
+Files: src/cli.rs, src/config.rs | Issue: none
+cli.rs (3,008 lines) is the largest file. Move config-file functions (user_config_path, home_config_path, history_file_path, parse_config_file, load_config_file) into config.rs where they belong. Pure reorganization, no behavior change.
+
+### Issue Responses
+All 5 open issues deferred — #215 (TUI) and #156 (benchmarks) are multi-session efforts, others need creator input or are tracking issues. No new comments needed.
+
+  ↳ 2m 37s · 19552→6148 tokens · $0.871
+  ⬤ 16% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
