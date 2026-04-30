@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the issues and then create a focused plan for Day 61.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -100  ▶ $ cat CHANGELOG.md | head -50 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what the last few sessions have been doing to avoid … (2 lines) ✓ (5ms)
+  ▶ $ # Check recent git log for context on what was done (2 lines)  ▶ $ # Check the pending issues for agent-input (2 lines) ✓ (4ms)
+ ✓ (376ms)
+  ▶ $ # Check the specific issues that appeared in ISSUES_TODAY (2 lines)  ▶ $ # Check issue 355 (2 lines) ✓ (373ms)
+ ✓ (392ms)
+  ▶ $ # Check issue 354 and 353 (4 lines) ✓ (637ms)
+  ▶ $ # Look at what /skill install does currently and what comman… (2 lines) ✓ (4ms)
+  ▶ $ # Look at the current state of commands_project.rs skill han… (2 lines) ✓ (3ms)
+  12 tools completed in 29.7s (12 ✓)
+
+Now let me think about the plan. Let me check what the biggest capability gaps are and what makes sense for Day 61:
+
+**Assessment summary:**
+• 9 consecutive 3/3 sessions — perfect streak
+• Clean CI, no bugs found
+• Issue #356 is blocked by #355 (x-research skill)
+• Issue #355 is a new skill (x-research) from @yuanhao — this is a skill file creation task
+• Issue #215 (TUI) is a large challenge, not a single-session task
+• The biggest competitive gap identified is **skills/plugin ecosystem** — remote install, discoverability
+• `commands_project.rs` at 2,736 lines bundles /todo, /context, /init, /plan, AND /skill — ripe for extraction
+• Issues #353, #354 are RLM-related new skills
+
+Plan for Day 61:
+1. **Task 1 (self-driven, capability gap):** Remote skill install — `yoyo skill install gh:user/repo` — this is the #1 strategic gap identified in the assessment. Currently only local install exists.
+2. **Task 2 (agent-input, @yuanhao):** Create the x-research skill (#355) — it's a skill YAML/markdown file, well-scoped.
+3. Task 3 (self-driven, consolidation): Extract /skill handling from `commands_project.rs into its own commands_skill.rs` — the file is 2,736 lines and /skill is a distinct concern, especially as it grows with remote install.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if xurl is available / what it looks like (2 lines)  ▶ $ # Look at how existing skills are structured for the x-resea… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check social skill for comparison (origin: yoyo) (2 lines) ✓ (3ms)
+  ▶ $ # Read the full issue #355 body (2 lines) ✓ (307ms)
+  4 tools completed in 11.5s (4 ✓)
+
+Now I have a clear picture. Let me refine my plan. Issue #355 is well-specified and from @yuanhao — it's a skill file, not code changes. Let me think about the three tasks:
+
+1. x-research skill (#355) — Create the skill file. Well-scoped, ~200-300 lines. @yuanhao's request.
+2. **Remote skill install (gh:user/repo)** — The biggest strategic gap. Extends the /skill install command to support GitHub repos. Self-driven capability gap closure.
+3. **Extract /skill handling into commands_skill.rs** — commands_project.rs is 2,736 lines and growing. /skill is becoming its own subsystem (local install, remote install, list, show, path). Clean extraction.
+
+Wait — tasks 2 and 3 both touch /skill code. Task 2 adds remote install to commands_project.rs, and task 3 extracts skill handling out. These should be ordered: extract first (task 2), then add remote install to the new file (task 3). Actually, the 3-file limit means I should think carefully.
+
+Let me reconsider. Task 3 (extract) touches commands_project.rs (remove code) + creates commands_skill.rs + touches dispatch.rs (update routing). That's 3 files. Task 2 (remote install) would then touch commands_skill.rs + maybe help.rs. That works if task 3 goes first.
+
+But actually, the extraction AND the remote install feature could be combined if I'm careful. No — task sizing rules say each task should touch at most 3 files. Let me keep them separate.
+
+Final plan: Task 1 = x-research skill (#355), Task 2 = extract /skill into commands_skill.rs, Task 3 = add remote GitHub skill install.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (97 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (41 lines) ✓ (0ms)
+  ▶ $ # Check how dispatch currently routes /skill (2 lines) ✓ (4ms)
+  ▶ $ # Check how commands.rs re-exports handle_skill (2 lines) ✓ (3ms)
+  ▶ $ # Wait - handle_refactor is in commands_refactor.rs, not com… (2 lines) ✓ (3ms)
+  5 tools completed in 26.6s (5 ✓)
+
+Good. Now I see that commands.rs re-exports from commands_project. Let me check what exactly is re-exported:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '451,456p' src/commands.rs ✓ (3ms)
+
+Interesting — handle_refactor, handle_rename, handle_extract, handle_move are all coming from `commands_project.rs too, even though there's a separate commands_refactor.rs`. Let me check:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn handle_refactor\|pub fn handle_extract\|pub fn handle_rename\|pu… ✓ (3ms)
+  ▶ $ # Those are re-exported through commands_project.rs? Let me … (2 lines) ✓ (3ms)
+  ▶ $ grep -A3 "pub use crate::commands_refactor" src/commands_project.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (44ms)
+  3 tools completed in 6.5s (3 ✓)
+
+OK, so commands_project.rs re-exports refactor functions. The extraction of skill code is still clean — I just need to update the re-export chain properly. Let me update task 2:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_02.md (40 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (71 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (25 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  5 tools completed in 50.0s (5 ✓)
+
+Plan committed. Here's the Day 61 session summary:
+
+## Day 61 Session Plan
+
+**Three tasks, ordered for dependency:**
+
+1. Task 1: Create x-research skill (#355, @yuanhao) — New skills/x-research/SKILL.md wrapping xurl for read-only X/Twitter access. Four primitives (search, thread, profile, article), caching with TTL, failure modes, cost awareness. Layer 1 only — no knowledge base.
+
+2. **Task 2: Extract /skill into commands_skill.rs** (self-driven, consolidation) — Move all skill-handling code out of the 2,736-line commands_project.rs into its own module. Zero behavior changes, just giving the growing skill subsystem its own home before adding more features to it.
+
+3. Task 3: Remote skill install from GitHub (self-driven, #1 capability gap) — Add `yoyo skill install gh:user/repo support. Uses git clone --depth 1` to a temp directory, validates SKILL.md, installs via existing skill_install_to() infrastructure. This is the biggest strategic gap vs competitors — the extensibility story needs a front door.
+
+Strategic thread: All three tasks serve the same arc — building yoyo's skill ecosystem from "you can load local skills" toward "anyone can share and install skills." Task 1 creates a skill worth sharing, Task 2 gives the code room to grow, Task 3 opens the door to remote sharing.
+
+  ↳ 3m 38s · 28639→7615 tokens · $1.23
+  ⬤ 17% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,379 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement remote skill installation from GitHub repositories. Let me start by understanding the current codebase.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/commands_skill.rs | head…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skill_install" src/comm… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,350p' src/commands_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '350,632p' src/commands_s… ✓ (5ms)
+  4 tools completed in 7.5s (4 ✓)
+
+Now let me look at the extract_skill_name_from_frontmatter function and the rest of the file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_skill_name" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '80,165p' src/commands_sk… ✓ (4ms)
+  2 tools completed in 14.1s (2 ✓)
+
+Now let me check the help text for /skill:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 10 "skill" src/help.r… ✓ (4ms)
+
+Good. Now I have a clear picture of the codebase. Let me plan and implement this:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 17.6s (7 ✓)
+
+Let me start by writing tests and the parsing function together:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add the GitHubSource struct and parse_github_source function, then the skill_install_from_github function, then the tests. I'll add everything right before the #[cfg(test)] module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:270..300 ✓ (1ms)
+
+Now let me implement the feature. I'll add the GitHubSource struct, parser, and installer right before the #[cfg(test)] section:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (3 → 351 lines)
+  + /// Parsed GitHub skill source: `gh:user/repo[/path][@branch]`
+  + #[derive(Debug, PartialEq)]
+  + struct GitHubSource {
+  +     user: String,
+  +     repo: String,
+  +     /// Sub-path within the repo (e.g. `"skills/my-skill"`), empty if root.
+  +     path: String,
+  +     /// Optional branch or tag (e.g. `"main"`).
+  +     branch: Option<String>,
+  + }
+  + 
+  + /// Parse a `gh:` prefixed source string into its components.
+  + ///
+  + /// Supported formats:
+  + /// - `gh:user/repo`
+  + /// - `gh:user/repo/path/to/skill`
+  + /// - `gh:user/repo@branch`
+  + /// - `gh:user/repo/path@branch`
+  + fn parse_github_source(source: &str) -> Result<GitHubSource, String> {
+  +     let raw = source
+  ... (331 more lines)
+ ✓ (1ms)
+
+Now wire the gh: prefix into the `skill_install` function:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (6 → 12 lines)
+  - /// Install a skill from a local directory path.
+  + /// Install a skill from a local directory path or a GitHub repository.
+    ///
+  - /// Validates the source directory contains a SKILL.md with valid frontmatter,
+  - /// and copies the entire directory to `~/.config/yoyo/skills/<name>/`.
+  + /// If the source starts with `gh:`, delegates to `skill_install_from_github`.
+  + /// Otherwise, validates the source directory contains a SKILL.md with valid
+  + /// frontmatter, and copies the entire directory to `~/.config/yoyo/skills/<name>/`.
+    fn skill_install(source: &str) {
+  +     if source.starts_with("gh:") {
+  +         skill_install_from_github(source);
+  +         return;
+  +     }
+  + 
+        let source_path = std::path::Path::new(source);
+ ✗ (0ms)
+    │ old_text not found in src/commands_skill.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '176,185p' src/commands_s… ✓ (3ms)
+  ▶ edit src/commands_skill.rs (5 → 12 lines)
+    ///
+    /// Validates the source, extracts the skill name from SKILL.md frontmatter,
+    /// and copies the entire directory to `~/.config/yoyo/skills/<name>/`.
+  + ///
+  + /// If the source starts with `gh:`, delegates to [`skill_install_from_github`].
+    fn skill_install(source: &str) {
+  +     if source.starts_with("gh:") {
+  +         skill_install_from_github(source);
+  +         return;
+  +     }
+  + 
+        let source_path = std::path::Path::new(source);
+ ✓ (1ms)
+  3 tools completed in 11.6s (2 ✓, 1 ✗)
+
+Now update the usage hint in the install subcommand help messages:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (9 → 13 lines)
+            if source.is_empty() {
+  -             eprintln!("{YELLOW}  usage: /skill install <path>{RESET}");
+  -             eprintln!("{DIM}  install a skill from a local directory containing SKILL.md{RESET}\n");
+  +             eprintln!("{YELLOW}  usage: /skill install <path|gh:user/repo>{RESET}");
+  +             eprintln!(
+  +                 "{DIM}  install a skill from a local directory or GitHub repository{RESET}\n"
+  +             );
+            } else {
+                skill_install(source);
+            }
+        } else if sub == "install" {
+  -         eprintln!("{YELLOW}  usage: /skill install <path>{RESET}");
+  -         eprintln!("{DIM}  install a skill from a local directory containing SKILL.md{RESET}\n");
+  +         eprintln!("{YELLOW}  usage: /skill install <path|gh:user/repo>{RESET}");
+  +         eprintln!(
+  +             "{DIM}  install a skill from a local directory or GitHub repository{RESET}\n"
+  +         );
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 7.1s (4 ✓)
+
+Now let me update the help text:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/help.rs (19 → 26 lines)
+                 \x20 /skill list         List loaded skills with name and description\n\
+                 \x20 /skill show <name>  Show the full content of a skill\n\
+                 \x20 /skill path         Show the skills directory path(s)\n\
+  -              \x20 /skill install <path>  Install a skill from a local directory\n\n\
+  +              \x20 /skill install <path>           Install a skill from a local directory\n\
+  +              \x20 /skill install gh:user/repo     Install a skill from a GitHub repository\n\
+  +              \x20 /skill install gh:user/repo/path  Install from a subdirectory of a repo\n\
+  +              \x20 /skill install gh:user/repo@branch  Install from a specific branch\n\n\
+                 Skills are loaded from directories specified with --skills <dir>.\n\
+                 Each skill is a directory containing a SKILL.md file with YAML\n\
+                 frontmatter (name + description) and markdown instructions.\n\n\
+                 The install subcommand copies a skill directory into\n\
+  -              ~/.config/yoyo/skills/<name>/ for permanent availability.\n\n\
+  +              ~/.config/yoyo/skills/<name>/ for permanent availability.\n\
+  +              Remote install uses 'git clone --depth 1' and cleans up after.\n\n\
+                 Examples:\n\
+                 \x20 /skill\n\
+                 \x20 /skill list\n\
+                 \x20 /skill show evolve\n\
+                 \x20 /skill path\n\
+  ... (5 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 16.9s (3 ✓)
+
+Now let me add tests. I need to add them in the test module:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_skill_install_s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -10 src/commands_skill.rs ✓ (3ms)
+  4 tools completed in 7.6s (4 ✓)
+
+Now let me add the tests for the GitHub source parsing and the find_skill_in_repo function:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (8 → 268 lines)
+            // These should not panic — they print usage/error messages
+            handle_skill("/skill install", &skills);
+            handle_skill("/skill install ", &skills);
+  +     }
+  + 
+  +     // ── GitHub source parsing tests ──────────────────────────────────────
+  + 
+  +     #[test]
+  +     fn test_parse_github_source_basic() {
+  +         let result = parse_github_source("gh:user/repo").unwrap();
+  +         assert_eq!(result.user, "user");
+  +         assert_eq!(result.repo, "repo");
+  +         assert_eq!(result.path, "");
+  +         assert_eq!(result.branch, None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_github_source_with_path() {
+  +         let result = parse_github_source("gh:user/repo/skills/my-skill").unwrap();
+  +         assert_eq!(result.user, "user");
+  ... (245 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Now let me check if tempfile is available as a dependency:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "tempfile" Cargo.toml ✓ (3ms)
+
+Good. But the `skill_install_from_github function uses tempfile::TempDir::new()` at runtime (not just tests). Let me check if tempfile is a regular dependency or dev-dependency:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 5 -B 2 "tempfile" Cargo.… ✓ (3ms)
+
+`tempfile` is a dev-dependency only. I need to either move it to regular dependencies, or use a manual temp directory approach. Let me use std::env::temp_dir() with a unique name instead:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tempfile" src/commands_… ✓ (3ms)
+
+I need to replace the runtime use of tempfile::TempDir with a manual temp dir approach:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (10 → 20 lines)
+        // Create a temp directory for the clone
+  -     let tmp_dir = match tempfile::TempDir::new() {
+  -         Ok(d) => d,
+  -         Err(e) => {
+  -             eprintln!("{RED}  error creating temp directory: {e}{RESET}\n");
+  -             return;
+  +     let tmp_base = std::env::temp_dir().join(format!(
+  +         "yoyo-skill-install-{}",
+  +         std::process::id()
+  +     ));
+  +     if let Err(e) = std::fs::create_dir_all(&tmp_base) {
+  +         eprintln!("{RED}  error creating temp directory: {e}{RESET}\n");
+  +         return;
+  +     }
+  + 
+  +     // Ensure cleanup on all exit paths
+  +     struct CleanupGuard(std::path::PathBuf);
+  +     impl Drop for CleanupGuard {
+  +         fn drop(&mut self) {
+  +             let _ = std::fs::remove_dir_all(&self.0);
+  ... (7 more lines)
+ ✓ (0ms)
+
+Also remove the comment about tmp_dir cleanup at the end of the function:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tmp_dir" src/commands_s… ✓ (3ms)
+  ▶ edit src/commands_skill.rs (1 → 1 lines)
+  -     // tmp_dir is automatically cleaned up on drop
+  +     // _cleanup guard handles temp directory removal on drop
+ ✓ (0ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let's try building:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (471ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.6s)
+  5 tools completed in 51.0s (5 ✓)
+
+All 2324 tests pass, no failures. Let me also run fmt check:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (480ms)
+
+All checks pass. Let me verify the changes look right:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+
+Let me quickly review the full diff to make sure everything looks correct:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/help.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_skill.rs |… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_skill.rs |… ✓ (4ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Everything looks good. Now let me commit:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (17 lines) ✓ (14ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Now let me check if the docs need updating:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skill install" docs/src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,80p' docs/src/configu… ✓ (3ms)
+  ▶ edit docs/src/configuration/skills.md (19 → 39 lines)
+    /skill list         List loaded skills with name and description
+    /skill show <name>  Show the full content of a skill
+    /skill path         Show the skills directory path(s)
+  - /skill install <path>  Install a skill from a local directory
+  + /skill install <path>           Install a skill from a local directory
+  + /skill install gh:user/repo     Install a skill from a GitHub repository
+    ```
+    
+  - The `install` subcommand copies a skill directory into `~/.config/yoyo/skills/<name>/`. The source directory must contain a `SKILL.md` file with YAML frontmatter including a `name:` field. For example:
+  + The `install` subcommand copies a skill directory into `~/.config/yoyo/skills/<name>/`. The source directory must contain a `SKILL.md` file with YAML frontmatter including a `name:` field.
+  + 
+  + ### Local install
+    
+    ```bash
+    # Install a local skill
+  ···
+    
+    ```bash
+    yoyo skill install ./my-custom-skill/
+  + ```
+  ... (17 more lines)
+ ✓ (0ms)
+  3 tools completed in 15.2s (3 ✓)
+
+Now check README.md for skill-related content:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skill" README.md | head… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '224,235p' README.md ✓ (3ms)
+  ▶ edit README.md (1 → 1 lines)
+  - - **Skills system** — `--skills <dir>` loads markdown skill files with YAML frontmatter
+  + - **Skills system** — `--skills <dir>` loads markdown skill files with YAML frontmatter; install from local paths or GitHub repos (`/skill install gh:user/repo`)
+ ✓ (0ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Let me also check the commands table in README:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/skill" README.md ✓ (3ms)
+
+Good, no command table entry needs updating. Now let me also update CLAUDE.md — check if it mentions skill install:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skill.*install" CLAUDE.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_skill" CLAUDE.… ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+The CLAUDE.md doesn't mention commands_skill.rs in its architecture section. Let me check what it says for skill-related things:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skill" CLAUDE.md | head… ✓ (3ms)
+
+The architecture section in CLAUDE.md has the file listings in the Repository Structure section. Let me check if `commands_skill.rs` is listed there:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "commands_skill" CLAUDE.md ✓ (3ms)
+
+It's not in the architecture section. The CLAUDE.md file lists many src/ files but commands_skill.rs was added more recently. This is auto-generated though, so I don't need to manually add it. Let me verify all tests still pass with the doc changes:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build && cargo test 2>&1 |… ✓ (9.5s)
+
+Now amend the commit to include the doc updates:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit --amend --no-edit ✓ (11ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.4s (3 ✓)
+
+All done. Here's a summary of what was implemented:
+
+## Summary
+
+**Added remote skill installation from GitHub repositories** — the #1 strategic gap for skills/plugin discoverability.
+
+### What was built
+
+1. **`GitHubSource struct + parse_github_source()** — Parses gh:user/repo[/path][@branch]` format with clear error messages for every malformed variant (missing user, missing repo, empty branch specifier, etc.)
+
+2. `find_skill_in_repo()` — Smart SKILL.md discovery in a cloned repo:
+   • If a sub-path was specified, looks only there
+   • Otherwise checks root → skill/ → skills/ directories
+   • When not found, recursively searches (up to 3 levels) and suggests the correct path to the user
+
+3. `skill_install_from_github()` — The main installer:
+   • Shallow clone (`git clone --depth 1`) for efficiency
+   • Optional --branch support for branch/tag specifiers
+   • RAII cleanup guard for the temp directory (no leftover files on any exit path)
+   • Clear error messages: git not installed, repo not found, branch not found, network failure
+   • Reuses existing copy_dir_recursive() and frontmatter validation
+
+4. **Dispatch wiring** — skill_install() checks for gh: prefix and delegates
+
+5. Updated help text in src/help.rs with all four install variants
+
+6. Updated docs — docs/src/configuration/skills.md with local + remote install sections, README.md feature description
+
+### Tests added (17 new)
+• 9 parsing tests (valid formats, edge cases, all error conditions)
+• 7 find_skill_in_repo tests (root, skill/, skills/, subpath, missing, suggestions)
+• 1 integration test with local git repo + 1 dispatch routing test
+
+  ↳ 6m 25s · 25169→15812 tokens · $2.34
+  ⬤ 17% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
