@@ -1,0 +1,329 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /skill search command. Let me start by understanding the existing code structure.
+  ▶ read src/commands_skill.rs (80 lines)  ▶ search 'SKILL_SUBCOMMANDS' in src/commands_skill.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/commands_skill.rs:80.. ✓ (6ms)
+  3 tools completed in 6.1s (3 ✓)
+
+Now let me look at the help text for the /skill command:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'skill' in src/help.rs ✓ (3ms)
+
+Now let me understand the skill_install structure more, specifically looking at the handle_skill routing and the error message for unknown subcommands:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:1..43 ✓ (1ms)
+
+Good. Now I have a clear picture. Let me implement this step by step:
+
+1. Add "search" to SKILL_SUBCOMMANDS
+2. Add handle_skill_search function
+3. Wire it into handle_skill
+4. Update help text
+5. Write a test
+
+Let me start with the implementation:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (6 → 6 lines)
+  - //! Skill-related command handlers: /skill list, show, path, install.
+  + //! Skill-related command handlers: /skill list, show, path, install, search.
+    
+    use crate::format::*;
+    
+    /// Subcommand names for `/skill <Tab>` completion.
+  - pub const SKILL_SUBCOMMANDS: &[&str] = &["list", "show", "path", "install"];
+  + pub const SKILL_SUBCOMMANDS: &[&str] = &["list", "show", "path", "install", "search"];
+ ✓ (0ms)
+
+Now wire the search subcommand into handle_skill:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (7 → 16 lines)
+        } else if sub == "install" {
+            eprintln!("{YELLOW}  usage: /skill install <path|gh:user/repo>{RESET}");
+            eprintln!("{DIM}  install a skill from a local directory or GitHub repository{RESET}\n");
+  +     } else if let Some(query) = sub.strip_prefix("search ") {
+  +         let query = query.trim();
+  +         if query.is_empty() {
+  +             handle_skill_search(None);
+  +         } else {
+  +             handle_skill_search(Some(query));
+  +         }
+  +     } else if sub == "search" {
+  +         handle_skill_search(None);
+        } else {
+            eprintln!("{RED}  unknown subcommand: {sub}{RESET}");
+  -         eprintln!("{DIM}  try: /skill list, /skill show <name>, /skill path, /skill install <path>{RESET}\n");
+  +         eprintln!("{DIM}  try: /skill list, /skill show <name>, /skill path, /skill install <path>, /skill search <query>{RESET}\n");
+        }
+ ✓ (0ms)
+
+Now add the handle_skill_search function. Let me find a good place — right after the `skill_path function seems logical, or after skill_show`. Let me put it before the extract_skill_name_from_frontmatter function since search is a user-facing feature:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:133..143 ✓ (0ms)
+  ▶ read src/commands_skill.rs:142..152 ✓ (0ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now I'll add the handle_skill_search function right before the extract_skill_name_from_frontmatter:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (4 → 261 lines)
+  +     }
+  + }
+  + 
+  + /// A single search result from GitHub.
+  + struct SkillSearchResult {
+  +     full_name: String,
+  +     description: String,
+  +     updated: String,
+  + }
+  + 
+  + /// Search GitHub for yoyo skills using the `gh` CLI.
+  + ///
+  + /// Searches for repositories with the `yoyo-skill` topic. If no topic-based
+  + /// results are found, falls back to a text search for "yoyo-skill".
+  + /// Displays results in a formatted table with install hints.
+  + fn handle_skill_search(query: Option<&str>) {
+  +     // Check if gh CLI is available
+  +     let gh_check = std::process::Command::new("gh")
+  +         .arg("--version")
+  +         .stdout(std::process::Stdio::null())
+  ... (241 more lines)
+ ✓ (0ms)
+
+Now update the help text in src/help.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:516..546 ✓ (1ms)
+  ▶ edit src/help.rs (27 → 32 lines)
+            "skill" => Some(
+  -             "/skill [subcommand] — List, inspect, and install skills\n\n\
+  +             "/skill [subcommand] — List, inspect, install, and search for skills\n\n\
+                 Usage:\n\
+                 \x20 /skill              List all loaded skills (same as /skill list)\n\
+                 \x20 /skill list         List loaded skills with name and description\n\
+                 \x20 /skill show <name>  Show the full content of a skill\n\
+                 \x20 /skill path         Show the skills directory path(s)\n\
+  +              \x20 /skill search [query]  Search GitHub for community skills\n\
+                 \x20 /skill install <path>           Install a skill from a local directory\n\
+                 \x20 /skill install gh:user/repo     Install a skill from a GitHub repository\n\
+                 \x20 /skill install gh:user/repo/path  Install from a subdirectory of a repo\n\
+  ···
+                 Skills are loaded from directories specified with --skills <dir>.\n\
+                 Each skill is a directory containing a SKILL.md file with YAML\n\
+                 frontmatter (name + description) and markdown instructions.\n\n\
+  +              The search subcommand finds skills on GitHub tagged with the\n\
+  +              yoyo-skill topic. Requires the gh CLI (https://cli.github.com/).\n\n\
+                 The install subcommand copies a skill directory into\n\
+                 ~/.config/yoyo/skills/<name>/ for permanent availability.\n\
+  ... (10 more lines)
+ ✓ (2ms)
+  2 tools completed in 17.1s (2 ✓)
+
+Now let me also update the short description and the other help references:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'List, inspect, and install skills' in src/help.rs ✓ (2ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  - "  skill             List, inspect, and install skills (e.g. yoyo skill list --skills ./skills)"
+  + "  skill             List, inspect, install, and search for skills (e.g. yoyo skill list --skills ./skills)"
+ ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  - "    /skill [subcmd]    List, inspect, and install skills"
+  + "    /skill [subcmd]    List, inspect, install, and search for skills"
+ ✓ (0ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  - "  /skill [subcmd]    List, inspect, and install skills (list/show/path/install)\n",
+  + "  /skill [subcmd]    List, inspect, install, and search for skills (list/show/path/install/search)\n",
+ ✓ (0ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  - "skill" => Some("List, inspect, and install skills"),
+  + "skill" => Some("List, inspect, install, and search for skills"),
+ ✓ (1ms)
+  5 tools completed in 19.9s (5 ✓)
+
+Now let me add tests. Let me look at the existing test module:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:1450.. ✓ (1ms)
+
+Now I'll add tests for the JSON parsing and the search result parsing (the parts we can test without network access):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (11 → 98 lines)
+            handle_skill(
+                "/skill install gh:nonexistent-user-12345/nonexistent-repo-67890",
+                &skills,
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_gh_search_json_basic() {
+  +         let json = r#"[{"fullName":"alice/cool-skill","description":"A cool skill","updatedAt":"2025-01-15T10:00:00Z"}]"#;
+  +         let results = parse_gh_search_json(json).unwrap();
+  +         assert_eq!(results.len(), 1);
+  +         assert_eq!(results[0].full_name, "alice/cool-skill");
+  +         assert_eq!(results[0].description, "A cool skill");
+  +         assert_eq!(results[0].updated, "2025-01-15");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_gh_search_json_multiple() {
+  +         let json = r#"[
+  +             {"fullName":"alice/skill-a","description":"First","updatedAt":"2025-01-01T00:00:00Z"},
+  ... (73 more lines)
+ ✓ (1ms)
+
+Now let's build, lint, and test:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (371ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (4.5s)
+  2 tools completed in 17.8s (2 ✓)
+
+Quick fix — safe_truncate returns &str:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn safe_truncate' in src/format/mod.rs ✓ (2ms)
+
+Right, it returns &str. Let me fix the type mismatch:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (5 → 5 lines)
+            let desc = if r.description.is_empty() {
+  -             "(no description)".to_string()
+  +             "(no description)"
+            } else {
+                safe_truncate(&r.description, 60)
+            };
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (6.9s)
+  2 tools completed in 11.4s (2 ✓)
+
+The updated field is parsed but never displayed. Let me add it to the display output — it's useful information:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (6 → 11 lines)
+            } else {
+                safe_truncate(&r.description, 60)
+            };
+  -         println!("    {GREEN}{name_display}{RESET}{padding}  {DIM}{desc}{RESET}");
+  +         let updated_str = if r.updated.is_empty() {
+  +             String::new()
+  +         } else {
+  +             format!("  {DIM}({}){RESET}", r.updated)
+  +         };
+  +         println!("    {GREEN}{name_display}{RESET}{padding}  {DIM}{desc}{RESET}{updated_str}");
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (6.9s)
+  2 tools completed in 12.6s (2 ✓)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (21.2s)
+  2 tools completed in 30.6s (2 ✓)
+
+All 2245 unit tests and 88 integration tests pass. Let me also run format check:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (374ms)
+
+All checks pass. Let me verify the final state of the changes:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+
+Good — changes are limited to the two files specified. Let me quickly review the full implementation one more time to make sure it's solid:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:144..264 ✓ (1ms)
+
+Good. Now let me commit:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Committed. Let me now check whether CLAUDE.md or README.md need updating. The CLAUDE.md mentions `commands_skill.rs` in the architecture section:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_skill' in CLAUDE.md ✓ (2ms)
+  ▶ search 'skill' in CLAUDE.md (CLAUDE.md) ✓ (4ms)
+  2 tools completed in 4.8s (2 ✓)
+
+The CLAUDE.md doesn't list `commands_skill.rs` in the architecture section, but it does reference the skill system. Let me check the Repository Structure section which auto-generates from the actual files:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_skill.rs' in CLAUDE.md ✓ (2ms)
+  ▶ search 'handle_skill$' in CLAUDE.md ✓ (2ms)
+  ▶ search 'fn handle_skill' in CLAUDE.md ✓ (2ms)
+  3 tools completed in 8.2s (3 ✓)
+
+The CLAUDE.md doesn't mention commands_skill.rs at all in its architecture/function listing, so there's nothing that needs updating there. Let me check the README for the commands table:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ search 'skill' in README.md ✓ (2ms)
+  ▶ read README.md:226..231 ✓ (0ms)
+  2 tools completed in 5.5s (2 ✓)
+
+I should update this line to mention search:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit README.md (1 → 1 lines)
+  - - **Skills system** — `--skills <dir>` loads markdown skill files with YAML frontmatter; install from local paths or GitHub repos (`/skill install gh:user/repo`)
+  + - **Skills system** — `--skills <dir>` loads markdown skill files with YAML frontmatter; search GitHub for community skills (`/skill search`), install from local paths or GitHub repos (`/skill install gh:user/repo`)
+ ✓ (0ms)
+
+Let me also check the docs:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ search 'skill' in docs/src/configuration/skills.md ✓ (2ms)
+  ▶ read docs/src/configuration/skills.md:45..75 ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+I need to add the search subcommand to the docs:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/skills.md (16 → 33 lines)
+    /skill list         List loaded skills with name and description
+    /skill show <name>  Show the full content of a skill
+    /skill path         Show the skills directory path(s)
+  + /skill search [query]           Search GitHub for community skills
+    /skill install <path>           Install a skill from a local directory
+    /skill install gh:user/repo     Install a skill from a GitHub repository
+    ```
+    
+    The `install` subcommand copies a skill directory into `~/.config/yoyo/skills/<name>/`. The source directory must contain a `SKILL.md` file with YAML frontmatter including a `name:` field.
+  + 
+  + ### Searching for skills
+  + 
+  + Find community-created skills on GitHub:
+  + 
+  + ```bash
+  + # Search for skills by keyword
+  + /skill search research
+  + 
+  + # Browse all available skills
+  + /skill search
+  ... (7 more lines)
+ ✓ (0ms)
+
+Now let me verify everything still builds and passes after the doc changes:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.6s)
+
+All checks pass. Let me amend the commit to include the doc updates:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit --amend… ✓ (11ms)
+
+Done. Here's what I built:
+
+`/skill search [query]` — a new subcommand that discovers yoyo skills on GitHub.
+
+### What it does:
+1. Checks if gh CLI is available (clear error message if not)
+2. Searches GitHub for repos with the yoyo-skill topic first
+3. Falls back to text search for "yoyo-skill" if no topic-based results
+4. Displays results in a formatted table: repo name, description, last updated date
+5. Shows install hint so users can immediately gh:owner/repo the skill
+
+### Changes:
+• `src/commands_skill.rs` — Added `"search" to SKILL_SUBCOMMANDS, wired into handle_skill(), implemented handle_skill_search()` with topic-based and text fallback search via `gh search repos --json`, plus a minimal JSON parser (avoids serde_json dependency). 8 new tests covering JSON parsing, escape handling, null values, empty inputs, and routing.
+• `src/help.rs` — Updated all 5 locations referencing skill commands to include search
+• `README.md` — Updated skills system description to mention search
+• `docs/src/configuration/skills.md` — Added "Searching for skills" section with usage examples
+
+### Design decisions:
+• Uses `--json fullName,description,updatedAt` for structured output instead of parsing tab-separated text — more reliable
+• Hand-rolled JSON parser instead of adding serde_json — keeps dependencies minimal, only needs 3 string fields
+• Safe string truncation with `is_char_boundary()` for repo names (follows project safety rules)
+• `yoyo-skill` topic convention enables decentralized discovery without a central registry
+
+  ↳ 5m 24s · 23960→11443 tokens · $1.56
+  ⬤ 15% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

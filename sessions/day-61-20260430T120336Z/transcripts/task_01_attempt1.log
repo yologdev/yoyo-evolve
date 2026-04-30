@@ -1,0 +1,82 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll create the `explore-codebase skill. Let me first study the canonical RLM skill (analyze-trajectory`) to match its structure, then create the new skill.
+  ▶ read skills/analyze-trajectory/SKILL.md  ▶ $ cat skills/self-assess/SKILL.md | head -30 ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Now let me also check the existing skill-creator skill for any conventions, and look at the RLM substrate section in CLAUDE.md more closely:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ head -20 skills/social/SKILL.md  ▶ $ ls skills/*/SKILL.md ✓ (9ms)
+ ✓ (33ms)
+  2 tools completed in 2.7s (2 ✓)
+
+Good. I have a clear picture of the structure. Let me also check the issue itself for any additional context:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 354 --json title,body,comments 2>/dev/null | head -100 || echo "Co… ✓ (367ms)
+
+Excellent — the issue has very detailed acceptance criteria and design. Let me now create the skill file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ mkdir -p skills/explore-codebase ✓ (2ms)
+  ▶ write skills/explore-codebase/SKILL.md (208 lines) ✓ (0ms)
+  2 tools completed in 1m 23s (2 ✓)
+
+Now let me verify the build and tests pass:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (388ms)
+ ✓ (7.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (240ms)
+ ✓ (13.8s)
+  4 tools completed in 28.9s (4 ✓)
+
+All 88 tests pass. Now let me check the specific integration test mentioned in the issue — the one that verifies skills directory loading:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skills_directory" tests… ✓ (3ms)
+  ▶ read tests/integration.rs:2196..2226 ✓ (1ms)
+  ▶ read tests/integration.rs:2225..2245 ✓ (0ms)
+  3 tools completed in 16.0s (3 ✓)
+
+The test dynamically discovers all skill directories — it doesn't hardcode a count. My new `explore-codebase/SKILL.md` will be automatically included. Let me run that specific test to confirm:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test skills_directory_load… ✓ (113ms)
+
+The skill loads successfully. Let me verify the frontmatter meets the issue's acceptance criteria — description ≤200 chars:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ echo -n "RLM-style large-codebase comprehension — build a mental map of any code… ✓ (3ms)
+
+152 chars — well under 200. Let me check frontmatter size and body word count:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (6 lines) ✓ (5ms)
+
+Frontmatter 516 chars (≤1900 ✓), body 1618 words (≤5000 ✓). All acceptance criteria met. Let me also verify nothing else was accidentally modified:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (4ms)
+
+Only the new skill directory. Now commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (9ms)
+
+Done. Created skills/explore-codebase/SKILL.md — a new RLM-style skill for large-codebase comprehension. Here's what shipped:
+
+What it does: Dispatches sub-agents to explore unfamiliar codebases file-by-file, collecting structured JSON summaries and synthesizing them into a mental map — without loading raw source into the main context window.
+
+Key design:
+• 7-step procedure: identify region → orient → decide direct/sub-agent → per-file dispatch → recurse on deeper questions → synthesize → use the map
+• Per-file fan-out (not per-byte like analyze-trajectory) — files are natural structural units in code
+• JSON contract for sub-agent responses: purpose, public API, invariants, dependencies, complexity
+• Final synthesis sub-agent produces a module graph with entry points and risk areas
+• SharedState namespace: `explore.<region>.<filename>`
+• Hard depth cap = 3, consistent with the established RLM pattern
+• 30KB chunking threshold for oversized individual files
+
+All checks green: cargo fmt, cargo clippy, cargo build, cargo test (88 tests pass), including the `skills_directory_loads_via_yoagent_skillset` integration test that verifies all skills load correctly.
+
+  ↳ 3m 8s · 14279→5260 tokens · $0.709
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

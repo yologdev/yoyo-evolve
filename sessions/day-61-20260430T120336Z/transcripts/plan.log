@@ -1,0 +1,78 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the issues and then create a focused plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -100  ▶ $ cat CHANGELOG.md | head -40 ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ grep -c "^## \[" CHANGELOG.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat CLAUDE_CODE_GAP.md | grep -A2 "Priority Queue" | head -20 ✓ (3ms)
+ ✓ (41ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md | grep -A50 "Priority Queue" ✓ (3ms)
+  ▶ $ # Check the dispatch.rs structure to understand what refacto… (2 lines)  ▶ $ # Check the one CI test failure mentioned in trajectory (2 lines) ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ # Look at what the explore-codebase issue (#354) is asking f… (2 lines) ✓ (3ms)
+  ▶ $ # Check what skill-creator looks like for scaffolding refere… (3 lines) ✓ (4ms)
+  ▶ $ # Check what image/multimodal support would look like - chec… (3 lines) ✓ (46ms)
+  ▶ $ # Check yoagent 0.8.0 for image/multimodal support (3 lines) ✓ (6ms)
+  ▶ $ # yoagent has Content::Image - let's check what the content … (3 lines) ✓ (4ms)
+  ▶ $ # Check the full Content enum (2 lines) ✓ (3ms)
+  ▶ $ # Check how /add handles images currently (2 lines) ✓ (3ms)
+  ▶ $ # How does the image content get injected into the conversat… (3 lines) ✓ (4ms)
+  17 tools completed in 44.1s (17 ✓)
+
+Good — yoyo already has image support via /add. Now let me think about what the most impactful tasks are.
+
+Let me look at the dispatch.rs situation more carefully since it's the biggest structural debt:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # How is dispatch organized? (4 lines) ✓ (4ms)
+  ▶ $ # Check what the dispatch function looks like - how many mat… (2 lines) ✓ (3ms)
+  ▶ $ grep -n '"/\|=> {' src/dispatch.rs | wc -l (3 lines) ✓ (4ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now I have a clear picture. Let me plan the three tasks:
+
+1. **Self-driven (capability gap)**: Create the explore-codebase skill (Issue #354 from @yuanhao, the creator — this is both a creator request and addresses an RLM capability gap)
+2. **Self-driven (structural debt)**: Split dispatch.rs — the 1,655-line central router with 189 match arms is the biggest remaining structural debt. Extract the subcommand dispatch (CLI entrypoint) into its own function/section.
+3. **Self-driven (competitive)**: Add /skill search — skill discovery is the next step after /skill install to close the marketplace gap
+
+Actually, let me reconsider. #354 is from @yuanhao (creator), and #215 is a community challenge. The creator's request should get priority. Let me think about sizing.
+
+The explore-codebase skill is a skill file creation — well-scoped, touches 1-2 files (the skill markdown + potentially CLAUDE.md). The dispatch.rs split is structural debt. And a third self-driven task.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a /skill search already (2 lines) ✓ (3ms)
+  ▶ $ # What subcommands does /skill currently support? (2 lines) ✓ (3ms)
+  ▶ $ # Check the try_dispatch_subcommand — what commands does it … (2 lines) ✓ (4ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Now I understand the full picture. Let me create the task plan.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (57 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (35 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (40 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (29 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (9ms)
+  6 tools completed in 1m 3s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 61 (11:25) Session Plan
+
+### Task 1: Create `explore-codebase` skill (Issue #354)
+**Self-driven + Creator request.** The first concrete RLM capability from the roadmap. Creates a new skill file modeled after analyze-trajectory that uses sub-agents to comprehend large/unfamiliar codebases without bloating main context. Addresses @yuanhao's issue directly.
+
+### Task 2: Extract subcommand dispatch into `dispatch_sub.rs`
+**Self-driven (structural debt).** dispatch.rs is 1,655 lines — the biggest structural debt callout. The file contains two completely independent concerns: CLI subcommand routing (`try_dispatch_subcommand`, ~330 lines) and REPL command routing (dispatch_command, ~1,220 lines). Clean mechanical extraction, no logic changes.
+
+### Task 3: Add `/skill search` for GitHub skill discovery
+Self-driven (competitive gap). The #1 gap vs Claude Code is the plugin marketplace. yoyo has /skill install but no discovery. This adds `/skill search <query> using gh search repos --topic yoyo-skill` to find community skills on GitHub. Lightweight, read-only, uses existing gh CLI dependency.
+
+  ↳ 2m 51s · 22057→5738 tokens · $1.02
+  ⬤ 12% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

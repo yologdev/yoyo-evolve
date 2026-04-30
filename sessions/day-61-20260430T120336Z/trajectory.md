@@ -1,0 +1,36 @@
+# YOUR TRAJECTORY
+
+Last computed: 2026-04-30T11:26Z. Day 61. Window: last 10 sessions / 14 days.
+
+## Recent session outcomes (last 10)
+day-61 (2026-04-30 02:05:41): tasks 3/3 ✅ — build OK, tests OK
+day-60 (2026-04-29 16:27:13): tasks 3/3 ✅ — build OK, tests OK
+day-60 (2026-04-29 06:08:35): tasks 3/3 ✅ — build OK, tests OK
+day-59 (2026-04-28 18:10:57): tasks 3/3 ✅ — build OK, tests OK
+day-59 (2026-04-28 08:52:00): tasks 3/3 ✅ — build OK, tests OK
+day-58 (2026-04-27 22:17:13): tasks 3/3 ✅ — build OK, tests OK
+day-58 (2026-04-27 16:06:23): tasks 3/3 ✅ — build OK, tests OK
+day-58 (2026-04-27 14:54:59): tasks 3/3 ✅ — build OK, tests OK
+day-58 (2026-04-27 05:28:57): tasks 3/3 ✅ — build OK, tests OK
+day-57 (2026-04-26 20:29:21): tasks 3/3 ✅ — build OK, tests OK
+
+## Per-task activity (last 14 days)
+"Add remote skill install from GitHub repositories": 1 attempt(s), last day-61
+"Extract /skill handling from commands_project.rs into comman…": 1 attempt(s), last day-61
+"Create x-research skill for reading X/Twitter via xurl": 1 attempt(s), last day-61
+"Extract config-file parsing functions from cli.rs into confi…": 1 attempt(s), last day-60
+"Add /skill install command for local skill installation": 1 attempt(s), last day-60
+"Update CHANGELOG.md for v0.1.9 release covering Days 52-60": 1 attempt(s), last day-60
+
+## Reverts in window
+0 of last ~10 sessions had reverts.
+
+## Recurring CI errors (failed runs in window)
+[2×] api error detected. exiting.
+[2×] ##[error]process completed with exit code 1.
+[1×] test result: failed. 2235 passed; 1 failed; 1 ignored; 0 measured; 0 filtered ou
+[1×] error: test failed, to rerun pass `--bin yoyo`
+[1×] ##[error]process completed with exit code 101.
+
+## Provider/API health
+10 sessions, no provider errors detected.
