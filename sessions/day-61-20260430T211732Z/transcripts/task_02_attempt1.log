@@ -1,0 +1,260 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current gap analysis document to understand what needs to be updated.
+  ▶ read CLAUDE_CODE_GAP.md ✓ (3ms)
+
+Now let me see the rest of the file more carefully, especially the priority queue and recently completed sections:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:99.. ✓ (2ms)
+
+Let me also get the actual current stats to be accurate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ echo "=== Source file count ===" && find src/ -name '*.rs' | wc -l && echo "=== … ✓ (18ms)
+
+Hmm, let me recount - #[test] matches both attribute declarations and test function starts. Let me count test functions more carefully:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ echo "=== Test functions (fn annotations) ===" && grep -r 'fn test_\|#\[test\]' … ✓ (10ms)
+  ▶ $ # Count actual #[test] annotated functions properly (2 lines) ✓ (4ms)
+  ▶ $ # That seems very high. Let me check if test helper lines ar… (2 lines) ✓ (3ms)
+  ▶ $ # Count unique test functions   (2 lines) ✓ (4ms)
+  ▶ $ # That's a lot. Let me see if there's a macro generating tes… (2 lines) ✓ (3ms)
+  ▶ $ # Let me check which files have the most tests (7 lines) ✓ (89ms)
+  6 tools completed in 22.1s (6 ✓)
+
+Wow, 2305 test functions! Let me also count slash commands and shell subcommands properly:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Count KNOWN_COMMANDS entries (8 lines) ✓ (8ms)
+  ▶ $ # Count unique subcommands in dispatch_sub.rs (2 lines) ✓ (4ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Good. Now let me also check the origin of the skills more carefully:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ for f in skills/*/SKILL.md; do (6 lines) ✓ (101ms)
+
+So: 7 core/creator skills, 5 yoyo-origin skills (not 7 as grepped — the 2 extras were false matches). Wait, let me recount:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -l 'origin: yoyo' skills/*/SKILL.md ✓ (39ms)
+  ▶ $ grep -l 'origin: creator' skills/*/SKILL.md ✓ (38ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Interesting — skill-creator and skill-evolve appear in BOTH. Let me check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep 'origin:' skills/skill-creator/SKILL.md skills/skill-evolve/SKILL.md ✓ (8ms)
+
+The grep is matching inside the content, not just the frontmatter. Let me check the actual frontmatter:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ head -10 skills/skill-creator/SKILL.md && echo "===" && head -10 skills/skill-ev… ✓ (4ms)
+
+OK so both skill-creator and skill-evolve have origin: creator and core: true. The task description says "7 core, 5 yoyo-origin" — let me verify:
+
+• Core/creator: analyze-trajectory, communicate, evolve, research, self-assess, skill-creator, skill-evolve = 7 ✅
+• Yoyo-origin: explore-codebase, family, release, social, x-research = 5 ✅
+• Total: 12 ✅
+
+Now I have all the data. Let me make the edits to CLAUDE_CODE_GAP.md:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (2 → 2 lines)
+  - Last verified: Day 59 (2026-04-28)
+  - Last updated: Day 24 (2026-03-24) — major refresh on Day 38, stats refresh on Day 50, Day 54, Day 59
+  + Last verified: Day 61 (2026-04-30)
+  + Last updated: Day 24 (2026-03-24) — major refresh on Day 38, stats refresh on Day 50, Day 54, Day 59, Day 61
+ ✓ (0ms)
+
+Now update the Skills system row (line 118) and the Plugin / skills marketplace row (line 121):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (4 → 4 lines)
+  - | Skills system | ✅ | 🟡 | yoyo loads skills via `--skills <dir>` (yoagent's `SkillSet`); Claude Code has formal skill packs and a plugin marketplace (see gap below) |
+  + | Skills system | ✅ | ✅ | yoyo loads skills via `--skills <dir>` (yoagent's `SkillSet`); `/skill install`, `/skill search`, `/skill create`, `/skill list/show/enable/disable` (Days 60-61) |
+    | OpenAPI tool support | ✅ | ❌ | `--openapi <spec>` loads OpenAPI specs and registers API tools (Day 9) |
+    | Config system_prompt/system_file | ✅ | ✅ | `system_prompt` and `system_file` keys in .yoyo.toml for persistent custom prompts (Day 23) |
+  - | Plugin / skills marketplace | ❌ | ✅ | Claude Code has a plugin marketplace and bundled skill packs; yoyo has the loader (`--skills`) but no discoverability, no signed bundles, no install command |
+  + | Skill install & discovery | 🟡 | ✅ | `/skill install <dir>` (local) + `/skill install gh:user/repo` (remote) + `/skill search <query>` (GitHub discovery) shipped Days 60-61; still missing signed bundles, curation/ratings, formal marketplace with reviews |
+ ✓ (0ms)
+
+Now update the priority queue section:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (29 → 26 lines)
+    ## Priority Queue (real remaining gaps)
+    
+    After the Day 38 refresh, the gaps that are actually still gaps. Re-evaluated
+  - on Day 59 — these four remain the real delta, though the competitive landscape
+  - has shifted significantly (see below).
+  + on Day 61 — three core gaps remain, plus one new sub-gap from the skills work.
+    
+  - 1. **Plugin / skills marketplace** (since Day ≤38) — Claude Code now has a formal
+  -    plugin ecosystem with 12+ bundled plugins and a marketplace with discoverability
+  -    and install commands. yoyo has `--skills <dir>` (yoagent's `SkillSet`) but no
+  -    marketplace, no signed bundles, and no `yoyo skill install` flow. Claude Code's
+  -    API also exposes advisor, memory, and web tools as first-class capabilities,
+  -    widening the plugin surface area. This gap is widening as competitors formalize
+  -    their extension stories.
+  - 2. **Real-time subprocess streaming inside tool calls** (since Day ≤38) — Claude Code shows
+  + 1. **Real-time subprocess streaming inside tool calls** (since Day ≤38) — Claude Code shows
+       compile/test output as it streams from the child process. yoyo's
+       `ToolExecutionUpdate` events render line counts and partial tails, and
+       Day 51 improved live output for long-running bash commands. But the
+       underlying bash tool still buffers stdout/stderr per call rather than
+  ... (18 more lines)
+ ✓ (1ms)
+
+Now update the competitive landscape section:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (18 → 21 lines)
+  - ### Competitive landscape shift (Day 59)
+  + ### Competitive landscape shift (Day 61)
+    
+    The gap is no longer just yoyo vs Claude Code. The field has widened:
+    
+  - - **Claude Code** now has a formal plugin ecosystem with 12+ bundled plugins,
+  + - **Claude Code** has a formal plugin ecosystem with 12+ bundled plugins,
+      a marketplace with discoverability and install commands, and exposes web
+      search, web fetch, code execution, advisor, and memory tools as first-class
+  -   API capabilities. The plugin gap is widening.
+  +   API capabilities. yoyo now matches on install/discovery mechanics
+  +   (`/skill install`, `/skill search`) but lacks the curation/trust layer.
+    - **Codex CLI** (OpenAI) has npm/brew install, ChatGPT plan integration,
+      and a desktop app — lowering the barrier to entry for non-terminal users.
+    - **Aider** v0.85–0.86 added GPT-5 family, Grok-4, and o3-pro support,
+      continuing to iterate on model compatibility and edit formats.
+    
+    yoyo's differentiators remain and have grown: open-source self-evolution,
+  - multi-provider support (25 backends), the skills/hooks extensibility model,
+  - `/architect` dual-model mode (Aider parity), `/loop` iterative refinement,
+  ... (8 more lines)
+ ✓ (0ms)
+
+Now update the "What was on the old priority queue and is now done" section to add the plugin/skills entry:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:187..227 ✓ (0ms)
+  ▶ read CLAUDE_CODE_GAP.md:226..266 ✓ (1ms)
+  ▶ read CLAUDE_CODE_GAP.md:265..345 ✓ (1ms)
+  3 tools completed in 7.8s (3 ✓)
+
+Now I need to:
+1. Add the plugin/skills entry to the "done" section
+2. Add Day 60-61 recently completed
+3. Update the stats section
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (1 → 14 lines)
+      analyze-trajectory JSON contract + token-aware chunking (Day 59).
+  + - ✅ **Plugin / skills ecosystem** — `/skill install <dir>` for local skills
+  +   (Day 60), `/skill install gh:user/repo` for remote GitHub skills (Day 61),
+  +   `/skill search <query>` for GitHub skill discovery (Day 61), `/skill create`
+  +   for scaffolding, `/skill list/show/enable/disable` for management. Closes
+  +   the install/discovery gap that was #1 priority since Day ≤38. Remaining
+  +   sub-gap: signed bundles, curation/ratings, formal marketplace with reviews.
+  + - ✅ Recently completed (Day 60–61): `/skill install` local directories
+  +   (Day 60), CHANGELOG generation (Day 60), `config.rs` extraction (Day 60),
+  +   x-research skill for X/Twitter reading (Day 61), `commands_skill.rs`
+  +   extraction (Day 61), `/skill install gh:user/repo` remote GitHub skills
+  +   (Day 61), `/skill search` GitHub skill discovery (Day 61),
+  +   explore-codebase RLM skill (Day 61), `dispatch_sub.rs` extraction (Day 61),
+  +   positional CLI arguments (Day 59).
+ ✓ (0ms)
+
+Now update the stats section:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (21 → 27 lines)
+  - ## Stats (Day 59)
+  + ## Stats (Day 61)
+    
+  - - yoyo: ~58,004 lines of Rust across 45 source files (incl. `src/format/`) + integration tests
+  - - 45 source files (was 38 on Day 54): commands split into 15 `commands_*.rs` files
+  + - yoyo: ~59,794 lines of Rust across 48 source files (incl. `src/format/`) + integration tests
+  + - 48 source files (was 45 on Day 59): added `commands_skill.rs`, `commands_lint.rs`,
+  +   `dispatch_sub.rs`; commands split into 17 `commands_*.rs` files
+      (`commands.rs`, `commands_bg.rs`, `commands_config.rs`, `commands_dev.rs`,
+  -   `commands_file.rs`, `commands_git.rs`, `commands_info.rs`, `commands_map.rs`,
+  -   `commands_memory.rs`, `commands_project.rs`, `commands_refactor.rs`,
+  -   `commands_retry.rs`, `commands_run.rs`, `commands_search.rs`,
+  -   `commands_session.rs`, `commands_spawn.rs`),
+  +   `commands_file.rs`, `commands_git.rs`, `commands_info.rs`, `commands_lint.rs`,
+  +   `commands_map.rs`, `commands_memory.rs`, `commands_project.rs`,
+  +   `commands_refactor.rs`, `commands_retry.rs`, `commands_run.rs`,
+  +   `commands_search.rs`, `commands_session.rs`, `commands_skill.rs`,
+  +   `commands_spawn.rs`),
+      format split into `format/{mod,markdown,highlight,cost,tools,output,diff}.rs`,
+      plus `agent_builder.rs`, `hooks.rs`, `memory.rs`, `setup.rs`, `docs.rs`,
+  ... (15 more lines)
+ ✓ (0ms)
+
+Now update the feature list at the bottom to add the Day 60-61 items:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (1 → 10 lines)
+    - `agent_builder.rs` — dedicated agent construction module
+  + - `/skill install` local + remote (`gh:user/repo`) skill installation
+  + - `/skill search` GitHub skill discovery
+  + - `/skill create` new skill scaffolding
+  + - `commands_skill.rs` — dedicated skill command module
+  + - `commands_lint.rs` — dedicated lint command module
+  + - `dispatch_sub.rs` — CLI subcommand routing
+  + - x-research skill (X/Twitter reading via xurl)
+  + - explore-codebase RLM skill (sub-agent codebase comprehension)
+  + - CHANGELOG generation
+ ✓ (0ms)
+
+Now let me also update the help text row to reflect the accurate count — let me check the exact number:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Count unique slash commands in KNOWN_COMMANDS (2 lines) ✓ (4ms)
+
+The current document says "89 REPL commands" but the actual count is 88 — but some of these are aliases (/quit, /exit, /clear, /clear!). The document says "~89" which is close enough. I updated it to "~88" which is the actual KNOWN_COMMANDS count.
+
+Now let me update the "Comprehensive categorized help" line in the feature list:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (1 → 1 lines)
+  - - Comprehensive categorized help (89 REPL commands, 32 shell subcommands)
+  + - Comprehensive categorized help (88 REPL commands, 32 shell subcommands)
+ ✓ (0ms)
+
+Now let me read the full file to verify coherence:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md ✓ (3ms)
+
+The document looks coherent. Let me verify the priority queue section reads well:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:135..195 ✓ (1ms)
+
+Looks great. This is a documentation-only change — no code changes needed. But the task says to run checks anyway. Let me do a quick build/test to make sure the repo is clean:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | head… ✓ (480ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (147ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (16.4s)
+  4 tools completed in 37.6s (4 ✓)
+
+All checks pass. Now commit:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (11ms)
+
+Done. Here's what I changed in `CLAUDE_CODE_GAP.md`:
+
+1. Moved "Plugin / skills marketplace" from #1 priority to done. Added detailed entry noting /skill install (local + gh:user/repo), `/skill search, /skill create`, and management commands that shipped Days 60-61.
+
+2. **Re-ranked the priority queue:**
+   • #1: Real-time subprocess streaming (was #2)
+   • #2: Persistent named subagents with orchestration (was #3)
+   • #3: Graceful degradation on partial tool failures (was #4)
+   • #4: Skill marketplace curation (new — signed bundles, ratings, reviews)
+
+3. Added Day 60-61 to recently completed section — skill install, x-research skill, explore-codebase skill, commands_skill.rs extraction, dispatch_sub.rs extraction, CHANGELOG generation.
+
+4. Updated stats:
+   • 48 source files (was 45)
+   • ~59,794 lines (was ~58,004)
+   • 2,305 tests (was 2,273)
+   • 12 skills listed with breakdown (7 core/creator, 5 yoyo-origin)
+   • 88 REPL commands, 32 shell subcommands
+
+5. Updated competitive landscape to reflect the narrowed plugin gap — yoyo now matches on install/discovery mechanics, the remaining gap is curation/trust.
+
+6. **Updated Configuration table** — Skills system row upgraded from 🟡 to ✅, added "Skill install & discovery" as a new 🟡 row capturing the remaining sub-gap.
+
+  ↳ 4m 27s · 29484→8677 tokens · $1.32
+  ⬤ 15% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

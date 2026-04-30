@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current research skill file to understand its structure before making changes.
+  ▶ read skills/research/SKILL.md ✓ (1ms)
+
+Now let me look at the analyze-trajectory skill for reference on the RLM pattern and JSON contract:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read skills/analyze-trajectory/SKILL.md ✓ (2ms)
+
+Good, I have a clear picture of both files. Now let me implement the changes to the research skill. The task is purely about editing a skill markdown file — no Rust code changes needed, but I'll verify the build still passes afterward.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit skills/research/SKILL.md (7 → 8 lines)
+    ---
+    name: research
+    description: Search the web and read documentation when stuck or learning something new
+  - tools: [bash]
+  + tools: [bash, sub_agent, shared_state]
+    core: true
+    origin: creator
+  + keywords: ["curl", "research", "synthesis", "shared_state", "sub_agent"]
+    ---
+ ✓ (0ms)
+
+Now add the multi-source synthesis section after the "When to research" section:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit skills/research/SKILL.md (1 → 126 lines)
+    - You're choosing between multiple approaches and want to see conventions
+  + 
+  + ## Multi-source synthesis
+  + 
+  + When a research question touches 3+ sources or any single source exceeds 5KB, the standard single-source approach (curl → read → summarize in main context) breaks down: raw content bloats your context window, cross-source reasoning gets noisy, and you lose the thread. Use the RLM substrate (sub-agents + SharedState) to fan out, digest in parallel, and synthesize.
+  + 
+  + ### When to use multi-source vs. single-source
+  + 
+  + - **1–2 sources, all under 5KB each**: Use the existing single-source procedure above. Sub-agent overhead isn't worth it.
+  + - **3+ sources on a single topic** (papers, blog posts, docs, discussions): Use multi-source synthesis.
+  + - **Any single source exceeding 5KB**: Use multi-source synthesis (even if it's only one source — the sub-agent digests it so your main context stays clean).
+  + 
+  + ### Procedure
+  + 
+  + #### 1. Fetch and store each source
+  + 
+  + Fetch each source via `bash` (curl) and store it in shared state. Use the namespace convention `research.<topic>.source-<N>`:
+  + 
+  + ```bash
+  + curl -sL "https://example.com/article-1" | sed 's/<[^>]*>//g' > /tmp/source_1.txt
+  ... (106 more lines)
+ ✓ (0ms)
+
+Now let me verify the file looks correct:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read skills/research/SKILL.md ✓ (1ms)
+
+The file looks good. Let me verify against the acceptance criteria:
+
+1. ✅ tools: includes sub_agent and shared_state
+2. ✅ New "Multi-source synthesis" section with trigger conditions and step-by-step procedure
+3. ✅ JSON contract for sub-agent responses (key_claims, key_quotes, relevance, confidence)
+4. ✅ Chunking procedure for sources >30KB (step 2)
+5. ✅ Fallback on sub-agent failure (step 6)
+6. ✅ Hard depth cap = 3 documented (step 5)
+7. ✅ No edits to other skills
+8. ✅ keywords: field added for skill-evolve scoring
+
+Now let me run the build checks:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (483ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (147ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (16.8s)
+  4 tools completed in 36.5s (4 ✓)
+
+All checks pass. Now let me check if CLAUDE.md needs updating — the research skill description in the Architecture section:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "research" CLAUDE.md | h… ✓ (3ms)
+
+The CLAUDE.md already mentions research.topic.source-3 as a namespace convention example (line 172) and mentions "multi-source research synthesis" in the capability roadmap (line 195). The skill description on line 96 says "internet lookups and knowledge caching" — that's still accurate since the skill still does that, just now also with multi-source synthesis. But let me update it to be more precise:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `research` — internet lookups and knowledge caching
+  + - `research` — internet lookups, knowledge caching, and RLM-style multi-source synthesis
+ ✓ (1ms)
+
+Now commit:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (14 lines) ✓ (11ms)
+
+Done! The research skill now has RLM-style multi-source synthesis. Here's what I did:
+
+`skills/research/SKILL.md`:
+• Added sub_agent and shared_state to the `tools:` frontmatter
+• Added keywords: field for skill-evolve scoring
+• Added a complete "Multi-source synthesis" section with:
+  • Trigger conditions — 3+ sources, or any single source >5KB; otherwise use existing single-source procedure
+  • **Step-by-step procedure**: fetch & store → handle large sources (>30KB chunking at ~25KB boundaries) → dispatch one sub-agent per source → synthesize across sources → depth cap & recursion → fallback
+  • JSON contract matching analyze-trajectory's pattern: key_claims, key_quotes, relevance, confidence for per-source digests; synthesis, consensus_claims, `contradictions, gaps, confidence` for the synthesis step
+  • **Hard depth cap = 3** consistent with analyze-trajectory
+  • Fallback on sub-agent failure with graceful degradation to direct `curl | head`
+  • Pitfalls section for common mistakes
+
+`CLAUDE.md`: Updated the research skill description to mention multi-source synthesis.
+
+  ↳ 2m 8s · 18043→3620 tokens · $0.774
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

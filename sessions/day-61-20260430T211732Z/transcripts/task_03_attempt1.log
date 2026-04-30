@@ -1,0 +1,326 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll extract the todo-related code from commands_project.rs into a new commands_todo.rs module. Let me start by understanding the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -50 src/commands_project.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^fn\|^struct\|^en…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TodoStatus\|TodoItem\|t… ✓ (6ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  3 tools completed in 2.0s (3 ✓)
+
+Now let me see the exact line ranges for the todo-related code and the tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '48,225p' src/commands_pr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1310,1500p' src/commands… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1530p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_todo\|TodoStatus…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_todo\|TodoStatus… ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod commands" src/main.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_project\|comma… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '525,535p' src/dispatch.r… ✓ (3ms)
+  8 tools completed in 12.8s (8 ✓)
+
+Now let me check how commands re-exports things:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use\|commands_proje… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '451,456p' src/commands.r… ✓ (3ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Good. Now let me also check all references to todo-related items to make sure I don't miss any imports:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TodoStatus\|TodoItem\|… ✓ (7ms)
+
+The tools.rs file references commands_project:: directly. Now I have the full picture. Let me also check what rw_read_or_recover and `rw_write_or_recover` are used for — they're helpers used only by todo functions:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rw_read_or_recover\|rw_… ✓ (3ms)
+
+These are only used by the todo functions. Let me also check that no test in commands_project.rs uses KNOWN_COMMANDS (from the test we saw):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '920,930p' src/commands_p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1495,1540p' src/commands… ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I have the full picture. Let me check what serial comes from:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/commands_pr… ✓ (3ms)
+
+Now I have everything I need. Let me also check the exact end of the todo tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1488,1520p' src/commands… ✓ (3ms)
+
+Now let me look at the full handle_todo function to get the exact text (especially the usage string at the end):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '207,225p' src/commands_p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '210,224p' src/commands_p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -A src/commands_project.rs |… ✓ (4ms)
+  3 tools completed in 7.5s (3 ✓)
+
+The file seems to have some display issues. Let me use `read_file` for a cleaner view of the exact lines:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:210..225 ✓ (1ms)
+
+Now I have everything. Let me create the new commands_todo.rs file and then surgically edit the other files.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 2.2s (8 ✓)
+
+First, let me read the exact todo code block (lines 57-221) and the todo tests (lines 1314-1519):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:57..222 ✓ (1ms)
+
+Now let me read the todo tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1313..1508 ✓ (1ms)
+  ▶ read src/commands_project.rs:1507..1522 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I have all the context I need. Let me check what's just before the first todo test to know the separation point:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1305..1315 ✓ (1ms)
+
+Good — the test before the todo tests ends at line 1311/1312. Now let me create the new file:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ write src/commands_todo.rs (389 lines) ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now remove the todo code from commands_project.rs. I need to remove lines 57-221 (the todo types, statics, and functions) and lines 1313-1517 (the todo tests). Let me do the tests first (so line numbers don't shift):
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1310..1315 ✓ (1ms)
+  ▶ read src/commands_project.rs:1516..1522 ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+I need to remove lines 1313 (blank) through 1519 (blank after last todo test). Let me do this precisely. The content between line 1312 and line 1520 needs to go:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1312p' src/commands_proj… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1313p' src/commands_proj… ✓ (3ms)
+  2 tools completed in 14.8s (2 ✓)
+
+That's a comment line with emoji. Let me use a different approach — I'll use sed to delete the line range:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_project.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1519p' src/commands_proj… ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+So line 1519 is the comment for parse_prompt_sections tests. I need to delete lines 1312 (blank) through 1518 (blank line after last todo test, before the next section comment). Let me verify line 1518:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1517,1521p' src/commands… ✓ (3ms)
+
+I need to delete lines 1313-1518 (the todo test section comment through the blank after the last todo test). Line 1312 is blank and should stay (it separates the previous test block). Let me actually delete from 1313 to 1518:
+
+Wait, let me reconsider. Line 1312 is a blank line. The blank line before line 1519 (the parse_prompt_sections comment) is line 1518. So I should delete lines 1313-1517 (the todo tests) and leave one blank line between the previous section and the next. Actually, let me just delete 1313-1518 and the blank line at 1312 will serve as separator before the next section comment at what becomes 1313.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1313,1518d' src/commands… ✓ (3ms)
+
+Now remove the todo code from the main body. Lines 57-221 originally, but I need to check what's around after the deletion:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:54..64 ✓ (1ms)
+  ▶ read src/commands_project.rs:218..228 ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+I need to delete lines 57-222 (blank line before the emoji comment for /context section). Actually, let me check line 57:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '56,58p' src/commands_pro… ✓ (3ms)
+
+So line 57 is a section comment. I should delete from 56 (blank) through 222 (blank after handle_todo). That leaves line 55 (} end of rw_write_or_recover), then a blank line (currently 223 which is the emoji comment for /context), then the context code.
+
+Wait, let me check more carefully. After the deletion, line 223 is the emoji comment and 224 is blank. Let me delete 56-222 to get a clean transition:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '221,226p' src/commands_p… ✓ (3ms)
+
+I'll delete lines 56-222 (blank + todo section comment + all todo code + blank after handle_todo). This leaves lines 55 (end of rw_write_or_recover) followed by line 223 (context section comment):
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '56,222d' src/commands_pr… ✓ (3ms)
+
+Now check whether rw_read_or_recover and rw_write_or_recover are still used in the remaining code:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rw_read_or_recover\|rw_… ✓ (3ms)
+
+They're now unused in this file. Let me also check if `RwLock` is still used:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RwLock" src/commands_pr… ✓ (3ms)
+
+`RwLock` and the two helper functions are now dead code. Remove them:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (3 → 1 lines)
+  - use std::sync::RwLock;
+  - 
+    use yoagent::agent::Agent;
+ ✓ (0ms)
+
+Now remove the two unused helper functions:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:44..59 ✓ (1ms)
+  ▶ edit src/commands_project.rs (9 → 0 lines)
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  -     lock.read().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+  - /// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+  -     lock.write().unwrap_or_else(|e| e.into_inner())
+  - }
+ ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now update the module doc comment since it no longer handles /todo:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (1 → 1 lines)
+  - //! Project-related command handlers: /todo, /context, /init, /docs, /plan.
+  + //! Project-related command handlers: /context, /init, /docs, /plan.
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now add mod commands_todo; to main.rs:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (7 → 8 lines)
+    mod commands_session;
+    mod commands_skill;
+    mod commands_spawn;
+  + mod commands_todo;
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now update src/commands.rs to re-export handle_todo from commands_todo instead of commands_project:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (4 → 6 lines)
+    pub use crate::commands_project::{
+        handle_context, handle_docs, handle_extract, handle_init, handle_move, handle_plan,
+  -     handle_refactor, handle_rename, handle_todo, is_plan_mode, PLAN_MODE_PROMPT,
+  +     handle_refactor, handle_rename, is_plan_mode, PLAN_MODE_PROMPT,
+    };
+  + 
+  + pub use crate::commands_todo::handle_todo;
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now update src/tools.rs — change commands_project:: references to commands_todo:::
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_project::todo\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/commands_project::todo… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_todo::" src/to… ✓ (3ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 14.0s (4 ✓)
+
+Now update `src/dispatch_sub.rs`:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_project.*todo\… ✓ (3ms)
+  ▶ edit src/dispatch_sub.rs (1 → 1 lines)
+  -                 let output = crate::commands_project::handle_todo(&input);
+  +                 let output = crate::commands_todo::handle_todo(&input);
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.9s (3 ✓)
+
+Now let's build and test:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (473ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (5.4s)
+  2 tools completed in 11.8s (2 ✓)
+
+Two issues to fix:
+1. tools.rs needs `use crate::commands_todo; instead of the old commands_project` references  
+2. `commands_project.rs` has unused imports in its test module
+
+Let me fix tools.rs first — it needs the crate:: prefix since it's using module-level paths:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/tools.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use crate::" src/tools… ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+I see — tools.rs uses use crate::commands_project; as a module import. I need to either add use crate::commands_todo; alongside it, or change the existing import. Since some references in tools.rs still use commands_project for non-todo items, let me check:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "commands_project::" src/to… ✓ (3ms)
+
+Good — commands_project is still used for rename_in_project. I just need to add the commands_todo import:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (2 → 3 lines)
+    use crate::commands_project;
+  + use crate::commands_todo;
+    use crate::format::*;
+ ✓ (0ms)
+
+Now fix the unused imports in commands_project.rs test module:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:743..753 ✓ (0ms)
+
+Let me check if KNOWN_COMMANDS, help_text, and serial are still used in the remaining tests:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "KNOWN_COMMANDS\|help_te… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_COMMANDS" src/com… ✓ (3ms)
+  2 tools completed in 7.2s (2 ✓)
+
+The remaining KNOWN_COMMANDS uses in tests bring their own use statements (line 1673 and 1712). The line 746 import is unused now. Let me check help_text:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "help_text" src/commands… ✓ (3ms)
+
+Line 1721 has its own import. The line 747 import is unused. And serial:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/commands_pr… ✓ (3ms)
+
+No tests use #[serial] anymore. All three imports are dead. Remove them:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (8 → 5 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  -     use crate::commands::KNOWN_COMMANDS;
+  -     use crate::help::help_text;
+  -     use serial_test::serial;
+        use std::fs;
+        use tempfile::TempDir;
+ ✓ (0ms)
+
+Now let's try building again:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.7s)
+
+Clean. Now run the full test suite:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.5s)
+
+All 2333 tests pass (2245 + 88), 0 failures. Let me also verify format check:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (477ms)
+
+All checks pass. Let me verify the file size reduction:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_project.rs sr… ✓ (2ms)
+
+`commands_project.rs` went from 2,113 lines to 1,726 lines (a reduction of 387 lines), and commands_todo.rs is 389 lines — a clean, self-contained module.
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now commit:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (17ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 8.1s (2 ✓)
+
+Clean extraction. Here's what I did:
+
+1. Created `src/commands_todo.rs` (389 lines) — contains TodoStatus, `TodoItem, todo_add, todo_update, todo_list, todo_clear, todo_remove, format_todo_list, handle_todo, plus the private rw_read_or_recover/rw_write_or_recover` helpers and all 18 todo-related tests.
+
+2. Trimmed `src/commands_project.rs` from 2,113 → 1,726 lines — removed the todo types, functions, helpers, and tests. Also removed now-dead imports (RwLock, `KNOWN_COMMANDS, help_text, serial_test`). Updated the module doc comment to reflect only the remaining concerns: `/context, /init, /docs, /plan`.
+
+3. Wired up the module — added mod commands_todo; in main.rs, added `pub use crate::commands_todo::handle_todo; in commands.rs, updated tools.rs to use commands_todo::` for all todo references, and updated dispatch_sub.rs to call `crate::commands_todo::handle_todo`.
+
+4. All checks green — `cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test` (2333 tests, 0 failures).
+
+  ↳ 6m 35s · 31821→14210 tokens · $2.78
+  ⬤ 18% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
