@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the failing test to understand what's going on.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "undo_last_commit_in_rea… ✓ (5ms)
+  ▶ read src/commands_git.rs:1949..2049 ✓ (1ms)
+  ▶ read src/commands_git.rs:2048..2068 ✓ (1ms)
+  3 tools completed in 7.7s (3 ✓)
+
+The test fails at line 2029 - ctx.contains("hello.txt"). The test expects the return value of `handle_undo_last_commit() to contain "hello.txt". Let me look at the handle_undo_last_commit` function:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_undo_last_com… ✓ (2ms)
+  ▶ read src/commands_git.rs:557..677 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+The function looks correct. The problem is that ctx.contains("hello.txt") fails. The `files` variable at line 566 gets the diff between HEAD~1 and HEAD - this should show "hello.txt". But wait - let me check if the issue is that handle_undo_last_commit is now somehow affected by a change I made. Let me check if there's something in commands_goal.rs that might have caused a side effect, or check git status:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_git.rs ✓ (6ms)
+  2 tools completed in 4.3s (2 ✓)
+
+I see - some functions were removed but they might reference things. Let me check what the actual issue is. The test output says "Context should mention the reverted file" and the ctx is from handle_undo_last_commit(). Let me check if there were changes to run_git or if there's something about `auto_compact_if_needed`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_git.rs | g… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_compact_if_needed"… ✓ (2ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Wait, it says auto_compact_if_needed is imported in commands.rs from somewhere. Let me check the actual compilation first - the test failure is a runtime assertion failure, not a compilation error. Let me just reproduce the test:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test undo_last_commit_in_r… ✓ (153ms)
+
+Interesting - the test passes now when run in isolation. This suggests it's a race condition with another test changing the working directory. Let me check if there's a new test in `commands_goal.rs` that might also change the working directory:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls src/commands_goal.rs 2>&1 ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir\|CWD_MU… ✓ (3ms)
+  ▶ read src/commands_goal.rs:140..190 ✓ (1ms)
+  3 tools completed in 23.5s (3 ✓)
+
+There's the problem. The with_temp_dir helper changes CWD but uses `#[serial] from serial_test - however the undo_last_commit_in_real_repo test in commands_git.rs uses its own CWD_MUTEX` which is a different synchronization mechanism. These two tests can run concurrently and interfere with each other's CWD.
+
+The fix: either make the commands_goal.rs tests use the same CWD_MUTEX, or better yet, make the with_temp_dir helper not change global CWD at all. Let me look at how the goal functions use CWD:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs ✓ (2ms)
+
+The problem is clear. The `commands_goal.rs tests use #[serial]` to serialize among themselves, but they change the process's CWD which can race with `undo_last_commit_in_real_repo in commands_git.rs which uses a different mutex (CWD_MUTEX). serial_test::serial` only serializes tests marked with #[serial] - it doesn't prevent other non-#[serial] tests from running concurrently.
+
+The fix is to check if serial_test is available in Cargo.toml and then use #[serial] on the git test too, OR better yet, change the goal tests to not change the global CWD at all - instead, pass paths explicitly. Let me check what approach is simplest:
+
+The goal functions use GOAL_FILE which is a relative path, so they depend on CWD. The cleanest fix is to refactor the test helper to not change CWD - but the functions themselves use the constant `".yoyo/goal.md"`. 
+
+The simplest fix: add #[serial] to the `undo_last_commit_in_real_repo` test, or even better, make the goal tests use explicit paths instead of changing CWD. But looking more carefully, the simplest and most correct fix is to add #[serial] to undo_last_commit_in_real_repo too since it also changes CWD.
+
+Let me check if serial_test is a dependency:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep serial_test Cargo.toml ✓ (2ms)
+
+Good, it's available. Now let me check if undo_last_commit_in_real_repo already uses serial_test:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1945..1955 ✓ (0ms)
+
+I need to add #[serial] to this test. Let me also check the use imports in the test module:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    use\|^mod tests" s… ✓ (3ms)
+
+Now apply the fix:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (3 → 4 lines)
+    mod tests {
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  +     use serial_test::serial;
+ ✓ (0ms)
+  ▶ edit src/commands_git.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn undo_last_commit_in_real_repo() {
+ ✓ (1ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now I can also remove the manual CWD_MUTEX from that test since `#[serial]` handles the serialization:
+
+Actually, let me keep the CWD_MUTEX - it's a belt-and-suspenders approach and there could be other tests not marked #[serial] that also use it. The important thing is that #[serial] will prevent the goal tests and this test from running concurrently.
+
+Now let me run the full test suite:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (4.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (21.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (7.5s)
+  3 tools completed in 40.5s (3 ✓)
+
+Let me run it a few more times to make sure the race condition is truly fixed:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "=== Run… ✓ (23.1s)
+
+All 2286 tests pass consistently across 3 runs. Let me also verify clippy is clean:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (6.9s)
+
+All clean. Here's what the fix was:
+
+**Root cause:** The undo_last_commit_in_real_repo test in commands_git.rs changes the process CWD using a local CWD_MUTEX, while the new commands_goal.rs tests also change CWD but use #[serial] from serial_test. These two synchronization mechanisms don't coordinate with each other, so the tests could run concurrently and interfere with each other's CWD — causing the git test to execute in the wrong directory.
+
+Fix: Added use serial_test::serial; to the `commands_git::tests module and #[serial] to the undo_last_commit_in_real_repo` test. This ensures it never runs concurrently with the goal tests (or any other #[serial] tests that change CWD).
+
+  ↳ 3m 6s · 13636→3613 tokens · $0.790
+  ⬤ 5% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

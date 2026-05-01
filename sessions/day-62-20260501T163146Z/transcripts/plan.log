@@ -1,0 +1,161 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by reading the current issues and gap analysis.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -200  ▶ $ cat journals/JOURNAL.md | head -80 ✓ (5ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md | grep -A5 "Real-time subprocess"  ▶ $ cat memory/learnings.jsonl | tail -5  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (4ms)
+ ✓ (4ms)
+ ✓ (193ms)
+  6 tools completed in 6.2s (6 ✓)
+
+Now let me check the test count and look at the area I'm considering for improvement:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what the current test situation looks like (2 lines)  ▶ $ # Look at the current state of prompt.rs auto-retry and tool… (2 lines)  ▶ $ # Check what commands_memory.rs looks like — it's in the fil… (2 lines) ✓ (2ms)
+ ✓ (2ms)
+ ✓ (7.7s)
+  ▶ $ # Look at the recurring CI error - what test failed recently… (3 lines)  ▶ $ # Check what tests exist for commands_project.rs, commands_f… (2 lines) ✓ (3ms)
+ ✓ (2ms)
+  5 tools completed in 14.8s (5 ✓)
+
+Interesting — the test count is 88 tests but there are hundreds of #[test] attributes. Let me check:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Total test functions across all files (2 lines)  ▶ $ # Are many behind cfg(test) modules? Let's check the actual … (2 lines) ✓ (4ms)
+ ✓ (7.9s)
+  ▶ $ # Ah, 2351 tests, not 88! The assessment was wrong. Let me c… (2 lines) ✓ (7.6s)
+  3 tools completed in 21.1s (3 ✓)
+
+OK — 2260 unit tests + 88 integration tests. The test coverage is actually decent. Now let me think strategically about the tasks.
+
+**Assessment summary:**
+• Build: clean, all tests pass (2260 + 88)
+• Strong streak: 9/10 sessions fully green
+• #1 gap: Real-time subprocess streaming (since Day ≤38) — the biggest UX gap
+• No sponsor issues to handle
+• Community issues: #215 (TUI challenge, aspirational) and #156 (benchmarks, requires external setup)
+• Recent work: skills ecosystem, RLM patterns, extractions, auto-retry enrichment
+
+Task selection reasoning:
+
+1. **Self-driven (Gap #1):** Real-time subprocess streaming has been the #1 gap since Day 38. This is the single biggest UX difference between yoyo and Claude Code. The assessment mentions it every session. Time to start chipping at it. But this is a deep change — I need to scope it carefully. A good first step: add a streaming mode to StreamingBashTool that pipes stdout/stderr line-by-line to the event stream as the process runs, instead of buffering everything. This is a single-file change to tools.rs.
+
+2. Self-driven (test infrastructure): The assessment mentions a CI test failure in the trajectory window. More importantly, several large modules could benefit from targeted test additions. But actually, the test coverage is already at 2260 tests — decent. Instead, I'll tackle another self-driven improvement: extract commands_git.rs (2,602 lines) which the assessment flags as above the comfort zone. Splitting the /blame and /review handlers into their own logical groupings would make the file more maintainable.
+
+3. Self-driven (competitive): Goal persistence — Codex v0.128.0 just shipped "persisted /goal workflows with pause/resume." This is a differentiating feature yoyo lacks. A simpler version: `/goal` command that saves a named goal to disk and can be resumed. This would be a new command file.
+
+Actually, let me reconsider. The #1 gap (streaming) is a gnarly multi-session effort. Let me think about what's the right first step that fits in a 20-minute task window.
+
+Looking at the tools.rs StreamingBashTool — the tool currently runs the command, collects output, and returns it. To stream it, we'd need the tool to emit ToolExecutionUpdate events as stdout lines arrive. This requires understanding yoagent's tool API.
+
+Let me reconsider the task mix for maximum impact:
+
+1. Real-time bash streaming (first step) — modify StreamingBashTool to emit line-by-line output as the process runs. Scoped to src/tools.rs only.
+2. Extract /blame and /review from commands_git.rs — these are self-contained handlers that can live in their own file, bringing commands_git.rs below 2,000 lines. 
+3. Goal persistence — /goal set, /goal show, /goal clear that saves a goal to .yoyo/goal.md and loads it into the system prompt. New file src/commands_goal.rs + wiring.
+
+Wait — task 1 (streaming) might be too complex for a single 20-min task without understanding yoagent's streaming API. Let me check what's available.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check yoagent's tool trait for streaming/update capabiliti… (2 lines)  ▶ $ # Check yoagent version (2 lines) ✓ (2ms)
+ ✓ (35ms)
+  ▶ $ # Check the Tool trait and ToolExecutionUpdate in yoagent (2 lines) ✓ (3ms)
+  ▶ $ # Find the tool trait (2 lines) ✓ (5ms)
+  ▶ $ # Check the Tool trait definition (2 lines) ✓ (3ms)
+  ▶ $ grep -rn "pub trait Tool" /home/runner/.cargo/registry/src/index.crates.io-1949c… ✓ (47ms)
+  ▶ $ grep -rn "trait.*Tool" /home/runner/.cargo/registry/src/index.crates.io-1949cf8c… ✓ (4ms)
+  ▶ $ sed -n '340,420p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (3ms)
+  ▶ $ sed -n '420,470p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (3ms)
+  ▶ $ # Check ToolContext - does it have on_progress? (2 lines) ✓ (3ms)
+  ▶ $ # Check on_update type (2 lines) ✓ (2ms)
+  11 tools completed in 30.3s (11 ✓)
+
+This is exactly what I need. ToolContext has on_update: Option<ToolUpdateFn> which is `Arc<dyn Fn(ToolResult) + Send + Sync>. The StreamingBashTool can call ctx.on_update` with partial results as each line comes in from the subprocess, and yoagent will emit ToolExecutionUpdate events that the renderer can display.
+
+Now let me check how the current StreamingBashTool works:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how StreamingBashTool currently executes commands (2 lines) ✓ (2ms)
+  ▶ $ sed -n '605,780p' src/tools.rs ✓ (4ms)
+  ▶ $ sed -n '780,880p' src/tools.rs ✓ (3ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Now let me check the emit_update function:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn emit_update\|emit_update" src/tools.rs | head -20 ✓ (3ms)
+  ▶ $ sed -n '593,605p' src/tools.rs ✓ (2ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now I see the current situation clearly. The bash tool already:
+1. Reads stdout/stderr line by line
+2. Has emit_update capability via ctx.on_update
+3. Emits periodic updates based on update_interval and lines_per_update
+
+But the update contains the full accumulated output, not incremental lines. And the UI renderer shows this as a line count + partial tail (format/tools.rs), not as streaming text.
+
+The real-time streaming gap has two halves:
+1. Tool side: Emit each new line as it arrives (incremental, not accumulated) — this is in tools.rs
+2. **Renderer side**: Display the streaming lines in real-time — this is in format/tools.rs and `prompt.rs`
+
+For a 20-minute task, the right scoping is to add incremental line emission via `on_progress (which emits ProgressMessage` events), so each new line from the subprocess is emitted as a progress message. Then the renderer in prompt.rs can display these messages as they arrive.
+
+Let me check how ProgressMessage is handled:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "ProgressMessage" src/prompt.rs | head -20 ✓ (3ms)
+  ▶ $ sed -n '1025,1045p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '1029,1040p' src/prompt.rs ✓ (2ms)
+  ▶ $ sed -n '1028,1042p' src/prompt.rs ✓ (3ms)
+  4 tools completed in 9.1s (4 ✓)
+
+Let me see this more cleanly:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n -A10 "ProgressMessage" src/prompt.rs ✓ (32ms)
+
+The ProgressMessage handler already prints the text dimmed. So if the bash tool emits on_progress for each new line, it will be rendered in real-time to the terminal.
+
+This is a clean, well-scoped change:
+• In `tools.rs`: Use ctx.on_progress to emit each new stdout/stderr line as it arrives
+• The renderer already handles it — ProgressMessage in prompt.rs prints each line
+
+This is the right first step toward closing gap #1. It's a single-file change (tools.rs) that leverages existing infrastructure.
+
+Now let me plan the session properly:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons… ✓ (3ms)
+  ▶ write session_plan/task_01.md (57 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (46 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (64 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (20 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (9ms)
+  7 tools completed in 1m 11s (7 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 62 Session Plan (15:43)
+
+### Task 1: Real-time bash output streaming via `on_progress` (self-driven, Gap #1)
+Files: src/tools.rs
+
+The #1 competitive gap since Day 38. yoagent already provides ctx.on_progress which emits ProgressMessage events, and prompt.rs already renders those to the terminal. The change: in the bash tool's line reader loop, call on_progress for each new stdout/stderr line as it arrives. This means developers watching cargo test through yoyo will see results in real time instead of waiting for the entire suite to finish.
+
+### Task 2: Extract /blame and /review from `commands_git.rs` (self-driven, consolidation)
+Files: `src/commands_git.rs, src/commands_git_review.rs`
+
+Continuing the consolidation pattern. commands_git.rs at 2,602 lines has six command groups. The review/blame handlers are self-contained code-inspection tools that naturally separate from the change-making commands (diff, commit, undo, pr). Extraction drops the file below 2,000 lines.
+
+### Task 3: Add `/goal` command for persistent session goals (self-driven, competitive)
+Files: src/commands_goal.rs, `src/dispatch.rs, src/help.rs`
+
+Competitive response to Codex v0.128.0's goal persistence. Simple /goal set/show/clear/check that saves to .yoyo/goal.md. Foundation for future workflow orchestration.
+
+### Issue Responses
+• #215 (TUI challenge): Deferred — architecture shift too large, REPL improvements continue
+• #156 (benchmarks): Deferred — requires external setup, keeping as help-wanted
+
+  ↳ 3m 44s · 25924→7634 tokens · $1.42
+  ⬤ 17% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

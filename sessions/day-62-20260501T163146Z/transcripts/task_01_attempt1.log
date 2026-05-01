@@ -1,0 +1,442 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current StreamingBashTool::execute implementation, then write tests, implement the feature, and verify everything passes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "on_progress\|on_update\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct StreamingBashToo… ✓ (2ms)
+ ✓ (5ms)
+  ▶ read src/tools.rs:535..855 ✓ (2ms)
+  3 tools completed in 5.1s (3 ✓)
+
+Now let me understand the current structure better — specifically the reader loop where I need to distinguish stdout vs stderr lines, and look at the test helpers:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "on_progress" src/tools.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ProgressMessage\|on_pro…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "on_progress" ~/.cargo/r… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ProgressFn\|on_progress… ✓ (3ms)
+  4 tools completed in 9.0s (4 ✓)
+
+Good — on_progress takes a String. Now let me see how ProgressMessage is handled in prompt.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1025..1040 ✓ (0ms)
+
+The rendering is already in place. Now let me check the reader loop more carefully. The key issue is that the current tokio::select! reads from stdout and stderr but doesn't track WHICH stream a line came from:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:722..802 ✓ (1ms)
+
+Now let me look at the existing test infrastructure:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1700..1830 ✓ (1ms)
+  ▶ read src/tools.rs:1829..1959 ✓ (1ms)
+  2 tools completed in 8.7s (2 ✓)
+
+Now let me check stderr_is_terminal:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn stderr_is_termin… ✓ (3ms)
+  ▶ read src/format/mod.rs:73..78 ✓ (0ms)
+  2 tools completed in 7.2s (2 ✓)
+
+Good. Now I have a clear picture. The key change is:
+
+1. Modify the tokio::select! to track whether a line came from stdout or stderr (change line to a tuple (line, is_stderr))
+2. After accumulating each line, call `ctx.on_progress` with the line (prefixing stderr lines with stderr: )
+3. Only call on_progress in interactive mode (`stderr_is_terminal()`)
+4. Update test_tool_context to accept an optional progress callback, and add tests
+
+Let me now implement this. First, let me write the tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 18.5s (5 ✓)
+
+Let me start with the implementation. First, I'll modify the test_tool_context to support both `on_update and on_progress`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/tools.rs (21 → 36 lines)
+        /// Create a ToolContext for testing, with an optional on_update callback
+        /// that collects partial results.
+        fn test_tool_context(
+  +         updates: Option<Arc<tokio::sync::Mutex<Vec<yoagent::types::ToolResult>>>>,
+  +     ) -> yoagent::types::ToolContext {
+  +         test_tool_context_with_progress(updates, None)
+  +     }
+  + 
+  +     /// Create a ToolContext for testing, with optional on_update and on_progress callbacks.
+  +     fn test_tool_context_with_progress(
+            updates: Option<Arc<tokio::sync::Mutex<Vec<yoagent::types::ToolResult>>>>,
+  +         progress: Option<Arc<tokio::sync::Mutex<Vec<String>>>>,
+        ) -> yoagent::types::ToolContext {
+            let on_update: Option<yoagent::types::ToolUpdateFn> = updates.map(|u| {
+                Arc::new(move |result: yoagent::types::ToolResult| {
+  ···
+                        guard.push(result);
+                    }
+                }) as yoagent::types::ToolUpdateFn
+  +         });
+  ... (16 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 18.2s (3 ✓)
+
+Now let me write the tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find where the existing streaming bash tests end so I can add new ones:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1915..1925 ✓ (1ms)
+  ▶ read src/tools.rs:1929..1939 ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now I'll add the new tests right after the test_streaming_bash_captures_stderr test (before the RenameSymbolTool tests):
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (4 → 120 lines)
+  +             _ => panic!("Expected text content"),
+  +         }
+  +     }
+  + 
+  +     #[tokio::test]
+  +     async fn test_streaming_bash_progress_emits_each_line() {
+  +         let progress = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+  +         let tool = StreamingBashTool::default();
+  +         let ctx = test_tool_context_with_progress(None, Some(Arc::clone(&progress)));
+  +         let params = serde_json::json!({
+  +             "command": "echo alpha; echo beta; echo gamma"
+  +         });
+  +         let result = tool.execute(params, ctx).await.unwrap();
+  +         assert_eq!(result.details["exit_code"], 0);
+  + 
+  +         let lines = progress.lock().await;
+  +         // Each stdout line should appear in progress
+  +         assert!(
+  +             lines.iter().any(|l| l.contains("alpha")),
+  +             "Progress should contain 'alpha', got: {lines:?}"
+  ... (100 more lines)
+ ✗ (0ms)
+    │ old_text matches 4 locations in src/tools.rs. Include more surrounding context to make the match unique.
+
+Need more context to disambiguate:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1920..1935 ✓ (0ms)
+  ▶ edit src/tools.rs (13 → 130 lines)
+            match &result.content[0] {
+                yoagent::types::Content::Text { text } => {
+                    assert!(text.contains("err_output"), "Should capture stderr: {text}");
+  +             }
+  +             _ => panic!("Expected text content"),
+  +         }
+  +     }
+  + 
+  +     #[tokio::test]
+  +     async fn test_streaming_bash_progress_emits_each_line() {
+  +         let progress = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+  +         let tool = StreamingBashTool::default();
+  +         let ctx = test_tool_context_with_progress(None, Some(Arc::clone(&progress)));
+  +         let params = serde_json::json!({
+  +             "command": "echo alpha; echo beta; echo gamma"
+  +         });
+  +         let result = tool.execute(params, ctx).await.unwrap();
+  +         assert_eq!(result.details["exit_code"], 0);
+  + 
+  +         let lines = progress.lock().await;
+  ... (104 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 21.8s (3 ✓)
+
+Now let me implement the actual feature — modifying the reader loop to track stdout/stderr and emit progress:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+The key change is in the reader loop. I need to:
+1. Change the select! to return (line, is_stderr) instead of just line
+2. After accumulating the line, call on_progress with the appropriate format
+3. Check `stderr_is_terminal() or just whether on_progress is set (the task spec says check stderr_is_terminal()`)
+
+Actually, re-reading the task spec: "Only emit via on_progress when stderr is a terminal (i.e., interactive mode)." — but in tests, stderr won't be a terminal. That would make the tests fail. Let me think about this...
+
+The right approach: the on_progress callback is only set in interactive mode (prompt.rs only wires it up when it wants progress). In piped mode, the agent doesn't set on_progress. So the check should be: if `ctx.on_progress is Some`, emit. The interactive-only gating happens at the wiring level (where the agent is built), not at the tool level. This way tests can provide an on_progress callback and it works.
+
+But the task spec says to check stderr_is_terminal(). Let me add the check but also make the tests work. Actually, looking more carefully, the task says the existing prompt.rs renderer already handles `ProgressMessage. The on_progress callback in tests can be set regardless. The point of the stderr_is_terminal() check is so that even if the agent wires up on_progress` (which it does automatically through yoagent), the tool itself gates the streaming on interactive mode.
+
+So I'll add the TTY check, but I need the tests to bypass it. The cleanest approach: check stderr_is_terminal() in the production code, and note that tests will need to verify the logic differently... Actually, looking at it again more carefully — in CI/tests stderr IS a terminal sometimes. But the tests need to reliably test the progress emission.
+
+A better approach: do the TTY check, but make it a field on the tool so tests can override. Actually, that overcomplicates things. Let me follow the simplest path that matches the spec: gate on stderr_is_terminal() AND ctx.on_progress.is_some(). For tests, I can use a helper that temporarily overrides... no, that's global state.
+
+Let me re-read the spec: "Only emit via on_progress when stderr is a terminal (i.e., interactive mode). In piped mode, the streaming output would interfere with structured output. Check `crate::format::stderr_is_terminal()` — if false, skip the on_progress calls."
+
+The simplest and most correct approach: add the TTY check in the production code. For tests, I'll note that in test environments stderr may not be a terminal, so I'll add an internal flag to StreamingBashTool to force progress emission (for testing). Or even simpler: I'll make a small helper `fn should_emit_progress` that checks TTY, and in the tool I'll add an allow_progress_non_tty field defaulting to false, which tests set to true.
+
+Actually, the cleanest approach is even simpler. The on_progress callback exists because yoagent provides it. If the caller doesn't want progress, they don't set on_progress. The TTY check is just an extra safety layer at the tool level. For tests, I can just skip the TTY check by making it a configurable property of the tool. Let me keep it simple:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:548..568 ✓ (0ms)
+
+I'll add a progress_requires_tty field (defaults to true, tests can set to false):
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (16 → 20 lines)
+        pub update_interval: Duration,
+        /// Emit an update after this many new lines (even if interval hasn't elapsed)
+        pub lines_per_update: usize,
+  +     /// When true (default), real-time progress via `on_progress` is only emitted
+  +     /// when stderr is a terminal (interactive mode). Set to false in tests to
+  +     /// allow progress emission regardless of TTY state.
+  +     pub progress_requires_tty: bool,
+    }
+ ✓ (0ms)
+
+Now update the Default impl:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:569..589 ✓ (1ms)
+  ▶ edit src/tools.rs (19 → 20 lines)
+                confirm_fn: None,
+                update_interval: Duration::from_millis(500),
+                lines_per_update: 20,
+  +             progress_requires_tty: true,
+            }
+        }
+    }
+ ✓ (0ms)
+  2 tools completed in 7.6s (2 ✓)
+
+Now the core change — modify the reader loop in execute. I need to:
+1. Change the select to return (line, is_stderr: bool)
+2. After accumulation, emit progress
+3. Gate progress on TTY check (using the new field)
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:722..807 ✓ (1ms)
+
+Now I'll make the surgical edit. The key changes:
+1. Change let line = tokio::select! to `let line_info = tokio::select! returning Option<(String, bool)>` where bool is is_stderr
+2. After accumulation, emit progress
+3. Need to pass progress_requires_tty into the spawned task
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (82 → 95 lines)
+            let trunc_clone = Arc::clone(&truncated);
+            let cancel_clone = cancel.clone();
+            let ctx_clone = ctx.clone();
+  +         let emit_progress = !self.progress_requires_tty || crate::format::stderr_is_terminal();
+    
+            let reader_handle = tokio::spawn(async move {
+                let stdout_reader = stdout.map(tokio::io::BufReader::new);
+  ···
+                        break;
+                    }
+    
+  -                 // Read one line from whichever stream has data
+  -                 let line = tokio::select! {
+  +                 // Read one line from whichever stream has data, tracking its source
+  +                 let line_info: Option<(String, bool)> = tokio::select! {
+                        biased;
+                        result = async {
+                            match stdout_lines.as_mut() {
+  ···
+                            }
+  ... (43 more lines)
+ ✓ (1ms)
+
+Now update the test cases to set progress_requires_tty: false so tests work in CI. Let me update the tests:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ search 'test_streaming_bash_progress_emits_each_line' in src/tools.rs ✓ (3ms)
+  ▶ read src/tools.rs:1953..2083 ✓ (1ms)
+  2 tools completed in 7.3s (2 ✓)
+
+I need to set progress_requires_tty: false on the tools used in the progress tests so they work in CI:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (4 → 7 lines)
+        async fn test_streaming_bash_progress_emits_each_line() {
+            let progress = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+  -         let tool = StreamingBashTool::default();
+  +         let tool = StreamingBashTool {
+  +             progress_requires_tty: false,
+  +             ..Default::default()
+  +         };
+            let ctx = test_tool_context_with_progress(None, Some(Arc::clone(&progress)));
+ ✓ (1ms)
+  ▶ edit src/tools.rs (4 → 7 lines)
+        async fn test_streaming_bash_progress_stderr_prefix() {
+            let progress = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+  -         let tool = StreamingBashTool::default();
+  +         let tool = StreamingBashTool {
+  +             progress_requires_tty: false,
+  +             ..Default::default()
+  +         };
+            let ctx = test_tool_context_with_progress(None, Some(Arc::clone(&progress)));
+ ✓ (1ms)
+  ▶ edit src/tools.rs (6 → 9 lines)
+            // Verify that the final ToolResult still contains the full buffered output
+            // (on_progress doesn't affect the return value)
+            let progress = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+  -         let tool = StreamingBashTool::default();
+  +         let tool = StreamingBashTool {
+  +             progress_requires_tty: false,
+  +             ..Default::default()
+  +         };
+            let ctx = test_tool_context_with_progress(None, Some(Arc::clone(&progress)));
+ ✓ (1ms)
+  ▶ edit src/tools.rs (8 → 9 lines)
+            let progress = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+            let tool = StreamingBashTool {
+                timeout: Duration::from_millis(200),
+  +             progress_requires_tty: false,
+                ..Default::default()
+            };
+            let ctx = test_tool_context_with_progress(None, Some(Arc::clone(&progress)));
+ ✓ (0ms)
+  ▶ edit src/tools.rs (5 → 8 lines)
+        async fn test_streaming_bash_progress_with_cancellation() {
+            // Verify cancellation still works with on_progress set
+            let progress = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+  -         let tool = StreamingBashTool::default();
+  +         let tool = StreamingBashTool {
+  +             progress_requires_tty: false,
+  +             ..Default::default()
+  +         };
+            let ctx = test_tool_context_with_progress(None, Some(Arc::clone(&progress)));
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 27.4s (6 ✓)
+
+Now let's update the doc comment at the top of StreamingBashTool to mention on_progress:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (13 → 18 lines)
+  - // StreamingBashTool — real-time subprocess output via on_update callbacks
+  + // StreamingBashTool — real-time subprocess output via on_update and on_progress callbacks
+    // ---------------------------------------------------------------------------
+    
+    /// Execute shell commands with real-time streaming output.
+  ···
+    /// calls `ctx.on_update()` periodically so the UI can display partial output
+    /// as the command runs. This is the difference between staring at a blank screen
+    /// during `cargo build` and watching compilation progress live.
+  + ///
+  + /// Additionally, each individual line is emitted in real-time via `ctx.on_progress()`
+  + /// (when available and in interactive mode), producing `AgentEvent::ProgressMessage`
+  + /// events that the renderer displays immediately. Stderr lines are prefixed with
+  + /// `stderr: ` so the user can distinguish them from stdout.
+    ///
+    /// Streaming updates are sent every `update_interval` or every `lines_per_update`
+    /// lines, whichever comes first.
+ ✓ (0ms)
+
+Now let's run the checks:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (373ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (7.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (3.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (21.6s)
+  5 tools completed in 49.0s (5 ✓)
+
+All 2353 tests pass (2265 + 88), 0 failures. Let me specifically verify my new tests ran:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test streaming_bash_progre… ✓ (311ms)
+
+All 5 new tests pass. Let me also verify the format check:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (376ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.7s (2 ✓)
+
+All checks pass. Now let me update the docs to mention this new capability. Let me check what CLAUDE.md says about tools.rs:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tools.rs" CLAUDE.md ✓ (2ms)
+
+The description is fine — StreamingBashTool is already mentioned. Let me check README.md for anything about real-time output:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "streaming\|real.time\|b… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CLAUDE_CODE_GAP\|gap.*#… ✓ (3ms)
+  2 tools completed in 7.3s (2 ✓)
+
+Let me check the gap doc for the subprocess streaming gap:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A3 "subprocess\|real.ti… ✓ (3ms)
+
+Let me see more context around the gap:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:142..162 ✓ (0ms)
+
+I need to update this gap doc — gap #1 is now closed! Let me also update the table row:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (1 → 1 lines)
+  - | Tool output streaming | 🟡 | ✅ | `ToolExecutionUpdate` events handled and rendered live (line counts, partial tail); full real-time subprocess streaming inside a single tool call still buffered |
+  + | Tool output streaming | ✅ | ✅ | `ToolExecutionUpdate` events handled and rendered live (line counts, partial tail); real-time per-line subprocess streaming via `on_progress` (Day 62) — stdout lines print as they arrive, stderr lines prefixed with `stderr:` |
+ ✓ (0ms)
+
+Now update the numbered gap list:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (8 → 1 lines)
+  - 1. **Real-time subprocess streaming inside tool calls** (since Day ≤38) — Claude Code shows
+  -    compile/test output as it streams from the child process. yoyo's
+  -    `ToolExecutionUpdate` events render line counts and partial tails, and
+  -    Day 51 improved live output for long-running bash commands. But the
+  -    underlying bash tool still buffers stdout/stderr per call rather than
+  -    pumping it to the renderer character-by-character. Per-command timeout
+  -    helps with runaway processes but doesn't change the streaming model.
+  - 2. **Persistent named subagents with orchestration** (since Day ≤38) — yoyo now has
+  + 1. **Persistent named subagents with orchestration** (since Day ≤38) — yoyo now has
+ ✓ (0ms)
+
+Now renumber the remaining items:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:142..167 ✓ (0ms)
+  ▶ edit CLAUDE_CODE_GAP.md (10 → 10 lines)
+       long-lived "reviewer" or "tester" subagent the orchestrator can delegate to
+       repeatedly across turns). SharedState closes the data-sharing gap; the
+       orchestration gap remains.
+  - 3. **Full graceful degradation on partial tool failures** (since Day ≤38) — provider fallback
+  + 2. **Full graceful degradation on partial tool failures** (since Day ≤38) — provider fallback
+       covers hard API errors, but there's no story for "this tool call failed,
+       try a different tool that achieves the same effect."
+  - 4. **Skill marketplace curation** (since Day 61) — `/skill install` and `/skill search`
+  + 3. **Skill marketplace curation** (since Day 61) — `/skill install` and `/skill search`
+ ✓ (0ms)
+  2 tools completed in 8.2s (2 ✓)
+
+Good. Now let me commit:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tools.rs | head -80 ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tools.rs | tail -80 ✓ (4ms)
+  4 tools completed in 12.2s (4 ✓)
+
+Everything looks clean. Let me commit:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (11ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Done. Here's what I shipped:
+
+### Summary
+
+**Real-time bash output streaming via on_progress** — closes gap #1 vs Claude Code.
+
+**What changed in src/tools.rs:**
+
+1. Reader loop now tracks line source: The tokio::select! returns (String, bool) tuples where the bool indicates stderr origin, instead of just the line string.
+
+2. Per-line progress emission: After each line is accumulated, ctx.on_progress() is called with the line text. Stdout lines are emitted as-is; stderr lines get a `stderr:  prefix. This produces AgentEvent::ProgressMessage` events that the prompt.rs renderer already handles — printing each as dim text immediately.
+
+3. Interactive-only gating: A new progress_requires_tty: bool field (defaults true) ensures progress emission only happens when stderr is a terminal. In piped mode, no streaming output interferes with structured output. Tests set this to false to verify progress behavior in CI.
+
+4. Backward compatibility preserved: The existing on_update periodic snapshots, the final ToolResult format, the update interval/lines-per-update settings — all unchanged.
+
+**5 new tests:**
+• test_streaming_bash_progress_emits_each_line — verifies each stdout line arrives via on_progress
+• test_streaming_bash_progress_stderr_prefix — verifies stderr lines get stderr:  prefix, stdout lines don't
+• `test_streaming_bash_progress_complete_output_unchanged` — verifies final result still has full buffered output
+• `test_streaming_bash_progress_with_timeout` — verifies timeout still works with progress active
+• test_streaming_bash_progress_with_cancellation — verifies cancellation still works with progress active
+
+Doc updates: CLAUDE_CODE_GAP.md — tool output streaming row upgraded from 🟡 to ✅, gap #1 removed from numbered list and remaining items renumbered.
+
+  ↳ 6m 56s · 31313→17055 tokens · $2.61
+  ⬤ 20% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

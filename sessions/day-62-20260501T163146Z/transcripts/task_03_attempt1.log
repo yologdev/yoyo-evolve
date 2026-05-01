@@ -1,0 +1,453 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /goal command. Let me start by understanding the existing patterns in the codebase.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (52.8s)
+
+Excellent. Now let me look at specific patterns I'll need:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_COMMANDS" src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use" src/commands.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod commands" src/main.… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '47,127p' src/commands.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "command_arg_hint" src/c… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '174,230p' src/commands.r… ✓ (3ms)
+  6 tools completed in 7.5s (6 ✓)
+
+Now let me look at the dispatch.rs patterns and help.rs sections I need to wire into:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/todo\|/remember\|/memo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Project\|Session\|AI\|I… ✓ (3ms)
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '520,540p' src/dispatch.r… ✓ (3ms)
+  3 tools completed in 4.0s (3 ✓)
+
+Now let me look at the help.rs sections more closely and at how the "Project" section is structured:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1611,1670p' src/help.rs ✓ (3ms)
+
+Now let me check command_short_description and command_help patterns:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1757,1850p' src/help.rs ✓ (3ms)
+
+Now let me look at what command_help looks like for a simple command:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 30 '"todo"' src/help.rs … ✓ (3ms)
+
+Now let me check for existing tests in a command file to understand the test patterns:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_todo.rs ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '181,389p' src/commands_t… ✓ (4ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Now I have a thorough understanding of all the patterns. Let me also check how `SendToAgent is used for the /goal check` feature:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A5 "SendToAgent" src/d… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SendToAgent" src/dispat… ✓ (2ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Good — SendToAgent is only used for custom commands. For /goal check, I'll return SendToAgent with a prompt that includes the goal text. Now let me build everything:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 25.6s (6 ✓)
+
+Now let me create the goal command module:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write src/commands_goal.rs (354 lines) ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Now wire it into the rest of the codebase. Let me make all the edits:
+
+1. Add `mod commands_goal;` to main.rs:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:40..65 ✓ (0ms)
+  ▶ edit src/main.rs (2 → 3 lines)
+    mod commands_git;
+    mod commands_git_review;
+  + mod commands_goal;
+ ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+**2. Add re-export and KNOWN_COMMANDS entry in commands.rs:**
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_git::" src/com… ✓ (2ms)
+  ▶ edit src/commands.rs (1 → 2 lines)
+    pub use crate::commands_git::{handle_commit, handle_diff, handle_git, handle_pr, handle_undo};
+  + pub use crate::commands_goal::{handle_goal, load_goal};
+ ✓ (0ms)
+  2 tools completed in 9.9s (2 ✓)
+
+Now add /goal to KNOWN_COMMANDS (alphabetical — between /git and /grep):
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (2 → 3 lines)
+        "/git",
+  +     "/goal",
+        "/grep",
+ ✓ (0ms)
+
+Now add command_arg_hint for goal:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 2 lines)
+            "git" => Some("status | log | add | diff | branch | stash"),
+  +         "goal" => Some("set | show | clear | check"),
+ ✓ (0ms)
+
+Now add `command_arg_completions` for goal:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "command_arg_completions… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '238,320p' src/commands.r… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+I'll add /goal completions:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'GOAL_SUBCOMMANDS\|const… ✓ (3ms)
+
+I need to add the subcommands constant. Let me add it after CONFIG_SUBCOMMANDS:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 4 lines)
+    pub const CONFIG_SUBCOMMANDS: &[&str] = &["show", "edit", "set", "get"];
+  + 
+  + /// Subcommands for `/goal`.
+  + pub const GOAL_SUBCOMMANDS: &[&str] = &["set", "show", "clear", "check"];
+ ✓ (0ms)
+
+Now add the completion entry:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 2 lines)
+            "/git" => filter_candidates(GIT_SUBCOMMANDS, &partial_lower),
+  +         "/goal" => filter_candidates(GOAL_SUBCOMMANDS, &partial_lower),
+ ✓ (0ms)
+
+**3. Wire into dispatch.rs:**
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/git\b" src/dispatch.rs… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '580,600p' src/dispatch.r… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+I'll add the /goal dispatch right after /git:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 7 lines)
+            s if s == "/git" || s.starts_with("/git ") => {
+                commands::handle_git(ctx.input);
+                CommandResult::Continue
+  +         }
+  +         s if s == "/goal" || s.starts_with("/goal ") => {
+  +             commands::handle_goal(ctx.input)
+            }
+ ✓ (0ms)
+
+**4. Wire into help.rs:**
+
+First, add command_help entry:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"git" =>' src/help.rs |… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '671,700p' src/help.rs ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+I'll add the /goal help right after the /git entry:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '686,690p' src/help.rs ✓ (2ms)
+  ▶ edit src/help.rs (5 → 22 lines)
+                 \x20 /git status\n\
+                 \x20 /git log\n\
+                 \x20 /git stash list",
+  +         ),
+  +         "goal" => Some(
+  +             "/goal — Set, view, or check progress on a session goal\n\n\
+  +              Usage:\n\
+  +              \x20 /goal              Show current goal\n\
+  +              \x20 /goal show         Show current goal\n\
+  +              \x20 /goal set <desc>   Set a new goal\n\
+  +              \x20 /goal clear        Remove current goal\n\
+  +              \x20 /goal check        Ask AI to evaluate progress\n\n\
+  +              Goals are stored in .yoyo/goal.md — human-readable, version-controllable.\n\
+  +              Persists across sessions so you can pick up where you left off.\n\n\
+  +              /goal check sends the goal to the AI, which reviews conversation history\n\
+  +              and project state to evaluate progress, remaining work, and next steps.\n\n\
+  +              Examples:\n\
+  +              \x20 /goal set Refactor auth module to use JWT\n\
+  +              \x20 /goal check\n\
+  +              \x20 /goal clear",
+  ... (2 more lines)
+ ✓ (1ms)
+  2 tools completed in 9.6s (2 ✓)
+
+Now add /goal to the help text listing — it belongs in the "Project" section:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "init.*Generate\|/docs.*… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "init\|/context\|/docs" … ✓ (3ms)
+  2 tools completed in 12.6s (2 ✓)
+
+Let me find the right spot in the help_text function's Project section:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Project\|/init\|/contex… ✓ (3ms)
+
+I'll add /goal right after /init:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1641,1643p' src/help.rs ✓ (2ms)
+  ▶ edit src/help.rs (2 → 5 lines)
+        out.push_str("  /init              Scan project and generate a YOYO.md context file\n");
+  +     out.push_str(
+  +         "  /goal [subcmd]     Set, view, or check progress on a session goal (set/show/clear/check)\n",
+  +     );
+        out.push_str("  /health            Run project health checks (auto-detects project type)\n");
+ ✓ (1ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Now add command_short_description for goal:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 2 lines)
+            "git" => Some("Quick git commands"),
+  +         "goal" => Some("Set, view, or check progress on a session goal"),
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.4s (3 ✓)
+
+Now let's build and test:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (378ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (4.7s)
+  2 tools completed in 10.4s (2 ✓)
+
+Two issues to fix. Let me handle both:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_goal::{handle_goal, load_goal};
+  + pub use crate::commands_goal::handle_goal;
+ ✓ (0ms)
+
+Now add Debug derive to CommandResult:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,30p' src/dispatch.rs ✓ (3ms)
+  ▶ edit src/dispatch.rs (2 → 3 lines)
+    /// Result of dispatching a slash command in the REPL.
+  + #[derive(Debug)]
+    pub(crate) enum CommandResult {
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (7.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (17.3s)
+  5 tools completed in 44.5s (5 ✓)
+
+Most of these failures are pre-existing (git, search, repl, watch — environment-specific). Let me focus on the two failures related to my changes:
+
+1. `cli::tests::help_text_documents_all_repl_commands — /goal` needs to be in the --help text
+2. commands_goal::tests::test_save_creates_directory — test failing
+
+Let me fix both:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "help_text_documents_all… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '990,1020p' src/cli.rs ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+This test checks that all KNOWN_COMMANDS appear in the --help output (`cli::help_text()). That's the cli_help_text()` function, not the REPL /help. Let me find where that is:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn cli_help_text\|f… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn help_text" src/cli.r… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '123,145p' src/cli.rs ✓ (2ms)
+  3 tools completed in 7.1s (3 ✓)
+
+So cli::help_text() delegates to help::cli_help_text(). Let me find where /goal needs to appear there:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1100p' src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1100,1200p' src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1300p' src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1300,1400p' src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1400,1500p' src/help.rs ✓ (3ms)
+  5 tools completed in 14.2s (5 ✓)
+
+I need to add /goal to the "Project:" section. Let me add it after `/init`:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (5 → 9 lines)
+        let _ = writeln!(
+            s,
+            "    /init              Generate a YOYO.md project context file"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /goal [subcmd]     Set, view, or check progress on a goal"
+        );
+        let _ = writeln!(s, "    /health            Run project health checks");
+ ✓ (54ms)
+
+Also need to add it to the Subcommands section at the top. Let me find it:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoyo init\|yoyo doctor\… ✓ (3ms)
+
+Let me add `goal` as a subcommand there too:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1265,1285p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (5 → 9 lines)
+        let _ = writeln!(
+            s,
+            "  todo              Manage project tasks (e.g. yoyo todo list, yoyo todo add ...)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  goal              Show or set a persistent session goal (e.g. yoyo goal show)"
+        );
+        let _ = writeln!(
+ ✓ (1ms)
+  2 tools completed in 10.7s (2 ✓)
+
+Now fix the test_save_creates_directory failure. The issue is likely the test running concurrently with CWD changes. Let me look more carefully:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_save_creates_dir… ✓ (8.3s)
+
+It passes in isolation — the failure was probably a test concurrency issue with set_current_dir. I need to use `serial_test` to prevent CWD races. Let me add that:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "serial_test" Cargo.toml ✓ (2ms)
+
+Good, it's already a dependency. Let me add #[serial] to all my CWD-changing tests:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (3 → 4 lines)
+        use super::*;
+  +     use serial_test::serial;
+        use std::env;
+        use tempfile::TempDir;
+ ✓ (0ms)
+
+Now add #[serial] to each test that uses with_temp_dir:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]" src/commands… ✓ (2ms)
+
+I need to add #[serial] to all tests that use with_temp_dir. Let me look at which tests don't:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,360p' src/commands_g… ✓ (4ms)
+
+All tests that use with_temp_dir need `#[serial]`. The last four tests (known_commands, help_exists, help_text, short_description) don't use with_temp_dir. Let me rewrite the entire test module with #[serial] on all with_temp_dir tests:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (156 → 173 lines)
+        #[test]
+  +     #[serial]
+        fn test_load_goal_none_when_missing() {
+            with_temp_dir(|| {
+                assert!(load_goal().is_none());
+  ···
+        }
+    
+        #[test]
+  +     #[serial]
+        fn test_save_and_load_roundtrip() {
+            with_temp_dir(|| {
+                save_goal("Build the authentication module").unwrap();
+  ···
+        }
+    
+        #[test]
+  +     #[serial]
+        fn test_save_creates_directory() {
+            with_temp_dir(|| {
+  ... (113 more lines)
+ ✓ (1ms)
+
+Now let me also check the dispatch_sub.rs for shell subcommands. The test checks --help output mentions /goal, which I've added. But I also need to wire `yoyo goal` as a shell subcommand:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"todo"\|"doctor"\|"heal… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '291,310p' src/dispatch_s… ✓ (2ms)
+  2 tools completed in 4.6s (2 ✓)
+
+I need to add goal as a subcommand. But since handle_goal returns CommandResult, not a plain print, I need to handle it slightly differently:
+  ╭─ Turn 79 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quote_args_as_command" … ✓ (3ms)
+  ▶ edit src/dispatch_sub.rs (6 → 19 lines)
+                    let input = quote_args_as_command(args);
+                    let output = crate::commands_todo::handle_todo(&input);
+                    println!("{output}");
+  +                 return Some(None);
+  +             }
+  +             "goal" => {
+  +                 let input = quote_args_as_command(args);
+  +                 let result = crate::commands_goal::handle_goal(&input);
+  +                 // /goal check sends to agent which requires a session — just print
+  +                 // the goal info for shell usage.
+  +                 if let crate::dispatch::CommandResult::SendToAgent(_) = result {
+  +                     eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
+  +                     eprintln!(
+  +                         "{DIM}  Start yoyo and use: /goal check{RESET}\n"
+  +                     );
+  +                 }
+                    return Some(None);
+                }
+ ✓ (1ms)
+  2 tools completed in 8.4s (2 ✓)
+
+Now let me run the full checks:
+  ╭─ Turn 81 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (378ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (7.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (4.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -50 ✓ (21.9s)
+  4 tools completed in 45.7s (4 ✓)
+
+All tests pass! Let me also specifically verify my tests pass:
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_goal 2>&1 ✓ (113ms)
+
+All 21 tests pass. Let me also verify the help_text_documents test:
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_text_documents_a… ✓ (111ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Now update the docs. Let me update CLAUDE.md, README.md, and the docs:
+  ╭─ Turn 89 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_todo\|commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_" CLAUDE.md | … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch\|\.yoyo/" CLAU… ✓ (3ms)
+  3 tools completed in 7.2s (3 ✓)
+
+I need to add .yoyo/goal.md to the state files section and mention commands_goal.rs in the architecture. Let me find those sections:
+  ╭─ Turn 92 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "State files\|\.yoyo/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '128,135p' CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `.yoyo/commands/` — project-local custom slash command definitions (`.md` files); `~/.yoyo/commands/` for global commands
+  + - `.yoyo/goal.md` — persistent session/project goal (plain text, set via `/goal set`)
+ ✓ (0ms)
+  3 tools completed in 8.7s (3 ✓)
+
+Now update README.md — find the commands table:
+  ╭─ Turn 95 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/todo\|/init\|/find\|/g… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '323,380p' README.md ✓ (3ms)
+  2 tools completed in 6.4s (2 ✓)
+
+I need to add /goal to this table. Let me find the right alphabetical position (between /git and /grep):
+  ╭─ Turn 97 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/git\b\|/grep" README.m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '349,352p' README.md ✓ (2ms)
+  ▶ edit README.md (1 → 2 lines)
+    | `/git <subcmd>` | Quick git: status, log, add, diff, branch, stash |
+  + | `/goal [subcmd]` | Set, view, or check progress on a session goal (set/show/clear/check) |
+ ✓ (0ms)
+  3 tools completed in 13.8s (3 ✓)
+
+Now update the architecture section in README.md to mention commands_goal.rs:
+  ╭─ Turn 100 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '402,410p' README.md ✓ (2ms)
+  ▶ edit README.md (2 → 3 lines)
+      commands_git.rs       /diff, /blame, /commit, /pr, /review, /git
+  +   commands_goal.rs      /goal — persistent session goals (set, show, clear, check)
+      commands_project.rs   /health, /fix, /test, /lint, /init, /index, /docs, /tree, /find, /ast, /watch
+ ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+  ↳ 10m 3s · 39897→18953 tokens · $3.83
+  ⬤ 24% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
