@@ -1,0 +1,594 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task step by step. Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 src/prompt.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_auto_retry_prompt… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '75,130p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_tool_error" src/pr… ✓ (3ms)
+  4 tools completed in 9.1s (4 ✓)
+
+Now let me look at where last_tool_error gets set alongside tool names, and where `PromptOutcome` is constructed:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,780p' src/prompt.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '745,800p' src/prompt.rs ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Let me get clearer context around where tool errors are captured:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '750,770p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '750,770p' src/prompt.rs … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=750 && NR<=775' src/pro… ✓ (4ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Let me read this section more carefully:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:750..780 ✓ (1ms)
+
+Good, I can see that tool_name is available in scope where last_tool_error is set. Let me also check where the ToolExecutionEnd event is matched to see the full pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolExecutionEnd" src/p… ✓ (3ms)
+  ▶ read src/prompt.rs:731..736 ✓ (1ms)
+  2 tools completed in 7.6s (2 ✓)
+
+`tool_name` is right there in the destructured event. Now let me look at the variable declarations:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:612..622 ✓ (1ms)
+
+Now let me find all PromptOutcome construction sites:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome {" src/pr… ✓ (3ms)
+
+Let me look at each construction site carefully. Let me check the main ones:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1015,1065p' src/prompt.r… ✓ (4ms)
+
+I see PromptResult not PromptOutcome in the inner function. Let me check that:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptResult" src/promp… ✓ (3ms)
+  ▶ read src/prompt.rs:563..588 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me see where PromptResult::Done is converted to PromptOutcome:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1095..1145 ✓ (1ms)
+  ▶ read src/prompt.rs:1220..1250 ✓ (1ms)
+  ▶ read src/prompt.rs:1249..1299 ✓ (1ms)
+  ▶ read src/prompt.rs:1298..1348 ✓ (1ms)
+  4 tools completed in 8.9s (4 ✓)
+
+Now let me see the other PromptOutcome construction site:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1440..1455 ✓ (1ms)
+
+Now let me check the run_prompt_with_content_and_changes function more fully:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1344..1404 ✓ (1ms)
+
+Now let me check the PromptResult::Done in the internal function:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1018..1028 ✓ (1ms)
+  ▶ read src/prompt.rs:1053..1063 ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now let me check existing tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:2145..2185 ✓ (1ms)
+
+Let me see the existing test module:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/pr… ✓ (3ms)
+  ▶ read src/prompt.rs:1456..1466 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I have a thorough understanding of the codebase. Let me also check if `last_tool_error` is read anywhere outside prompt.rs:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "last_tool_error\|last_… ✓ (6ms)
+
+There are many places that construct `PromptOutcome or read last_tool_error. I need to add last_tool_name` to the struct and update all construction sites. Let me also check main.rs and `agent_builder.rs` constructions:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '760,800p' src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome" src/agen… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1630,1690p' src/agent_bu… ✓ (4ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Good. Now I have a complete picture. Since PromptOutcome derives `Default, adding a new Option<String>` field is safe — it'll default to None. Let me plan the work:
+
+1. Add `last_tool_name: Option<String> to PromptOutcome`
+2. Add last_tool_name: Option<String> to `PromptResult::Done`
+3. Track last_tool_name alongside last_tool_error in handle_prompt_events
+4. Add tool_recovery_hint function
+5. Update `build_auto_retry_prompt` to accept optional tool name
+6. Update call sites
+7. Add tests
+8. Verify all checks pass
+
+Let me start with the tests first (test-first approach), then implement.
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 13.4s (5 ✓)
+
+Let me start with tests first:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/prompt.rs:2147..2177 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I'll write the tests first, then implement the functionality. Let me add all tests at the end of the test module:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (3 → 101 lines)
+            assert!(outcome_no_error.last_api_error.is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_tool_recovery_hint_bash() {
+  +         let hint = tool_recovery_hint("bash");
+  +         assert!(hint.contains("shell command failed"), "bash hint: {hint}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_tool_recovery_hint_edit_file() {
+  +         let hint = tool_recovery_hint("edit_file");
+  +         assert!(
+  +             hint.contains("edit failed"),
+  +             "edit_file hint: {hint}"
+  +         );
+  +         assert!(hint.contains("read_file"), "edit_file hint should suggest read_file: {hint}");
+  +     }
+  + 
+  +     #[test]
+  ... (81 more lines)
+ ✓ (1ms)
+
+Now let's verify the tests don't compile yet (since we haven't added the functions):
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib prompt::tests 2… ✓ (114ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (6.4s)
+  2 tools completed in 10.3s (2 ✓)
+
+Tests fail as expected — `tool_recovery_hint doesn't exist and last_tool_name` field doesn't exist. Now let me implement everything.
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.7s (2 ✓)
+
+**Step 1: Add last_tool_name to PromptOutcome:**
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (9 → 12 lines)
+        /// The last tool error encountered during this prompt turn, if any.
+        /// Tool errors are from `ToolExecutionEnd` events where `is_error` is true.
+        pub last_tool_error: Option<String>,
+  +     /// The name of the tool that produced `last_tool_error`, if any.
+  +     /// Used to provide tool-specific recovery hints in auto-retry prompts.
+  +     pub last_tool_name: Option<String>,
+        /// Whether this prompt triggered an auto-compact due to context overflow.
+        /// Callers can use this to inform users or adjust behavior.
+        pub was_overflow: bool,
+ ✓ (1ms)
+
+**Step 2: Add last_tool_name to PromptResult::Done:**
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:563..578 ✓ (0ms)
+  ▶ edit src/prompt.rs (7 → 8 lines)
+            collected_text: String,
+            usage: Usage,
+            last_tool_error: Option<String>,
+  +         last_tool_name: Option<String>,
+        },
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 14.3s (4 ✓)
+
+**Step 3: Add tool_recovery_hint function and update `build_auto_retry_prompt`:**
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:84..104 ✓ (1ms)
+  ▶ edit src/prompt.rs (14 → 63 lines)
+    /// Build a prompt for automatic retry after a tool error.
+    /// Includes the original input plus context about what went wrong,
+  - /// encouraging the agent to try a different approach.
+  - pub fn build_auto_retry_prompt(original_input: &str, tool_error: &str, attempt: u32) -> String {
+  + /// encouraging the agent to try a different approach. When `tool_name` is
+  + /// provided, the retry prompt names the specific tool and includes a
+  + /// tool-specific recovery hint so the agent can make informed retry decisions.
+  + pub fn build_auto_retry_prompt(
+  +     original_input: &str,
+  +     tool_error: &str,
+  +     tool_name: Option<&str>,
+  +     attempt: u32,
+  + ) -> String {
+        let summary = if tool_error.len() > 300 {
+            format!("{}…", safe_truncate(tool_error, 300))
+        } else {
+            tool_error.to_string()
+        };
+  -     format!(
+  -         "[Auto-retry {attempt}/{MAX_AUTO_RETRIES}: a tool failed with: {summary}. \
+  ... (49 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 19.6s (4 ✓)
+
+**Step 4: Track last_tool_name in handle_prompt_events and update all construction sites.**
+
+First, add the last_tool_name variable alongside last_tool_error:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:663..668 ✓ (1ms)
+  ▶ read src/prompt.rs:667..672 ✓ (1ms)
+  ▶ edit src/prompt.rs (1 → 2 lines)
+        let mut last_tool_error: Option<String> = None;
+  +     let mut last_tool_name: Option<String> = None;
+ ✗ (0ms)
+    │ old_text matches 3 locations in src/prompt.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/prompt.rs (3 → 4 lines)
+        let mut overflow_error: Option<String> = None;
+        let mut last_tool_error: Option<String> = None;
+  +     let mut last_tool_name: Option<String> = None;
+        let mut md_renderer = MarkdownRenderer::new();
+ ✓ (1ms)
+  4 tools completed in 10.4s (3 ✓, 1 ✗)
+
+Now update where last_tool_error is set (the error handling in `ToolExecutionEnd`):
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:801..826 ✓ (1ms)
+  ▶ edit src/prompt.rs (11 → 13 lines)
+                                } else {
+                                    last_tool_error = Some("tool execution failed".to_string());
+                                }
+  +                             last_tool_name = Some(tool_name.clone());
+                            } else {
+                                // Successful tool clears the last error
+                                batch_succeeded += 1;
+                                last_tool_error = None;
+  +                             last_tool_name = None;
+ ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now update all PromptResult::Done construction sites in the event handler:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptResult::Done" src… ✓ (4ms)
+
+Let me look at each one:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1076..1084 ✓ (1ms)
+  ▶ edit src/prompt.rs (5 → 6 lines)
+                        collected_text,
+                        usage,
+                        last_tool_error,
+  +                     last_tool_name,
+                    };
+ ✓ (0ms)
+  ▶ read src/prompt.rs:1113..1121 ✓ (1ms)
+  ▶ edit src/prompt.rs (5 → 6 lines)
+                collected_text,
+                usage,
+                last_tool_error,
+  +             last_tool_name,
+            }
+ ✓ (1ms)
+  4 tools completed in 11.4s (4 ✓)
+
+Now the destructuring sites where PromptResult::Done is matched. Let me look at each:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1163..1178 ✓ (1ms)
+
+I need to check what variables are declared for this function:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let mut last_tool" src/… ✓ (3ms)
+
+I need to add last_tool_name declarations in the other two functions too (lines 1148 and 1415):
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1146..1151 ✓ (0ms)
+  ▶ edit src/prompt.rs (3 → 4 lines)
+        let mut collected_text = String::new();
+        let mut last_tool_error: Option<String> = None;
+  +     let mut last_tool_name: Option<String> = None;
+        let mut did_overflow_compact = false;
+ ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now update the destructuring at this site:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1164..1179 ✓ (1ms)
+  ▶ edit src/prompt.rs (12 → 14 lines)
+                    collected_text: text,
+                    usage,
+                    last_tool_error: tool_err,
+  +                 last_tool_name: tool_nm,
+                } => {
+                    total_usage.input += usage.input;
+                    total_usage.output += usage.output;
+  ···
+                    total_usage.cache_write += usage.cache_write;
+                    collected_text = text;
+                    last_tool_error = tool_err;
+  +                 last_tool_name = tool_nm;
+                    break;
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/prompt.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/prompt.rs (15 → 17 lines)
+                    collected_text: text,
+                    usage,
+                    last_tool_error: tool_err,
+  +                 last_tool_name: tool_nm,
+                } => {
+                    total_usage.input += usage.input;
+                    total_usage.output += usage.output;
+  ···
+                    total_usage.cache_write += usage.cache_write;
+                    collected_text = text;
+                    last_tool_error = tool_err;
+  +                 last_tool_name = tool_nm;
+                    break;
+                }
+                PromptResult::RetriableError { error_msg, usage } => {
+ ✓ (1ms)
+  3 tools completed in 11.9s (2 ✓, 1 ✗)
+
+Now look at the overflow-compact path where PromptResult::Done appears (around line 1233):
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptResult::Done" src… ✓ (3ms)
+  ▶ read src/prompt.rs:1235..1255 ✓ (1ms)
+  ▶ edit src/prompt.rs (13 → 15 lines)
+                            collected_text: text,
+                            usage: retry_usage,
+                            last_tool_error: tool_err,
+  +                         last_tool_name: tool_nm,
+                        } => {
+                            total_usage.input += retry_usage.input;
+                            total_usage.output += retry_usage.output;
+  ···
+                            total_usage.cache_write += retry_usage.cache_write;
+                            collected_text = text;
+                            last_tool_error = tool_err;
+  +                         last_tool_name = tool_nm;
+                        }
+ ✓ (1ms)
+  3 tools completed in 9.6s (3 ✓)
+
+Now update the PromptOutcome construction at the end of `run_prompt_with_changes`:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome {" src/pr… ✓ (3ms)
+  ▶ read src/prompt.rs:1292..1300 ✓ (1ms)
+  ▶ edit src/prompt.rs (6 → 7 lines)
+        PromptOutcome {
+            text: collected_text,
+            last_tool_error,
+  +         last_tool_name,
+            was_overflow: did_overflow_compact,
+            last_api_error: api_error,
+        }
+ ✓ (1ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Now the second PromptOutcome construction (the content-block variant around line 1511):
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1412..1422 ✓ (1ms)
+  ▶ edit src/prompt.rs (2 → 3 lines)
+        let mut collected_text = String::new();
+        let mut last_tool_error: Option<String> = None;
+  +     let mut last_tool_name: Option<String> = None;
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/prompt.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/prompt.rs (5 → 6 lines)
+        let mut total_usage = Usage::default();
+        let mut collected_text = String::new();
+        let mut last_tool_error: Option<String> = None;
+  +     let mut last_tool_name: Option<String> = None;
+        let mut api_error: Option<String> = None;
+        let user_msg = AgentMessage::Llm(Message::User {
+ ✓ (0ms)
+  3 tools completed in 8.9s (2 ✓, 1 ✗)
+
+Now update the destructuring in the content-block handler:
+  ╭─ Turn 81 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1437..1457 ✓ (0ms)
+  ▶ edit src/prompt.rs (14 → 16 lines)
+                    collected_text: text,
+                    usage,
+                    last_tool_error: tool_err,
+  +                 last_tool_name: tool_nm,
+                } => {
+                    total_usage.input += usage.input;
+                    total_usage.output += usage.output;
+  ···
+                    total_usage.cache_write += usage.cache_write;
+                    collected_text = text;
+                    last_tool_error = tool_err;
+  +                 last_tool_name = tool_nm;
+                    break;
+                }
+ ✓ (1ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now update the second PromptOutcome construction site (end of the content-block function):
+  ╭─ Turn 83 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1512..1522 ✓ (1ms)
+  ▶ edit src/prompt.rs (7 → 8 lines)
+        PromptOutcome {
+            text: collected_text,
+            last_tool_error,
+  +         last_tool_name,
+            was_overflow: false,
+            last_api_error: api_error,
+        }
+ ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now I need to update all PromptOutcome constructions in other files. Let me update them with `last_tool_name: None`:
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome {" src/ma… ✓ (3ms)
+  ▶ read src/main.rs:761..771 ✓ (1ms)
+  2 tools completed in 48.9s (2 ✓)
+  ⚡ retrying (attempt 2/6, waiting 0s)...
+
+
+
+I need to continue from where I left off. Let me check the current state of my changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+
+Good, I have changes in progress. Let me see what's done and what still needs updating.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -30 ✓ (2.3s)
+
+Two remaining call sites for build_auto_retry_prompt need the new tool_name parameter. Plus I need to update PromptOutcome constructions in other files. Let me fix all of these.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_auto_retry_prompt… ✓ (3ms)
+  ▶ read src/prompt.rs:1325..1340 ✓ (1ms)
+  ▶ edit src/prompt.rs (7 → 12 lines)
+  -                 let retry_prompt = build_auto_retry_prompt(input, err, attempt);
+  +                 let retry_prompt = build_auto_retry_prompt(
+  +                     input,
+  +                     err,
+  +                     outcome.last_tool_name.as_deref(),
+  +                     attempt,
+  +                 );
+                    eprintln!(
+                        "{DIM}  ⚡ auto-retrying after tool error (attempt {attempt}/{MAX_AUTO_RETRIES})...{RESET}"
+                    );
+ ✓ (1ms)
+  3 tools completed in 30.7s (3 ✓)
+
+Now the second call site:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_auto_retry_prompt… ✓ (3ms)
+  ▶ read src/prompt.rs:1392..1402 ✓ (1ms)
+  ▶ edit src/prompt.rs (3 → 8 lines)
+                    // Retry with a text-only follow-up — the original content blocks
+                    // (files, images) are already in conversation history from the first attempt
+  -                 let retry_prompt = build_auto_retry_prompt(original_text, err, attempt);
+  +                 let retry_prompt = build_auto_retry_prompt(
+  +                     original_text,
+  +                     err,
+  +                     outcome.last_tool_name.as_deref(),
+  +                     attempt,
+  +                 );
+ ✓ (1ms)
+  3 tools completed in 12.5s (3 ✓)
+
+Now update all PromptOutcome constructions in other files — they need last_tool_name: None:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome {" src/ma… ✓ (3ms)
+  ▶ read src/main.rs:761..769 ✓ (0ms)
+  ▶ edit src/main.rs (6 → 7 lines)
+            let response = PromptOutcome {
+                text: "Hello, world!".to_string(),
+                last_tool_error: None,
+  +             last_tool_name: None,
+                was_overflow: false,
+                last_api_error: None,
+            };
+ ✓ (0ms)
+  ▶ read src/main.rs:793..801 ✓ (0ms)
+  ▶ edit src/main.rs (6 → 7 lines)
+            let response = PromptOutcome {
+                text: "Something went wrong".to_string(),
+                last_tool_error: None,
+  +             last_tool_name: None,
+                was_overflow: false,
+                last_api_error: Some("API error".to_string()),
+            };
+ ✓ (0ms)
+  5 tools completed in 14.6s (5 ✓)
+
+Now the agent_builder.rs ones:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1636..1644 ✓ (0ms)
+  ▶ edit src/agent_builder.rs (6 → 7 lines)
+            let response = PromptOutcome {
+                text: "success".to_string(),
+                last_tool_error: None,
+  +             last_tool_name: None,
+                was_overflow: false,
+                last_api_error: None,
+            };
+ ✓ (1ms)
+  ▶ read src/agent_builder.rs:1656..1664 ✓ (0ms)
+  ▶ edit src/agent_builder.rs (6 → 7 lines)
+                text: String::new(),
+                last_tool_error: None,
+  +             last_tool_name: None,
+                was_overflow: false,
+                last_api_error: Some("503 Service Unavailable".to_string()),
+            };
+ ✓ (1ms)
+  ▶ read src/agent_builder.rs:1678..1688 ✓ (0ms)
+  ▶ edit src/agent_builder.rs (6 → 7 lines)
+            let response = PromptOutcome {
+                text: String::new(),
+                last_tool_error: None,
+  +             last_tool_name: None,
+                was_overflow: false,
+                last_api_error: Some("529 Overloaded".to_string()),
+            };
+ ✓ (1ms)
+  6 tools completed in 23.3s (6 ✓)
+
+Now there are also PromptOutcome constructions in the prompt.rs tests that were already there. Let me update the existing test:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome {" src/pr… ✓ (3ms)
+
+Lines 2233 and 2244 are the existing test. Let me check them:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:2230..2250 ✓ (0ms)
+  ▶ edit src/prompt.rs (19 → 21 lines)
+            let outcome = PromptOutcome {
+                text: String::new(),
+                last_tool_error: None,
+  +             last_tool_name: None,
+                was_overflow: false,
+                last_api_error: Some("503 Service Unavailable".to_string()),
+            };
+  ···
+            let outcome_no_error = PromptOutcome {
+                text: "hello".to_string(),
+                last_tool_error: None,
+  +             last_tool_name: None,
+                was_overflow: false,
+                last_api_error: None,
+            };
+ ✓ (1ms)
+  2 tools completed in 8.2s (2 ✓)
+
+Now let me also check if WatchResult in watch.rs has similar constructions I missed (it's a different struct, not PromptOutcome):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (5.1s)
+
+Build passes! Now let me run the tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (27.2s)
+
+All 88 tests pass. Let me run clippy and fmt:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.7s)
+
+All checks pass. Let me verify the full pipeline once more to be sure:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (34.2s)
+
+All green. Let me review what I've changed to make sure it's complete and correct:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+
+Let me quickly verify all the acceptance criteria are met:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== 1. PromptOutcome has l… ✓ (9ms)
+
+All acceptance criteria met. Now let me commit:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (15ms)
+
+Committed! The auto-retry system now gives the agent actionable intelligence when a tool fails — instead of the vague "a tool failed, try something different," it names the specific tool and offers recovery strategies tuned to each tool's failure modes. An edit_file failure gets "use read_file to see current contents," a `read_file` failure gets "use list_files to verify the path" — small courtesies that compound into better self-correction.
+
+  ↳ 10m 6s · 40922→18156 tokens · $3.98
+  ⬤ 24% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

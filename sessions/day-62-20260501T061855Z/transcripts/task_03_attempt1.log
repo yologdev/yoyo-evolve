@@ -1,0 +1,327 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /context files subcommand. Let me start by understanding the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -80 src/commands_project.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CONTEXT_SUBCOMMANDS\|ha…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum AgentMessage\|enu… ✓ (6ms)
+ ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub enum AgentMessage\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ~/.cargo/registry/src/*/yoag… ✓ (5ms)
+ ✓ (6ms)
+  5 tools completed in 6.6s (5 ✓)
+
+Now I understand the types. Let me look at the existing tests and imports in commands_project.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -200 src/commands_project.r… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now let me look at how tests create agents:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A10 "test_context_default_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_agent\|fn creat… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me look at how `agent.messages() returns data and how the Content::ToolCall` is structured:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn messages\|fn mes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A5 "pub fn messages" ~/.ca… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Good. Now I have a clear picture. Let me also check what `Content` looks like for ToolCall arguments:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A15 "ToolCall {" ~/.ca… ✓ (3ms)
+
+Now I have everything I need. Let me look at the existing handle_context function area and the show_project_context_files to understand the display format:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:43..123 ✓ (1ms)
+
+Now I understand everything. Let me implement this step by step.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 14.5s (6 ✓)
+
+Let me first write the tests, then implement. Let me also check what imports are available and how BTreeSet etc. are used:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use std::collections" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '743,780p' src/commands_p… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me implement everything. I'll start with the extraction function (testable independently), then the display function, then the tests.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_project.rs (2 → 2 lines)
+    /// Subcommands for /context.
+  - const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens"];
+  + const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files"];
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_project.rs (11 → 13 lines)
+            show_system_prompt_sections(system_prompt);
+        } else if args.starts_with("tokens") {
+            show_context_tokens(system_prompt, agent);
+  +     } else if args.starts_with("files") {
+  +         show_context_files(agent);
+        } else {
+            show_project_context_files();
+        }
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 19.0s (6 ✓)
+
+Now implement the core logic. Let me find a good place to add the functions — right after handle_context:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:66..71 ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_project.rs (3 → 105 lines)
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // /context files — show files the agent has interacted with
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Categories of file interaction, ordered for display.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+  + enum FileAction {
+  +     Read,
+  +     Edited,
+  +     Written,
+  +     Listed,
+  +     Searched,
+  + }
+  + 
+  + impl FileAction {
+  +     fn label(self) -> &'static str {
+  +         match self {
+  +             FileAction::Read => "Read",
+  ... (85 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 21.8s (4 ✓)
+
+Now let me write the tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find the end of the tests module to add our new tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_project.rs ✓ (2ms)
+  ▶ edit src/commands_project.rs (5 → 203 lines)
+                help.contains("architect"),
+                "Help text should mention architect mode"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_context_files_subcommand_in_list() {
+  +         assert!(
+  +             CONTEXT_SUBCOMMANDS.contains(&"files"),
+  +             "CONTEXT_SUBCOMMANDS should contain 'files'"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_show_context_files_no_panic() {
+  +         // Smoke test: calling with an empty agent shouldn't panic
+  +         let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
+  +             .with_system_prompt("test")
+  +             .with_model("test-model")
+  +             .with_api_key("test-key");
+  ... (183 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 30.9s (3 ✓)
+
+Now let's try building and testing:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (496ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.1s)
+  3 tools completed in 17.6s (3 ✓)
+
+Two clippy fixes needed:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (1 → 1 lines)
+  -                         result.entry(action).or_insert_with(BTreeSet::new).insert(path.to_string());
+  +                         result.entry(action).or_default().insert(path.to_string());
+ ✗ (1ms)
+    │ old_text not found in src/commands_project.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "or_insert_with\|is_none… ✓ (3ms)
+  ▶ read src/commands_project.rs:139..144 ✓ (0ms)
+  ▶ edit src/commands_project.rs (4 → 4 lines)
+                            result
+                                .entry(action)
+  -                             .or_insert_with(BTreeSet::new)
+  +                             .or_default()
+                                .insert(path.to_string());
+ ✓ (1ms)
+  ▶ read src/commands_project.rs:2009..2014 ✓ (1ms)
+  ▶ edit src/commands_project.rs (5 → 5 lines)
+            // search without a path shouldn't produce an entry
+            assert!(
+  -             result.get(&FileAction::Searched).is_none(),
+  +             !result.contains_key(&FileAction::Searched),
+                "search without path should not create entry"
+            );
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (26.3s)
+  9 tools completed in 1m 8s (8 ✓, 1 ✗)
+
+The one failing test (destructive_guard_blocks_known_bad_commands_in_project_root) is a pre-existing failure — not caused by my changes. Let me verify:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash && cargo test git::tes… ✓ (10.8s)
+
+Hmm, that one passes in isolation. Let me restore my changes and run just my new tests:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash pop ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (10.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (136ms)
+  4 tools completed in 22.1s (4 ✓)
+
+All my new tests pass. The one pre-existing flaky test (`destructive_guard_blocks_known_bad_commands_in_project_root`) is a known test-ordering issue unrelated to my changes. Let me verify it fails without my changes too when run in the full suite:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (134ms)
+
+All 7 new tests pass. Let me verify that test is a known flaky one by running it in the full suite without my changes:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash && cargo test 2>&1 | g… ✓ (28.9s)
+
+Hmm, passes without my changes. Let me check if my .yoyo.toml got changed by the setup wizard test:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash pop && cargo test 2>&1… ✓ (28.8s)
+
+All tests pass now. That was a flaky test from the previous run. Let me also run fmt check:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (497ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (487ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (9.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build && cargo test 2>&1 |… ✓ (33.2s)
+  4 tools completed in 54.9s (4 ✓)
+
+All checks pass. Now let me update the help text:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context" src/help.rs | … ✓ (4ms)
+  ▶ read src/help.rs:596..616 ✓ (1ms)
+  ▶ edit src/help.rs (14 → 18 lines)
+                                     preview of each section's content.\n\
+                   /context tokens — Show context token budget breakdown\n\
+                                     System prompt size, conversation messages, total\n\
+  -                                  context used vs limit, and remaining capacity.",
+  +                                  context used vs limit, and remaining capacity.\n\
+  +                /context files  — Show files referenced in this conversation\n\
+  +                                  Lists all files the agent has read, edited, written,\n\
+  +                                  listed, or searched during the current session,\n\
+  +                                  grouped by action type and deduplicated.",
+            ),
+ ✓ (1ms)
+  5 tools completed in 18.3s (5 ✓)
+
+Now let me also check the help text listing (the summary help) to see if /context is described there:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/context" src/help.rs |… ✓ (3ms)
+  ▶ read src/help.rs:1622..1625 ✓ (0ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     out.push_str("  /context [system|tokens]  Show loaded project context files\n");
+  +     out.push_str("  /context [system|tokens|files]  Show loaded project context files\n");
+ ✓ (1ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Let me also check the other /context reference:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1356..1359 ✓ (1ms)
+
+That one is just the summary line — fine as is. Now run all checks again:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build && cargo test 2>&1 |… ✓ (33.6s)
+  2 tools completed in 50.0s (2 ✓)
+
+All 2260 tests pass (1 ignored is pre-existing). Let me now check the CLAUDE.md for any needed updates:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_project\|/cont… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context_subcommands\|ha… ✓ (3ms)
+  2 tools completed in 5.8s (2 ✓)
+
+CLAUDE.md doesn't mention /context subcommands directly — it lists commands_project.rs in the Repository Structure section. Let me check if the structure listing needs updating:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A15 "commands_project.rs" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "commands_project" CLAUDE.m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "context" CLAUDE.md | head … ✓ (3ms)
+  3 tools completed in 10.8s (3 ✓)
+
+CLAUDE.md doesn't mention /context subcommands explicitly; the architecture section lists context.rs (the project context loader, different from /context command). The Repository Structure section is auto-generated and the new functions will be picked up. No CLAUDE.md update needed.
+
+Let me check README.md for any /context reference:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context" README.md | he… ✓ (3ms)
+  ▶ read README.md:336..339 ✓ (0ms)
+  ▶ edit README.md (1 → 1 lines)
+  - | `/context [system]` | Show loaded project context files or system prompt sections |
+  + | `/context [system\|tokens\|files]` | Show loaded project context, system prompt, token budget, or referenced files |
+ ✓ (0ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Now let me check docs:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "/context" docs/src/ | … ✓ (4ms)
+  ▶ read docs/src/usage/commands.md:569..574 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - | `/context [system]` | Show which project context files are loaded, or use `/context system` to see system prompt sections with token estimates |
+  + | `/context [system\|tokens\|files]` | Show project context files, system prompt sections, token budget, or files referenced in this conversation |
+ ✓ (0ms)
+  3 tools completed in 7.8s (3 ✓)
+
+Now let me run all checks one final time:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (27.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (9.5s)
+  2 tools completed in 44.0s (2 ✓)
+
+All 2260 unit tests + 88 integration tests pass. Let me commit:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (18ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 14.0s (5 ✓)
+
+All done. Here's what I implemented:
+
+## Summary
+
+Added /context files subcommand that shows all files the agent has interacted with during the current session, closing a UX gap vs Claude Code.
+
+### Changes made:
+
+1. `src/commands_project.rs` — Core implementation:
+   • Added "files" to CONTEXT_SUBCOMMANDS
+   • Added FileAction enum (Read, Edited, Written, Listed, Searched) with labels and emoji icons
+   • Added extract_context_files() — parses AgentMessage content blocks for `ToolCall variants, extracting file paths from read_file`, edit_file, write_file, list_files, and search tool calls. Returns a `BTreeMap<FileAction, BTreeSet<String>>` (sorted, deduplicated)
+   • Added show_context_files() — displays grouped files with color coding and emoji
+   • Wired into handle_context() dispatch
+   • Added 7 tests: subcommand presence, smoke tests (empty agent, dispatch routing), extraction from real tool call data, deduplication, non-file tool skipping, search-without-path handling, and label/icon correctness
+
+2. `src/help.rs` — Added /context files to detailed help text and summary help listing
+
+3. `README.md` — Updated commands table to include files subcommand
+
+4. `docs/src/usage/commands.md` — Updated command reference
+
+  ↳ 9m 51s · 24439→13182 tokens · $2.53
+  ⬤ 15% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

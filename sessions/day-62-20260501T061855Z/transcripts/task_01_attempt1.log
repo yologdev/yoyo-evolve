@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll create the multi-source research synthesis skill. Let me start by understanding the existing patterns.
+  ▶ read skills/analyze-trajectory/SKILL.md  ▶ read skills/research/SKILL.md ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me look at the explore-codebase skill for another RLM pattern example:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read skills/explore-codebase/SKILL.md ✓ (1ms)
+
+Good. Now I have a clear picture of the patterns. Let me also check issue #353 briefly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ ls skills/synthesis/ 2>/dev/null || echo "Directory doesn't exist yet" ✓ (5ms)
+
+Now let me create the skill:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write skills/synthesis/SKILL.md (238 lines) ✓ (0ms)
+
+Now let me verify the build and tests still pass:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | head…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (504ms)
+ ✓ (9.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (262ms)
+ ✓ (17.3s)
+  4 tools completed in 36.6s (4 ✓)
+
+All checks pass. Let me verify the skill file meets all acceptance criteria:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 skills/synthesis/SKILL.… ✓ (3ms)
+
+Let me verify each acceptance criterion:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== Ch… (9 lines) ✓ (13ms)
+
+All acceptance criteria pass. Now let me commit:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (19 lines) ✓ (11ms)
+
+Done. Created skills/synthesis/SKILL.md — a new `origin: yoyo skill that handles multi-source research synthesis using the RLM substrate. It complements the existing research` skill (which remains untouched) by handling the cases where 3+ sources or large sources (>5KB) make direct reading impractical.
+
+The skill documents:
+• **Trigger conditions**: 3+ sources, any source >5KB, cross-referencing needed
+• Full procedure: fetch → store in SharedState → dispatch per-source sub-agents → collect JSON summaries → dispatch synthesis sub-agent → compose answer
+• **JSON contract**: `{key_claims, key_quotes, relevance, confidence, source_type, deeper_question} for extraction; {answer, consensus, disagreements, gaps, confidence, source_count}` for synthesis
+• **Chunking**: sources >30KB split at ~25KB paragraph boundaries
+• Fallback: malformed JSON → partial summary; empty/errored → direct `curl | head` with low-confidence result
+• Depth cap: 3 (matching analyze-trajectory's pattern)
+• Relationship table: clear routing between research and synthesis based on source count and size
+
+  ↳ 2m 39s · 15420→5033 tokens · $0.607
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
