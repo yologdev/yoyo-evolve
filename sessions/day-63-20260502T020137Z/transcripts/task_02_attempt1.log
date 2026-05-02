@@ -1,0 +1,225 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of the ast-grep code in commands_search.rs and how it's dispatched.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ast_grep\|ast-grep\|AST…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ast_grep\|handle_ast" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search\|ast_gr… ✓ (7ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  3 tools completed in 2.0s (3 ✓)
+
+Now let me look at the exact code blocks I need to extract:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_search.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|^pub use " src/c… ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/commands_search.rs:870..1010 ✓ (1ms)
+  3 tools completed in 4.2s (3 ✓)
+
+Now let me see the tests related to ast-grep:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1550..1710 ✓ (2ms)
+
+Now let me also check how commands_search is used by other modules, and if there are also ast-grep symbols referenced from `commands_map.rs`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_search\|ast_g… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_search\|ast_g… ✓ (8ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Let me see the exact re-exports in commands.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:468..483 ✓ (1ms)
+
+Now I have a clear picture. Let me also check the dispatch_sub.rs references more carefully:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ast" src/dispatch_sub.r… ✓ (3ms)
+
+Good — dispatch_sub.rs doesn't reference ast-grep directly. And let me check commands.rs for the AST_GREP_FLAGS reference:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:258..263 ✓ (0ms)
+
+Now I have everything I need. Let me also check if commands_map.rs uses `is_ast_grep_available` and other functions from there:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_ast_grep_available\|… ✓ (3ms)
+
+So commands_map.rs imports is_ast_grep_available from commands_search. After the extraction, I'll need to either:
+1. Re-export is_ast_grep_available from commands_search (via commands_ast_grep), or
+2. Update commands_map.rs to import from `commands_ast_grep` directly.
+
+Option 1 is cleaner — re-export from commands_search for backward compatibility. Let me now create the new file and make all edits:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1..11 ✓ (1ms)
+
+Now let me create the new commands_ast_grep.rs file:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write src/commands_ast_grep.rs (274 lines) ✓ (0ms)
+
+Now let me remove the ast-grep code from commands_search.rs. First, let me see the exact lines around the boundaries:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:865..875 ✓ (1ms)
+  ▶ read src/commands_search.rs:1003..1013 ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now remove the ast-grep function block from commands_search.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:868..873 ✓ (1ms)
+
+Let me check what's on line 871:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '869,873p' src/commands_s… ✓ (3ms)
+
+That's a decorative Unicode comment. Let me grab the exact text to remove using sed:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '871p' src/commands_searc… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '871p' src/commands_searc… ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+I'll use line-number based removal. Let me find the exact lines to remove — from line 870 (empty line after `handle_grep`) through line 1005 (end of handle_ast_grep):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1005,1010p' src/commands… ✓ (3ms)
+
+Good. Lines 870 through 1005 need to be removed. Let me also check what the first line (1) looks like and update the module doc:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '870,1005d' src/commands_… ✓ (3ms)
+
+Now update the module doc comment:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (1 → 2 lines)
+  - //! Search & navigation command handlers: /find, /grep, /index, /ast, /outline.
+  + //! Search & navigation command handlers: /find, /grep, /index, /outline.
+  + //! Ast-grep (/ast) lives in `commands_ast_grep.rs`.
+ ✓ (1ms)
+
+Now remove the ast-grep tests from commands_search.rs. Let me find them:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ast_grep\|ast-grep\|AST… ✓ (3ms)
+
+Now I need to remove these test functions. Let me find the exact blocks:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1420..1560 ✓ (1ms)
+
+I need to remove lines 1422-1550 (all the ast-grep tests). Let me look at the boundary:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1416..1421 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1420,1550d' src/commands… ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now I need to check if commands_search.rs still compiles — it may still reference is_ast_grep_available, etc. from super::*. Since we removed them, there should be no references. Let me verify:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ast_grep\|AST_GREP\|han… ✓ (3ms)
+
+Clean. Now update main.rs to add the new module:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:53..63 ✓ (0ms)
+  ▶ edit src/main.rs (1 → 2 lines)
+  + mod commands_ast_grep;
+    mod commands_refactor;
+ ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now update commands.rs to re-export `handle_ast_grep` from the new module:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (3 → 4 lines)
+  + pub use crate::commands_ast_grep::{handle_ast_grep, AST_GREP_FLAGS};
+    pub use crate::commands_search::{
+  -     handle_ast_grep, handle_find, handle_grep, handle_index, handle_outline,
+  +     handle_find, handle_grep, handle_index, handle_outline,
+    };
+ ✓ (0ms)
+
+Now update the command_arg_completions reference in commands.rs:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "/ast" => filter_candidates(crate::commands_search::AST_GREP_FLAGS, &partial_lower),
+  +         "/ast" => filter_candidates(crate::commands_ast_grep::AST_GREP_FLAGS, &partial_lower),
+ ✓ (0ms)
+
+Now update `commands_map.rs to import is_ast_grep_available` from the new module:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (1 → 2 lines)
+  - use crate::commands_search::{is_ast_grep_available, is_binary_extension, list_project_files};
+  + use crate::commands_ast_grep::is_ast_grep_available;
+  + use crate::commands_search::{is_binary_extension, list_project_files};
+ ✓ (0ms)
+
+Now let's try building:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.1s)
+
+The AST_GREP_FLAGS re-export is unused from commands.rs because the completion code uses the direct path. Let me remove it from the re-export line:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_ast_grep::{handle_ast_grep, AST_GREP_FLAGS};
+  + pub use crate::commands_ast_grep::handle_ast_grep;
+ ✓ (1ms)
+
+Now let me run the full check suite:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.0s)
+  3 tools completed in 50.7s (3 ✓)
+
+All 2385 tests pass (2297 + 88, with 2 ignored). Let me verify the line counts:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_search.rs src… ✓ (2ms)
+
+`commands_search.rs` went from 2,202 lines down to 1,935, and the new commands_ast_grep.rs is 274 lines. Now let me update the CLAUDE.md docs to reflect the new file:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search\|comman… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search\|comman… ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+CLAUDE.md doesn't mention the specific file. Let me check in the Project Files and Repository Structure sections:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search" CLAUDE… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search" README… ✓ (3ms)
+  2 tools completed in 7.6s (2 ✓)
+
+Neither CLAUDE.md nor README.md mentions commands_search.rs by name in their text sections. The Project Files and Repository Structure sections at the bottom of CLAUDE.md are auto-generated at session start, so no manual update needed.
+
+Let me also verify there are no broken references by running one more full check:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (489ms)
+
+Everything is clean. Let me commit:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (18ms)
+
+There seem to be other uncommitted changes from previous tasks. Let me see what the actual diff for my changes is vs what was already staged:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (5ms)
+
+There are prior uncommitted changes from earlier tasks. I should only commit the files I touched. Let me unstage everything and restage only my changes:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git reset HEAD -- CLAUDE_CODE_GA… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached --stat ✓ (9ms)
+  2 tools completed in 4.6s (2 ✓)
+
+That's exactly my changes. Let me commit:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (7 lines) ✓ (10ms)
+
+Clean extraction. Here's what happened:
+
+Created src/commands_ast_grep.rs (274 lines) containing:
+• `AST_GREP_FLAGS` constant
+• is_ast_grep_available() — checks for sg binary
+• run_ast_grep_search() — runs structural search
+• parse_ast_grep_args() — parses /ast command arguments  
+• handle_ast_grep() — REPL command handler
+• All 14 ast-grep tests, moved from commands_search.rs
+
+**Modified:**
+• src/commands_search.rs — removed ast-grep code (2,202 → 1,935 lines), updated module doc
+• src/commands.rs — re-export handle_ast_grep from new module, updated AST_GREP_FLAGS path
+• `src/commands_map.rs — import is_ast_grep_available` from new module
+• src/main.rs — added mod commands_ast_grep
+
+All 2,385 tests pass. No logic changes — purely mechanical extraction.
+
+  ↳ 4m 26s · 22868→9144 tokens · $1.53
+  ⬤ 12% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

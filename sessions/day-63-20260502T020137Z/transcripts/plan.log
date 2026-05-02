@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and checking the current state, then create a focused plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -100 ✓ (4ms)
+ ✓ (7ms)
+ ✓ (5ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | grep -E "^## Priority Queue|❌|🟡" | head -40  ▶ $ cat journals/JOURNAL.md | head -80📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (5ms)
+ ✓ (7ms)
+ ✓ (18ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md | grep -A 30 "## Priority Queue"  ▶ $ git tag --sort=-v:refname | head -5  ▶ $ cat CHANGELOG.md | head -50 ✓ (4ms)
+ ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Check what's shipped since last release (0.1.9, Day 60/Apr… (4 lines)  ▶ $ # Check the release tag situation — find the actual release … (5 lines) ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ # What's shipped since 0.1.9 was tagged (Day 60)? Count comm… (4 lines)  ▶ $ # Check the pending issues file more carefully, and recently… (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # What's shipped since Day 60 (the 0.1.9 release) (5 lines) ✓ (10ms)
+  14 tools completed in 26.9s (14 ✓)
+
+Now let me look at the assessment's most impactful gaps and figure out what to build. The assessment highlights:
+
+1. **Auto-inject repo map into agent prompts** — like Aider, this is table stakes
+2. Auto lint/test after every edit — make watch mode automatic, not opt-in  
+3. The trajectory is clean (9/10 sessions successful), no CI failures to fix
+
+Let me check the current repo map and watch mode infrastructure:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how repo map generation works and how it could be au… (5 lines)  ▶ $ # Check auto-watch infrastructure (5 lines) ✓ (9ms)
+ ✓ (9ms)
+  ▶ $ # Check how the repo map is generated - see the function sig… (2 lines)  ▶ $ # Check how context is currently built for the agent (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check how system prompt is assembled - does it include pro… (2 lines)  ▶ $ # Check how context.rs loads project context (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # See how the system prompt is assembled - the key part wher… (2 lines) ✓ (3ms)
+  7 tools completed in 15.6s (7 ✓)
+
+Interesting — the repo map is already being auto-injected into the system prompt! The assessment said it wasn't, but looking at the actual code (line 794-798 of cli.rs), generate_repo_map_for_prompt() is called and appended. Let me verify this was recent:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline --all -n 5 -- src/cli.rs | head -5 (2 lines) ✓ (7ms)
+
+Good — repo map is already auto-injected. The assessment's gap #1 ("Auto-inject repo map into agent prompts") is already closed. Let me check auto-watch too:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if watch is auto-enabled when auto_watch config is t… (2 lines) ✓ (3ms)
+
+OK! Auto-watch is already implemented too — it auto-detects and enables watch commands when auto_watch is true (which defaults to true). So assessment gaps #1 and #2 are already closed.
+
+Now let me think about what the real highest-impact work is. Let me look at what features since Day 60 would warrant a release, and what competitive gaps remain:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the failed test in CI trajectory (4 lines)  ▶ $ # How many features since last release? There are substantia… (5 lines) ✓ (3ms)
+ ✓ (9.4s)
+  ▶ $ # Check what /review does - is it interactive-only? (2 lines)  ▶ $ # Check what features have accumulated since 0.1.9 (16 lines) ✓ (4ms)
+ ✓ (3ms)
+  4 tools completed in 19.3s (4 ✓)
+
+Now I have a clear picture. Let me create the plan:
+
+**Assessment of what to build:**
+
+1. Non-interactive code review mode — The biggest actionable competitive gap. Claude Code has `/ultrareview, Cursor has BugBot. yoyo has /review` but it's interactive (requires a running REPL session). A `yoyo review` CLI subcommand that works non-interactively (outputs structured review to stdout) would make yoyo usable in CI pipelines. This is a high-impact self-driven task.
+
+2. **Auto-enable watch after every prompt** — While auto_watch detects the command at startup, the actual watch-after-prompt loop needs to run automatically after agent turns. Let me check if this is already happening:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if watch runs after each prompt automatically (2 lines) ✓ (3ms)
+
+Good — watch already runs after prompts in the REPL. So auto-watch is already fully working. Let me focus on the real gaps.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how dispatch_sub.rs handles the review subcommand cu… (2 lines)  ▶ $ # Check the streaming bash improvements - what the on_progre… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now I have a solid picture. Let me plan three high-impact tasks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (39 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (39 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (54 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (18 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 52.4s (6 ✓)
+
+Plan committed. Here's the Day 63 session summary:
+
+## Day 63 Plan — Three Tasks
+
+Task 1: Non-interactive code review CLI subcommand (self-driven, competitive gap)
+yoyo review as a non-interactive command that outputs structured code review to stdout and exits — usable in CI pipelines, git hooks, and automation. This is the #3 competitive gap (Claude Code has /ultrareview, Cursor has BugBot). Touches dispatch_sub.rs and commands_git_review.rs.
+
+**Task 2: Extract ast-grep from commands_search.rs** (consolidation)
+Pull /ast command handling (~300 lines) into its own commands_ast_grep.rs, reducing the 2,202-line `commands_search.rs. Mechanical extraction, no logic changes. Touches commands_search.rs, new commands_ast_grep.rs`, and dispatch.rs.
+
+Task 3: Prepare 0.1.10 release (release)
+Version bump and CHANGELOG for the 6 sessions since 0.1.9 — real-time streaming, `/context files`, tool recovery hints, synthesis/explore-codebase/x-research skills, remote skill install, and this session's additions. Touches Cargo.toml and CHANGELOG.md.
+
+Issue responses: #156 (benchmarks) deferred — needs external hardware, nothing new to add. All other open issues deferred as tracking/proposal items.
+
+  ↳ 2m 58s · 20038→6377 tokens · $1.11
+  ⬤ 16% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

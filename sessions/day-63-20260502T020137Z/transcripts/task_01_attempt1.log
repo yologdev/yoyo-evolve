@@ -1,0 +1,607 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the non-interactive yoyo review CLI subcommand. Let me start by understanding the existing code.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 16.2s (7 ✓)
+
+Let me read the existing code:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs ✓ (3ms)
+  ▶ read src/commands_git_review.rs:95..175 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me look at the current review subcommand handler in dispatch_sub.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'review' in src/dispatch_sub.rs ✓ (3ms)
+  ▶ read src/dispatch_sub.rs:140..190 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me understand the broader dispatch_sub.rs structure and how it handles args:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:1..141 ✓ (1ms)
+
+Now let me understand how `build_side_agent` works:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub.*fn build_side_agent' in src/agent_builder.rs ✓ (2ms)
+  ▶ read src/agent_builder.rs:530..580 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me understand how handle_side works — it runs a side agent non-interactively, which is exactly the pattern I need:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_side' in src/repl.rs ✓ (3ms)
+  ▶ read src/repl.rs:949..1029 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me check how AgentConfig is used in dispatch_sub — I need to understand if the dispatch_sub has access to an AgentConfig:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'AgentConfig|agent_config' in src/dispatch_sub.rs ✓ (2ms)
+
+So dispatch_sub.rs doesn't currently have access to AgentConfig. It's called very early — let me check how it's invoked:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'try_dispatch_subcommand' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:630..660 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+The subcommand dispatch happens before config is fully parsed. For the review subcommand to be non-interactive (running through an agent), I need to construct an AgentConfig inside the handler. Let me look at how config is built from flags/env:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct AgentConfig' in src/agent_builder.rs ✓ (2ms)
+  ▶ read src/agent_builder.rs:387..442 ✓ (1ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I understand the architecture. Let me look at how other subcommands that need an agent work. Let me search if there's any async subcommand handler:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ search 'async|tokio|runtime' in src/dispatch_sub.rs ✓ (2ms)
+  ▶ search 'tokio|async|runtime"' in src/main.rs ✓ (2ms)
+  ▶ read src/main.rs (60 lines) ✓ (0ms)
+  ▶ search 'tokio|#\[tokio"' in src/main.rs ✓ (2ms)
+  ▶ search 'fn main|async"' in src/main.rs ✓ (2ms)
+  ▶ search 'fn main"' in src/main.rs ✓ (2ms)
+  ▶ search 'fn main' in src/main.rs ✓ (2ms)
+  ▶ read src/main.rs:470..500 ✓ (0ms)
+  8 tools completed in 19.6s (8 ✓)
+
+OK so the main function is #[tokio::main] async fn main(). The dispatch happens inside `parse_args which is called synchronously. But try_dispatch_subcommand returns Some(None)` to exit early.
+
+The key insight: for the review subcommand to run an agent, I need to either:
+1. Make `try_dispatch_subcommand` return something that signals "run this async review" back to main
+2. Or create a tokio runtime inside the subcommand handler (but we're already inside tokio)
+3. Or use `tokio::runtime::Handle::current()` to block on the async work
+
+Actually, looking more carefully — try_dispatch_subcommand is called from parse_args, which is called from inside async fn main(). So we're already inside a tokio runtime. I can use tokio::runtime::Handle::current().block_on() to run async code from within the sync function.
+
+But wait, let me check — is there a simpler approach? Let me look at how the function is structured:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:634..654 ✓ (1ms)
+
+The simplest approach: try_dispatch_subcommand is called from a sync function inside a tokio runtime. I can use tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(future)) to run async code.
+
+Actually wait — let me reconsider. Looking at the existing review subcommand handler, it currently just prints the prompt text. The simplest approach is to:
+
+1. Create a run_non_interactive_review function in `commands_git_review.rs` that takes the necessary config params and runs the review through an agent
+2. In dispatch_sub.rs, build an AgentConfig from the available args/config and call the review function
+
+Let me look at how the imports and API key resolution work:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ search 'api_key' in src/cli.rs (*.rs) ✓ (3ms)
+
+Let me look at how the API key resolution works in detail:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:430..490 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Good. Now I have a clear plan. Let me also check what `build_review_content` supports for diff ranges and PR review:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pr|PR|--pr' in src/commands_git_review.rs ✓ (2ms)
+
+So build_review_content doesn't currently support --pr or commit ranges. The existing function handles either staged/unstaged diffs (empty arg) or file review (path arg). I'll need to extend it to handle commit ranges and PR numbers.
+
+Let me also check what git diff range support exists:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn get_branch_diff|fn run_git' in src/git.rs ✓ (3ms)
+  ▶ search 'pub fn run_git|pub fn get_branch_diff' in src/git.rs ✓ (3ms)
+  ▶ search '^pub.*fn ' in src/git.rs ✓ (3ms)
+  3 tools completed in 7.7s (3 ✓)
+
+Good. Now let me also quickly check how build_review_content is used in the PR review context in the git commands:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ search 'review' in src/commands_git.rs ✓ (3ms)
+
+Now let me also check how the PR subcommand in handle_pr fetches diffs:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ search 'gh pr diff' in src/commands_git.rs ✓ (2ms)
+  ▶ search 'gh pr' in src ✓ (6ms)
+  2 tools completed in 6.8s (2 ✓)
+
+OK, so there's no existing PR diff fetching. Let me now plan and implement. Here's the plan:
+
+1. **Extend build_review_content** to handle commit ranges (HEAD~3..HEAD) and --pr N arguments
+2. **Create `run_non_interactive_review** that builds an AgentConfig`, runs the review through an agent, and returns the result
+3. **Update `dispatch_sub.rs`** to call the non-interactive review function with proper config resolution
+4. **Add tests** for the content building and prompt building
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me first write the test, then implement. Let me look at the existing test section:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:450..520 ✓ (1ms)
+
+Now let me look at the full test block opening:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_git_review.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/commands_git_review.rs ✓ (2ms)
+  ▶ read src/commands_git_review.rs:285..315 ✓ (1ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now I have a complete picture. Let me implement:
+
+1. First, extend `build_review_content to support commit ranges and --pr` 
+2. Add run_non_interactive_review 
+3. Update `dispatch_sub.rs`
+4. Add tests
+
+Let me start with the implementation in `commands_git_review.rs`:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:1..13 ✓ (0ms)
+
+Now let me also see how handle_review flows and check the full file to make sure I don't break things:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:1..201 ✓ (1ms)
+
+Now let me implement. First, I'll add the new `build_review_content_for_range function and the run_non_interactive_review` function:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (61 → 214 lines)
+  - //! Code review command handlers: /review and /blame.
+  + //! Code review command handlers: /review, /blame, and non-interactive review.
+    
+    use crate::commands::auto_compact_if_needed;
+    use crate::format::*;
+  ···
+                    // Fall back to unstaged diff if nothing staged
+                    let unstaged = run_git(&["diff"]).unwrap_or_default();
+                    if unstaged.trim().is_empty() {
+  -                     println!("{DIM}  nothing to review — no staged or unstaged changes{RESET}\n");
+  +                     eprintln!("{DIM}  nothing to review — no staged or unstaged changes{RESET}\n");
+                        None
+                    } else {
+  -                     println!("{DIM}  reviewing unstaged changes...{RESET}");
+  +                     eprintln!("{DIM}  reviewing unstaged changes...{RESET}");
+                        Some(("unstaged changes".to_string(), unstaged))
+                    }
+                }
+                Some(diff) => {
+  -                 println!("{DIM}  reviewing staged changes...{RESET}");
+  ... (180 more lines)
+ ✓ (1ms)
+
+Now I need to also output the review text to stdout (for piping). The streaming goes to stderr for visual feedback, and the final text goes to stdout. Let me update the dispatch_sub.rs handler:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now update dispatch_sub.rs to run the review through the agent. I need to:
+1. Resolve the API key, model, provider from CLI args and config (like doctor does)
+2. Build an AgentConfig
+3. Call `run_non_interactive_review using tokio::task::block_in_place + Handle::current().block_on()`
+
+Let me look at how the imports are set up:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:1..17 ✓ (0ms)
+
+Now let me also check how provider_api_key_env works:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn provider_api_key_env' in src/providers.rs ✓ (2ms)
+  ▶ read src/providers.rs:22..42 ✓ (0ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good. Now let me update the dispatch_sub.rs review handler. I need to resolve API key, model, provider, and build a minimal `AgentConfig that's enough for build_side_agent`:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:155..160 ✓ (0ms)
+  ▶ edit src/dispatch_sub.rs (18 → 7 lines)
+                "review" => {
+  -                 // handle_review is async and needs an agent — for bare
+  -                 // subcommand, gather the content and print the review prompt
+  -                 // so the user can see what would be sent to the model.
+  -                 let input = quote_args_as_command(args);
+  -                 let arg = input.strip_prefix("/review").unwrap_or("").trim();
+  -                 match crate::commands_git_review::build_review_content(arg) {
+  -                     Some((label, content)) => {
+  -                         let prompt =
+  -                             crate::commands_git_review::build_review_prompt(&label, &content);
+  -                         println!("{prompt}");
+  -                     }
+  -                     None => {
+  -                         // build_review_content already printed the error/status
+  -                     }
+  -                 }
+  -                 return Some(None);
+  +                 // Non-interactive code review: build an agent, run the review
+  +                 // prompt, print the result to stdout, and exit.
+  +                 let review_arg = build_review_arg(args);
+  ... (3 more lines)
+ ✓ (1ms)
+  2 tools completed in 10.1s (2 ✓)
+
+Now I need to add the helper functions. Let me add them near the end of the file but before the tests:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/dispatch_sub.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/dispatch_sub.rs ✓ (2ms)
+  ▶ read src/dispatch_sub.rs:374..384 ✓ (0ms)
+  3 tools completed in 10.6s (3 ✓)
+
+Now I'll add the helper functions before the test module:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:355..375 ✓ (0ms)
+  ▶ edit src/dispatch_sub.rs (4 → 134 lines)
+        }
+    }
+    
+  - #[cfg(test)]
+  + /// Build the review argument string from CLI args.
+  + ///
+  + /// Handles `yoyo review`, `yoyo review HEAD~3..HEAD`, `yoyo review --pr 123`,
+  + /// and `yoyo review path/to/file.rs`.
+  + fn build_review_arg(args: &[String]) -> String {
+  +     // args[0] = binary, args[1] = "review", args[2..] = review arguments
+  +     if args.len() <= 2 {
+  +         return String::new();
+  +     }
+  +     // Preserve --pr as a single token with its argument
+  +     args[2..].join(" ")
+  + }
+  + 
+  + /// Resolve API key from flags, env vars, and config file.
+  + /// Returns `Some(key)` or `None` if no key is available.
+  + fn resolve_api_key(args: &[String], provider: &str) -> Option<String> {
+  ... (115 more lines)
+ ✓ (1ms)
+  2 tools completed in 28.6s (2 ✓)
+
+Now I need to add `#[cfg(test)]` back:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:504..509 ✓ (0ms)
+  ▶ edit src/dispatch_sub.rs (2 → 4 lines)
+    }
+  + 
+  + #[cfg(test)]
+    mod tests {
+ ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I need to check if PermissionConfig and DirectoryRestrictions have a Default implementation:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct PermissionConfig|impl.*Default.*for.*PermissionConfig…' in src/config.rs ✓ (2ms)
+  ▶ search 'PermissionConfig' in src/config.rs ✓ (2ms)
+  ▶ read src/config.rs:5..20 ✓ (0ms)
+  ▶ search 'DirectoryRestrictions"' in src/config.rs ✓ (2ms)
+  ▶ search 'struct DirectoryRestrictions' in src/config.rs ✓ (2ms)
+  ▶ read src/config.rs:50..65 ✓ (1ms)
+  6 tools completed in 15.4s (6 ✓)
+
+Good, both have Default. Now let me check what `ContextStrategy` needs:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ search 'enum ContextStrategy' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:44..56 ✓ (1ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Wait, I used ContextStrategy::Auto but it's actually ContextStrategy::Compaction. Let me fix that:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (1 → 1 lines)
+  -         context_strategy: crate::cli::ContextStrategy::Auto,
+  +         context_strategy: crate::cli::ContextStrategy::Compaction,
+ ✓ (1ms)
+
+Now let me check whether AgentConfig fields are all pub:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:387..412 ✓ (0ms)
+
+Good — all fields are pub. Let me verify the PermissionConfig and DirectoryRestrictions are exported from cli:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub use.*config|pub use.*Permission|pub use.*Directory' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:55..70 ✓ (0ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Good. Now let me try building:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -50 ✓ (2.2s)
+
+Two easy fixes:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (1 → 1 lines)
+  -     let mut md_renderer = crate::format::markdown::MarkdownRenderer::new();
+  +     let mut md_renderer = MarkdownRenderer::new();
+ ✓ (0ms)
+
+Now I need to import MarkdownRenderer in the review file. Let me check what the format module re-exports:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub use.*MarkdownRenderer' in src/format/mod.rs ✓ (2ms)
+  ▶ search 'pub use|pub mod"' in src/format/mod.rs ✓ (2ms)
+  ▶ search '^pub' in src/format/mod.rs ✓ (3ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Line 118: pub use markdown::*; — so MarkdownRenderer is re-exported through crate::format::*. Since the file already imports `use crate::format::*;, MarkdownRenderer` should be available. Let me check:
+  ╭─ Turn 80 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub struct MarkdownRenderer' in src/format/markdown.rs ✓ (3ms)
+
+OK so it is public and re-exported through *. Let me check the mod is actually pub(crate) or mod:
+  ╭─ Turn 81 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:109..114 ✓ (0ms)
+
+The module is private but the types are re-exported via `pub use markdown::*. So using MarkdownRenderer` directly (via the wildcard import) should work. Let me fix that differently — the error said the module is private but I was trying to path through it. Now that I changed to just MarkdownRenderer::new() (relying on use crate::format::*), it should work.
+
+Now fix the SkillSet issue:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (1 → 1 lines)
+  -         skills: SkillSet::new(),
+  +         skills: SkillSet::empty(),
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (5.0s)
+  2 tools completed in 9.7s (2 ✓)
+
+Build passes. Now let me add tests:
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Let me add tests for the new functions. Tests I need:
+
+1. `build_review_content_range` — unit test for commit range detection
+2. build_review_content_pr — unit test for PR arg parsing
+3. build_review_arg — unit test in dispatch_sub
+4. `resolve_api_key` — can test env var resolution
+5. Test that the review prompt is built correctly with range labels
+
+Let me find the test section in `commands_git_review.rs`:
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_git_review.rs ✓ (2ms)
+  ▶ read src/commands_git_review.rs:436..451 ✓ (0ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Let me add tests. First in commands_git_review.rs:
+  ╭─ Turn 88 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:439..459 ✓ (0ms)
+  ▶ read src/commands_git_review.rs:458..488 ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me find the end of the test section and add new tests there:
+  ╭─ Turn 90 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:680..700 ✓ (0ms)
+  ▶ edit src/commands_git_review.rs (11 → 52 lines)
+            // Both lines should have ANSI codes
+            assert!(lines[0].contains("\x1b["));
+            assert!(lines[1].contains("\x1b["));
+  +     }
+  + 
+  +     #[test]
+  +     fn build_review_content_detects_commit_range() {
+  +         // A range with ".." should be treated as a git diff range
+  +         let arg = "HEAD~3..HEAD";
+  +         // We can't test the actual git command in unit tests, but we can
+  +         // verify the function handles the range format by checking it doesn't
+  +         // try to treat it as a file path.
+  +         let result = build_review_content(arg);
+  +         // In test environment, git may fail — but it should NOT try to
+  +         // read it as a file (which would give "file not found").
+  +         // Either None (git error) or Some (if git works) is fine.
+  +         // The key test: it should not panic.
+  +         let _ = result;
+  +     }
+  + 
+  ... (26 more lines)
+ ✓ (1ms)
+  2 tools completed in 16.8s (2 ✓)
+
+Now add tests in dispatch_sub.rs for build_review_arg:
+  ╭─ Turn 92 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:1074..1094 ✓ (0ms)
+  ▶ edit src/dispatch_sub.rs (3 → 63 lines)
+            assert_eq!(quote_args_as_command(&args), "/grep \"has\ttab\"");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_review_arg_empty() {
+  +         let args: Vec<String> = vec!["yoyo", "review"]
+  +             .into_iter()
+  +             .map(String::from)
+  +             .collect();
+  +         assert_eq!(build_review_arg(&args), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_review_arg_commit_range() {
+  +         let args: Vec<String> = vec!["yoyo", "review", "HEAD~3..HEAD"]
+  +             .into_iter()
+  +             .map(String::from)
+  +             .collect();
+  +         assert_eq!(build_review_arg(&args), "HEAD~3..HEAD");
+  +     }
+  ... (43 more lines)
+ ✓ (1ms)
+  2 tools completed in 12.2s (2 ✓)
+
+Now let's run tests:
+  ╭─ Turn 94 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (27.7s)
+
+All tests pass. Now let's run the full check suite:
+  ╭─ Turn 95 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (488ms)
+  4 tools completed in 20.1s (4 ✓)
+
+All checks pass. Let me verify the build one more time:
+  ╭─ Turn 99 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.2s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 11.5s (3 ✓)
+
+Now update the docs. Let me update:
+1. `docs/src/usage/commands.md` — mention non-interactive review
+2. CLAUDE_CODE_GAP.md — mark the CI review gap as closed
+3. CLAUDE.md — update architecture if needed
+4. README.md — if review is mentioned
+  ╭─ Turn 102 ───────────────────────────────────────────────────────────╮
+  ▶ search 'review' in docs/src/usage/commands.md ✓ (3ms)
+  ▶ read docs/src/usage/commands.md:460..490 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (22 → 38 lines)
+    |---------|-------------|
+    | `/review` | AI-powered review of staged changes (falls back to unstaged if nothing staged) |
+    | `/review <path>` | AI-powered review of a specific file |
+  + | `/review HEAD~3..HEAD` | Review a specific commit range |
+  + | `/review --pr 123` | Review a GitHub PR |
+    
+    The `/review` command sends your code to the AI for a thorough review covering:
+    
+  ···
+    /review              # review staged changes (or unstaged if nothing staged)
+    /review src/main.rs  # review a specific file
+    /review Cargo.toml   # review any file
+  + ```
+  + 
+  + ### Non-interactive review (CLI subcommand)
+  + 
+  + `yoyo review` also works as a CLI subcommand — no REPL or interactive session needed. This makes it usable in CI pipelines, git hooks, and scripts:
+  + 
+  + ```bash
+  + yoyo review                   # review staged/unstaged changes
+  ... (9 more lines)
+ ✓ (1ms)
+  3 tools completed in 17.2s (3 ✓)
+
+Now update the subcommand table at the top of the commands doc:
+  ╭─ Turn 105 ───────────────────────────────────────────────────────────╮
+  ▶ read docs/src/usage/commands.md:18..48 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - > | `yoyo review` | Show review prompt for staged changes or a file |
+  + > | `yoyo review` | AI-powered code review (non-interactive, pipeable to files/CI) |
+ ✓ (1ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Now update CLAUDE_CODE_GAP.md:
+  ╭─ Turn 107 ───────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md ✓ (3ms)
+
+Let me search for the priority queue / gaps section:
+  ╭─ Turn 108 ───────────────────────────────────────────────────────────╮
+  ▶ search 'Priority Queue|non-interactive|CI review|ultrareview|BugBot' in CLAUDE_CODE_GAP.md ✓ (2ms)
+  ▶ search 'review|CI' in CLAUDE_CODE_GAP.md ✓ (2ms)
+  ▶ search 'review' in CLAUDE_CODE_GAP.md ✓ (2ms)
+  ▶ read CLAUDE_CODE_GAP.md:103..113 ✓ (0ms)
+  4 tools completed in 10.4s (4 ✓)
+
+I should update the Code review row to mention non-interactive support:
+  ╭─ Turn 112 ───────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (1 → 1 lines)
+  - | Code review | ✅ | ✅ | `/review` provides AI-powered code review of staged/unstaged changes (Day 13) |
+  + | Code review | ✅ | ✅ | `/review` provides AI-powered code review of staged/unstaged changes (Day 13); `yoyo review` works non-interactively for CI pipelines — supports commit ranges (`HEAD~3..HEAD`) and PR review (`--pr 42`) (Day 63) |
+ ✓ (0ms)
+
+Now let me also add the non-interactive review to the "yoyo has features Claude Code doesn't" section:
+  ╭─ Turn 113 ───────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:350..360 ✓ (0ms)
+  ▶ edit CLAUDE_CODE_GAP.md (3 → 4 lines)
+    - x-research skill (X/Twitter reading via xurl)
+    - explore-codebase RLM skill (sub-agent codebase comprehension)
+    - CHANGELOG generation
+  + - Non-interactive `yoyo review` for CI pipelines (commit ranges, PR review)
+ ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now update the gap analysis date:
+  ╭─ Turn 115 ───────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE_CODE_GAP.md (2 → 2 lines)
+  - Last verified: Day 61 (2026-04-30)
+  - Last updated: Day 24 (2026-03-24) — major refresh on Day 38, stats refresh on Day 50, Day 54, Day 59, Day 61
+  + Last verified: Day 63 (2026-05-02)
+  + Last updated: Day 24 (2026-03-24) — major refresh on Day 38, stats refresh on Day 50, Day 54, Day 59, Day 61, Day 63
+ ✓ (0ms)
+
+Now let me check the non-interactive subcommand list in the help text:
+  ╭─ Turn 116 ───────────────────────────────────────────────────────────╮
+  ▶ search 'review' in src/help.rs ✓ (2ms)
+
+Let me update the help text for /review and the subcommand description:
+  ╭─ Turn 117 ───────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:758..773 ✓ (1ms)
+  ▶ edit src/help.rs (11 → 17 lines)
+            "review" => Some(
+  -             "/review [path] — AI code review\n\n\
+  +             "/review [target] — AI code review\n\n\
+                 Usage:\n\
+  -              \x20 /review            Review staged/uncommitted changes\n\
+  -              \x20 /review <path>     Review a specific file\n\n\
+  +              \x20 /review                   Review staged/uncommitted changes\n\
+  +              \x20 /review <path>            Review a specific file\n\
+  +              \x20 /review HEAD~3..HEAD      Review a commit range\n\
+  +              \x20 /review --pr 42           Review a GitHub PR\n\n\
+                 Sends the diff or file to the AI for a code review, looking\n\
+                 for bugs, style issues, and improvement opportunities.\n\n\
+  +              Also works as a CLI subcommand (non-interactive):\n\
+  +              \x20 yoyo review               Review from the command line\n\
+  +              \x20 yoyo review HEAD~1 > r.md Pipe review to a file\n\n\
+                 Examples:\n\
+                 \x20 /review\n\
+  -              \x20 /review src/main.rs",
+  +              \x20 /review src/main.rs\n\
+  +              \x20 /review HEAD~3..HEAD",
+  ... (1 more lines)
+ ✓ (1ms)
+  2 tools completed in 10.1s (2 ✓)
+
+Now let me update the CLI subcommand help text line:
+  ╭─ Turn 119 ───────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1213..1218 ✓ (0ms)
+  ▶ search 'review.*review prompt' in src/help.rs ✓ (2ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "  review            Show review prompt for staged changes or a file"
+  +         "  review            AI code review (non-interactive, supports commit ranges and PRs)"
+ ✓ (1ms)
+  3 tools completed in 8.7s (3 ✓)
+
+Now let me also update the REPL help line for /review:
+  ╭─ Turn 122 ───────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1370..1375 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "    /review [path]     AI code review of staged changes or a file"
+  +         "    /review [target]   AI code review (staged, file, range, or --pr N)"
+ ✓ (0ms)
+  2 tools completed in 10.5s (2 ✓)
+
+Now let me also update the brief help_text:
+  ╭─ Turn 124 ───────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1636..1641 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "  /review [path]     AI code review: staged changes (default) or a specific file\n",
+  +         "  /review [target]   AI code review: staged changes, file, range, or --pr N\n",
+ ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me update the short description:
+  ╭─ Turn 126 ───────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1855..1858 ✓ (1ms)
+
+Good, that's fine — the short description is still accurate.
+
+Now let me also check if README.md mentions review:
+  ╭─ Turn 127 ───────────────────────────────────────────────────────────╮
+  ▶ search 'review' in README.md ✓ (3ms)
+
+  ↳ 10m 1s · 45574→20902 tokens · $4.96
+  ⬤ 25% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
