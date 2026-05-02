@@ -1,0 +1,202 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -80 src/repl.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub async fn run_repl" … ✓ (3ms)
+  ▶ read src/repl.rs:301..351 ✓ (1ms)
+  ▶ read src/repl.rs:350..450 ✓ (1ms)
+  4 tools completed in 12.4s (4 ✓)
+
+Now let me check how mcp_cli_servers and mcp_server_configs are used in the function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mcp_cli_servers\|mcp_se… ✓ (4ms)
+
+Now let's see the call site in main.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_repl" src/main.rs ✓ (3ms)
+  ▶ read src/main.rs:568..588 ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now let me look at how the DispatchContext uses these fields, since that's where they end up:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:465..495 ✓ (1ms)
+
+Now let me look at the imports in repl.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1..17 ✓ (1ms)
+
+Now let me check what McpServerConfig is:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct McpServerCon… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::cli::McpServ… ✓ (3ms)
+  2 tools completed in 8.6s (2 ✓)
+
+Good, McpServerConfig is from crate::config and re-exported through crate::cli. Since repl.rs already does use crate::cli::*, it should already have access to `McpServerConfig`. Let me verify:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "pub use" src/cli.rs | head… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A5 "pub use crate::config"… ✓ (3ms)
+  2 tools completed in 12.2s (2 ✓)
+
+`McpServerConfig is available through crate::cli::*`. Now I have all the information I need. Let me implement the refactor:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (3 → 14 lines)
+    use crate::AgentConfig;
+  + 
+  + /// Configuration for the REPL session, bundling the positional arguments
+  + /// that don't need mutable borrow semantics.
+  + pub struct ReplConfig {
+  +     pub mcp_count: u32,
+  +     pub openapi_count: u32,
+  +     pub continue_session: bool,
+  +     pub update_available: Option<String>,
+  +     pub mcp_cli_servers: Vec<String>,
+  +     pub mcp_server_configs: Vec<McpServerConfig>,
+  + }
+    
+    use rustyline::completion::{Completer, Pair};
+ ✓ (1ms)
+
+Now change the function signature:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (10 → 5 lines)
+    pub async fn run_repl(
+        agent_config: &mut AgentConfig,
+        agent: &mut yoagent::agent::Agent,
+  -     mcp_count: u32,
+  -     openapi_count: u32,
+  -     continue_session: bool,
+  -     update_available: Option<String>,
+  -     mcp_cli_servers: Vec<String>,
+  -     mcp_server_configs: Vec<crate::cli::McpServerConfig>,
+  +     config: ReplConfig,
+    ) {
+ ✓ (1ms)
+
+Now update the usages within run_repl. First, mcp_count:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (6 → 6 lines)
+  -     if mcp_count > 0 {
+  -         println!("{DIM}  mcp: {mcp_count} server(s) connected{RESET}");
+  +     if config.mcp_count > 0 {
+  +         println!("{DIM}  mcp: {} server(s) connected{RESET}", config.mcp_count);
+        }
+  -     if openapi_count > 0 {
+  -         println!("{DIM}  openapi: {openapi_count} spec(s) loaded{RESET}");
+  +     if config.openapi_count > 0 {
+  +         println!("{DIM}  openapi: {} spec(s) loaded{RESET}", config.openapi_count);
+        }
+ ✓ (1ms)
+
+Now `update_available`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 1 lines)
+  -     if let Some(ref latest) = update_available {
+  +     if let Some(ref latest) = config.update_available {
+ ✓ (0ms)
+
+Now `continue_session`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 1 lines)
+  -     if !continue_session && commands::last_session_exists() {
+  +     if !config.continue_session && commands::last_session_exists() {
+ ✓ (1ms)
+
+Now `mcp_cli_servers and mcp_server_configs` in the dispatch context:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (4 → 4 lines)
+  -             mcp_cli_servers: &mcp_cli_servers,
+  -             mcp_server_configs: &mcp_server_configs,
+  -             mcp_count,
+  -             openapi_count,
+  +             mcp_cli_servers: &config.mcp_cli_servers,
+  +             mcp_server_configs: &config.mcp_server_configs,
+  +             mcp_count: config.mcp_count,
+  +             openapi_count: config.openapi_count,
+ ✓ (1ms)
+
+Now update the call site in main.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (11 → 13 lines)
+        repl::run_repl(
+            &mut agent_config,
+            &mut agent,
+  -         mcp_count,
+  -         openapi_count,
+  -         continue_session,
+  -         update_available,
+  -         mcp_servers,
+  -         mcp_server_configs,
+  +         repl::ReplConfig {
+  +             mcp_count,
+  +             openapi_count,
+  +             continue_session,
+  +             update_available,
+  +             mcp_cli_servers: mcp_servers,
+  +             mcp_server_configs,
+  +         },
+        )
+        .await;
+ ✓ (0ms)
+
+Now let's build and test:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (5.9s)
+
+There's a name collision — the rustyline `config variable shadows our config` parameter. Let me check the rustyline config variable:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let config" src/repl.rs… ✓ (3ms)
+
+The rustyline config variable at line 396 shadows our config parameter. I'll rename our parameter to repl_config:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (5 → 5 lines)
+    pub async fn run_repl(
+        agent_config: &mut AgentConfig,
+        agent: &mut yoagent::agent::Agent,
+  -     config: ReplConfig,
+  +     repl_config: ReplConfig,
+    ) {
+ ✓ (0ms)
+
+Now update all the config. references to repl_config.:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config\." src/repl.rs |… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/config\.mcp_count/repl… ✓ (4ms)
+  2 tools completed in 7.9s (2 ✓)
+
+Let me verify the changes look correct:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "repl_config\." src/repl… ✓ (3ms)
+
+Good. Now let's also make sure there's no agent_config → `repl_config accidental change (sed should be safe since agent_config` doesn't contain those field names, but let's verify):
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (27.3s)
+  3 tools completed in 51.5s (3 ✓)
+
+All 88 tests pass. Let me quickly verify the final state of the key areas looks clean:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:11..36 ✓ (1ms)
+  ▶ read src/repl.rs:311..321 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Ah, there's a stale #[allow(clippy::too_many_arguments)] that's no longer needed since we only have 3 parameters now. Let me remove it:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (2 → 1 lines)
+  - #[allow(clippy::too_many_arguments)]
+    pub async fn run_repl(
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (28.4s)
+  3 tools completed in 46.4s (3 ✓)
+
+All green. Let me commit:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (9 lines) ✓ (13ms)
+
+Done! Clean mechanical refactor — run_repl went from 8 positional arguments down to 3 (two mutable borrows + one config struct). The ReplConfig struct bundles the six configuration values that were previously threaded through individually, making the signature readable and future-extensible. All 88 tests pass, clippy is clean, no behavior change.
+
+  ↳ 4m 9s · 17767→5060 tokens · $0.966
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

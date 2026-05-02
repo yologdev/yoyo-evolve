@@ -1,0 +1,440 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll extract the /plan command from commands_project.rs into its own commands_plan.rs file. Let me start by understanding the current code.
+  ▶ read src/commands_project.rs (50 lines)  ▶ read src/main.rs (60 lines) ✓ (2ms)
+ ✓ (2ms)
+  ▶ search 'PLAN_SUBCOMMANDS|parse_plan_task|build_plan_prompt|handle_pl…' in src/commands_project.rs ✓ (3ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Hmm, those names might have been renamed. Let me search more broadly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'plan' in src/commands_project.rs ✓ (3ms)
+
+Now let me see the full plan-related code and the tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:730..850  ▶ search 'test.*plan|plan.*test' in src/commands_project.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/commands_project.rs:847.. ✓ (7ms)
+  3 tools completed in 5.3s (3 ✓)
+
+Now let me find the plan-related tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn test_.*plan|fn test_plan' in src/commands_project.rs ✓ (3ms)
+  ▶ search 'plan' in src/commands_project.rs ✓ (3ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Let me see the plan-related tests specifically:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "plan" src/commands_project.rs | grep -i "test\|fn.*plan" ✓ (5ms)
+
+Now let me read all the plan-related test blocks:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1165..1225  ▶ read src/commands_project.rs:1698..1838 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Let me also read the earlier plan tests (around line 1214-1240):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1224..1254 ✓ (1ms)
+
+Now let me check how commands.rs references plan stuff:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'plan' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:455..470 ✓ (1ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now let me check what other files reference plan functions from commands_project:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_project::.*plan|commands_project::PLAN' in src ✓ (5ms)
+  ▶ search 'PLAN_SUBCOMMANDS|is_plan_mode|set_plan_mode|PLAN_MODE_PROMPT…' in src ✓ (6ms)
+  ▶ $ grep -rn 'PLAN_SUBCOMMANDS\|is_plan_mode\|set_plan_mode\|PLAN_MODE_PROMPT\|handl…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (44ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now I have a clear picture. Let me also check dispatch.rs and commands_info.rs usage:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:650..665  ▶ read src/commands_info.rs:66..76 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 1.3s (2 ✓)
+
+Good. commands_info.rs uses crate::commands_project::is_plan_mode() directly. I need to update that to use crate::commands_plan::is_plan_mode().
+
+Now let me also look at line 45 (there's a blank line 45 and line 46 is context_subcommands):
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:43..48 ✓ (1ms)
+
+Now let me check what imports command_project uses, some of which are only needed by plan:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'auto_compact_if_needed\|run_prompt[^_]' src/commands_project.rs ✓ (8ms)
+  ▶ $ grep -n 'run_prompt\b' src/commands_project.rs ✓ (7ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Let me check if run_prompt is used elsewhere in commands_project.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use crate::prompt' src/commands_project.rs ✓ (7ms)
+  ▶ $ grep -n 'crate::prompt\|prompt::' src/commands_project.rs | head -20 ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Let me check what functions from crate::prompt are used elsewhere in commands_project besides run_prompt:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'run_prompt\|PromptOutcome\|run_prompt_auto\|run_prompt_with' src/comman… ✓ (7ms)
+
+So run_prompt is only used in handle_plan. Let me check if auto_compact_if_needed is used elsewhere in commands_project:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'auto_compact_if_needed' src/commands_project.rs ✓ (7ms)
+
+Also only used in handle_plan. Let me check if anything else from crate::prompt::* is used (like the types):
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'PromptOutcome\|build_retry\|build_auto_retry\|run_prompt_auto\|run_pro… ✓ (38ms)
+
+So crate::prompt::* is only used for run_prompt in the plan handler. After extraction, commands_project.rs won't need use crate::prompt::* anymore. Let me verify by checking if there's any other use:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (14 lines) ✓ (24ms)
+
+Good. Now let me also check what auto_compact_if_needed comes from. The import says `crate::commands::auto_compact_if_needed`, let me verify:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'auto_compact_if_needed' src/commands.rs | head -5 ✓ (3ms)
+  ▶ read src/commands.rs:485..490 ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Perfect. Now let me also check if auto_compact_if_needed is used elsewhere in commands_project.rs (besides in handle_plan):
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'auto_compact_if_needed' src/commands_project.rs ✓ (9ms)
+
+Only used by plan. Let me check what `use yoagent::* and use yoagent::agent::Agent` provide — they're needed by handle_plan's signature:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'Agent\b' src/commands_project.rs ✓ (9ms)
+
+Agent is used in many places in commands_project, so those imports stay. And yoagent::* provides Usage:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'Usage' src/commands_project.rs ✓ (9ms)
+
+`Usage` is also used in tests plus the handle_plan signature. Tests use it extensively, so yoagent::* stays in commands_project. 
+
+Now I have a complete understanding. Let me create the new file and make the edits:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ write src/commands_plan.rs (314 lines) ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  10 tools completed in 57.0s (10 ✓)
+
+Now let me remove the plan code from commands_project.rs. First, let me see the exact boundaries more carefully:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1..51 ✓ (1ms)
+
+Now remove the plan block (lines 18-44) and update the module doc and imports:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (43 → 13 lines)
+  - //! Project-related command handlers: /context, /init, /docs, /plan.
+  + //! Project-related command handlers: /context, /init, /docs.
+    
+    use crate::cli;
+  - use crate::commands::auto_compact_if_needed;
+    use crate::docs;
+    use crate::format::*;
+  - use crate::prompt::*;
+    
+    // Re-export refactoring commands for backward compatibility
+    pub use crate::commands_refactor::{
+        handle_extract, handle_move, handle_refactor, handle_rename, rename_in_project,
+    };
+    
+  - use std::sync::atomic::{AtomicBool, Ordering};
+    use yoagent::agent::Agent;
+    use yoagent::*;
+  - 
+  - // ---------------------------------------------------------------------------
+  - // Plan mode — a session toggle that restricts the agent to read-only operations.
+  ... (24 more lines)
+ ✓ (1ms)
+
+Now remove the PLAN_SUBCOMMANDS and all plan functions (which were at lines 733-845 but are now shifted). Let me find them:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'PLAN_SUBCOMMANDS\|parse_plan_task\|build_plan_prompt\|handle_plan' src/… ✓ (8ms)
+  ▶ read src/commands_project.rs:700..705 ✓ (0ms)
+  ▶ read src/commands_project.rs:700..830 ✓ (1ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Now I'll remove lines 700-815 (the plan section). The test section at line 817 stays but I need to remove the plan tests from it. Let me do the production code first:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (120 → 6 lines)
+  - 
+  - /// Subcommand names for `/plan <Tab>` completion.
+  - pub const PLAN_SUBCOMMANDS: &[&str] = &["on", "off", "open", "close"];
+  - 
+  - /// Parse a `/plan` command and extract the task description.
+  - /// Returns None if no task was provided or if the input is a mode toggle keyword.
+  - pub fn parse_plan_task(input: &str) -> Option<String> {
+  -     let task = input.strip_prefix("/plan").unwrap_or("").trim().to_string();
+  -     if task.is_empty() {
+  -         None
+  -     } else {
+  -         // Don't treat mode toggle keywords as plan tasks
+  -         match task.as_str() {
+  -             "on" | "off" | "open" | "close" => None,
+  -             _ => Some(task),
+  -         }
+  -     }
+  - }
+  - 
+  - /// Build a planning-mode prompt that asks the agent to create a structured plan
+  ... (97 more lines)
+ ✓ (1ms)
+
+Now remove the plan-related tests from commands_project.rs. Let me find them:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'plan\|PLAN' src/commands_project.rs ✓ (8ms)
+  ▶ read src/commands_project.rs:1020..1100 ✓ (1ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Remove the plan tests (lines 1022-1091):
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (71 → 3 lines)
+  - 
+  -     #[test]
+  -     fn parse_plan_task_with_description() {
+  -         let result = parse_plan_task("/plan add error handling to the parser");
+  -         assert_eq!(result, Some("add error handling to the parser".to_string()));
+  -     }
+  - 
+  -     #[test]
+  -     fn parse_plan_task_empty() {
+  -         let result = parse_plan_task("/plan");
+  -         assert!(result.is_none(), "Empty /plan should return None");
+  -     }
+  - 
+  -     #[test]
+  -     fn parse_plan_task_whitespace_only() {
+  -         let result = parse_plan_task("/plan   ");
+  -         assert!(result.is_none(), "Whitespace-only /plan should return None");
+  -     }
+  - 
+  -     #[test]
+  ... (51 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_project.rs.
+
+The issue is there might be some invisible characters or different whitespace. Let me look more carefully:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1019,1095p' src/commands_project.rs | cat -A | head -80 ✓ (4ms)
+
+I see — there are Unicode box-drawing characters in the comments. Let me use line numbers instead to be precise:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1019..1021 ✓ (1ms)
+  ▶ $ sed -n '1019p' src/commands_project.rs | xxd | head -3 ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+OK, so lines 1019 is a blank line. Let me use sed to get the exact content I need to delete (lines 1020-1092):
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'test_context_system_sections' src/commands_project.rs ✓ (7ms)
+
+So I need to delete lines 1020-1093. Let me use a different approach — read the exact lines:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1020,1020p' src/commands_project.rs ✓ (3ms)
+  ▶ $ sed -n '1020p' src/commands_project.rs | hexdump -C ✓ (26ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Those are ─ (U+2500) box-drawing characters. Let me just use sed to delete the range directly:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_project.rs ✓ (7ms)
+  ▶ $ # Find the line right before the plan tests and right after (2 lines) ✓ (3ms)
+  2 tools completed in 6.7s (2 ✓)
+
+I need to delete lines 1020-1093 (the plan tests + the divider comment before test_context_system_sections). Let me verify the boundary:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1090..1095 ✓ (1ms)
+  ▶ $ sed -n '1092p' src/commands_project.rs | hexdump -C ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Line 1092 is     // ── parse_prompt_sections ──... — that should stay (it's not plan-related). So I need to delete lines 1020-1091:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -i '1020,1091d' src/commands_project.rs ✓ (3ms)
+
+Now let me find and remove the second batch of plan tests (the ones that were further down):
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'plan\|PLAN' src/commands_project.rs ✓ (8ms)
+  ▶ read src/commands_project.rs:1480..1590 ✓ (1ms)
+  ▶ read src/commands_project.rs:1589..1619 ✓ (0ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Now I need to remove the plan tests from this section. Let me handle it in two edits:
+
+1. Remove test_parse_plan_task_extracts_task through test_plan_subcommands (lines 1483-1552)
+2. Remove test_plan_in_known_commands and test_plan_in_help_text (lines 1595-1613)
+3. Update the comment about "moved from commands.rs — /docs and /plan command tests"
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (74 → 4 lines)
+            let _ = std::fs::remove_dir_all(&tmp);
+  -     }
+  -     #[test]
+  -     fn test_parse_plan_task_extracts_task() {
+  -         let result = parse_plan_task("/plan add error handling");
+  -         assert_eq!(result, Some("add error handling".to_string()));
+  -     }
+  - 
+  -     #[test]
+  -     fn test_parse_plan_task_empty_returns_none() {
+  -         assert!(parse_plan_task("/plan").is_none());
+  -         assert!(parse_plan_task("/plan  ").is_none());
+  -     }
+  - 
+  -     #[test]
+  -     fn test_build_plan_prompt_structure() {
+  -         let prompt = build_plan_prompt("migrate database schema");
+  -         assert!(prompt.contains("migrate database schema"));
+  -         assert!(prompt.contains("Do NOT execute any tools"));
+  -         assert!(prompt.contains("Files to examine"));
+  ... (55 more lines)
+ ✓ (1ms)
+
+Now remove the plan_in_known_commands and plan_in_help_text tests:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'test_plan_in' src/commands_project.rs ✓ (7ms)
+  ▶ read src/commands_project.rs:1523..1548 ✓ (1ms)
+  ▶ edit src/commands_project.rs (24 → 4 lines)
+  -     }
+  - 
+  -     #[test]
+  -     fn test_plan_in_known_commands() {
+  -         use crate::commands::KNOWN_COMMANDS;
+  -         assert!(
+  -             KNOWN_COMMANDS.contains(&"/plan"),
+  -             "/plan should be in KNOWN_COMMANDS"
+  -         );
+  -     }
+  - 
+  -     #[test]
+  -     fn test_plan_in_help_text() {
+  -         use crate::help::help_text;
+  -         let help = help_text();
+  -         assert!(help.contains("/plan"), "/plan should appear in help text");
+  -         assert!(
+  -             help.contains("architect"),
+  -             "Help text should mention architect mode"
+  -         );
+  ... (3 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 14.5s (5 ✓)
+
+Now update src/commands.rs — change the re-export path for plan items:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (5 → 6 lines)
+    // Project-related handlers
+  + pub use crate::commands_plan::{handle_plan, is_plan_mode, PLAN_MODE_PROMPT};
+    pub use crate::commands_project::{
+  -     handle_context, handle_docs, handle_extract, handle_init, handle_move, handle_plan,
+  -     handle_refactor, handle_rename, is_plan_mode, PLAN_MODE_PROMPT,
+  +     handle_context, handle_docs, handle_extract, handle_init, handle_move, handle_refactor,
+  +     handle_rename,
+    };
+ ✓ (0ms)
+
+Now update the PLAN_SUBCOMMANDS reference in commands.rs:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "/plan" => filter_candidates(crate::commands_project::PLAN_SUBCOMMANDS, &partial_lower),
+  +         "/plan" => filter_candidates(crate::commands_plan::PLAN_SUBCOMMANDS, &partial_lower),
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 4.7s (3 ✓)
+
+Add mod commands_plan; to main.rs:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:38..68 ✓ (1ms)
+  ▶ edit src/main.rs (3 → 4 lines)
+    mod commands_map;
+    mod commands_memory;
+  + mod commands_plan;
+    mod commands_project;
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 9.0s (4 ✓)
+
+Now update commands_info.rs — it uses `crate::commands_project::is_plan_mode()` directly:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (1 → 1 lines)
+  -     if crate::commands_project::is_plan_mode() {
+  +     if crate::commands_plan::is_plan_mode() {
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Now let's verify that no remaining references to plan stuff go through commands_project:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'commands_project.*plan\|commands_project.*PLAN' src/ --include='*.rs' ✓ (40ms)
+
+Clean. Now let's build and test:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.3s)
+
+`yoagent::* was used for Usage` in the plan handler. Let me check if it's still needed in commands_project.rs:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'Usage' src/commands_project.rs ✓ (8ms)
+
+The `Usage references are all in tests (in AgentMessage` construction). Those are from yoagent::*, but the import is through tests which use super::*. Let me check more carefully:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use yoagent' src/commands_project.rs ✓ (7ms)
+
+The tests import yoagent::types::* directly. The module-level use yoagent::* was only needed for Usage in handle_plan's signature. Since handle_plan is gone, let me check if Agent is the only thing still needed:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'Agent\b' src/commands_project.rs | grep -v test | grep -v '//' | head -… ✓ (4ms)
+
+`Agent is imported from yoagent::agent::Agent directly. The use yoagent::*` is now unused. Remove it:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (2 → 1 lines)
+    use yoagent::agent::Agent;
+  - use yoagent::*;
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.2s)
+  2 tools completed in 15.7s (2 ✓)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (27.7s)
+  2 tools completed in 37.8s (2 ✓)
+
+All 88 tests pass. Let me verify the test count is consistent — no tests were lost:
+  ╭─ Turn 80 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep 'test com… ✓ (9.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -c 'test … ✓ (9.4s)
+  2 tools completed in 23.6s (2 ✓)
+
+16 plan tests moved successfully. Let me also run fmt check:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (493ms)
+
+All checks pass. Let me verify the file sizes to confirm the extraction was meaningful:
+  ╭─ Turn 83 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_plan.rs src/commands_project.rs ✓ (7ms)
+
+`commands_project.rs` went from 2,028 lines to 1,721 lines. The new commands_plan.rs is 314 lines (production code + tests).
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me commit:
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (18 lines) ✓ (16ms)
+
+Clean extraction. 5 files changed, net +9 lines (the new module declaration and re-export lines). All 16 plan tests moved to their new home, all 88 tests pass, clippy clean, fmt clean. commands_project.rs is now down to 1,721 lines and focused on /context, /init, and /docs.
+
+  ↳ 7m 53s · 34826→16967 tokens · $3.33
+  ⬤ 20% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
