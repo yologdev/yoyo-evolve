@@ -1,0 +1,459 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of tools.rs to identify exactly what needs to be extracted.
+  ▶ read src/tools.rs  ▶ read src/main.rs (50 lines) ✓ (15ms)
+ ✓ (15ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Let me see the rest of the module declarations and find the exact boundaries of each piece to extract:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:50..100  ▶ read src/tools.rs:80..480 ✓ (1ms)
+ ✓ (4ms)
+  ▶ read src/tools.rs:190..390 ✓ (3ms)
+  3 tools completed in 6.0s (3 ✓)
+
+Now let me see the maybe_truncate function and where the wrapper section ends / concrete tools begin:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn maybe_truncate' in src/tools.rs  ▶ read src/tools.rs:390..420 ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Good - so there's no maybe_truncate function (it's called `with_truncation). Let me now see how these wrappers are used in build_tools` and check for tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'with_truncation|maybe_guard|maybe_confirm|maybe_guard_arc' in src/tools.rs  ▶ search '#\[cfg\(test\)\]' in src/tools.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ search 'with_truncation\b|maybe_guard\b|maybe_confirm\b|maybe_guard_…' in src/tools.rs ✓ (3ms)
+  ▶ $ grep -n "with_truncation\|maybe_guard\|maybe_confirm\|maybe_guard_arc\|truncate_…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+  4 tools completed in 8.6s (4 ✓)
+
+Let me see the build_tools function and find where it uses these wrappers:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1050..1250 ✓ (2ms)
+
+Now let me see the tests section to identify which tests are for wrappers vs concrete tools:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1215.. ✓ (8ms)
+
+Let me find the tests that specifically test wrapper behavior:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1313..1613 ✓ (2ms)
+  ▶ read src/tools.rs:1612..1712 ✓ (2ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me check if truncate_result, `describe_file_operation, or confirm_file_operation are used outside of tools.rs`:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'truncate_result|describe_file_operation|confirm_file_operati…' (*.rs) ✓ (21ms)
+  ▶ $ grep -rn "truncate_result\|describe_file_operation\|confirm_file_operation\|with… ✓ (11ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Good — only a comment in hooks.rs references these types. Now let me also check what describe_file_operation exports look like:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^pub " src/tools.rs | head -20 ✓ (4ms)
+  ▶ $ grep -n "pub(crate)" src/tools.rs ✓ (9ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now I have a complete picture. Let me also check how the `describe_rename_symbol` test looks:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "rename_symbol" src/tools.rs | head -10 ✓ (4ms)
+
+Now I have a comprehensive understanding of what to extract. Let me create a task list and start:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 25.0s (7 ✓)
+
+Now let me carefully extract the exact lines. Let me re-read the precise sections:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/tools.rs:1..392 ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I have all the pieces. Let me create the new file:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ write src/tool_wrappers.rs (586 lines) ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now add the module to main.rs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/main.rs (3 → 4 lines)
+    mod sync_util;
+  + mod tool_wrappers;
+    mod tools;
+    mod update;
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now update tools.rs — remove the extracted code and import from tool_wrappers:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/tools.rs (12 → 12 lines)
+    //! Tool definitions for the yoyo agent.
+    //!
+  - //! Contains all agent tool structs and implementations:
+  - //! - `GuardedTool` — directory restriction wrapper
+  - //! - `TruncatingTool` — output truncation wrapper
+  - //! - `ConfirmTool` — user confirmation wrapper for file operations
+  + //! Contains concrete tool implementations and builder functions:
+    //! - `StreamingBashTool` — real-time subprocess output
+    //! - `RenameSymbolTool` — cross-file symbol renaming
+    //! - `AskUserTool` — interactive question-asking
+    //! - `TodoTool` — task list management
+    //! - `build_tools` — assembles the complete tool set
+    //! - `build_sub_agent_tool` — creates a sub-agent with inherited config
+  + //!
+  + //! Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool)
+  + //! live in `tool_wrappers`.
+ ✓ (1ms)
+  2 tools completed in 11.0s (2 ✓)
+
+Now add the import from tool_wrappers:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (7 → 11 lines)
+    use crate::format::*;
+    use crate::hooks::{self, maybe_hook, AuditHook, HookRegistry};
+    use crate::safety::analyze_bash_command;
+  + use crate::tool_wrappers::{
+  +     confirm_file_operation, describe_file_operation, maybe_confirm, maybe_guard, maybe_guard_arc,
+  +     truncate_result, with_truncation,
+  + };
+    use crate::AgentConfig;
+ ✓ (1ms)
+
+Now remove the extracted code from tools.rs. The extracted section runs from line 45 (struct GuardedTool) to line 390 (end of maybe_confirm). Let me verify the exact boundaries:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:39..49 ✓ (1ms)
+  ▶ read src/tools.rs:390..400 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I need to remove lines 45-395 (from /// A wrapper tool... to the blank line after maybe_confirm):
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (354 → 3 lines)
+    use crate::rtk::maybe_prefix_rtk;
+  - 
+  - /// A wrapper tool that checks directory restrictions before delegating to an inner tool.
+  - /// Intercepts the `"path"` parameter from tool arguments and validates it against
+  - /// the configured `DirectoryRestrictions`. If the path is blocked, the tool returns
+  - /// an error without executing the inner tool.
+  - struct GuardedTool {
+  -     inner: Box<dyn AgentTool>,
+  -     restrictions: cli::DirectoryRestrictions,
+  - }
+  - 
+  - #[async_trait::async_trait]
+  - impl AgentTool for GuardedTool {
+  -     fn name(&self) -> &str {
+  -         self.inner.name()
+  -     }
+  - 
+  -     fn label(&self) -> &str {
+  -         self.inner.label()
+  -     }
+  ... (334 more lines)
+ ✓ (1ms)
+
+Now I need to also remove the moved tests from tools.rs. Let me find the tests that were moved:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_describe_write_file\|test_describe_edit_file\|test_describe_unknow… ✓ (8ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Let me see the exact boundaries of these tests to remove them:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1025..1245 ✓ (2ms)
+
+Good. Now I need to remove the tests that were moved. The tests to remove are from `// === File operation confirmation tests === (line 1026) through the end of test_always_approved_shared_between_bash_and_file_tools (line 1241). But I need to keep test_build_tools_auto_approve_skips_confirmation and test_build_tools_no_approve_includes_confirmation since they test build_tools`, not the wrappers directly. Let me re-read to identify precisely:
+
+The tests that belong in tool_wrappers.rs (testing wrapper logic directly):
+• `test_describe_write_file_operation through test_describe_unknown_tool` — test describe_file_operation
+• `test_confirm_file_operation_* — test confirm_file_operation`  
+• test_always_approved_shared_between_bash_and_file_tools — tests shared flag concept
+
+Tests that should stay in tools.rs (test build_tools):
+• test_build_tools_auto_approve_skips_confirmation
+• test_build_tools_no_approve_includes_confirmation
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (166 → 5 lines)
+  - 
+  -     // === File operation confirmation tests ===
+  - 
+  -     #[test]
+  -     fn test_describe_write_file_operation() {
+  -         let params = serde_json::json!({
+  -             "path": "src/main.rs",
+  -             "content": "line1\nline2\nline3\n"
+  -         });
+  -         let desc = describe_file_operation("write_file", &params);
+  -         assert!(desc.contains("write:"));
+  -         assert!(desc.contains("src/main.rs"));
+  -         assert!(desc.contains("3 lines")); // Rust's .lines() strips trailing newline
+  -     }
+  - 
+  -     #[test]
+  -     fn test_describe_write_file_empty_content() {
+  -         let params = serde_json::json!({
+  -             "path": "empty.txt",
+  -             "content": ""
+  ... (147 more lines)
+ ✓ (1ms)
+
+Now remove the test_always_approved_shared test:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1055..1095 ✓ (1ms)
+  ▶ edit src/tools.rs (27 → 4 lines)
+            assert!(names.contains(&"todo"));
+  -     }
+  - 
+  -     #[test]
+  -     fn test_always_approved_shared_between_bash_and_file_tools() {
+  -         // Simulates: user says "always" on a bash prompt,
+  -         // subsequent file operations should auto-approve too.
+  -         // This test verifies the shared flag concept.
+  -         let always_approved = Arc::new(AtomicBool::new(false));
+  -         let bash_flag = Arc::clone(&always_approved);
+  -         let file_flag = Arc::clone(&always_approved);
+  - 
+  -         // Initially, nothing is auto-approved
+  -         assert!(!bash_flag.load(Ordering::Relaxed));
+  -         assert!(!file_flag.load(Ordering::Relaxed));
+  - 
+  -         // User says "always" on a bash command
+  -         bash_flag.store(true, Ordering::Relaxed);
+  - 
+  -         // File tool should now see the flag as true
+  ... (7 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 17.1s (4 ✓)
+
+Now let's try building:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.0s)
+  2 tools completed in 9.7s (2 ✓)
+
+Good — it builds. The warnings tell me confirm_file_operation, describe_file_operation, and truncate_result are not used directly in tools.rs anymore (they're used in the tests via `use super::*`, but the tests for those functions moved to tool_wrappers.rs). Let me fix the import:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (4 → 1 lines)
+  - use crate::tool_wrappers::{
+  -     confirm_file_operation, describe_file_operation, maybe_confirm, maybe_guard, maybe_guard_arc,
+  -     truncate_result, with_truncation,
+  - };
+  + use crate::tool_wrappers::{maybe_confirm, maybe_guard, maybe_guard_arc, with_truncation};
+ ✓ (1ms)
+
+Wait, the remaining tests in tools.rs still reference `describe_file_operation and confirm_file_operation through use super::*`. Let me check:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "describe_file_operation\|confirm_file_operation\|truncate_result" src/t… ✓ (8ms)
+
+The remaining tests in tools.rs use describe_file_operation and truncate_result. These are now in tool_wrappers, but the tests use use super::* which only sees what's in tools.rs. I have two options:
+
+1. Keep these tests in tools.rs and re-export from tools
+2. Move these tests to tool_wrappers.rs too
+
+Looking at the tests, `test_describe_rename_symbol tests describe_file_operation` for rename_symbol — that's wrapper behavior. And test_truncate_result_* tests truncate_result. Both should move to tool_wrappers.rs. Let me see them:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1470..1550 ✓ (1ms)
+
+I need to move the rename symbol and truncate tests too. Let me remove them from tools.rs and add to tool_wrappers.rs:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (74 → 4 lines)
+  -     }
+  - 
+  -     #[test]
+  -     fn test_describe_rename_symbol_operation() {
+  -         let params = serde_json::json!({
+  -             "old_name": "FooBar",
+  -             "new_name": "BazQux",
+  -             "path": "src/"
+  -         });
+  -         let desc = describe_file_operation("rename_symbol", &params);
+  -         assert!(desc.contains("FooBar"), "Should contain old_name: {desc}");
+  -         assert!(desc.contains("BazQux"), "Should contain new_name: {desc}");
+  -         assert!(desc.contains("src/"), "Should contain scope: {desc}");
+  -     }
+  - 
+  -     #[test]
+  -     fn test_describe_rename_symbol_no_path() {
+  -         let params = serde_json::json!({
+  -             "old_name": "Foo",
+  -             "new_name": "Bar"
+  ... (53 more lines)
+ ✓ (1ms)
+
+Now add those tests to tool_wrappers.rs:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (1 → 75 lines)
+  +     // === describe_file_operation: rename_symbol ===
+  + 
+  +     #[test]
+  +     fn test_describe_rename_symbol_operation() {
+  +         let params = serde_json::json!({
+  +             "old_name": "FooBar",
+  +             "new_name": "BazQux",
+  +             "path": "src/"
+  +         });
+  +         let desc = describe_file_operation("rename_symbol", &params);
+  +         assert!(desc.contains("FooBar"), "Should contain old_name: {desc}");
+  +         assert!(desc.contains("BazQux"), "Should contain new_name: {desc}");
+  +         assert!(desc.contains("src/"), "Should contain scope: {desc}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_describe_rename_symbol_no_path() {
+  +         let params = serde_json::json!({
+  +             "old_name": "Foo",
+  +             "new_name": "Bar"
+  ... (55 more lines)
+ ✗ (0ms)
+    │ old_text matches 130 locations in src/tool_wrappers.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/tool_wrappers.rs (6 → 81 lines)
+            assert!(
+                file_flag.load(Ordering::Relaxed),
+                "File tool should see always_approved after bash 'always'"
+  +         );
+  +     }
+  + 
+  +     // === describe_file_operation: rename_symbol ===
+  + 
+  +     #[test]
+  +     fn test_describe_rename_symbol_operation() {
+  +         let params = serde_json::json!({
+  +             "old_name": "FooBar",
+  +             "new_name": "BazQux",
+  +             "path": "src/"
+  +         });
+  +         let desc = describe_file_operation("rename_symbol", &params);
+  +         assert!(desc.contains("FooBar"), "Should contain old_name: {desc}");
+  +         assert!(desc.contains("BazQux"), "Should contain new_name: {desc}");
+  +         assert!(desc.contains("src/"), "Should contain scope: {desc}");
+  +     }
+  ... (61 more lines)
+ ✓ (1ms)
+  2 tools completed in 12.4s (1 ✓, 1 ✗)
+
+Now let me check if TOOL_OUTPUT_MAX_CHARS is accessible from tool_wrappers test. Let me check:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "pub.*TOOL_OUTPUT_MAX_CHARS" src/format/output.rs ✓ (39ms)
+
+Good, it's pub. Let me try building:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.0s)
+
+Clean build, no warnings. Let me run all checks:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (503ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (5.4s)
+  2 tools completed in 13.0s (2 ✓)
+
+The output module is private. It's re-exported via format::*. Let me fix:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -         use crate::format::output::TOOL_OUTPUT_MAX_CHARS;
+  +         use crate::format::TOOL_OUTPUT_MAX_CHARS;
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (28.5s)
+  3 tools completed in 44.9s (3 ✓)
+
+All 2385 tests pass (2297 + 88), 0 failures. Let me also run `cargo fmt` just to be safe:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (996ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now update CLAUDE.md:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ search 'tools\.rs' in CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, tool builders, SharedState wiring for sub-agents
+  + - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool) and helper wrappers
+ ✓ (1ms)
+  3 tools completed in 11.7s (3 ✓)
+
+Also add src/tool_wrappers.rs to the Project Files section:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (2 → 3 lines)
+    src/sync_util.rs
+  + src/tool_wrappers.rs
+    src/tools.rs
+ ✗ (0ms)
+    │ old_text not found in CLAUDE.md.
+  ▶ $ grep -n "sync_util\|tools.rs" CLAUDE.md | tail -10 ✓ (3ms)
+  ▶ search '^src/tools\.rs$' in CLAUDE.md ✓ (3ms)
+  ▶ $ grep -n "src/tools.rs" CLAUDE.md ✓ (8ms)
+  4 tools completed in 11.9s (3 ✓, 1 ✗)
+
+Let me check the Project Files section:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "src/sync_util\|src/tools" CLAUDE.md ✓ (8ms)
+
+It seems the Project Files section uses different naming. Let me find where:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ search '^## Project Files' in CLAUDE.md ✓ (2ms)
+  ▶ search 'Project Files' in CLAUDE.md ✓ (2ms)
+  2 tools completed in 6.9s (2 ✓)
+
+It's in the task prompt's project files section, not in CLAUDE.md itself. The architecture section in CLAUDE.md uses module names without src/ prefix. Let me verify the update I already made is correct:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE.md:55..60 ✓ (1ms)
+
+The architecture section is updated. The CLAUDE.md update is done.
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me do a final verification — make sure the line counts make sense and verify the extraction is clean:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/tools.rs src/tool_wrappers.rs ✓ (7ms)
+
+Original was 2287 lines, now 1683 + 661 = 2344. The slight increase is from added imports and module docs — makes sense. tools.rs went from 2287 → 1683 (~600 lines extracted), and tool_wrappers.rs is 661 lines (includes full test suite).
+
+Let me also run one final full check to be certain:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (27.4s)
+
+All green. Time to commit:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --stat --… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (11ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 11.7s (4 ✓)
+
+Done. Here's what happened:
+
+**Extracted to src/tool_wrappers.rs (661 lines):**
+• GuardedTool struct + `AgentTool` impl — directory restriction wrapper (Box-based)
+• ArcGuardedTool struct + AgentTool impl — directory restriction wrapper (Arc-based, for sub-agents)
+• TruncatingTool struct + AgentTool impl — output truncation wrapper
+• ConfirmTool struct + AgentTool impl — user confirmation wrapper
+• maybe_guard, maybe_guard_arc, with_truncation, maybe_confirm — conditional wrapper helpers
+• `truncate_result — truncation logic for ToolResult`
+• `describe_file_operation, confirm_file_operation` — confirmation UI helpers
+• 19 tests covering all wrapper behavior (describe_file_operation variants, confirm_file_operation patterns, truncate_result, shared approval flag)
+
+**What stayed in tools.rs (1683 lines, down from 2287):**
+• StreamingBashTool, `RenameSymbolTool, AskUserTool, TodoTool` — concrete tool implementations
+• build_tools, `build_sub_agent_tool` — builder functions that compose tools with wrappers
+• All tests for concrete tools and builders
+
+No logic changes. Pure extraction — all 2385 tests pass, zero clippy warnings, clean formatting.
+
+  ↳ 9m 20s · 41156→23237 tokens · $3.91
+  ⬤ 25% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

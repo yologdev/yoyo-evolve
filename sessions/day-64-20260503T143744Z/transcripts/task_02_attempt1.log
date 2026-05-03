@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "print_banner" src/cli.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn detect_project_t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn git_branch" src/… ✓ (3ms)
+ ✓ (7ms)
+ ✓ (4ms)
+  ▶ read src/cli.rs:127..167  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub enum ProjectType" s… ✓ (2ms)
+ ✓ (4ms)
+  ▶ read src/commands_project.rs:658..688 ✓ (1ms)
+  ▶ read src/commands_project.rs:687..717 ✓ (1ms)
+  7 tools completed in 13.1s (7 ✓)
+
+Now let me look at how detect_project_name works:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:506..536 ✓ (1ms)
+
+Now let me check if ProjectType has PartialEq derived (for tests):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 "pub enum ProjectType" … ✓ (3ms)
+
+Good, it has `PartialEq. Now let me check what imports are at the top of cli.rs`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1..21 ✓ (1ms)
+
+Now I have a clear picture. Let me also check the Display impl for ProjectType to see how it formats - I need a shorter version for the banner:
+
+The Display impl shows "Rust (Cargo)", "Node.js (npm)", etc. For the banner, I want shorter labels like just "Rust", "Node.js", "Python", "Go", "Make". Let me create a helper function.
+
+Now let me implement this. I'll start by writing the testable helper function and tests, then modify `print_banner`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2520..2530 ✓ (1ms)
+  ▶ read src/cli.rs:2529..2539 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me implement the solution. First, I'll add the banner_project_line helper and update print_banner:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (12 → 59 lines)
+        println!(
+            "\n{BOLD}{CYAN}  yoyo{RESET} v{VERSION}{day_suffix} {DIM}— a coding agent growing up in public{RESET}"
+        );
+  + 
+  +     // Show project context if we can detect it
+  +     let dir = std::path::Path::new(".");
+  +     let project_type = crate::commands_project::detect_project_type(dir);
+  +     let name = crate::commands_project::detect_project_name(dir);
+  +     let branch = crate::git::git_branch();
+  +     if let Some(line) = banner_project_line(&project_type, &name, branch.as_deref()) {
+  +         println!("{DIM}  {line}{RESET}");
+  +     }
+  + 
+        println!("{DIM}  Type /help for commands, /quit to exit{RESET}\n");
+  + }
+  + 
+  + /// Build the project context line for the startup banner.
+  + /// Returns `None` if the project type is Unknown (graceful degradation).
+  + pub fn banner_project_line(
+  +     project_type: &crate::commands_project::ProjectType,
+  ... (32 more lines)
+ ✓ (1ms)
+
+Now let me add the tests. Let me find the right spot after the existing test_print_banner_does_not_panic test:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2570..2585 ✓ (1ms)
+  ▶ edit src/cli.rs (8 → 53 lines)
+            // When built externally, option_env! returns None gracefully.
+            // Either way, it must not panic.
+            print_banner();
+  +     }
+  + 
+  +     #[test]
+  +     fn test_banner_project_line_rust() {
+  +         use crate::commands_project::ProjectType;
+  +         let line = banner_project_line(&ProjectType::Rust, "my-app", Some("main"));
+  +         assert_eq!(line, Some("\u{1F4C1} Rust project (my-app) on main".to_string()));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_banner_project_line_node_no_branch() {
+  +         use crate::commands_project::ProjectType;
+  +         let line = banner_project_line(&ProjectType::Node, "webapp", None);
+  +         assert_eq!(line, Some("\u{1F4C1} Node.js project (webapp)".to_string()));
+  +     }
+  + 
+  +     #[test]
+  ... (29 more lines)
+ ✓ (1ms)
+  2 tools completed in 13.3s (2 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (499ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (27.7s)
+  4 tools completed in 55.7s (4 ✓)
+
+All 88 tests pass. Let me verify my new tests ran:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test banner 2>&1 ✓ (133ms)
+
+All 7 banner tests pass (the original test_print_banner_does_not_panic plus my 6 new ones). Let me also verify the format check:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (501ms)
+
+All checks pass. Now let me commit:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (13ms)
+
+Done! The implementation:
+
+1. `banner_project_line()` — a pure, testable helper that takes project type, name, and optional branch, returning Option<String>. Returns None for Unknown projects (graceful degradation).
+
+2. `print_banner()` — now calls `detect_project_type, detect_project_name, and git_branch`, then inserts the context line (DIM-colored) between the version line and the help line.
+
+3. 6 new tests covering: Rust with branch, Node.js without branch, Unknown returns None, empty name, Go with feature branch, Make with neither name nor branch.
+
+  ↳ 2m 20s · 12583→4008 tokens · $0.579
+  ⬤ 7% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

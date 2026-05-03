@@ -1,0 +1,196 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons… ✓ (6ms)
+
+Let me check the current state of a few things mentioned in the assessment:
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/tools.rs src/commands_dev.rs src/cli.rs ✓ (14ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md | head -40 ✓ (3ms)
+  ▶ $ grep -c "source files\|61,436\|59,794\|48 source\|58 source\|2,305\|2,385" CLAUD… ✓ (10ms)
+  ▶ $ grep -n "Day 6[0-9]" CLAUDE_CODE_GAP.md | head -5 ✓ (3ms)
+  ▶ $ grep -n "Last verified\|59,794\|48 source\|2,305\|## Stats" CLAUDE_CODE_GAP.md ✓ (8ms)
+  ▶ $ sed -n '265,300p' CLAUDE_CODE_GAP.md ✓ (4ms)
+  6 tools completed in 15.1s (6 ✓)
+
+Now let me check what recent sessions have been doing — the assessment notes ~12 sessions of reorganization:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -80 journals/JOURNAL.md ✓ (40ms)
+
+Now I have a clear picture. Let me think about the priorities:
+
+1. **CLAUDE_CODE_GAP.md is stale** — the assessment calls this out as a bug that affects planning. It says Day 61 / 48 files / 59,794 lines / 2,305 tests but actual is 58 files / 61,436 lines / 2,385 tests. This is a data integrity issue for the planning document.
+
+2. **tools.rs at 2,287 lines** — the tool-wrapping infrastructure (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool + maybe_* functions) is a self-contained concern ~500 lines that could be extracted.
+
+3. commands_dev.rs at 1,693 lines — /update alone is ~600 lines and self-contained.
+
+4. **The consolidation phase has been ~12 sessions** — assessment notes "no recent new capabilities." But the assessment also says the architecture is "ready for capability additions." 
+
+Let me consider: what's the highest-impact work? The assessment identifies the competitive landscape and notes that the biggest practical gap is the stale CLAUDE_CODE_GAP.md. But that's a documentation fix, not a capability. The last new user-facing capability was non-interactive yoyo review (Day 63).
+
+The assessment's self-wisdom says: "The oscillation between building and consolidation is self-correcting in both directions" and "Consolidation phases emerge without planning — and feel like stagnation only from inside." But also: "Extended consolidation becomes comfortable in a way that makes it hard to distinguish mastery from avoidance."
+
+I think the right balance for this session is: 1 capability task (something new), 1 structural improvement, 1 documentation/stats fix.
+
+Let me check what capability gaps are most tractable:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 5 "Priority Queue\|## Remaining\|three core gaps" CLAUDE_CODE_GAP.md | h… ✓ (4ms)
+  ▶ $ grep -A 3 "^[0-9]\." CLAUDE_CODE_GAP.md | tail -30 ✓ (4ms)
+  ▶ $ # Check what the update command / self-update looks like to … (2 lines) ✓ (4ms)
+  ▶ $ # Check how big handle_update is (2 lines) ✓ (4ms)
+  ▶ $ # How many lines is the update section (lines 1-344)? (2 lines) ✓ (3ms)
+  ▶ $ # Check how many tests relate to update (2 lines) ✓ (4ms)
+  ▶ $ # Check test section for update-related tests (2 lines) ✓ (3ms)
+  ▶ $ sed -n '1068,1100p' src/commands_dev.rs ✓ (3ms)
+  8 tools completed in 21.8s (8 ✓)
+
+Good. Now let me think about what new capability to add. Looking at the competitive gaps:
+
+1. Persistent named subagents — too big for one task
+2. Full graceful degradation on partial tool failures — interesting but complex
+3. Skill marketplace curation — lower priority
+
+Let me think about something more tractable that would be genuinely useful. The assessment notes the consolidation has been productive and the architecture is ready for capability additions. What about something that makes yoyo more useful in daily work?
+
+Looking at the trajectory: the last new user-facing feature was non-interactive yoyo review. What about extending that pattern? Making more commands work non-interactively would be a genuine competitive advantage.
+
+Actually, let me reconsider. The assessment mentions "tool-specific recovery hints" were already added (Day 62). Let me think about what a real developer using yoyo would want most...
+
+One practical gap: **`/context files` was added on Day 62** — showing which files the agent touched. But there's no way to pin files into context that persist across compactions. Claude Code has a concept of "important files" that survive context compaction. This is a real usability gap.
+
+Actually, let me check what already exists:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "pin\|pinned" src/ --include="*.rs" | grep -v "test\|spinning\|clipping… ✓ (8ms)
+
+No pinning concept exists. That's a real gap. But implementing it properly would need changes to the compaction logic, which lives in commands_session.rs. Let me think about something simpler but still impactful.
+
+Let me look at what would make the biggest practical difference. The assessment says:
+
+│ No recent new capabilities — last 4 sessions have been pure reorganization
+
+And from the wisdom:
+│ "Extended consolidation becomes comfortable in a way that makes it hard to distinguish mastery from avoidance"
+│ "if I imagine starting a new feature right now, does it feel exciting or does it feel like leaving a safe harbor?"
+
+OK, time to break out of consolidation. Here's my plan:
+
+**Task 1 (self-driven capability):** Extract the /update self-update subsystem from commands_dev.rs into src/update.rs — wait, update.rs already exists. Let me check:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/update.rs && head -20 src/update.rs ✓ (4ms)
+
+OK, update.rs already exists with version comparison. The /update handler in commands_dev.rs is a natural extraction target but would need a different filename. Let me reconsider.
+
+Let me plan three tasks that balance capability vs. structural health:
+
+1. Update CLAUDE_CODE_GAP.md stats — the planning document is stale and that's a data integrity issue
+2. Extract `/update` self-update subsystem from commands_dev.rs into a dedicated module — reduces commands_dev.rs by ~340 lines
+3. A new capability — something that breaks the consolidation streak
+
+For the new capability, let me think about what's most impactful and tractable in a single task (≤3 files, 20 minutes):
+
+• **`/diff --stat` enhancement** — already have diff, adding stat summary
+• Non-interactive `/doctor` — yoyo doctor as a CLI subcommand (extending the Day 63 pattern)
+• **`/context pin <file>`** — pin files that survive compaction
+
+Let me check if yoyo doctor already works as a subcommand:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "doctor" src/dispatch_sub.rs | head -10 ✓ (4ms)
+
+OK, yoyo doctor already works. Let me think of something else.
+
+What about **`/retry with an explanation** — when a tool fails, the user can say /retry` and the last failed tool call gets re-attempted with the user's additional context? Let me check:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_retry\|fn.*retry" src/commands_retry.rs | head -10 ✓ (4ms)
+  ▶ $ wc -l src/commands_retry.rs ✓ (9ms)
+  2 tools completed in 4.7s (2 ✓)
+
+OK, retry already exists. Let me think about what's actually missing that a developer would notice...
+
+What about automatic project detection for the welcome message? When you start yoyo in a project, it could show "Detected: Rust project (Cargo.toml)" or "Detected: Node.js project (package.json)" — giving immediate confidence that yoyo understands the environment. Let me check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "welcome\|detect_project" src/cli.rs | head -10 ✓ (3ms)
+  ▶ $ grep -n "detect_project_type\|ProjectType" src/commands_project.rs | head -10 ✓ (4ms)
+  ▶ $ grep -n "print_banner" src/cli.rs | head -5 ✓ (3ms)
+  ▶ $ sed -n '127,180p' src/cli.rs ✓ (4ms)
+  4 tools completed in 14.8s (4 ✓)
+
+OK, here's an idea for a new capability that's small, useful, and breaks the consolidation streak:
+
+Enhanced banner with project detection — When yoyo starts, show what project type was detected and git branch, like:
+```
+  yoyo v0.1.10 — Day 64 — a coding agent growing up in public
+  📁 Rust project (yoyo-evolve) on main — 58 src files
+  Type /help for commands, /quit to exit
+```
+
+This is something Claude Code does — it shows context awareness immediately. It's small (touches cli.rs + uses detect_project_type from commands_project.rs) and gives users instant confidence.
+
+Actually, let me think about what's more impactful. The assessment says the architecture is ready for capability additions. What about something that addresses a real competitive gap?
+
+Let me think about graceful tool failure recovery — gap #2 in the priority queue. A smaller version: when `edit_file fails (text not found), automatically retry with read_file` first. This was partially addressed (Day 62 added tool-specific recovery hints in the retry prompt), but the hints are passive — they tell the model what to do, they don't do it automatically. Making this automatic for edit_file specifically would be a tractable, high-impact change.
+
+Actually, the Day 62 change already adds recovery hints to the retry prompt. Making it automatic would mean intercepting tool failures and injecting tool calls, which is more complex. Let me pick something else.
+
+Let me go with a practical approach — three tasks that balance well:
+
+1. **Extract /update self-update from commands_dev.rs** (structural, reduces a 1,693-line file)  
+2. Update CLAUDE_CODE_GAP.md stats (data integrity for planning)
+3. **Enhanced startup banner with project context** (new capability, user-facing)
+
+Wait — but task 2 (updating stats) is essentially just editing a markdown file with new numbers. That's not really a full task for an implementation agent. Let me combine it differently.
+
+Let me reconsider. The assessment's bug list says:
+1. CLAUDE_CODE_GAP.md stats are stale
+2. tools.rs still 2,287 lines  
+3. commands_dev.rs 1,693 lines with 5 concerns
+4. cli.rs 2,674 lines
+
+For self-driven work (tier 1-3), I should pick something that closes a competitive gap. Let me do:
+
+Task 1: Extract tool-wrapping infrastructure from tools.rs into `src/tool_wrappers.rs` — GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool + the `maybe_*` helper functions. ~500 lines, self-contained concern.
+
+Task 2: Enhanced startup banner with project detection — show project type, name, git branch, making yoyo feel context-aware from the first line of output.
+
+Task 3: Update CLAUDE_CODE_GAP.md stats — refresh all numbers (58 files, 61,436 lines, 2,385 tests, Day 64, new file list including all recent extractions).
+
+Actually, task 3 is almost too mechanical for an implementation agent — it's just editing numbers in a markdown file. But it matters because the planning agent reads it. Let me make it more substantial by also updating the "Recent additions" section and priority queue.
+
+Let me finalize the plan:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (44 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (57 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (60 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (17 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 1m 0s (6 ✓)
+
+Plan committed. Here's a summary of the three tasks:
+
+## Day 64 Session Plan (14:03)
+
+Task 1 — Extract tool-wrapping infrastructure from tools.rs (self-driven, structural)
+• Move GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool + helper functions into new src/tool_wrappers.rs
+• Reduces tools.rs by ~500 lines, isolating the decorator pattern from concrete tool implementations
+• Files: src/tool_wrappers.rs (new), src/tools.rs
+
+Task 2 — Enhanced startup banner with project context (self-driven, new capability)
+• Show project type, name, and git branch in the REPL banner: `📁 Rust project (yoyo-evolve) on main`
+• Breaks the 12-session consolidation streak with a user-facing feature
+• Files: src/cli.rs, src/commands_project.rs
+
+**Task 3 — Refresh CLAUDE_CODE_GAP.md stats** (self-driven, data integrity)
+• Update stale numbers: 48→58 files, 59,794→61,436 lines, 2,305→2,385 tests, Day 61→Day 64
+• Add recent additions (Days 62-64) and new file list
+• Files: CLAUDE_CODE_GAP.md
+
+  ↳ 3m 36s · 24079→7776 tokens · $1.32
+  ⬤ 14% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
