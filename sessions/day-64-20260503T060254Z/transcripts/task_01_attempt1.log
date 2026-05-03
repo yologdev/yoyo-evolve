@@ -1,0 +1,186 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current destructive_guard function and its tests to understand the exact code I need to change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "destructive_guard" src/… ✓ (5ms)
+  ▶ read src/git.rs:1..81 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me read the tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:1195.. ✓ (1ms)
+
+Now I have a clear picture. Let me implement the fix:
+
+1. Change destructive_guard to accept an explicit `cwd: &Path` parameter
+2. Update the call site in run_git()
+3. Update all tests to pass explicit paths
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (19 → 21 lines)
+    /// Check whether a git invocation targets a destructive subcommand and is
+    /// running from the project root (i.e., the real repo, not a temp dir).
+    /// Returns `Some(subcommand)` when the call should be blocked, `None` when safe.
+  + ///
+  + /// Accepts an explicit `cwd` so tests don't need `std::env::set_current_dir`
+  + /// (which is process-global and causes flaky races under parallel test execution).
+    #[cfg(test)]
+  - fn destructive_guard<'a>(args: &'a [&'a str]) -> Option<&'a str> {
+  + fn destructive_guard<'a>(args: &'a [&'a str], cwd: &std::path::Path) -> Option<&'a str> {
+        let subcmd = args.first()?;
+        if !DESTRUCTIVE_GIT_COMMANDS.contains(subcmd) {
+            return None;
+        }
+  -     // Compare the current working dir against the compile-time project root.
+  +     // Compare the supplied working dir against the compile-time project root.
+        // If they match, we're in the real repo — block it.
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+  -     let cwd = std::env::current_dir().ok()?;
+        if cwd == manifest_dir {
+            Some(subcmd)
+  ... (1 more lines)
+ ✓ (1ms)
+
+Now update the call site in run_git() to pass the current directory:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (8 → 10 lines)
+        #[cfg(test)]
+  -     if let Some(cmd) = destructive_guard(args) {
+  -         panic!(
+  -             "SAFETY: run_git() called with destructive command '{}' from project root during \
+  -              tests. Use a temp directory or mock instead.",
+  -             cmd
+  -         );
+  +     if let Some(cwd) = std::env::current_dir().ok() {
+  +         if let Some(cmd) = destructive_guard(args, &cwd) {
+  +             panic!(
+  +                 "SAFETY: run_git() called with destructive command '{}' from project root during \
+  +                  tests. Use a temp directory or mock instead.",
+  +                 cmd
+  +             );
+  +         }
+        }
+ ✓ (1ms)
+
+Now update the tests. First, the safe commands test:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (18 → 19 lines)
+        #[test]
+        fn destructive_guard_allows_safe_commands() {
+  -         // Read-only commands should never be blocked
+  +         // Read-only commands should never be blocked, even from project root
+  +         let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            for safe in &[
+                &["--version"][..],
+                &["rev-parse", "--abbrev-ref", "HEAD"],
+  ···
+                &["show", "HEAD"],
+            ] {
+                assert!(
+  -                 destructive_guard(safe).is_none(),
+  +                 destructive_guard(safe, project_root).is_none(),
+                    "Safe command {:?} should not be blocked",
+                    safe
+                );
+ ✓ (0ms)
+
+Now the "blocks in project root" test:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (14 → 15 lines)
+        #[test]
+        fn destructive_guard_blocks_known_bad_commands_in_project_root() {
+  -         // We're running from the project root during cargo test, so these should trigger
+  +         // Pass the project root explicitly — should trigger for every destructive command
+  +         let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            for cmd in DESTRUCTIVE_GIT_COMMANDS {
+                let args = &[*cmd, "--help"];
+  -             let result = destructive_guard(&args[..]);
+  +             let result = destructive_guard(&args[..], project_root);
+                assert!(
+                    result.is_some(),
+                    "Destructive command '{}' should be blocked from project root",
+ ✓ (1ms)
+
+Now the flaky test — the whole point of this fix:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (13 → 11 lines)
+        #[test]
+        fn destructive_guard_allows_destructive_in_temp_dir() {
+  -         // If we're in a temp directory, destructive commands should be allowed
+  +         // Pass a temp directory as cwd — destructive commands should be allowed.
+  +         // No std::env::set_current_dir needed — that was the source of the race.
+            let tmp = std::env::temp_dir();
+  -         let original = std::env::current_dir().unwrap();
+  -         std::env::set_current_dir(&tmp).unwrap();
+  -         let result = destructive_guard(&["commit", "-m", "test"]);
+  -         std::env::set_current_dir(&original).unwrap();
+  +         let result = destructive_guard(&["commit", "-m", "test"], &tmp);
+            assert!(
+                result.is_none(),
+                "Destructive command in temp dir should NOT be blocked"
+ ✓ (0ms)
+
+Now the empty args test:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (4 → 8 lines)
+        #[test]
+        fn destructive_guard_empty_args() {
+  -         assert!(destructive_guard(&[]).is_none(), "Empty args should pass");
+  +         let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+  +         assert!(
+  +             destructive_guard(&[], project_root).is_none(),
+  +             "Empty args should pass"
+  +         );
+        }
+ ✓ (0ms)
+
+Good. The `destructive_guard_list_covers_original_incident test doesn't call destructive_guard` — it just checks the list — so it needs no changes. Let me verify there are no other callers:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "destructive_guard" src… ✓ (5ms)
+
+Only in src/git.rs. Now let's run the full verification pipeline:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (495ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.3s)
+  2 tools completed in 14.1s (2 ✓)
+
+Clippy caught the ok() pattern — should use if let Ok(cwd) directly:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (3 → 3 lines)
+        #[cfg(test)]
+  -     if let Some(cwd) = std::env::current_dir().ok() {
+  +     if let Ok(cwd) = std::env::current_dir() {
+            if let Some(cmd) = destructive_guard(args, &cwd) {
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.0s)
+  4 tools completed in 51.4s (4 ✓)
+
+All 2385 tests pass (2297 + 88), zero failures. Let me also specifically run the destructive guard tests to see them clearly:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test git::tests::destructi… ✓ (133ms)
+
+All 5 destructive_guard tests pass. Let me also verify `set_current_dir` is no longer used anywhere in the tests:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/gi… ✓ (3ms)
+
+Only in comments — no actual calls. Now commit:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (11ms)
+
+Clean fix. The change is small and surgical — exactly what this needed:
+
+1. **`destructive_guard** now takes cwd: &Path instead of calling std::env::current_dir()` internally
+2. **`run_git()** passes std::env::current_dir()` at the call site, guarded by if let Ok(cwd)
+3. The flaky test (`destructive_guard_allows_destructive_in_temp_dir) now passes std::env::temp_dir()` directly — no more set_current_dir / restore dance that raced with parallel tests
+4. All other tests pass explicit paths (`env!("CARGO_MANIFEST_DIR")` for project root tests)
+
+The set_current_dir call was the entire source of the race. Gone now. 🐙
+
+  ↳ 2m 28s · 14683→4289 tokens · $0.755
+  ⬤ 8% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

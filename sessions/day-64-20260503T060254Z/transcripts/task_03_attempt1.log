@@ -1,0 +1,311 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of prompt.rs and identifying the functions to extract.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^fn\|^pub(crate)\… ✓ (5ms)
+ ✓ (3ms)
+  ▶ read src/prompt.rs:1..241 ✓ (2ms)
+  ▶ read src/prompt.rs:240..300 ✓ (1ms)
+  4 tools completed in 9.3s (4 ✓)
+
+Now let me see the tests section to understand what needs to move:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1238.. ✓ (3ms)
+
+Now let me see the full test section to identify which tests to extract:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1340..1740 ✓ (3ms)
+
+Now let me check which call sites reference these functions:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "search_messages\|highl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "crate::prompt::" --inc… ✓ (5ms)
+ ✓ (10ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Good - they're imported via use crate::prompt::*; not explicit paths. Let me check how the call sites import:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::prompt" --in… ✓ (5ms)
+
+Let me also check if tool_result_preview is used anywhere outside prompt.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "tool_result_preview" -… ✓ (5ms)
+
+`tool_result_preview is private and only used within prompt.rs` itself (in the event handler at lines 466/472/498). I should still extract it since the task says to, but it needs to remain accessible from prompt.rs. Let me check `message_text`:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "message_text" --includ… ✓ (6ms)
+
+`message_text is also only used within prompt.rs (called by search_messages`). Now I have the full picture. Let me also see the remaining tests between 1438-1682 to identify which should stay vs move:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1438..1688 ✓ (2ms)
+
+Now I have a clear picture. Let me identify which tests to move vs keep:
+
+Tests to move to prompt_utils.rs (related to the extracted functions):
+• test_summarize_message_user (1286)
+• `test_summarize_message_tool_result` (1294)
+• test_summarize_message_tool_result_error (1311)
+• `test_write_output_file_none` (1327)
+• test_write_output_file_some (1333)
+• `test_tool_result_preview_empty` (1345)
+• test_tool_result_preview_text (1354)
+• test_tool_result_preview_truncated (1365)
+• `test_tool_result_preview_multiline` (1378)
+• test_search_messages_basic_match (1389)
+• `test_search_messages_case_insensitive` (1402)
+• test_search_messages_no_match (1411)
+• `test_search_messages_empty_messages` (1418)
+• test_search_messages_multiple_matches (1425)
+• test_search_messages_tool_result (1438)
+• test_message_text_user (1454)
+• test_message_text_tool_result (1461)
+• `test_highlight_matches_basic` (1479)
+• test_highlight_matches_case_insensitive (1486)
+• `test_highlight_matches_multiple_occurrences` (1492)
+• test_highlight_matches_no_match (1501)
+• test_highlight_matches_empty_query (1507)
+• `test_highlight_matches_empty_text` (1513)
+• test_highlight_matches_preserves_original_case (1519)
+• `test_highlight_matches_entire_string` (1526)
+• test_search_messages_results_are_highlighted (1532)
+
+Tests to keep in prompt.rs (related to prompt internals):
+• `agent_messages_empty_until_finish_is_called` (1251)
+• `test_image_content_block_construction` (1543)
+• test_user_message_with_image_content (1576)
+• test_deferred_bash_timer_set_lifecycle (1609)
+• test_deferred_bash_timer_denied_command_cleanup (1654)
+• `test_non_bash_tools_not_deferred` (1678)
+• `test_prompt_outcome_has_api_error_field` (1688)
+• test_prompt_outcome_has_tool_name_field (1712)
+
+Let me also check main.rs for the mod declarations:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod " src/main.rs ✓ (3ms)
+
+Now I have all the information. Let me also check the blank line 1541:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1539..1545 ✓ (1ms)
+
+There's a blank line 1541 (probably was a comment that got removed). Now let me create the new module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write src/prompt_utils.rs (452 lines) ✓ (0ms)
+
+Now let me update prompt.rs to remove the extracted functions and tests, replacing them with re-exports:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (192 → 15 lines)
+    };
+    // MAX_RETRIES is pub(crate), so import without re-exporting.
+    use crate::prompt_retry::MAX_RETRIES;
+  - 
+  - /// Extract a preview of tool result content for display.
+  - /// Returns an empty string if there's nothing meaningful to show.
+  - fn tool_result_preview(result: &ToolResult, max_chars: usize) -> String {
+  -     let text: String = result
+  -         .content
+  -         .iter()
+  -         .filter_map(|c| match c {
+  -             Content::Text { text } => Some(text.as_str()),
+  -             _ => None,
+  -         })
+  -         .collect::<Vec<_>>()
+  -         .join(" ");
+  -     let text = text.trim();
+  -     if text.is_empty() {
+  -         return String::new();
+  -     }
+  ... (173 more lines)
+ ✓ (1ms)
+
+Now let me remove the extracted tests from prompt.rs. Let me see the current state of the tests section:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]\|#\[cfg(test)… ✓ (3ms)
+  ▶ read src/prompt.rs:1061.. ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now I need to see the exact boundaries of the tests to remove. Let me read the section that needs to be replaced:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1108..1368 ✓ (2ms)
+
+Now I'll remove all the extracted tests (lines 1109-1365):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (258 → 6 lines)
+  -     #[test]
+  -     fn test_summarize_message_user() {
+  -         let msg = AgentMessage::Llm(Message::user("hello world, this is a test"));
+  -         let (role, preview) = summarize_message(&msg);
+  -         assert_eq!(role, "user");
+  -         assert!(preview.contains("hello world"));
+  -     }
+  - 
+  -     #[test]
+  -     fn test_summarize_message_tool_result() {
+  -         let msg = AgentMessage::Llm(Message::ToolResult {
+  -             tool_call_id: "tc_1".into(),
+  -             tool_name: "bash".into(),
+  -             content: vec![Content::Text {
+  -                 text: "output".into(),
+  -             }],
+  -             is_error: false,
+  -             timestamp: 0,
+  -         });
+  -         let (role, preview) = summarize_message(&msg);
+  ... (241 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/prompt.rs.
+
+There's a blank line issue. Let me look at the exact content around line 1362-1367:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1360,1370p' src/prompt.r… ✓ (3ms)
+
+There's a Unicode box-drawing separator comment. Let me also check what's on line 1364:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1363,1366p' src/prompt.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1364p' src/prompt.rs | x… ✓ (4ms)
+  2 tools completed in 5.7s (2 ✓)
+
+OK, there's a Unicode separator. Let me read the exact lines more carefully. Let me just use a different approach - replace from the first extracted test to the test_image_content block:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1108,1109p' src/prompt.r… ✓ (3ms)
+
+Let me use a python script approach to make the replacement safely:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (44 lines) ✓ (20ms)
+
+Now let me add the mod prompt_utils; to main.rs:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (3 → 4 lines)
+    mod prompt;
+    mod prompt_budget;
+    mod prompt_retry;
+  + mod prompt_utils;
+ ✓ (1ms)
+
+Now let me also add a re-export in prompt.rs for `tool_result_preview so it's accessible. Wait, let me check where tool_result_preview` is actually used in the current prompt.rs:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_result_preview" sr… ✓ (3ms)
+
+Good, I already added the use crate::prompt_utils::tool_result_preview; import. Now let's try building:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.0s)
+
+There's an unused import warning. highlight_matches is re-exported but not used within prompt.rs itself. However, it's used by other modules via use crate::prompt::*;. Let me check if the re-export is actually needed or if clippy will flag it:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.9s)
+
+The highlight_matches function is indeed re-exported and used through crate::prompt::* in other files, but clippy doesn't track that. Let me check:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "highlight_matches" --i… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "highlight_matches" --i… ✓ (5ms)
+  2 tools completed in 5.2s (2 ✓)
+
+`highlight_matches is not used directly by any module other than prompt_utils.rs` itself. It's called by search_messages internally but not directly from outside. Let me remove it from the re-export:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (3 → 1 lines)
+  - pub use crate::prompt_utils::{
+  -     highlight_matches, search_messages, summarize_message, write_output_file,
+  - };
+  + pub use crate::prompt_utils::{search_messages, summarize_message, write_output_file};
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.8s)
+  2 tools completed in 13.3s (2 ✓)
+
+Now let's run tests:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (28.4s)
+
+All tests pass. Let me now run fmt:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (980ms)
+
+All checks pass. Let me verify prompt.rs is now significantly smaller:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs src/prompt_u… ✓ (3ms)
+
+prompt.rs went from 1,732 lines down to 1,300 lines — well under the 1,800 line target. Let me also verify the structure is clean:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/prompt_u… ✓ (3ms)
+
+26 tests moved to prompt_utils.rs. Let me quickly verify the remaining tests in prompt.rs:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]\|#\[tokio::te… ✓ (3ms)
+
+8 tests remain in prompt.rs (the async agent test + the 7 prompt-specific tests). Now let me update the CLAUDE.md architecture section to document the new module:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry" CLAUDE.md… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`)
+  + - `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview (extracted from `prompt.rs`)
+ ✓ (0ms)
+  2 tools completed in 13.1s (2 ✓)
+
+Now update the Project Files section:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (2 → 3 lines)
+    src/prompt_retry.rs
+  + src/prompt_utils.rs
+    src/providers.rs
+ ✗ (0ms)
+    │ old_text not found in CLAUDE.md.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry\|prompt_ut… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt_retry" CLAUDE.md ✓ (3ms)
+  3 tools completed in 8.6s (2 ✓, 1 ✗)
+
+The Project Files section lists files differently. Let me check:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/prompt" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt" CLAUDE.md ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Good — the architecture section already has the new line at 79. The Project Files section doesn't exist as line-by-line src/ paths in CLAUDE.md — it's the ## Project Files section with all filenames. Let me check that:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "## Project Files" CLAUD… ✓ (3ms)
+
+The Project Files section is not in CLAUDE.md but is in the system prompt above. It doesn't need updating. Let me also update the Repository Structure section if it's in CLAUDE.md:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Repository Structure" C… ✓ (3ms)
+
+Not in CLAUDE.md. Let me do one final comprehensive check:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (42.6s)
+
+All checks pass. Let me verify the specific prompt_utils tests run:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_utils 2>&1 ✓ (130ms)
+
+All 26 extracted tests pass in their new home. Now let me commit:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (11ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Done. Here's what I did:
+
+**Created `src/prompt_utils.rs`** (452 lines) with 6 extracted functions:
+• tool_result_preview — formats a preview of tool result content (now pub(crate))
+• `write_output_file` — writes response text to output file
+• `message_text` — extracts searchable text from a message (private, used by search_messages)
+• highlight_matches — BOLD-highlights query matches in text
+• search_messages — searches conversation messages with highlighted previews
+• summarize_message — one-line summary for /history display
+
+Moved 26 tests alongside their functions into the new module.
+
+Updated `src/prompt.rs`:
+• Added re-exports via pub use crate::prompt_utils:: for search_messages, summarize_message, write_output_file (the three used by external modules)
+• Added use crate::prompt_utils::tool_result_preview; (used internally by the event handler)
+• Removed all extracted function bodies and their 26 tests
+• Result: 1,732 → 1,300 lines (432 line reduction, well under the 1,800 target)
+
+Updated `src/main.rs`: Added mod prompt_utils;
+
+**Updated `CLAUDE.md**: Added prompt_utils.rs` to the Architecture section.
+
+All call sites (`main.rs, commands_session.rs, commands_spawn.rs`) continue to work through the existing use crate::prompt::*; re-exports — zero changes needed at call sites.
+
+  ↳ 7m 16s · 38065→17072 tokens · $2.38
+  ⬤ 21% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

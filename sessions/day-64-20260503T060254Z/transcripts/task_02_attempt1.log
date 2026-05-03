@@ -1,0 +1,578 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll extract the error diagnosis and retry logic from prompt.rs into a new prompt_retry.rs module. Let me start by understanding the current code.
+  ▶ $ wc -l src/prompt.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ head -100 src/prompt.rs ✓ (10ms)
+ ✓ (40ms)
+  ▶ $ sed -n '80,450p' src/prompt.rs ✓ (6ms)
+  ▶ $ grep -n "^pub fn\|^fn\|^pub const\|^const\|^pub struct\|^struct\|^mod tests\|#\[… ✓ (4ms)
+  4 tools completed in 7.7s (4 ✓)
+
+Now let me look at the test section to find the tests I need to move:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1601,2425p' src/prompt.rs ✓ (10ms)
+
+Let me see the full test section to identify all tests that need to move:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[test\]\|#\[tokio::test\]" src/prompt.rs ✓ (8ms)
+  ▶ $ grep -n "#\[test\]\|#\[tokio::test\]\|fn test_" src/prompt.rs ✓ (8ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Let me get a clearer picture of which tests relate to the retry/diagnosis functions vs. other prompt functions:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1601,2425p' src/prompt.rs | grep -n "fn test_" ✓ (4ms)
+
+Now I have a clear picture. Let me identify exactly which lines to extract. The functions to move are lines 58-425 (from build_retry_prompt through infer_provider_from_model), and the corresponding tests. Let me check exact boundaries:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '425,450p' src/prompt.rs ✓ (3ms)
+
+Good. The retry-related functions span lines 55-424 (from the doc comment before build_retry_prompt through end of infer_provider_from_model). Let me verify:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '55,57p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '54,58p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '420,427p' src/prompt.rs ✓ (3ms)
+  3 tools completed in 6.2s (3 ✓)
+
+So the block to extract is lines 54-424 (inclusive). Now let me check what imports these functions need:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '54,424p' src/prompt.rs | grep -oE "crate::\w+::\w+" | sort -u ✓ (4ms)
+  ▶ $ sed -n '54,424p' src/prompt.rs | grep -oE "safe_truncate|truncate_with_ellipsis|… ✓ (4ms)
+  ▶ $ grep "use " src/prompt.rs | head -20 ✓ (3ms)
+  ▶ $ sed -n '1,12p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '3,8p' src/prompt.rs ✓ (3ms)
+  5 tools completed in 11.4s (5 ✓)
+
+Let me see the actual imports:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1..11 ✓ (1ms)
+
+Now let me check what MAX_RETRIES is used for in prompt.rs (remaining code after extraction):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "MAX_RETRIES\|MAX_AUTO_RETRIES\|retry_delay\|is_retriable_error\|diagnos… ✓ (5ms)
+
+Now I have a complete picture. Let me also check what uses these functions from other files:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "build_retry_prompt\|MAX_AUTO_RETRIES\|build_auto_retry_prompt\|tool_re… ✓ (10ms)
+
+Good - only build_retry_prompt is imported externally, and it's from `crate::prompt`. I'll re-export it from prompt.rs so that import keeps working.
+
+Now let me plan the extraction. I need to:
+1. Create `src/prompt_retry.rs` with the extracted functions
+2. Remove those functions from prompt.rs and add re-exports
+3. Add mod prompt_retry; to main.rs
+4. Move corresponding tests
+
+Let me first extract the exact lines I need:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '54,424p' src/prompt.rs ✓ (7ms)
+
+Now let me identify all the tests to move. I need to extract tests that test the retry/diagnosis functions:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1601,2425p' src/prompt.rs ✓ (10ms)
+
+Let me see the full test section without truncation:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1694,1810p' src/prompt.rs ✓ (4ms)
+
+Now let me see the remaining tests to understand which ones to move and which to keep:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1810,2100p' src/prompt.rs ✓ (6ms)
+  ▶ $ sed -n '2100,2425p' src/prompt.rs ✓ (6ms)
+  2 tools completed in 10.9s (2 ✓)
+
+Now I have a complete picture. Let me create the plan:
+
+Tests to move (they test retry/diagnosis functions):
+• test_retry_delay_exponential_backoff_ranges (1605-1627)
+• `test_retry_delay_capped_at_60s` (1629-1635)
+• test_retry_delay_zero_attempt_floor (1682-1692)
+• test_is_retriable_rate_limit (1694-1700)
+• `test_is_retriable_server_errors` (1702-1710)
+• test_is_retriable_network_errors (1712-1718)
+• `test_is_not_retriable_auth_errors` (1720-1728)
+• test_is_not_retriable_client_errors (1730-1735)
+• `test_is_not_retriable_unknown_error` (1737-1742)
+• test_is_retriable_stream_errors (1744-1756)
+• `test_stream_ended_not_retriable` (1758-1767)
+• test_diagnose_stream_ended (1769-1778)
+• test_diagnose_stream_closed (1780-1785)
+• test_diagnose_unexpected_eof (1787-1792)
+• test_diagnose_broken_pipe (1794-1799)
+• test_diagnose_incomplete (1801-1807)
+• `test_max_auto_retries_constant` (2064-2066)
+• `test_is_overflow_error_*` (2071-2143)
+• `test_build_overflow_retry_prompt` (2147-2152)
+• test_tool_recovery_hint_* (2323-2365)
+• `test_build_auto_retry_prompt_*` (2367-2406)
+
+Tests to keep (they test prompt.rs functions that stay):
+• `agent_messages_empty_until_finish_is_called`
+• `test_summarize_message_*`
+• test_write_output_file_*
+• test_tool_result_preview_*
+• `test_search_messages_*`
+• test_message_text_*
+• `test_highlight_matches_*`
+• test_image_content_block_*
+• `test_deferred_bash_timer_*`
+• test_non_bash_tools_not_deferred
+• `test_prompt_outcome_has_api_error_field`
+• test_prompt_outcome_has_tool_name_field
+
+Let me now create the new file and then surgically edit prompt.rs. I'll delegate the test identification to be precise:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat -n src/prompt.rs | sed -n '54,424p' ✓ (6ms)
+
+Now let me carefully extract the test blocks. I need to identify exact line ranges for the tests to move:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ awk '/^    #\[test\]/{start=NR} /^    fn test_/{name=$2; sub(/\(.*/, "", name)} … ✓ (6ms)
+  ▶ $ awk '/^    #\[test\]/{start=NR} /^    fn test_/{name=$2; sub(/\(.*/, "", name)} … ✓ (6ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now I have all the info I need. Let me create the new file:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ write src/prompt_retry.rs (708 lines) ✓ (0ms)
+
+Now let me add the module declaration in main.rs:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^mod prompt" src/main.rs ✓ (7ms)
+  ▶ read src/main.rs:74..79 ✓ (0ms)
+  ▶ edit src/main.rs (2 → 3 lines)
+    mod prompt;
+    mod prompt_budget;
+  + mod prompt_retry;
+ ✓ (0ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now I need to modify prompt.rs to remove the extracted functions and add re-exports. Let me do this carefully:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:30..40 ✓ (1ms)
+
+First, add the re-export after the session re-export:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (3 → 11 lines)
+    pub use crate::session::{format_changes, ChangeKind, SessionChanges, TurnHistory, TurnSnapshot};
+  + 
+  + // Extracted into `prompt_retry` module (Day 64). Re-exported here so
+  + // `use crate::prompt::*;` call sites keep working without changes.
+  + pub use crate::prompt_retry::{
+  +     build_auto_retry_prompt, build_overflow_retry_prompt, build_retry_prompt, diagnose_api_error,
+  +     is_overflow_error, is_retriable_error, retry_delay, tool_recovery_hint, MAX_AUTO_RETRIES,
+  +     MAX_RETRIES,
+  + };
+    
+    /// Outcome of a prompt execution, including the text response and any tool error.
+ ✓ (1ms)
+
+Now remove the extracted functions (lines 54-424 became lines 62-432 after adding 8 lines). Let me verify the exact positions after the edit:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^/// Build a retry prompt\|^fn infer_provider_from_model\|^/// Extract … ✓ (8ms)
+  ▶ $ sed -n '62,62p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '430,436p' src/prompt.rs ✓ (3ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Good. Lines 62-432 need to be removed. Let me extract exactly what to replace:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '60,62p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '432,435p' src/prompt.rs ✓ (3ms)
+  2 tools completed in 5.9s (2 ✓)
+
+I need to delete lines 62-432 (the blank line + all the functions). I'll use edit_file to replace the block:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '62p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '61,63p' src/prompt.rs ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Wait, there's no empty line at 61. Let me check:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '58,65p' src/prompt.rs ✓ (3ms)
+  ▶ $ cat -An src/prompt.rs | sed -n '60,62p' ✓ (3ms)
+  ▶ $ cat -An src/prompt.rs | sed -n '432,434p' ✓ (3ms)
+  3 tools completed in 6.6s (3 ✓)
+
+So I need to delete lines 62-432 (from the /// Build a retry prompt doc comment through the closing } of `infer_provider_from_model` and the blank line after it). The text starts at line 62 and ends at line 432 (which is }), followed by a blank line 433.
+
+Let me use a targeted approach — remove the exact block from the file:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Create a temp file with lines 62-432 removed (4 lines) ✓ (5ms)
+
+2433 - 2062 = 371 lines removed. That's the function block. Now let me verify the splice is correct:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '58,66p' /tmp/prompt_new.rs ✓ (3ms)
+
+Good. Now let me also remove the tests that were extracted. First, let me identify the test blocks to remove from the new file. I need to find them by function name since line numbers changed:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp /tmp/prompt_new.rs src/prompt.rs ✓ (3ms)
+
+Now I need to remove the tests that were extracted. Let me find them in the current prompt.rs:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_retry_delay\|fn test_is_retriable\|fn test_is_not_retriable\|fn… ✓ (10ms)
+
+I need to carefully remove each test block. Let me take a more systematic approach — I'll use sed to remove the test functions by finding their exact boundaries:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 32s)
+
+The sub-agent didn't complete properly. Let me do this manually with a Python script:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/remove_tests.py << 'PYEOF' (137 lines) ✓ (29ms)
+
+The script didn't find any matches. Let me debug:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "    #\[test\]" src/prompt.rs | head -5 ✓ (3ms)
+  ▶ $ cat -A src/prompt.rs | sed -n '1242,1244p' ✓ (3ms)
+  ▶ $ grep -n "#\[test\]" src/prompt.rs | head -5 ✓ (3ms)
+  ▶ $ sed -n '1242,1245p' src/prompt.rs ✓ (3ms)
+  ▶ $ sed -n '1240,1245p' src/prompt.rs ✓ (3ms)
+  5 tools completed in 12.6s (5 ✓)
+
+OK, the test detection has a whitespace issue. Let me check:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1649,1653p' src/prompt.rs ✓ (3ms)
+
+OK, so the tests are at 4-space indent with #[test]. The issue is that the first test in the test module that needs to be removed is `test_retry_delay_exponential_backoff_ranges` — where is it?
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_retry_delay_exponential" src/prompt.rs ✓ (8ms)
+
+Wait — it seems like some tests were already removed when I removed the function block! Let me check what happened:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_retry_delay\|test_is_retriable\|test_is_not_retriable\|test_diagno… ✓ (8ms)
+
+Wait — none of those tests are in prompt.rs anymore? Let me check what happened. The tests were inside the mod tests block but they referenced retry_delay, is_retriable_error, etc. which were local functions. When I removed lines 62-432, did I also accidentally remove tests?
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/prompt.rs ✓ (7ms)
+
+Original was 2425 lines, I removed 371 lines (the functions block was 62-432). That removed only the functions, not the tests at lines 1605+. But... wait, the test block was at lines 1601-2425 in the original file. After removing 371 lines from lines 62-432, the tests would be at lines 1230-2054. Let me check if they are still there:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_" src/prompt.rs | head -30 ✓ (4ms)
+  ▶ $ grep -n "fn test_" src/prompt.rs | tail -10 ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+The tests that needed to be moved are already gone from prompt.rs! The line range 62-432 in the original file contained the functions, and lines 1605+ contained the tests. But when I did head -61 + tail -n +433, those tests should still be there...
+
+Wait, looking more carefully — all the retry/diagnosis tests are NOT in the remaining prompt.rs. That means they were originally at lines 1605-1807 and 2063-2406 in the original file. Since I only removed lines 62-432 (the function definitions), those tests should still be present. But they're not. Let me figure out what happened:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ # The original file was 2425 lines. After my edit_file addin… (16 lines) ✓ (5ms)
+  ▶ $ # In the original (HEAD) file, tests were at lines 1605-2425… (10 lines) ✓ (3ms)
+  ▶ $ # Let me find the #[cfg(test)] block (2 lines) ✓ (3ms)
+  ▶ $ sed -n '1601,1620p' src/prompt.rs ✓ (3ms)
+  4 tools completed in 12.7s (4 ✓)
+
+The retry tests that were at lines 1605-1636 (in the original file) are GONE because they were between the mod tests { and the `agent_messages_empty_until_finish_is_called test. In the original file, those tests (test_retry_delay_*) came right after use super::*;`. 
+
+Wait, let me re-read the original file structure. In the HEAD version:
+• Line 1601: #[cfg(test)]
+• Line 1602: mod tests {
+• Line 1603: `    use super::*;`
+• Line 1605:     #[test]
+• Line 1606: `    fn test_retry_delay_exponential_backoff_ranges()`
+
+These lines were at 1601-1636 in the original. After my edit_file that added 8 lines, they moved to 1609-1644. My `head -61 kept lines 1-61, and tail -n +433` kept lines 433 onwards. So lines 433-2433 became lines 62-2062. Lines 1609+ in the edited file became line `1609-432+61 = 1238`. Let me check:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1238,1245p' src/prompt.rs ✓ (3ms)
+
+That doesn't look right. Let me trace this differently. Let me find where the tests originally were and where they are now:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ # In current file, where is #[cfg(test)]? (4 lines) ✓ (4ms)
+  ▶ $ sed -n '1601,1655p' src/prompt.rs ✓ (3ms)
+  2 tools completed in 8.2s (2 ✓)
+
+The retry tests (test_retry_delay_*, test_is_retriable_*, etc.) that were originally between `use super::*; and agent_messages_empty_until_finish_is_called` are already gone! They were in the original file at lines 1605-1636 (in the original 2425-line file), but in the version I edited (2433-line file after adding imports), they were at lines 1613-1644. 
+
+Wait, actually let me re-check. After my edit_file that added 8 import lines at the top (lines ~31-39), ALL subsequent line numbers shifted by +8. So the original test block at line 1601 became line 1609 in the intermediate file. Then `head -61 / tail -n+433` kept lines 1-61 then 433+. Since 1609 > 433, those test lines would be in the tail -n+433 output, starting at position 1609-433+62 = 1238.
+
+But wait — the test_retry_delay tests were at original lines 1605-1636. After +8, that's 1613-1644 in the intermediate file. After tail -n+433 and prepending 61 lines, those map to `1613-433+62 = 1242 to 1644-433+62 = 1273`. But I don't see them there.
+
+Let me check if maybe the test functions that were between #[cfg(test)] mod tests { use super::*; and `agent_messages_empty_until_finish_is_called` in the original file simply aren't in the current file:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's at lines 1601-1620 of the original file (2 lines) ✓ (5ms)
+
+OK I see — the original file had test_retry_delay tests at 1605-1636, then the agent_messages_empty... test starting at 1638. After my import addition (+8 lines), these were at 1613-1644 and 1646+.
+
+In my intermediate file (2433 lines), the `head -61 / tail -n+433` operation:
+• Kept lines 1-61 (before function block)
+• Kept lines 433-2433 (after function block)
+
+So line 1613 in the intermediate file maps to line `61 + (1613 - 432) = 61 + 1181 = 1242` in the output. Let me check:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1242,1242p' src/prompt.rs ✓ (3ms)
+
+That's not a test. Something went wrong with my line calculation. Let me just check from the #[cfg(test)] line:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1601,1610p' src/prompt.rs ✓ (3ms)
+
+So the test module starts at 1601 in the current file, and the retry_delay tests that were originally right after `use super::*; are gone. They've been replaced by the agent_messages_empty... test. This means my head/tail` operation accidentally skipped some lines, OR something else happened.
+
+Actually wait — I think I understand. The original file had the test functions interleaved at specific positions. When I looked at lines 1601-2425 in the original, the retry tests at 1605-1636 were there. But in the 2433-line intermediate file (after adding 8 import lines), those tests were at 1613-1644. The tail -n +433 started at line 433, so those test lines WERE included. 
+
+But then I ran the Python script which found 0 matches because... the tests don't actually exist in the current file. Let me just verify by counting:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "fn test_" src/prompt.rs ✓ (10ms)
+
+  ↳ 10m 8s · 43645→19254 tokens · $3.18
+  ⬤ 26% of context window used
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.10 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `build_retry_prompt` is never used[0m
+  [1m[94m--> [0msrc/prompt_retry.rs:14:8
+   [1m[94m|[0m
+[1m[94m14[0m [1m[94m|[0m pub fn build_retry_prompt(input: &str, last_error: &Option<String>) -> String {
+   [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: constant `MAX_RETRIES` is never used[0m
+  [1m[94m--> [0msrc/prompt_retry.rs:33:18
+   [1m[94m|[0m
+[1m[94m33[0m [1m[94m|[0m pub(crate) const MAX_RETRIES: u32 = 5;
+   [1m[94m|[0m                  [1m[91m^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: constant `MAX_AUTO_RETRIES` is never used[0m
+  [1m[94m--> [0msrc/prompt_retry.rs:38:11
+   [1m[94m|[0m
+[1m[94m38[0m [1m[94m|[0m pub const MAX_AUTO_RETRIES: u32 = 2;
+   [1m[94m|[0m           [1m[91m^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `build_auto_retry_prompt` is never used[0m
+  [1m[94m--> [0msrc/prompt_retry.rs:45:8
+   [1m[94m|[0m
+[1m[94m45[0m [1m[94m|[0m pub fn build_auto_retry_prompt(
+   [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `tool_recovery_hint` is never used[0m
+  [1m[94m--> [0msrc/prompt_retry.rs:76:8
+   [1m[94m|[0m
+[1m[94m76[0m [1m[94m|[0m pub fn tool_recovery_hint(tool_name: &str) -> &'static str {
+   [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: constant `OVERFLOW_PHRASES` is never used[0m
+   [1m[94m--> [0msrc/prompt_retry.rs:104:7
+    [1m[94m|[0m
+[1m[94m104[0m [1m[94m|[0m const OVERFLOW_PHRASES: &[&str] = &[
+    [1m[94m|[0m       [1m[91m^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `is_overflow_error` is never used[0m
+   [1m[...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Looking at the errors, the issue is that prompt.rs still has its own copies of these functions (they weren't fully removed), so the re-exports from prompt_retry are unused. Let me diagnose and fix this.
+  ▶ $ grep -n "pub fn build_retry_prompt\|pub fn build_auto_retry_prompt\|pub fn tool_… ✓ (9ms)
+
+Wait, that output is messy. Let me try a cleaner search:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^pub fn build_retry_prompt\|^pub fn build_auto_retry_prompt\|^pub fn to… ✓ (8ms)
+
+There's something odd with grep. Let me use a different approach:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "build_retry_prompt\|MAX_RETRIES\|MAX_AUTO_RETRIES\|build_auto_retry_pro… ✓ (5ms)
+
+The functions are STILL in prompt.rs at lines 58-424. My earlier head/tail operation didn't actually save back to prompt.rs correctly, or it was overwritten. Let me check the current state:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/prompt.rs ✓ (9ms)
+  ▶ $ head -45 src/prompt.rs ✓ (37ms)
+  2 tools completed in 8.4s (2 ✓)
+
+I see — the re-export lines I added are missing! The `prompt_retry` re-export block didn't persist. Let me check:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep "prompt_retry" src/prompt.rs ✓ (7ms)
+
+Right — when I did `cp /tmp/prompt_new.rs src/prompt.rs`, it overwrote the file with the version that had the import additions BUT the /tmp/prompt_new.rs was created from the intermediate state where I had added the re-exports. Wait, no — let me trace more carefully:
+
+1. I did edit_file to add the re-export block → this created the 2433-line version with re-exports
+2. I did `head -61 / tail -n+433 → this created /tmp/prompt_new.rs from the 2433-line version, but head -61` would only keep lines 1-61, which does NOT include the re-export block (which was at lines ~32-39)
+
+Wait, the re-exports were added at lines 32-39 roughly. Let me check what line 61 was:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '50,65p' src/prompt.rs ✓ (3ms)
+
+OK so the file state: my cp /tmp/prompt_new.rs src/prompt.rs replaced it with a file that has 2095 lines, but it still has the original functions at line 54+ because the /tmp/prompt_new.rs was created from a version without the re-exports removed properly. The head/tail removed the wrong range.
+
+Let me start fresh — the functions still exist at lines 54-424, and the re-export was lost. Let me redo this properly:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # First, find exact lines of the block to remove (4 lines) ✓ (3ms)
+  ▶ $ # Find the closing brace of infer_provider_from_model (2 lines) ✓ (3ms)
+  ▶ $ sed -n '420,425p' src/prompt.rs ✓ (3ms)
+  3 tools completed in 7.8s (3 ✓)
+
+So lines 54-424 (the } at line 424) need to be removed and replaced with the re-export. Let me also check what the tests situation is — the Python script said 0 tests were removed, but the retry tests ARE still there:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "fn test_retry_delay\|fn test_is_retriable\|fn test_is_not_retriable\|fn… ✓ (8ms)
+
+OK, the tests ARE gone. Only the function definitions remain. So I just need to:
+1. Remove the function definitions (lines 54-424) from prompt.rs
+2. Add the re-export block
+
+Let me do this properly with a Python script:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (31 lines) ✓ (19ms)
+
+Now let me verify the file looks correct:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '48,70p' src/prompt.rs ✓ (3ms)
+
+Good. Now let me verify the remaining prompt.rs still uses these functions correctly:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "MAX_RETRIES\|is_overflow_error\|is_retriable_error\|diagnose_api_error\… ✓ (4ms)
+
+All the usages still reference those symbols, which will now come through the re-export. Now let me also check that `MAX_RETRIES was originally const (not pub`) in prompt.rs — the re-export makes it pub:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "MAX_RETRIES" src/prompt_retry.rs | head -3 ✓ (3ms)
+
+Good, it's pub(crate) in the new module. But in prompt.rs, we're re-exporting it with pub use, which would make it public. Let me check if anything outside prompt.rs uses MAX_RETRIES:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "MAX_RETRIES" src/ --include="*.rs" | grep -v prompt.rs | grep -v promp… ✓ (5ms)
+
+Nothing outside uses it. The re-export just needs to work internally. But `pub use of a pub(crate)` item should work fine since prompt.rs is in the same crate.
+
+Now let me try building:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (2.1s)
+
+There's an error about re-exporting MAX_RETRIES which is `pub(crate) — can't re-export a pub(crate) item as pub`. Let me also fix the unused imports:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | grep "^error" ✓ (2.0s)
+  ▶ $ cargo build 2>&1 | grep "error\[" ✓ (2.1s)
+  2 tools completed in 9.0s (2 ✓)
+
+Fix 1: Change the re-export to pub(crate) use for MAX_RETRIES, or just use a separate import line. Actually, the simplest fix is to not re-export MAX_RETRIES since it's only used internally in prompt.rs. Let me check:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "MAX_RETRIES" src/prompt.rs | grep -v "AUTO\|pub use\|//" ✓ (3ms)
+
+It's used within prompt.rs. I need to import it but not re-export it publicly. Let me fix the re-export block:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (7 → 8 lines)
+    pub use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, build_retry_prompt, diagnose_api_error,
+        is_overflow_error, is_retriable_error, retry_delay, tool_recovery_hint, MAX_AUTO_RETRIES,
+  -     MAX_RETRIES,
+    };
+  + // MAX_RETRIES is pub(crate), so import without re-exporting.
+  + use crate::prompt_retry::MAX_RETRIES;
+ ✓ (1ms)
+
+Now fix the unused Duration import (it was used by retry_delay which is now moved):
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (1 → 1 lines)
+  - use std::time::{Duration, Instant};
+  + use std::time::Instant;
+ ✓ (1ms)
+
+Now fix the unused tool_recovery_hint re-export. Let me check if anything uses it from prompt.rs:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "tool_recovery_hint" src/ --include="*.rs" | grep -v prompt_retry.rs | … ✓ (6ms)
+
+Nothing uses tool_recovery_hint from prompt.rs directly — it was only called by `build_auto_retry_prompt` which is now in prompt_retry.rs. But it was pub in the original, so it should be re-exported for API compatibility. Let me check if any other file imports it:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "tool_recovery_hint" src/ --include="*.rs" | grep -v prompt_retry.rs ✓ (5ms)
+
+Nobody else uses it. The warning is because the pub use re-export is technically unused since no other module imports crate::prompt::tool_recovery_hint. But it was pub originally. Let me just remove it from the re-export to fix the warning:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (4 → 4 lines)
+    pub use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, build_retry_prompt, diagnose_api_error,
+  -     is_overflow_error, is_retriable_error, retry_delay, tool_recovery_hint, MAX_AUTO_RETRIES,
+  +     is_overflow_error, is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+    };
+ ✓ (1ms)
+
+Now let me also check if the safe_truncate import is still needed in prompt.rs (it was used by build_retry_prompt and build_auto_retry_prompt which are now moved):
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "safe_truncate" src/prompt.rs ✓ (8ms)
+
+It's not used in prompt.rs anymore — but it was imported via `use crate::format::*;` which is a glob import, so no issue there.
+
+Let me try building again:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 ✓ (4.9s)
+
+Build passes. Now let's run clippy:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 ✓ (8.8s)
+
+Now let's run the tests:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | tail -30 ✓ (27.3s)
+
+All 88 tests pass. Let me also run fmt:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check 2>&1 ✓ (491ms)
+  ▶ $ cargo fmt ✓ (493ms)
+  ▶ $ cargo fmt -- --check && cargo clippy --all-targets -- -D warnings && cargo test … ✓ (37.2s)
+  3 tools completed in 46.4s (3 ✓)
+
+All checks pass. Let me verify the line count reduction:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/prompt.rs src/prompt_retry.rs ✓ (10ms)
+  ▶ $ echo "Original prompt.rs: 2425 lines" (3 lines) ✓ (2ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Now let me update CLAUDE.md to reflect the new module:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "prompt_budget.rs\|prompt.rs" CLAUDE.md | head -10 ✓ (3ms)
+  ▶ edit CLAUDE.md (4 → 5 lines)
+    - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic
+    - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts (extracted from `prompt.rs`)
+    - `prompt_budget.rs` — session wall-clock budget + audit log helpers (extracted from `prompt.rs`)
+  + - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`)
+    - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
+ ✓ (0ms)
+  2 tools completed in 8.4s (2 ✓)
+
+Now add the new file to the Project Files section:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "src/prompt_budget.rs" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "src/prompt.rs" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "prompt" CLAUDE.md | tail -15 ✓ (4ms)
+  3 tools completed in 7.3s (3 ✓)
+
+The architecture section is already updated. Now let me also update the Repository Structure section — let me check if prompt_retry.rs needs to be added there:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "src/prompt" CLAUDE.md | grep -v "^7[5-9]:" ✓ (3ms)
+  ▶ $ grep -n "prompt" CLAUDE.md | grep "Repository\|struct\|fn " | head -20 ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Let me check the Repository Structure section to add the new file:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "src/prompt" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "prompt.rs\|prompt_budget" CLAUDE.md ✓ (8ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Let me look for the section with the full file paths:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "src/prompt" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "^src/" CLAUDE.md | head -20 ✓ (3ms)
+  2 tools completed in 5.6s (2 ✓)
+
+The Project Files listing doesn't seem to be in CLAUDE.md as full paths. Let me check:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "prompt" CLAUDE.md | head -20 ✓ (4ms)
+
+Good — the architecture section is already updated. Now let me run the full verification again to be sure:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings && cargo build && cargo t… ✓ (27.5s)
+
+All checks pass. Now let me commit:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 64 (05:18): Extract error d… (16 lines) ✓ (15ms)
+
+Done! Clean extraction — all 88 tests pass, clippy clean, fmt clean. The commit landed with:
+
+• `src/prompt_retry.rs` (new, 708 lines): All error diagnosis and retry logic with 35 tests
+• `src/prompt.rs`: Reduced from 2,425 → 1,732 lines (-693), with re-exports preserving API compatibility
+• `src/main.rs`: Added `mod prompt_retry;`
+• `CLAUDE.md`: Updated architecture section
+
+  ↳ 5m 41s · 9177→6808 tokens · $2.52
+  ⬤ 31% of context window used
+
+  ✓ Watch passed after fix (attempt 1)
+
