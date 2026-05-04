@@ -1,0 +1,288 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of run_repl and the specific blocks to extract.
+  ▶ $ wc -l src/repl.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+  ▶ $ grep -n 'pub async fn run_repl\|^async fn run_repl\|fn run_repl' src/repl.rs ✓ (7ms)
+  ▶ $ awk '/^pub async fn run_repl/,0' src/repl.rs | wc -l ✓ (4ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Good, the function is indeed ~985 lines. Let me read the full function to understand the structure.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:312..512 ✓ (1ms)
+  ▶ read src/repl.rs:511..711 ✓ (2ms)
+  ▶ read src/repl.rs:710..910 ✓ (1ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now I have a clear picture. Let me also check line 798 (there seems to be a gap):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:796..801 ✓ (1ms)
+
+Good, line 798 is blank/missing (gap in line numbering but that's just rendering). Now let me check the imports and types used:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1..51 ✓ (1ms)
+
+Now let me check the types that I'll need for the function signatures:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use.*PromptOutcome\|use.*TurnSnapshot\|use.*TurnHistory\|use.*SessionCh… ✓ (8ms)
+  ▶ $ grep -n 'PromptOutcome\|TurnSnapshot\|TurnHistory\|SessionChanges\|AgentEvent\|A… ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+These types come from use crate::prompt::* and use yoagent::*. Let me check what PromptOutcome is:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub struct PromptOutcome' src/prompt.rs ✓ (8ms)
+  ▶ read src/prompt.rs:35..55 ✓ (1ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Good. Let me also look at the SessionChanges and TurnSnapshot types:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub struct SessionChanges\|pub struct TurnSnapshot\|pub struct TurnHist… ✓ (7ms)
+
+Now let me check what's imported through `use crate::format::*`:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'MarkdownRenderer' src/repl.rs ✓ (8ms)
+  ▶ $ grep -n 'pub use\|pub struct MarkdownRenderer\|pub fn estimate_cost' src/format/… ✓ (3ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Good, MarkdownRenderer comes through crate::format::* and `estimate_cost through crate::format::cost::*`. 
+
+Now I have all the context I need. Let me plan the extraction:
+
+1. **`run_architect_turn`** - lines 552-676 (the if commands::is_architect_mode() block)
+2. **`handle_post_prompt** - lines 718-831 (from maybe_ring_bell to auto_compact_if_needed`)
+
+Let me first verify the build passes before making changes:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -5 ✓ (120ms)
+
+Good. Now let me do the extraction. I'll start with the architect-mode turn handler:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:547..557 ✓ (0ms)
+
+Now let me write the two helper functions. I'll insert them right before `run_repl`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:305..315 ✓ (0ms)
+
+I'll add the two helper functions before run_repl. Let me first write the run_architect_turn function:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (2 → 263 lines)
+  + /// Run the architect-mode two-phase turn: plan with a strong model, then
+  + /// implement with a cheaper editor model. Returns the editor's `PromptOutcome`
+  + /// (or a default if the architect returned an empty plan).
+  + async fn run_architect_turn(
+  +     agent_config: &mut AgentConfig,
+  +     effective_input: &str,
+  +     session_total: &mut Usage,
+  +     session_changes: &SessionChanges,
+  + ) -> PromptOutcome {
+  +     let arch_model = commands::architect_model().unwrap_or_else(|| agent_config.model.clone());
+  +     let editor_model = commands::default_editor_model(&arch_model);
+  + 
+  +     eprintln!("{DIM}  🏗️ architect mode: planning with {arch_model}...{RESET}");
+  + 
+  +     // Phase 1: Get the plan from the architect (no tools, text-only)
+  +     let architect_input = format!("{}\n\n{}", commands::ARCHITECT_PROMPT, effective_input);
+  +     let mut arch_agent = agent_config.build_architect_agent(&arch_model);
+  +     let mut rx = arch_agent.prompt(&architect_input).await;
+  + 
+  +     let mut md_renderer = MarkdownRenderer::new();
+  ... (243 more lines)
+ ✓ (1ms)
+
+Now I need to replace the architect-mode block in run_repl with a call to run_architect_turn:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'is_architect_mode\|run_architect_turn' src/repl.rs ✓ (8ms)
+  ▶ read src/repl.rs:808..958 ✓ (2ms)
+  ▶ read src/repl.rs:957..987 ✓ (1ms)
+  3 tools completed in 20.2s (3 ✓)
+
+Now I'll replace the architect block with a call to the helper, and replace the post-prompt block similarly:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (127 → 10 lines)
+            // ── Architect mode: plan with strong model, implement with editor ──
+            let outcome = if commands::is_architect_mode() {
+  -             let arch_model =
+  -                 commands::architect_model().unwrap_or_else(|| agent_config.model.clone());
+  -             let editor_model = commands::default_editor_model(&arch_model);
+  - 
+  -             eprintln!("{DIM}  🏗️ architect mode: planning with {arch_model}...{RESET}");
+  - 
+  -             // Phase 1: Get the plan from the architect (no tools, text-only)
+  -             let architect_input = format!("{}\n\n{}", commands::ARCHITECT_PROMPT, effective_input);
+  -             let mut arch_agent = agent_config.build_architect_agent(&arch_model);
+  -             let mut rx = arch_agent.prompt(&architect_input).await;
+  - 
+  -             let mut md_renderer = MarkdownRenderer::new();
+  -             let mut plan_text = String::new();
+  -             let mut started = false;
+  - 
+  -             loop {
+  -                 match rx.recv().await {
+  -                     Some(AgentEvent::MessageUpdate {
+  ... (114 more lines)
+ ✓ (1ms)
+
+Now let me find and replace the post-prompt block. Let me see the current state:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'maybe_ring_bell\|auto_compact_if_needed\|changes_after\|turn_history.pu… ✓ (4ms)
+  ▶ read src/repl.rs:855..975 ✓ (1ms)
+  2 tools completed in 9.5s (2 ✓)
+
+Now replace the post-prompt block with a call to handle_post_prompt:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (114 → 16 lines)
+                .await
+            };
+  -         crate::format::maybe_ring_bell(prompt_start.elapsed());
+  -         last_error = outcome.last_tool_error.clone();
+  - 
+  -         // Notify the user if the context was auto-compacted due to overflow
+  -         if outcome.was_overflow {
+  -             eprintln!("{YELLOW}  ℹ Context was auto-compacted (overflow detected){RESET}");
+  -         }
+  - 
+  -         // Fallback provider: if the API failed and a fallback is configured, switch and retry
+  -         if outcome.last_api_error.is_some() {
+  -             let old_provider = agent_config.provider.clone();
+  -             let fallback_name = agent_config.fallback_provider.clone();
+  -             if agent_config.try_switch_to_fallback() {
+  -                 let fallback = fallback_name.as_deref().unwrap_or("unknown");
+  -                 eprintln!(
+  -                     "\n{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
+  -                     old_provider, fallback
+  -                 );
+  ... (108 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/repl.rs.
+
+The old text isn't matching because the architect block was already replaced. Let me look at the current state around the post-prompt area:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:735..765 ✓ (1ms)
+  ▶ read src/repl.rs:808..888 ✓ (1ms)
+  ▶ read src/repl.rs:887..987 ✓ (1ms)
+  3 tools completed in 11.6s (3 ✓)
+
+Now I can see the exact text. Let me do the replacement carefully — the post-prompt block starts at line 862 and ends at line 974:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (113 → 15 lines)
+            };
+  -         crate::format::maybe_ring_bell(prompt_start.elapsed());
+  -         last_error = outcome.last_tool_error.clone();
+  - 
+  -         // Notify the user if the context was auto-compacted due to overflow
+  -         if outcome.was_overflow {
+  -             eprintln!("{YELLOW}  ℹ Context was auto-compacted (overflow detected){RESET}");
+  -         }
+  - 
+  -         // Fallback provider: if the API failed and a fallback is configured, switch and retry
+  -         if outcome.last_api_error.is_some() {
+  -             let old_provider = agent_config.provider.clone();
+  -             let fallback_name = agent_config.fallback_provider.clone();
+  -             if agent_config.try_switch_to_fallback() {
+  -                 let fallback = fallback_name.as_deref().unwrap_or("unknown");
+  -                 eprintln!(
+  -                     "\n{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
+  -                     old_provider, fallback
+  -                 );
+  - 
+  ... (107 more lines)
+ ✗ (0ms)
+    │ old_text not found in src/repl.rs.
+
+The issue is with special characters in the text. Let me use a different approach — I'll grab the exact bytes:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'maybe_ring_bell\|auto_compact_if_needed(agent)' src/repl.rs ✓ (8ms)
+
+Lines 862-974 in the current file need to be replaced. Let me read that exact block and use sed:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '861p' src/repl.rs ✓ (3ms)
+  ▶ $ sed -n '975p' src/repl.rs ✓ (3ms)
+  2 tools completed in 5.7s (2 ✓)
+
+I need to replace lines 862-974 (the post-prompt block after the }; that ends the outcome computation). Let me use sed to do this:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/replacement.txt << 'REPLACEMENT_EOF' (20 lines) ✓ (5ms)
+
+That sed might have corrupted things. Let me check:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/repl.rs ✓ (7ms)
+  ▶ $ sed -n '860,870p' src/repl.rs ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Ok, the sed removed lines 862-974 and left a blank line. Now I need to insert the handle_post_prompt call at line 862:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '861,863p' src/repl.rs ✓ (3ms)
+
+Good, the blank line was collapsed. I need to insert the handle_post_prompt call between line 861 (};) and line 862 (`}`):
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (28 lines) ✓ (19ms)
+  ▶ $ sed -n '858,880p' src/repl.rs ✓ (3ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now let me try to build:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 ✓ (5.0s)
+
+It builds. Now let me check the import situation — `auto_compact_if_needed is no longer directly used in run_repl but it IS used in handle_post_prompt`. Let me also check for unused imports:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 ✓ (8.9s)
+  ▶ $ cargo test 2>&1 ✓ (27.9s)
+  2 tools completed in 42.1s (2 ✓)
+
+All tests pass. Let me also run cargo fmt:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check 2>&1 ✓ (494ms)
+  ▶ $ cargo fmt ✓ (497ms)
+  ▶ $ cargo fmt -- --check 2>&1 ✓ (497ms)
+  3 tools completed in 8.6s (3 ✓)
+
+Now let me verify the final state — count the lines of `run_repl`:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub async fn run_repl' src/repl.rs ✓ (7ms)
+  ▶ $ awk '/^pub async fn run_repl/,0' src/repl.rs | wc -l ✓ (4ms)
+  2 tools completed in 5.6s (2 ✓)
+
+985 → 769 lines. That's a reduction of 216 lines. Let me also check total file size:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/repl.rs ✓ (7ms)
+
+1296 → 1337 lines total (41 more lines overall since the helpers have their own signatures, doc comments, and the `#[allow(clippy::too_many_arguments)] attribute). But run_repl` itself dropped from 985 to 769 lines — a net reduction of ~216 lines in the main function.
+
+Let me do a final full verification:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build && cargo test && cargo clippy --all-targets -- -D warnings && cargo … ✓ (41.3s)
+
+All four checks pass. Let me also verify the extracted functions look clean:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:311..321 ✓ (1ms)
+  ▶ $ grep -n 'async fn handle_post_prompt\|async fn run_architect_turn' src/repl.rs ✓ (8ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Good. Now let me verify the call site looks right:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:816..856 ✓ (1ms)
+  ▶ read src/repl.rs:855..880 ✓ (0ms)
+  2 tools completed in 5.8s (2 ✓)
+
+The structure is clean. The main loop now reads: dispatch → prepare input → architect turn OR file-mentions prompt OR normal prompt → handle post-prompt. Exactly as intended.
+
+Now let me commit:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 65 (10:52): Extract archite… (14 lines) ✓ (12ms)
+
+Clean commit. The extraction landed:
+
+• `run_architect_turn` (~120 lines): handles the two-phase architect flow — plan with strong model, implement with editor model, cost display for both phases
+• `handle_post_prompt` (~130 lines): handles bell notification, error tracking, fallback provider retry, turn snapshot updates, watch-after-prompt, auto-commit, and auto-compact
+• `run_repl`: 985 → 769 lines (−216 lines), now readable as dispatch → prepare input → route prompt → handle post-prompt
+
+All checks pass: build ✓, test (2309+88) ✓, clippy ✓, fmt ✓.
+
+  ↳ 6m 18s · 34607→12819 tokens · $2.25
+  ⬤ 19% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

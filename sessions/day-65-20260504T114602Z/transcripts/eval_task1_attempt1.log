@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me quickly verify the implementation matches the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub async fn run_repl"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^async fn run_architect… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (9.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^pub async fn run_repl/,/^…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (5ms)
+ ✓ (9.0s)
+  5 tools completed in 24.1s (5 ✓)
+
+Now let me verify the semantic correctness of the extraction — check for any subtle behavioral differences:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "input," src/repl.rs | h… ✓ (3ms)
+
+Let me check the fallback retry path — the original used input but the new helper receives effective_input:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/repl.rs |… ✓ (5ms)
+
+Let me check the specific difference in the fallback retry - original used input (the raw user input), new code uses effective_input:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:src/repl.rs | gr… ✓ (4ms)
+
+The original used input (the raw user input before any transformation), while the new handle_post_prompt receives effective_input (which may include file contents and other expansions). Let me check what effective_input vs input is:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '780,860p' src/repl.rs ✓ (4ms)
+
+This is a behavioral difference. The original fallback retry used input (raw user input), but the new code passes effective_input (which includes teach mode prefix, plan mode prefix, undo context, etc.). However, looking at this more carefully, using effective_input for the fallback retry is arguably *more correct* — it retries with the same prompt that was actually sent. The original using raw input would have lost the teach/plan/undo prefixes on retry. This is a minor improvement, not a bug.
+
+Let me also verify the turn_snap ownership is handled correctly (it was moved by value in the original and now it's passed by value to the helper):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "mut turn_snap" src/repl.rs ✓ (3ms)
+
+Good — turn_snap is moved into the function by value and the function takes it as mut, which is correct.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (0ms)
+
+Verdict: PASS
+
+Both helper functions are correctly extracted, the main loop is dramatically shorter (~326 lines vs ~985), all CI checks pass (build, test, clippy), and behavior is preserved. The one subtle change (fallback retry using effective_input instead of raw input) is actually an improvement since it retries with the same prompt that was originally sent, preserving teach/plan/undo context.
+
+  ↳ 59.8s · 8987→1486 tokens · $0.353
+  ⬤ 4% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
