@@ -1,0 +1,498 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the files involved, then move the functions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (8ms)
+  3 tools completed in 2.3s (3 ✓)
+
+Now let me read the relevant sections in detail:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '510,700p' src/commands_d…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_dev.rs src/wa… ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,930p' src/commands_d… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '925,940p' src/commands_d… ✓ (3ms)
+  4 tools completed in 6.3s (4 ✓)
+
+Now let me see the full function bodies and imports needed:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/commands_dev.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/watch.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -10 src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,15p' src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs (20 lines) ✓ (0ms)
+  5 tools completed in 9.9s (5 ✓)
+
+Now let me look at the exact text of what I need to move from commands_dev.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '514,660p' src/commands_d… ✓ (5ms)
+
+I see that the file is truncating the ... lines. Let me read the actual raw content:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:514..664 ✓ (1ms)
+
+Now let me check what handle_watch in commands_dev.rs depends on — specifically detect_project_type, lint_command_for_project, test_command_for_project, and `LintStrictness`:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_project_type\|li…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn detect_project_t… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Good. Now let me look at the tests that need to move:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:740..940 ✓ (2ms)
+
+Now let me check what the handle_watch function uses from crate::prompt:: vs what's already available in watch.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn set_watch_comman… ✓ (3ms)
+
+The watch functions are already in watch.rs and re-exported from prompt. Let me check that:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "watch" src/prompt.rs | hea… ✓ (4ms)
+
+Good. Now let me check if watch.rs already has any tests section:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|#\[cfg(test)… ✓ (3ms)
+  ▶ read src/watch.rs:330..370 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good — there's already a test module. Now let me see the end of watch.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:660..690 ✓ (0ms)
+
+Now let me check where commands.rs references these things in the `pub use` block:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:480..510 ✓ (1ms)
+
+Now let me look at the line referencing WATCH_SUBCOMMANDS in commands.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:268..273 ✓ (1ms)
+
+Let me also check if there are any other references to these functions across the whole codebase:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_dev::.*watch\… ✓ (6ms)
+
+Good — those references need updating too. Let me also check what handle_watch uses from crate::prompt:: — it calls crate::prompt::set_watch_commands, `crate::prompt::set_watch_command`, etc. Since those are re-exports of crate::watch::*, once the function is in watch.rs it can call them directly. Let me also check dispatch_sub.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:206..211 ✓ (1ms)
+
+Now I have a clear picture. Let me plan the changes and execute them:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 15.0s (6 ✓)
+
+Let me start. First, add the functions and const to watch.rs, right before the #[cfg(test)] block. I need to add the necessary imports first.
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+The functions need detect_project_type, ProjectType, `lint_command_for_project, test_command_for_project, and LintStrictness`. And handle_watch already uses set_watch_command, set_watch_commands, `get_watch_command, get_watch_commands, clear_watch_command which are defined in watch.rs` itself.
+
+But in commands_dev.rs, handle_watch calls them as `crate::prompt::* — once in watch.rs`, they can be called directly (they're in the same module). Let me also check the format::* imports — DIM, RESET, GREEN are used:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "use crate::format" src/wat… ✓ (3ms)
+
+Good, `watch.rs already has use crate::format::*; which covers DIM, RESET, GREEN, YELLOW`.
+
+Now let me add the imports and functions to watch.rs. I'll insert the new imports after the existing ones, and add the functions before the #[cfg(test)] block.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:320..340 ✓ (1ms)
+
+Now I'll add the imports and the functions. First, add imports for the lint/project types:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (8 → 10 lines)
+  + use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
+  + use crate::commands_project::{detect_project_type, ProjectType};
+    use crate::format::*;
+    use crate::prompt::run_prompt_auto_retry;
+    use crate::prompt_budget::session_budget_exhausted;
+ ✓ (0ms)
+
+Now add the functions before the #[cfg(test)] block:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (7 → 156 lines)
+  + /// Auto-detect the appropriate watch command for the current project.
+  + /// Returns a lint+test combo command (e.g. `cargo clippy … && cargo test`) when
+  + /// both are available, falls back to test-only, or `None` for unknown project types.
+  + pub fn auto_detect_watch_command() -> Option<String> {
+  +     detect_watch_all_command()
+  + }
+  + 
+  + /// Auto-detect a combined lint + test command for the current project.
+  + /// Returns both commands chained with `&&` so the first failure stops execution.
+  + /// Falls back to just the test command if no lint command is available,
+  + /// or `None` if neither can be detected.
+  + pub fn detect_watch_all_command() -> Option<String> {
+  +     let dir = std::env::current_dir().unwrap_or_default();
+  +     let project_type = detect_project_type(&dir);
+  +     let lint = lint_command_for_project(&project_type, LintStrictness::Default);
+  +     let test = test_command_for_project(&project_type);
+  +     match (lint, test) {
+  +         (Some((lint_label, _)), Some((test_label, _))) => {
+  +             Some(format!("{lint_label} && {test_label}"))
+  +         }
+  ... (132 more lines)
+ ✓ (1ms)
+
+Now add the watch tests to the test module in watch.rs. Let me find the closing brace of the test module:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/watch.rs ✓ (3ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Now add the watch-related tests. Insert them before the closing } of the test module:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (13 → 201 lines)
+            );
+            // The function checks get_watch_commands() first and returns a passing
+            // WatchResult if empty. We verify the guard condition.
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_detect_watch_command_returns_lint_and_test_in_rust_project() {
+  +         // We're running from a directory with Cargo.toml, so this should detect Rust
+  +         // After the Day 58 change, auto-detect defaults to lint+test (not test-only)
+  +         let cmd = auto_detect_watch_command();
+  +         assert!(
+  +             cmd.is_some(),
+  +             "should detect a watch command in a Rust project"
+  +         );
+  +         let cmd = cmd.unwrap();
+  +         assert!(
+  +             cmd.contains("clippy"),
+  +             "auto-detect should include lint (clippy): {cmd}"
+  +         );
+  +         assert!(
+  ... (173 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Now remove the moved functions, const, and tests from commands_dev.rs. Let me first identify the exact line range. The functions start at line 514 and end at line 661 (with the closing }). Then the tests are lines 744-932.
+
+Let me read the exact boundaries:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:510..515 ✓ (1ms)
+  ▶ read src/commands_dev.rs:660..670 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now remove the functions (lines 514-663, the gap between `} on 513 and /// Build a directory tree` on 665):
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:511..516 ✓ (1ms)
+
+I need to remove from line 513 (after the }) to line 663 (before /// Build a directory tree). Let me read the exact content at the boundary:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:662..665 ✓ (1ms)
+
+Let me check what's on line 663:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '662,665p' src/commands_d… ✓ (4ms)
+
+There's a Unicode section divider comment on line 663. Let me use sed to get the exact content:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (20ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Line 663 is the Unicode divider. I need to remove lines 514 through 663 (the blank line after } on 661, line 662, and the divider on 663). Actually let me also keep the divider between sections — or just remove everything between the } on 513 and /// Build a directory tree on 665. Let me do this with a Python script to be precise:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines) ✓ (20ms)
+
+Now remove the watch-related tests from the tests module in commands_dev.rs. Let me find them:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma… ✓ (4ms)
+
+Let me see the exact test boundaries:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:593..793 ✓ (2ms)
+
+I need to remove from line 595 (the #[test] before auto_detect_watch_command_returns_lint_and_test_in_rust_project) through line 783 (the end of handle_watch_custom_command_single_phase). There's also line 746 which seems to have some Unicode content. Let me check:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (4 lines) ✓ (20ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Hmm, there's no line 746 content? Let me check:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (20ms)
+
+OK. Let me just remove the tests using Python for precision:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (36 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (20ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now check if there are unused imports in commands_dev.rs. The functions I removed used detect_project_type, lint_command_for_project, `test_command_for_project, LintStrictness but these are still used by auto_detect_watch_command in the other functions (handle_fix, handle_health`, etc.):
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lint_command_for_projec… ✓ (4ms)
+
+Good, those imports are still needed by the remaining code. But auto_detect_watch_command, detect_watch_all_command, detect_watch_all_phases, handle_watch, and `WATCH_SUBCOMMANDS` are removed. Let me verify they're all gone:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma… ✓ (3ms)
+
+All removed. Let me also update the module doc comment:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (1 → 1 lines)
+  - //! Dev workflow command handlers: /doctor, /health, /fix, /watch, /tree.
+  + //! Dev workflow command handlers: /doctor, /health, /fix, /tree.
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Now update all references. Let me do them one by one:
+
+1. `src/commands.rs` — Update the pub use and the WATCH_SUBCOMMANDS reference:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (3 → 3 lines)
+    pub use crate::commands_dev::{
+  -     handle_doctor, handle_fix, handle_health, handle_tree, handle_watch,
+  +     handle_doctor, handle_fix, handle_health, handle_tree,
+    };
+ ✓ (1ms)
+
+Now add the handle_watch import from watch:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use crate::watch" s… ✓ (3ms)
+
+No existing watch re-exports in commands.rs. Let me add one after the commands_dev block:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (3 → 5 lines)
+    pub use crate::commands_dev::{
+        handle_doctor, handle_fix, handle_health, handle_tree,
+    };
+  + 
+  + pub use crate::watch::handle_watch;
+ ✓ (1ms)
+
+Now update the WATCH_SUBCOMMANDS reference:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "/watch" => filter_candidates(crate::commands_dev::WATCH_SUBCOMMANDS, &partial_lower),
+  +         "/watch" => filter_candidates(crate::watch::WATCH_SUBCOMMANDS, &partial_lower),
+ ✓ (0ms)
+
+**2. src/repl.rs** — Update the auto_detect_watch_command reference:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 1 lines)
+  -         if let Some(cmd) = crate::commands_dev::auto_detect_watch_command() {
+  +         if let Some(cmd) = crate::watch::auto_detect_watch_command() {
+ ✓ (0ms)
+
+**3. `src/main.rs** — Update both auto_detect_watch_command` references:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_dev::auto_dete… ✓ (3ms)
+  ▶ read src/main.rs:156..159 ✓ (1ms)
+  ▶ edit src/main.rs (1 → 1 lines)
+  -         if let Some(cmd) = commands_dev::auto_detect_watch_command() {
+  +         if let Some(cmd) = watch::auto_detect_watch_command() {
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/main.rs. Include more surrounding context to make the match unique.
+  ▶ read src/main.rs:156..161 ✓ (0ms)
+  ▶ read src/main.rs:323..328 ✓ (1ms)
+  ▶ edit src/main.rs (5 → 5 lines)
+        // Auto-enable watch mode if a project type is detected and config allows it
+        if get_watch_command().is_none() && agent_config.auto_watch {
+  -         if let Some(cmd) = commands_dev::auto_detect_watch_command() {
+  +         if let Some(cmd) = watch::auto_detect_watch_command() {
+                set_watch_command(&cmd);
+                eprintln!("{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}");
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/main.rs. Include more surrounding context to make the match unique.
+  6 tools completed in 19.6s (4 ✓, 2 ✗)
+
+The two instances have identical surrounding lines. Let me use more context:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:150..160 ✓ (1ms)
+  ▶ read src/main.rs:318..328 ✓ (1ms)
+  ▶ edit src/main.rs (8 → 8 lines)
+    
+        // Auto-enable watch mode if a project type is detected and config allows it
+        if get_watch_command().is_none() && agent_config.auto_watch {
+  -         if let Some(cmd) = commands_dev::auto_detect_watch_command() {
+  +         if let Some(cmd) = watch::auto_detect_watch_command() {
+ ✓ (1ms)
+  ▶ edit src/main.rs (7 → 7 lines)
+    
+        // Auto-enable watch mode if a project type is detected and config allows it
+        if get_watch_command().is_none() && agent_config.auto_watch {
+  -         if let Some(cmd) = commands_dev::auto_detect_watch_command() {
+  +         if let Some(cmd) = watch::auto_detect_watch_command() {
+ ✗ (0ms)
+    │ old_text not found in src/main.rs.
+  ▶ edit src/main.rs (8 → 8 lines)
+    
+        // Auto-enable watch mode if a project type is detected and config allows it
+        if get_watch_command().is_none() && agent_config.auto_watch {
+  -         if let Some(cmd) = commands_dev::auto_detect_watch_command() {
+  +         if let Some(cmd) = watch::auto_detect_watch_command() {
+                set_watch_command(&cmd);
+ ✓ (1ms)
+  5 tools completed in 19.0s (4 ✓, 1 ✗)
+
+**4. `src/dispatch_sub.rs** — Update the handle_watch` reference:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (1 → 1 lines)
+  -                 crate::commands_dev::handle_watch(&input);
+  +                 crate::watch::handle_watch(&input);
+ ✓ (1ms)
+
+Now let me verify there are no remaining references to the old locations:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "commands_dev::.*watch\… ✓ (5ms)
+
+All references are updated.
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.6s (2 ✓)
+
+Now let's run all checks:
+  ╭─ Turn 79 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (494ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.1s)
+  2 tools completed in 17.4s (2 ✓)
+
+Three issues to fix:
+
+1. commands_dev.rs — now has unused imports for lint/test functions (they were only used by the moved functions, but let me double-check)
+2. prompt.rs — some re-exports are unused now
+3. watch.rs — ProjectType is unused (it's used indirectly through detect_project_type return, but not named directly)
+
+Let me check #1 more carefully:
+  ╭─ Turn 81 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lint_command_for_projec… ✓ (3ms)
+
+They're only in the import line now — the functions that used them were moved. Remove these imports:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (2 → 1 lines)
+  - use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
+    use crate::commands_project::{detect_project_type, ProjectType};
+ ✓ (0ms)
+
+Now fix `watch.rs — remove unused ProjectType`:
+  ╭─ Turn 83 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (2 → 2 lines)
+    use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
+  - use crate::commands_project::{detect_project_type, ProjectType};
+  + use crate::commands_project::detect_project_type;
+ ✓ (1ms)
+
+Now fix prompt.rs — remove the unused re-exports:
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:12..22 ✓ (1ms)
+
+The prompt.rs re-exports clear_watch_command, get_watch_commands, and set_watch_commands which clippy says are unused. Let me check who actually uses them through crate::prompt::*:
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "clear_watch_command\|g… ✓ (7ms)
+
+They're not used anywhere outside of watch.rs and prompt.rs re-exports. Since handle_watch is now in watch.rs, it calls them directly. Let me remove the unused re-exports but keep the ones that ARE used:
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "get_watch_command\b" s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_watch_command\b" s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_watch_after_prompt… ✓ (6ms)
+  3 tools completed in 8.4s (3 ✓)
+
+So `get_watch_command, set_watch_command, and run_watch_after_prompt are used through the re-exports. Let me check if repl.rs and main.rs import them via crate::prompt::*`:
+  ╭─ Turn 89 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "use crate::prompt" src/mai… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "use crate::watch\|use crat… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "^use \|^mod " src/main.rs … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 src/main.rs | grep -n "… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,85p' src/main.rs ✓ (3ms)
+  ▶ read src/main.rs:60..100 ✓ (1ms)
+  6 tools completed in 15.9s (6 ✓)
+
+So `main.rs uses use prompt::*; which re-exports watch functions. The get_watch_command, set_watch_command, and run_watch_after_prompt are still used from this glob import. clear_watch_command, get_watch_commands, and set_watch_commands` are NOT used anywhere outside of watch.rs.
+
+Let me remove only the unused re-exports:
+  ╭─ Turn 95 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (4 → 3 lines)
+    pub use crate::watch::{
+  -     clear_watch_command, get_watch_command, get_watch_commands, run_watch_after_prompt,
+  -     set_watch_command, set_watch_commands,
+  +     get_watch_command, run_watch_after_prompt, set_watch_command,
+    };
+ ✓ (0ms)
+
+Now let's retry:
+  ╭─ Turn 96 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 97 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (27.7s)
+  2 tools completed in 37.2s (2 ✓)
+
+All 88 tests pass. Let me also verify the format check:
+  ╭─ Turn 99 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (500ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (492ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (505ms)
+  3 tools completed in 8.9s (3 ✓)
+
+All four checks pass. Let me verify the size changes:
+  ╭─ Turn 102 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_dev.rs src/wa… ✓ (3ms)
+
+`commands_dev.rs`: 1277 → 936 lines (-341 lines, includes both functions and tests)
+watch.rs: 683 → 1022 lines (+339 lines)
+
+That's a clean move. Let me verify the moved functions are accessible:
+  ╭─ Turn 103 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn auto_detect_watc… ✓ (4ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Now let me update the CLAUDE.md architecture section to reflect the move:
+  ╭─ Turn 106 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_dev.rs\|watch.… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts (extracted from `prompt.rs`)
+  + - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch
+ ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now let me check if commands_dev.rs is mentioned in the architecture section:
+  ╭─ Turn 108 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "commands_dev" CLAUDE.md ✓ (3ms)
+
+It's not listed in the architecture section. That's fine — the Repository Structure section at the bottom is auto-generated. Let me also check the help.rs to see if it has anything about /watch being in commands_dev:
+  ╭─ Turn 109 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_dev" src/help.… ✓ (3ms)
+
+Good, no stale references. Now commit:
+  ╭─ Turn 110 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (8ms)
+
+Clean move — 343 lines out of commands_dev.rs, 339 lines into watch.rs (the difference is the removed unused imports). Let me commit:
+  ╭─ Turn 111 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (21ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Done. Clean move of the /watch command handler and detection functions from commands_dev.rs into watch.rs:
+
+• Moved: auto_detect_watch_command, detect_watch_all_command, detect_watch_all_phases, `handle_watch, WATCH_SUBCOMMANDS` + 8 associated tests
+• `commands_dev.rs`: 1277 → 936 lines 
+• `watch.rs`: 683 → 1022 lines
+• Key improvement: handle_watch now calls set_watch_command, get_watch_command, clear_watch_command etc. directly (same module) instead of going through crate::prompt:: re-exports
+• All references updated in commands.rs, dispatch_sub.rs, main.rs, repl.rs
+• Cleaned up unused re-exports in prompt.rs and unused imports in commands_dev.rs
+• All 88 tests pass, clippy clean, fmt clean
+
+  ↳ 8m 32s · 31573→20042 tokens · $4.13
+  ⬤ 20% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

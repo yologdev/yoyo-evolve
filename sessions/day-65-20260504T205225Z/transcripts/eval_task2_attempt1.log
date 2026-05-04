@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll quickly verify the implementation matches the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn auto_detect_watc… ✓ (3ms)
+ ✓ (4ms)
+ ✓ (9.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_watch\|WATCH_SUB…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "clear_watch_command\|ge… ✓ (3ms)
+ ✓ (3ms)
+  5 tools completed in 15.4s (5 ✓)
+
+Let me check if clear_watch_command, get_watch_commands, and set_watch_commands are still used elsewhere and if removing them from prompt.rs re-exports is correct:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "crate::prompt::clear_w…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "use crate::prompt::" s… ✓ (6ms)
+ ✓ (7ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Good — clear_watch_command, get_watch_commands, and set_watch_commands were only used by the moved code (which was in `commands_dev.rs via crate::prompt::*`), and now that code lives in watch.rs where those functions are defined directly. No external callers depend on the prompt re-exports.
+
+All checks pass. The implementation correctly:
+1. Moved all 5 items (auto_detect_watch_command, detect_watch_all_command, detect_watch_all_phases, handle_watch, WATCH_SUBCOMMANDS) from commands_dev.rs to watch.rs
+2. Moved all related tests
+3. Updated wiring in commands.rs, `dispatch_sub.rs, main.rs, repl.rs`
+4. Cleaned up now-unnecessary re-exports in prompt.rs
+5. Updated CLAUDE.md documentation
+6. All 88 tests pass
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (0ms)
+
+**Verdict: PASS** — All functions, const, and tests moved correctly with proper wiring updates. Build and tests pass.
+
+  ↳ 42.7s · 11747→1222 tokens · $0.332
+  ⬤ 5% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
