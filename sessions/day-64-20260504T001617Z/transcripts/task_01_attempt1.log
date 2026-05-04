@@ -1,0 +1,158 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll update the model registry to add the latest models. Let me start by reading the current state of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "known_models_for_provid… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '42,95p' src/providers.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '131,170p' src/commands.r… ✓ (4ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now let me check the existing tests to understand the test patterns:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,200p' src/providers.… ✓ (4ms)
+
+Good, I understand the pattern. Let me now write the tests first, then make the changes.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/providers.rs | … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,210p' src/providers.… ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me add the tests first, then update the model lists:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (8 → 41 lines)
+            assert!(
+                KNOWN_PROVIDERS.contains(&"minimax"),
+                "minimax should be in KNOWN_PROVIDERS"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_openai_known_models_includes_gpt5() {
+  +         let models = known_models_for_provider("openai");
+  +         assert!(models.contains(&"gpt-5"), "openai should include gpt-5");
+  +         assert!(
+  +             models.contains(&"gpt-5-mini"),
+  +             "openai should include gpt-5-mini"
+  +         );
+  +         assert!(
+  +             models.contains(&"gpt-5.5"),
+  +             "openai should include gpt-5.5"
+  +         );
+  +         assert!(
+  +             models.contains(&"gpt-5.5-mini"),
+  ... (19 more lines)
+ ✓ (0ms)
+
+Now let me verify the tests fail (as expected, since the models aren't added yet):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_openai_known_mod… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_openai_known_mod… ✓ (10.6s)
+  2 tools completed in 15.4s (2 ✓)
+
+Good — test fails as expected. Now let me update the model lists in src/providers.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (10 → 14 lines)
+            "openai" => &[
+  +             "gpt-5",
+  +             "gpt-5-mini",
+  +             "gpt-5.5",
+  +             "gpt-5.5-mini",
+                "gpt-4o",
+                "gpt-4o-mini",
+                "gpt-4.1",
+ ✓ (1ms)
+  ▶ edit src/providers.rs (1 → 6 lines)
+  -         "google" => &["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+  +         "google" => &[
+  +             "gemini-2.5-pro",
+  +             "gemini-2.5-flash",
+  +             "gemini-2.5-flash-lite",
+  +             "gemini-2.0-flash",
+  +         ],
+ ✓ (1ms)
+  ▶ edit src/providers.rs (1 → 1 lines)
+  -         "xai" => &["grok-3", "grok-3-mini", "grok-2"],
+  +         "xai" => &["grok-4", "grok-3", "grok-3-mini", "grok-2"],
+ ✓ (1ms)
+  3 tools completed in 9.1s (3 ✓)
+
+Now update KNOWN_MODELS in src/commands.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (16 → 22 lines)
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+        "claude-haiku-35-20241022",
+  +     "gpt-5",
+  +     "gpt-5-mini",
+  +     "gpt-5.5",
+  +     "gpt-5.5-mini",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4.1",
+  ···
+        "o4-mini",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+  +     "gemini-2.5-flash-lite",
+  +     "grok-4",
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ];
+ ✓ (1ms)
+
+Now let me run the full verification:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (27.0s)
+  3 tools completed in 54.7s (3 ✓)
+
+All 88 tests pass, including the 3 new ones. Let me verify the new tests specifically:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_openai_known_mod… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test gpt5 2>&1 | tail -5 &… ✓ (405ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Hmm, the test names have underscores that get filtered oddly. Let me use the full module path:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test includes_gpt5 2>&1 | … ✓ (135ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "gpt5\… ✓ (9.1s)
+  2 tools completed in 14.1s (2 ✓)
+
+All three new tests pass. Now let me commit:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (6ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Clean diff — exactly the two files specified, no extraneous changes. Let me commit:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done! Here's what I did:
+
+Changes made:
+
+1. **src/providers.rs — known_models_for_provider():**
+   • OpenAI: added gpt-5, `gpt-5-mini, gpt-5.5, gpt-5.5-mini` (at top of list, newest first)
+   • Google: added gemini-2.5-flash-lite
+   • xAI: added grok-4 (at top, newest first)
+   • All existing models kept intact
+
+2. `src/commands.rs` — `KNOWN_MODELS`:
+   • Added `gpt-5, gpt-5-mini, gpt-5.5, gpt-5.5-mini, gemini-2.5-flash-lite, grok-4` for tab-completion
+
+3. Tests added in `src/providers.rs`:
+   • `test_openai_known_models_includes_gpt5` — verifies all four GPT-5 variants
+   • `test_xai_known_models_includes_grok4` — verifies grok-4
+   • test_google_known_models_includes_flash_lite — verifies gemini-2.5-flash-lite
+
+All 88 tests pass, clippy clean, formatted. No defaults changed (GPT-5 and Grok-4 are too new for safe defaults).
+
+  ↳ 2m 38s · 13935→4019 tokens · $0.739
+  ⬤ 7% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
