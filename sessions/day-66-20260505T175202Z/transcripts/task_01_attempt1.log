@@ -1,0 +1,428 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of prompt.rs to identify the exact patterns to extract.
+  ▶ read src/prompt.rs ✓ (8ms)
+
+Let me read the file in sections to see the specific patterns:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:100..400 ✓ (2ms)
+  ▶ read src/prompt.rs:400..700 ✓ (2ms)
+  ▶ read src/prompt.rs:700..1000 ✓ (2ms)
+  ▶ read src/prompt.rs:1000..1200 ✓ (1ms)
+  ▶ read src/prompt.rs:1200..1400 ✓ (1ms)
+  5 tools completed in 16.9s (5 ✓)
+
+Now I have a thorough understanding of the file. Let me create a plan and identify all the occurrences of the usage accumulation pattern.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search '\.input \+= .*\.input;' (src/prompt.rs) ✓ (14ms)
+  ▶ search 'input \+= ' (src/prompt.rs) ✓ (12ms)
+  ▶ $ grep -n '\.input +=' src/prompt.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (161ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Good — 14 occurrences of the pattern. Let me count the actual 4-line blocks:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'input\|output\|cache_read\|cache_write' src/prompt.rs | grep '+=' ✓ (3ms)
+
+That's 13 four-line blocks. Now let me also understand the epilogue pattern that's duplicated between the two functions:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 16.2s (6 ✓)
+
+Let me first write the tests, then implement. Let me check the `Usage` type:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'pub struct Usage' ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null |… ✓ (4ms)
+  ▶ $ grep -A 15 'pub struct Usage' ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b… ✓ (93ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Good — Usage has 5 fields, but the code consistently only accumulates 4 (input, output, cache_read, cache_write). I notice total_tokens isn't accumulated. Let me verify that's intentional by checking the existing pattern:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'total_tokens' src/prompt.rs ✓ (253ms)
+
+Yes — total_tokens is a different function, not used in accumulation. The pattern consistently accumulates only those 4 fields. Now let me write the tests first and then implement.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find where the existing tests live in the file to know where to add:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1395..1495 ✓ (1ms)
+
+Now I'll start implementing. First, add the accumulate_usage function and its test:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (3 → 49 lines)
+  + /// Accumulate usage from `delta` into `total`.
+  + ///
+  + /// Replaces the recurring 4-line pattern:
+  + /// ```ignore
+  + /// total.input  += delta.input;
+  + /// total.output += delta.output;
+  + /// total.cache_read  += delta.cache_read;
+  + /// total.cache_write += delta.cache_write;
+  + /// ```
+  + fn accumulate_usage(total: &mut Usage, delta: &Usage) {
+  +     total.input += delta.input;
+  +     total.output += delta.output;
+  +     total.cache_read += delta.cache_read;
+  +     total.cache_write += delta.cache_write;
+  + }
+  + 
+  + /// Shared epilogue for `run_prompt_with_changes` and
+  + /// `run_prompt_with_content_and_changes`.
+  + ///
+  + /// Accumulates prompt-level usage into the session total, prints the usage
+  ... (29 more lines)
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me replace all 13 occurrences of the usage accumulation pattern. Let me do them systematically. I'll start from the end of the file and work backwards (to avoid line number shifts).
+
+First, let me re-read the file to get current line numbers:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '\.input +=' src/prompt.rs ✓ (39ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Let me replace all 13 blocks, working from bottom to top. I'll use a sub-agent for this systematic work:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 52s)
+
+Let me do these replacements myself, one at a time, from bottom to top:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1290..1300 ✓ (0ms)
+  ▶ read src/prompt.rs:1258..1273 ✓ (0ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Wait — that one is already replaced? Let me check if the sub-agent actually did work:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'accumulate_usage' src/prompt.rs ✓ (55ms)
+
+The sub-agent did some replacements! Let me check how many .input += patterns remain:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '\.input +=' src/prompt.rs ✓ (10ms)
+
+Line 40 is the implementation itself. Line 489 is inside handle_agent_end. The remaining 5 are in the retry loop bodies. Let me replace them:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:486..496 ✓ (1ms)
+  ▶ edit src/prompt.rs (4 → 1 lines)
+  -                 self.usage.input += msg_usage.input;
+  -                 self.usage.output += msg_usage.output;
+  -                 self.usage.cache_read += msg_usage.cache_read;
+  -                 self.usage.cache_write += msg_usage.cache_write;
+  +                 accumulate_usage(&mut self.usage, msg_usage);
+ ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now the remaining 5 in the retry loops. Let me read their context:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:735..795 ✓ (1ms)
+  ▶ edit src/prompt.rs (6 → 3 lines)
+                } => {
+  -                 total_usage.input += usage.input;
+  -                 total_usage.output += usage.output;
+  -                 total_usage.cache_read += usage.cache_read;
+  -                 total_usage.cache_write += usage.cache_write;
+  +                 accumulate_usage(&mut total_usage, &usage);
+                    collected_text = text;
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/prompt.rs. Include more surrounding context to make the match unique.
+  2 tools completed in 6.3s (1 ✓, 1 ✗)
+
+There are two identical blocks — one in run_prompt_with_changes and one in `run_prompt_with_content_and_changes`. Let me use more context:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:730..745 ✓ (0ms)
+  ▶ edit src/prompt.rs (12 → 9 lines)
+                    last_tool_error: tool_err,
+                    last_tool_name: tool_nm,
+                } => {
+  -                 total_usage.input += usage.input;
+  -                 total_usage.output += usage.output;
+  -                 total_usage.cache_read += usage.cache_read;
+  -                 total_usage.cache_write += usage.cache_write;
+  +                 accumulate_usage(&mut total_usage, &usage);
+                    collected_text = text;
+ ✓ (1ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now the RetriableError block in run_prompt_with_changes:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:745..755 ✓ (0ms)
+  ▶ edit src/prompt.rs (9 → 6 lines)
+                PromptResult::RetriableError { error_msg, usage } => {
+  -                 total_usage.input += usage.input;
+  -                 total_usage.output += usage.output;
+  -                 total_usage.cache_read += usage.cache_read;
+  -                 total_usage.cache_write += usage.cache_write;
+  +                 accumulate_usage(&mut total_usage, &usage);
+    
+                    if attempt < MAX_RETRIES {
+                        let delay = retry_delay(attempt + 1);
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/prompt.rs. Include more surrounding context to make the match unique.
+  ▶ read src/prompt.rs:744..769 ✓ (1ms)
+  3 tools completed in 8.8s (2 ✓, 1 ✗)
+
+I need to use more unique context. Let me check both blocks:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:741..771 ✓ (0ms)
+  ▶ read src/prompt.rs:770..780 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+OK, the second matching block is in run_prompt_with_content_and_changes. Let me find it:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'let next = attempt + 2' src/prompt.rs ✓ (45ms)
+
+Good. The first one has // human-readable attempt number comment; the second doesn't. Let me use that to distinguish them. Let me replace the first block:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (10 → 7 lines)
+                PromptResult::RetriableError { error_msg, usage } => {
+  -                 total_usage.input += usage.input;
+  -                 total_usage.output += usage.output;
+  -                 total_usage.cache_read += usage.cache_read;
+  -                 total_usage.cache_write += usage.cache_write;
+  +                 accumulate_usage(&mut total_usage, &usage);
+    
+                    if attempt < MAX_RETRIES {
+                        let delay = retry_delay(attempt + 1);
+ ✓ (1ms)
+
+Now the ContextOverflow block in run_prompt_with_changes:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:768..778 ✓ (0ms)
+  ▶ edit src/prompt.rs (7 → 4 lines)
+                PromptResult::ContextOverflow { error_msg, usage } => {
+  -                 total_usage.input += usage.input;
+  -                 total_usage.output += usage.output;
+  -                 total_usage.cache_read += usage.cache_read;
+  -                 total_usage.cache_write += usage.cache_write;
+  +                 accumulate_usage(&mut total_usage, &usage);
+    
+                    // Auto-compact and retry once
+ ✓ (0ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now let me find the remaining blocks in run_prompt_with_content_and_changes:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '\.input +=' src/prompt.rs ✓ (215ms)
+
+Good — only 2 remaining (plus the implementation itself). Let me read them:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:998..1028 ✓ (0ms)
+  ▶ read src/prompt.rs:993..998 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+I'll use the run_prompt_once_with_messages call as distinguishing context:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (26 → 20 lines)
+                    last_tool_error: tool_err,
+                    last_tool_name: tool_nm,
+                } => {
+  -                 total_usage.input += usage.input;
+  -                 total_usage.output += usage.output;
+  -                 total_usage.cache_read += usage.cache_read;
+  -                 total_usage.cache_write += usage.cache_write;
+  +                 accumulate_usage(&mut total_usage, &usage);
+                    collected_text = text;
+                    last_tool_error = tool_err;
+                    last_tool_name = tool_nm;
+                    break;
+                }
+                PromptResult::RetriableError { error_msg, usage } => {
+  -                 total_usage.input += usage.input;
+  -                 total_usage.output += usage.output;
+  -                 total_usage.cache_read += usage.cache_read;
+  -                 total_usage.cache_write += usage.cache_write;
+  +                 accumulate_usage(&mut total_usage, &usage);
+    
+  ... (2 more lines)
+ ✓ (0ms)
+
+Now let me verify all non-implementation .input += are gone:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '\.input +=' src/prompt.rs ✓ (7ms)
+
+Only the implementation itself remains. Now let me also check for the ContextOverflow block in the content function — wait, that one was different (no retry):
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'ContextOverflow' src/prompt.rs ✓ (8ms)
+
+Let me check line 1034:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1030..1045 ✓ (0ms)
+
+Good — that one was already replaced by the sub-agent. 
+
+Now let me handle the epilogue helper. Let me replace the epilogue in run_prompt_with_changes:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me find the epilogues:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'print_usage\|agent.finish\|print_context_usage\|maybe_ring_bell\|contex… ✓ (9ms)
+
+Lines 831-844 and 1048-1059 are the two epilogues to replace. Let me read them with context:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:826..851 ✓ (1ms)
+
+Wait — I see the sub-agent already replaced line 830 with accumulate_usage(session_total, &total_usage); but the old epilogue code is still there on lines 831-844. Now the epilogue helper I defined includes that accumulation. So I need to replace lines 830-844 with a single call to finish_prompt_epilogue:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (16 → 2 lines)
+  -     accumulate_usage(session_total, &total_usage);
+  -     print_usage(&total_usage, session_total, model, prompt_start.elapsed());
+  -     // Issue #258: yoagent 0.7.x runs the agent loop in a background task; the
+  -     // agent's internal `self.messages` is only updated when `finish()` is awaited.
+  -     // Without this, `agent.messages()` returns stale state and the context bar
+  -     // permanently reads "0% used". Call finish() before reading messages.
+  -     agent.finish().await;
+  -     let ctx_used = total_tokens(agent.messages()) as u64;
+  -     let ctx_max = crate::cli::effective_context_tokens();
+  -     print_context_usage(ctx_used, ctx_max);
+  -     if let Some(warning) = crate::format::context_budget_warning(ctx_used, ctx_max) {
+  -         eprintln!("{warning}");
+  -     }
+  -     maybe_ring_bell(prompt_start.elapsed());
+  -     println!();
+  +     finish_prompt_epilogue(agent, &total_usage, session_total, model, prompt_start).await;
+        PromptOutcome {
+ ✓ (1ms)
+
+Now the second epilogue in run_prompt_with_content_and_changes:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1030..1055 ✓ (0ms)
+  ▶ edit src/prompt.rs (21 → 9 lines)
+  -     accumulate_usage(session_total, &total_usage);
+  -     print_usage(&total_usage, session_total, model, prompt_start.elapsed());
+  -     // Issue #258: see run_prompt_with_changes — yoagent 0.7.x requires finish()
+  -     // before reading messages, otherwise the context bar reads stale "0%".
+  -     agent.finish().await;
+  -     let ctx_used = total_tokens(agent.messages()) as u64;
+  -     let ctx_max = crate::cli::effective_context_tokens();
+  -     print_context_usage(ctx_used, ctx_max);
+  -     if let Some(warning) = crate::format::context_budget_warning(ctx_used, ctx_max) {
+  -         eprintln!("{warning}");
+  -     }
+  -     maybe_ring_bell(prompt_start.elapsed());
+  -     println!();
+  +     finish_prompt_epilogue(agent, &total_usage, session_total, model, prompt_start).await;
+        PromptOutcome {
+            text: collected_text,
+            last_tool_error,
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 10.0s (3 ✓)
+
+Now let me add the tests. Let me find the test section:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1293..1303 ✓ (1ms)
+  ▶ $ grep -n '#\[cfg(test)\]' src/prompt.rs ✓ (139ms)
+  ▶ read src/prompt.rs:1266..1271 ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 18.4s (4 ✓)
+
+Now add the tests. I'll add them right after the use super::*; line:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (5 → 65 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn test_accumulate_usage_adds_all_fields() {
+  +         let mut total = Usage {
+  +             input: 10,
+  +             output: 20,
+  +             cache_read: 30,
+  +             cache_write: 40,
+  +             ..Default::default()
+  +         };
+  +         let delta = Usage {
+  +             input: 1,
+  +             output: 2,
+  +             cache_read: 3,
+  +             cache_write: 4,
+  +             ..Default::default()
+  +         };
+  ... (45 more lines)
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.5s (2 ✓)
+
+Now let me verify there's no remaining duplication patterns and run the build:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 ✓ (4.7s)
+  2 tools completed in 9.7s (2 ✓)
+
+Builds clean. Now tests:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (23.1s)
+
+All 2342 + 88 tests pass. Now clippy:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (7.3s)
+
+And format check:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (394ms)
+
+All four checks pass clean. Let me verify the reduction:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/prompt.rs ✓ (6ms)
+
+Originally 1665, but I added ~50 lines of helper functions + ~60 lines of tests. The actual line count of the executable code should be lower. Let me count the actual savings:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat src/prompt.rs ✓ (4ms)
+
+120 insertions, 82 deletions. The insertions include the helper definitions (46 lines) and tests (60 lines) — so the actual code change is net -82 lines of duplication removed, replaced by ~14 lines of helper functions (the rest is docs and tests). That's a big win.
+
+Let me verify one more time the code looks right by checking a few key spots:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'accumulate_usage' src/prompt.rs ✓ (43ms)
+  ▶ $ grep -c 'finish_prompt_epilogue' src/prompt.rs ✓ (761ms)
+  2 tools completed in 7.8s (2 ✓)
+
+1 definition + 2 call sites. Exactly right — run_prompt_with_changes and `run_prompt_with_content_and_changes` both now use the shared epilogue.
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me commit:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (20 lines) ✓ (10ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.7s (3 ✓)
+
+Done. Here's what I did:
+
+Extracted two helpers in `src/prompt.rs`:
+
+1. `accumulate_usage(total, delta)` — replaced the 4-line `total.input += delta.input; total.output += delta.output; ...` pattern that appeared 13 times across:
+   • handle_agent_end (1×)
+   • run_prompt_with_changes retry loop (5× — Done, RetriableError, ContextOverflow, two overflow-retry arms)
+   • run_prompt_with_content_and_changes retry loop (3× — Done, RetriableError, ContextOverflow)
+   • Session-total accumulation (2× — one per function)
+   • run_prompt_stream_json / `run_prompt_stream_json_with_content` (2×)
+   • handle_stream_json_events (1×)
+
+2. `finish_prompt_epilogue(agent, total_usage, session_total, model, prompt_start)` — replaced the identical 15-line epilogue block duplicated in both run_prompt_with_changes and run_prompt_with_content_and_changes (session accumulation → print_usage → agent.finish().await → context bar → budget warning → bell → newline).
+
+Tests added: 3 unit tests for accumulate_usage (normal accumulation, zero delta, multiple sequential deltas).
+
+Net effect: 82 lines of pure copy-paste removed, replaced by 14 lines of helpers + 60 lines of tests. All 2430 tests pass, clippy clean, fmt clean.
+
+  ↳ 7m 53s · 43439→12166 tokens · $3.36
+  ⬤ 21% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

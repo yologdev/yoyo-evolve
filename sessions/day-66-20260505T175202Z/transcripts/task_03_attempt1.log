@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/repl.rs:570..700 ✓ (1ms)
+
+Now I can see the structure. Lines 584-660 are the startup info block, and line 662 onwards is the editor setup. Let me extract lines 584-660 into a new function.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1..31 ✓ (0ms)
+  ▶ read src/repl.rs:30..40 ✓ (0ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now I have a good understanding of the structure. Let me create the extraction. The block from lines 584-660 will become the new print_startup_info function.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (85 → 90 lines)
+  - /// Returns when the user exits (via /quit, /exit, Ctrl-D, etc.).
+  - pub async fn run_repl(
+  -     agent_config: &mut AgentConfig,
+  -     agent: &mut yoagent::agent::Agent,
+  -     repl_config: ReplConfig,
+  - ) {
+  + /// Print the startup banner and all session configuration info.
+  + fn print_startup_info(agent_config: &AgentConfig, repl_config: &ReplConfig) {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "(unknown)".to_string());
+  ···
+                );
+            }
+        }
+  + }
+  + 
+  + /// Returns when the user exits (via /quit, /exit, Ctrl-D, etc.).
+  + pub async fn run_repl(
+  +     agent_config: &mut AgentConfig,
+  ... (6 more lines)
+ ✓ (0ms)
+
+Now let's run the checks:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (4.9s)
+
+There's a reference to cwd later in run_repl. Let me find it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:750..765 ✓ (0ms)
+
+I need to add cwd back as a local variable in run_repl since it's used in the dispatch context. Let me add it right after the print_startup_info call:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (3 → 7 lines)
+        print_startup_info(agent_config, &repl_config);
+  + 
+  +     let cwd = std::env::current_dir()
+  +         .map(|p| p.display().to_string())
+  +         .unwrap_or_else(|_| "(unknown)".to_string());
+    
+        // Set up rustyline editor with slash-command tab-completion
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (7.6s)
+  2 tools completed in 14.9s (2 ✓)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (26.8s)
+
+All 88 tests pass, clippy is clean, build succeeds. Let me commit:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (10ms)
+
+Done. Extracted the ~80-line startup banner block from `run_repl into a new private fn print_startup_info(agent_config: &AgentConfig, repl_config: &ReplConfig)` function. The cwd variable stays duplicated in run_repl since it's also needed later in the dispatch context — but the startup printing logic is now cleanly separated and independently readable. Pure extraction, no behavior change.
+
+  ↳ 1m 48s · 12771→3581 tokens · $0.411
+  ⬤ 7% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

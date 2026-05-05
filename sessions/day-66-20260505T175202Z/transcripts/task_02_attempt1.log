@@ -1,0 +1,396 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the re-exports in prompt.rs and what each of the three target files actually uses.
+  ▶ read src/prompt.rs (70 lines)  ▶ $ grep -n 'use crate::prompt' src/repl.rs src/dispatch.rs src/conversations.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (3ms)
+ ✓ (222ms)
+  ▶ $ grep -n 'use crate::prompt' src/repl.rs src/dispatch.rs src/conversations.rs 2>/… ✓ (4ms)
+  3 tools completed in 6.5s (3 ✓)
+
+Good. Now let me find which symbols from `prompt.rs` (including re-exports) are actually used by each file.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 0s)
+
+Now let me verify this by looking at the actual imports and usages more carefully in each file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Verify repl.rs usages (11 lines) ✓ (8ms)
+
+Now let me look at the exact import sections of each file:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs (30 lines)  ▶ read src/dispatch.rs (30 lines)  ▶ read src/conversations.rs (30 lines) ✓ (1ms)
+ ✓ (1ms)
+ ✓ (2ms)
+  3 tools completed in 3.7s (3 ✓)
+
+Now I have a clear picture. Let me also check what other files still use crate::prompt::* to know which re-exports I can safely remove:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'use crate::prompt::' src/ --include='*.rs' | grep -v 'prompt_budget\|p… ✓ (5ms)
+
+Now let me check which re-exported symbols are used by the remaining callers (after removing repl.rs, dispatch.rs, conversations.rs):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check which re-exported symbols the REMAINING callers need… (23 lines) ✓ (21ms)
+
+Now I also need to check if there are re-exports from `prompt_retry and prompt_utils`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub use crate::prompt_retry\|pub use crate::prompt_utils' src/prompt.rs ✓ (8ms)
+  ▶ read src/prompt.rs:95..115 ✓ (0ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Let me check which of these prompt_retry and prompt_utils re-exports are used by the three target files and the remaining callers:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check prompt_retry re-exports in our 3 target files (17 lines) ✓ (37ms)
+
+Now I have a complete picture. Let me also check whether commands_retry.rs imports build_retry_prompt via crate::prompt:: directly:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep 'use crate::prompt' src/commands_retry.rs ✓ (215ms)
+
+Good. Now I have the full picture. Let me plan and execute:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 11.1s (5 ✓)
+
+Now let's start with Step 1 — update src/repl.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+repl.rs uses:
+• From session: SessionChanges, TurnHistory, TurnSnapshot
+• From watch: `get_watch_command, set_watch_command, run_watch_after_prompt`
+• From prompt itself: PromptOutcome, `run_prompt_auto_retry, run_prompt_auto_retry_with_content`
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 3 lines)
+  - use crate::prompt::*;
+  + use crate::prompt::{run_prompt_auto_retry, run_prompt_auto_retry_with_content, PromptOutcome};
+  + use crate::session::{SessionChanges, TurnHistory, TurnSnapshot};
+  + use crate::watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Step 2 — update src/dispatch.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+dispatch.rs uses:
+• From session: SessionChanges, TurnHistory
+• From prompt itself: `run_prompt_with_changes`
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (1 → 2 lines)
+  - use crate::prompt::*;
+  + use crate::prompt::run_prompt_with_changes;
+  + use crate::session::{SessionChanges, TurnHistory};
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Step 3 — update `src/conversations.rs`:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+conversations.rs uses:
+• From prompt itself: run_prompt_auto_retry
+• From session: SessionChanges (already imported directly)
+• From watch: run_watch_after_prompt (already imported directly)
+
+So I need to replace use crate::prompt::*; with just the prompt-native symbol, and keep the existing direct imports:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/conversations.rs (1 → 1 lines)
+  - use crate::prompt::*;
+  + use crate::prompt::run_prompt_auto_retry;
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let's do a quick build check before proceeding to Step 4:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (4.3s)
+
+Build passes. The warning tells me TurnSnapshot is no longer used through the re-export — it's now imported directly from crate::session in repl.rs. Let me check who still needs it:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Which remaining crate::prompt::* callers use TurnSnapshot? (2 lines) ✓ (3ms)
+  ▶ $ grep 'TurnSnapshot' src/commands_git.rs ✓ (8ms)
+  2 tools completed in 5.8s (2 ✓)
+
+`commands_git.rs imports TurnSnapshot via use crate::prompt::{TurnHistory, TurnSnapshot}` (a specific import, not wildcard). It also has use crate::prompt::*; at line 5. So it gets TurnSnapshot through the specific import. But wait — the warning says the re-export itself is unused, which means no caller resolves TurnSnapshot through the pub use in prompt.rs anymore. The commands_git.rs line 1833 import `use crate::prompt::{TurnHistory, TurnSnapshot}` would still use the re-export! Let me check more carefully:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use crate::prompt' src/commands_git.rs ✓ (7ms)
+
+`commands_git.rs has use crate::prompt::*; at line 5 — so it gets TurnSnapshot` from the wildcard re-export. The specific import at line 1833 is inside a function scope. The compiler warning must mean that after the wildcard import brings it in, the TurnSnapshot re-export IS still used by commands_git.rs. 
+
+Wait — the warning says "unused import" not "unused re-export". Let me re-read: `warning: unused import: TurnSnapshot pointing at pub use crate::session::...TurnSnapshot in prompt.rs. But commands_git.rs has use crate::prompt::*;` which should pull in TurnSnapshot. This suggests the compiler optimized it... Actually no, with cargo build warnings are different from clippy. Let me check if clippy will flag this differently. Actually the warning is fine — the compiler might not trace through all wildcard usages. Let me proceed to Step 4 — removing re-exports that are truly no longer needed.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me carefully analyze which re-exports can be removed. After my 3 file changes, the remaining callers that use crate::prompt::* or specific crate::prompt::Symbol imports are:
+
+Remaining `use crate::prompt::*;` callers:
+• commands_git.rs — uses TurnHistory, TurnSnapshot (via specific import at line 1833)
+• commands_lint.rs
+• commands_dev.rs
+• commands_run.rs
+• commands_git_review.rs
+• commands_session.rs
+• agent_builder.rs
+• commands_spawn.rs
+
+Remaining specific imports:
+• commands_plan.rs — use crate::prompt::run_prompt;
+• hooks.rs — `use crate::prompt::{audit_log_tool_call, is_audit_enabled};`
+• commands_retry.rs — `use crate::prompt::{build_retry_prompt, format_changes, run_prompt, ChangeKind, SessionChanges};`
+• main.rs — uses via wildcard or specific
+
+Let me check which specific re-exported symbols are still needed by these remaining callers:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ # For each re-export group, check if any remaining caller st… (29 lines) ✓ (16ms)
+
+Let me check what main.rs imports:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use crate::prompt\|use crate::session\|use crate::watch\|use crate::pro… ✓ (7ms)
+  ▶ $ grep -n 'prompt\|session\|watch\|budget' src/main.rs | head -30 ✓ (3ms)
+  2 tools completed in 7.8s (2 ✓)
+
+`main.rs uses use prompt::;` (not `use crate::prompt::;` — it's the crate root). So it still pulls in all re-exports via the wildcard. Let me check what symbols from re-exports it actually uses:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check main.rs usage of re-exported symbols (7 lines) ✓ (36ms)
+
+So main.rs (via use prompt::*;) uses:
+• SessionChanges (session re-export)
+• get_watch_command, run_watch_after_prompt, set_watch_command (watch re-exports)
+• enable_audit_log (prompt_budget re-export)
+• write_output_file (prompt_utils re-export)
+
+Now let me check `session_budget_exhausted` — my analysis showed no remaining caller:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ # session_budget_exhausted - is it used anywhere via crate::… (2 lines) ✓ (4ms)
+
+`session_budget_exhausted is used within prompt.rs` itself (lines 861, 921), but those use it through the direct use statement at line 23 (the pub use re-export). Actually, prompt.rs itself imports it with `pub use crate::prompt_budget::{..., session_budget_exhausted} — the pub use` makes it both available for re-export AND usable within prompt.rs. So session_budget_exhausted is still needed within prompt.rs itself, but the pub part of the re-export could theoretically become a non-pub `use. Let me check if any external caller needs it via crate::prompt::session_budget_exhausted`:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Any external caller using session_budget_exhausted via cra… (2 lines) ✓ (4ms)
+
+No external caller uses session_budget_exhausted via the re-export. The only users are:
+• prompt.rs itself (needs the import, but doesn't need it `pub`)
+• watch.rs (imports directly from crate::prompt_budget)
+
+So I can downgrade session_budget_exhausted from pub use to just use in prompt.rs. But wait — it's part of a grouped `pub use` statement. Let me be careful.
+
+Now let me determine which re-exports can be safely removed (i.e., no remaining caller depends on them via crate::prompt::):
+
+After the 3-file migration:
+1. `session_budget_exhausted` — no external caller via prompt. Can remove from pub use (but keep as private use since prompt.rs uses it internally).
+
+Actually, let me think about this more carefully. The pub use re-export line in prompt.rs is:
+```rust
+pub use crate::prompt_budget::{
+    audit_log_tool_call, enable_audit_log, is_audit_enabled, session_budget_exhausted,
+};
+```
+
+• audit_log_tool_call — used by hooks.rs via use crate::prompt::{audit_log_tool_call, is_audit_enabled}
+• enable_audit_log — used by main.rs via `use prompt::*`
+• is_audit_enabled — used by hooks.rs via use crate::prompt::{...} and agent_builder.rs via use crate::prompt::*
+• session_budget_exhausted — NOT used by any external caller via prompt re-export
+
+So I can remove session_budget_exhausted from the pub use and add a private use for it since prompt.rs uses it internally.
+
+Let me also check if any of the prompt_retry or prompt_utils re-exports lost all callers after this batch:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ # prompt_retry re-exports: build_auto_retry_prompt, build_ov… (25 lines) ✓ (52ms)
+
+Excellent. Now I can see which re-exports from prompt_retry can be safely removed:
+• build_auto_retry_prompt — NO external use (only used within prompt.rs itself)
+• build_overflow_retry_prompt — NO external use
+• diagnose_api_error — NO external use
+• is_overflow_error — NO external use
+• `is_retriable_error` — NO external use
+• retry_delay — NO external use
+• MAX_AUTO_RETRIES — NO external use
+• build_retry_prompt — STILL NEEDED by commands_retry.rs
+
+Let me check which of these prompt_retry symbols are used internally by prompt.rs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ for sym in build_auto_retry_prompt build_overflow_retry_prom… (8 lines) ✓ (12ms)
+
+All these symbols are used by prompt.rs internally, so they need to stay imported — but those that have no external callers can become private use instead of pub use.
+
+Now let me make the edits to prompt.rs:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:12..32 ✓ (1ms)
+  ▶ read src/prompt.rs:95..115 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now I'll update the re-exports. The key changes:
+
+1. `session_budget_exhausted` — remove from `pub use, add to private use`
+2. **prompt_retry re-exports** — keep only build_retry_prompt as pub use, downgrade the rest to private use  
+3. **Watch and remaining session/prompt_budget re-exports** — keep as pub use (still needed by remaining callers like main.rs, commands_git.rs, etc.)
+
+Let me make the edits:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (8 → 6 lines)
+  - // Extracted into `prompt_budget` module. Re-exported here so the existing
+  - // `use crate::prompt::*;` call sites in `main.rs` and `repl.rs` keep working
+  - // without any changes, and `crate::prompt::foo` paths continue to resolve.
+  - // Only symbols actually referenced via the `prompt::` path today are
+  - // re-exported; the rest remain accessible at `crate::prompt_budget::`.
+  - pub use crate::prompt_budget::{
+  -     audit_log_tool_call, enable_audit_log, is_audit_enabled, session_budget_exhausted,
+  - };
+  + // Extracted into `prompt_budget` module. Re-exported here for callers that
+  + // still reach these symbols via `crate::prompt::*` (main.rs, hooks.rs,
+  + // agent_builder.rs). `session_budget_exhausted` is only used within this
+  + // module, so it stays private.
+  + pub use crate::prompt_budget::{audit_log_tool_call, enable_audit_log, is_audit_enabled};
+  + use crate::prompt_budget::session_budget_exhausted;
+ ✓ (0ms)
+
+Now update the prompt_retry re-exports — keep only build_retry_prompt as public:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (6 → 8 lines)
+  - // Extracted into `prompt_retry` module (Day 64). Re-exported here so
+  - // `use crate::prompt::*;` call sites keep working without changes.
+  - pub use crate::prompt_retry::{
+  -     build_auto_retry_prompt, build_overflow_retry_prompt, build_retry_prompt, diagnose_api_error,
+  -     is_overflow_error, is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+  + // Extracted into `prompt_retry` module (Day 64). Only `build_retry_prompt`
+  + // is still needed by external callers (commands_retry.rs); the rest are
+  + // used only within this module.
+  + pub use crate::prompt_retry::build_retry_prompt;
+  + use crate::prompt_retry::{
+  +     build_auto_retry_prompt, build_overflow_retry_prompt, diagnose_api_error, is_overflow_error,
+  +     is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+    };
+ ✓ (1ms)
+
+Now update the comments on the remaining re-exports to be accurate:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (2 → 2 lines)
+  - // Extracted into `watch` module (Day 58). Re-exported here so
+  - // `use crate::prompt::*;` call sites keep working without changes.
+  + // Extracted into `watch` module (Day 58). Still needed by main.rs and
+  + // other callers via `crate::prompt::*`; will migrate in a future batch.
+ ✓ (0ms)
+  ▶ edit src/prompt.rs (2 → 3 lines)
+  - // Extracted into `session` module (Day 54). Re-exported here so
+  - // `use crate::prompt::*;` call sites keep working without changes.
+  + // Extracted into `session` module (Day 54). Still needed by commands_git.rs,
+  + // commands_session.rs, commands_retry.rs, main.rs via `crate::prompt::*`;
+  + // will migrate in a future batch.
+ ✓ (0ms)
+  ▶ edit src/prompt.rs (2 → 3 lines)
+  - // Extracted into `prompt_utils` module (Day 64). Re-exported here so
+  - // `use crate::prompt::*;` call sites keep working without changes.
+  + // Extracted into `prompt_utils` module (Day 64). Still needed by
+  + // commands_session.rs, commands_spawn.rs, main.rs via `crate::prompt::*`;
+  + // will migrate in a future batch.
+ ✓ (0ms)
+  3 tools completed in 14.2s (3 ✓)
+
+Now let me verify the changes look right:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:12..42 ✓ (1ms)
+  ▶ read src/prompt.rs:95..115 ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 12.6s (3 ✓)
+
+Now let's run the full verification:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (388ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (7.3s)
+  3 tools completed in 25.8s (3 ✓)
+
+The compiler sees TurnSnapshot as unused. Let me check more carefully — commands_git.rs has `use crate::prompt::{TurnHistory, TurnSnapshot}` at line 1833, which is inside a function scope. And it also has `use crate::prompt::*;` at line 5. Let me verify:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'TurnSnapshot\|TurnHistory' src/commands_git.rs ✓ (33ms)
+
+`commands_git.rs uses TurnSnapshot` at line 1843 via the scoped import at 1833. And it uses TurnHistory both through path-qualified crate::prompt::TurnHistory (lines 469, 617, 1826, 1886, 1893) and through the scoped import (line 1833). Both rely on the re-export from crate::prompt.
+
+But the compiler says TurnSnapshot is unused. This means commands_git.rs:1833 imports TurnSnapshot from crate::prompt, but clippy is still seeing the re-export as unused. Let me check if this specific import in commands_git.rs actually functions:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1830..1855 ✓ (1ms)
+
+This is in a test (#[test]). The `--all-targets` flag should compile tests too, so this import should be visible... Unless clippy considers test code differently for the unused import analysis. Let me check:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (3.0s)
+
+The issue is that clippy sees TurnSnapshot as an unused re-export in prompt.rs because the only external user is in a #[test] function inside commands_git.rs. In the non-test compilation, TurnSnapshot truly has no external user.
+
+Since commands_git.rs will be migrated in a future batch anyway, and the test there can also import directly from crate::session, I should just remove TurnSnapshot from the pub re-export now. The test in commands_git.rs already uses `use crate::prompt::{TurnHistory, TurnSnapshot}; — when I remove TurnSnapshot` from the re-export, it will fail to compile for tests. Let me check if I should update that one import too, or if there's another way.
+
+Actually, the task says to only update the 3 target files. But the clippy error will block CI. The safest approach is to remove TurnSnapshot from the `pub use` in prompt.rs (since it genuinely has no non-test external users), and update the test import in commands_git.rs to use the canonical path. This is a minimal fix to make the build pass.
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (1 → 1 lines)
+  - pub use crate::session::{format_changes, ChangeKind, SessionChanges, TurnHistory, TurnSnapshot};
+  + pub use crate::session::{format_changes, ChangeKind, SessionChanges, TurnHistory};
+ ✓ (0ms)
+
+Now update the test import in commands_git.rs to use the canonical path:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 2 lines)
+  -         use crate::prompt::{TurnHistory, TurnSnapshot};
+  +         use crate::prompt::TurnHistory;
+  +         use crate::session::TurnSnapshot;
+ ✓ (0ms)
+
+Now let's run again:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (7.2s)
+
+Clippy passes clean. Now let's run the full suite:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (394ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (4.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (23.1s)
+  3 tools completed in 1m 3s (3 ✓)
+
+All 88 tests pass, zero failures. Let me verify the final state of the changes:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (6ms)
+  2 tools completed in 9.7s (2 ✓)
+
+Clean, focused diff. Let me commit:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Done. Here's what I did:
+
+**Step 1 — src/repl.rs:* Replaced `use crate::prompt::;` with explicit imports:
+• `crate::prompt::{run_prompt_auto_retry, run_prompt_auto_retry_with_content, PromptOutcome}` (symbols native to prompt.rs)
+• `crate::session::{SessionChanges, TurnHistory, TurnSnapshot}` (canonical module)
+• `crate::watch::{get_watch_command, run_watch_after_prompt, set_watch_command}` (canonical module)
+
+Step 2 — `src/dispatch.rs`: Replaced use crate::prompt::*; with:
+• `crate::prompt::run_prompt_with_changes` (native to prompt.rs)
+• crate::session::{SessionChanges, TurnHistory} (canonical module)
+
+**Step 3 — `src/conversations.rs:** Replaced use crate::prompt::*;` with:
+• crate::prompt::run_prompt_auto_retry (native to prompt.rs)
+• Already had direct imports from crate::session and crate::watch
+
+**Step 4 — Cleaned up `prompt.rs` re-exports:**
+• `session_budget_exhausted: downgraded from pub use to use` (no external callers)
+• TurnSnapshot: removed from pub use (only external user was a test, updated to import canonically)
+• 7 prompt_retry symbols (`build_auto_retry_prompt, build_overflow_retry_prompt, diagnose_api_error, is_overflow_error, is_retriable_error, retry_delay, MAX_AUTO_RETRIES`): downgraded from pub use to use (only used within prompt.rs itself)
+• Updated comments to document which re-exports remain and why
+
+Bonus fix: Updated commands_git.rs test to import `TurnSnapshot from crate::session` directly (needed to resolve a clippy unused-import error).
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test (88 passed, 0 failed).
+
+  ↳ 8m 47s · 20825→13389 tokens · $1.98
+  ⬤ 13% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

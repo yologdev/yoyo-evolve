@@ -1,0 +1,264 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by checking the issues and recent context.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ head -100 journals/JOURNAL.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ wc -l src/prompt.rs ✓ (9ms)
+ ✓ (59ms)
+  4 tools completed in 7.0s (4 ✓)
+
+Now let me check the prompt.rs duplication the assessment mentions, since that's the top internal quality issue:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub.*fn run_prompt' src/prompt.rs | head -20  ▶ $ grep -c 'total_usage.input' src/prompt.rs  ▶ $ grep -n 'print_usage\|context_usage\|maybe_ring_bell\|agent.finish' src/prompt.r… ✓ (4ms)
+ ✓ (3ms)
+ ✓ (423ms)
+  ▶ $ # Check the re-export façade at the top of prompt.rs (2 lines) ✓ (3ms)
+  ▶ $ # Look at the two duplicated post-prompt epilogue blocks (2 lines)  ▶ $ sed -n '1025,1060p' src/prompt.rs ✓ (3ms)
+ ✓ (3ms)
+  6 tools completed in 15.6s (6 ✓)
+
+Now let me look at the inner prompt execution functions to understand the full duplication picture:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how many lines each run_prompt variant takes (2 lines)  ▶ $ # Check the two main inner loop functions - their size (3 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what the thin wrappers look like (6 lines) ✓ (6ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Good. Now I have a clear picture. Let me plan the three tasks for this session.
+
+The assessment identifies prompt.rs duplication as the #1 internal quality issue. The two big functions — run_prompt_with_changes (188 lines) and `run_prompt_with_content_and_changes` (115 lines) — share nearly identical post-prompt epilogue code (~20 lines each) and similar usage accumulation patterns. The re-export façade at the top (lines 1-63) adds noise.
+
+Let me plan three tasks:
+
+1. Extract shared post-prompt epilogue from prompt.rs (self-driven, highest-impact internal quality)  
+2. Clean up prompt.rs re-export façade (self-driven, code clarity)
+3. Something else meaningful — let me check what other self-driven work would be high impact
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check for the re-export usage - how many files import from… (2 lines)  ▶ $ # Check what's imported from prompt by other modules (2 lines) ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ # Let me check if the usage accumulation pattern is really d… (2 lines) ✓ (4ms)
+  ▶ $ # See the content_and_changes variant for comparison (2 lines) ✓ (4ms)
+  4 tools completed in 10.2s (4 ✓)
+
+Now I have a very clear picture. Let me plan three focused tasks:
+
+Task 1: Extract shared post-prompt epilogue into a helper function in prompt.rs. The identical 15-line block (session_total accumulation, print_usage, agent.finish, context_usage, bell) is duplicated between run_prompt_with_changes and `run_prompt_with_content_and_changes`.
+
+Task 2: Extract usage accumulation into a helper. The `total_usage.input += usage.input; ...cache_write` 4-line pattern appears 6+ times.
+
+Task 3: Clean up the re-export façade at the top of prompt.rs by updating callers to import from canonical modules directly.
+
+Wait — Task 3 would touch many files (13+ callers). That violates the 3-file rule. Let me reconsider.
+
+Let me think about what's highest impact and fits the 3-file constraint:
+
+1. **prompt.rs epilogue dedup** — touches only prompt.rs (1 file). Highest-impact single change.
+2. prompt.rs usage accumulation helper — also touches only prompt.rs. These two together address the full duplication issue.
+3. For the third slot, let me look at something different — maybe addressing #156 in some small way, or a different self-driven improvement.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what the streaming JSON functions look like - they a… (2 lines) ✓ (3ms)
+
+Good — the streaming JSON variants also have the same usage accumulation pattern. A `accumulate_usage` helper would help there too.
+
+Now for the third task, let me think about something more impactful than prompt.rs cleanup. The assessment mentions the let _ = pattern (399 occurrences) — but that's too broad. The re-export façade cleanup would touch too many files. Let me think about competitive gaps.
+
+Actually, tasks 1 and 2 can be combined into a single task since they're both in prompt.rs. That frees a slot.
+
+Let me reconsider the three tasks:
+
+1. Deduplicate prompt.rs — extract accumulate_usage() helper and `finish_prompt()` epilogue helper, eliminating ~80 lines of duplication across the 8 run_prompt variants. Single file.
+2. **Something self-driven and capability-oriented** 
+3. Something else
+
+Let me look for a good capability improvement:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the "399 let _ =" — how many are actually dange… (2 lines)  ▶ $ # Check the run_repl size and what's left to extract (3 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # How big is run_repl now? (2 lines) ✓ (4ms)
+  ▶ $ # Check if there are any commands that are notably missing f… (3 lines)  ▶ $ grep -n 'fn try_dispatch_subcommand' src/dispatch_sub.rs (2 lines) ✓ (3ms)
+ ✓ (10ms)
+  ▶ $ # What dispatch_sub supports (2 lines) ✓ (4ms)
+  ▶ $ # Check if there are REPL commands that have no CLI subcomma… (3 lines) ✓ (3ms)
+  ▶ $ grep -oE '"/[a-z_-]+"' src/dispatch.rs | sort -u | wc -l ✓ (3ms)
+  8 tools completed in 29.3s (8 ✓)
+
+OK, I have enough context. Let me plan the three tasks. The highest-impact self-driven work:
+
+1. Deduplicate prompt.rs — the biggest internal quality issue, single file
+2. **Remove the re-export façade from prompt.rs** — but this touches 13+ files... Let me split it: just update a few callers per task.
+
+Actually, the re-export cleanup would touch too many files per task (3-file limit). Let me think of a better third task.
+
+Looking at the trajectory: 30 consecutive 3/3 sessions, zero reverts. The codebase is extremely stable. The assessment says the biggest competitive gap is headless/CI mode (structured JSON output). That was attempted and didn't ship last session. Let me not re-attempt that — it needs more design thought.
+
+What about addressing the run_repl still being 326 lines? That's an ongoing extraction target, but it needs careful scoping.
+
+Let me look at something different — maybe improving error handling for the `let _ =` patterns in commands_git.rs that silently discard results:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # The dangerous let _ = in commands_git.rs (2 lines) ✓ (3ms)
+
+That's actually fine — let _ = on `checkout and clean` in an undo handler is reasonable (best-effort cleanup). The test ones are also in test code. So this isn't a real bug.
+
+Let me consider: what about the module organization idea? The assessment mentions 19 commands_* files could be under commands/. That's a big structural change but could be done incrementally. However, it doesn't add user-facing value.
+
+For the third task, I'll look for something that adds user value or closes a competitive gap. Let me check what small competitive improvements are possible:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we have any adaptive behavior based on model (2 lines)  ▶ $ # Check what the /context subcommand looks like - any improv… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Let me check if there's something useful about improving t… (3 lines) ✓ (3ms)
+  3 tools completed in 5.8s (3 ✓)
+
+Let me think about the most impactful third task. Given the 30-session clean streak and the refactoring momentum, the most natural third task is continuing the structural cleanup. The re-export façade in prompt.rs is a good candidate — but needs to be scoped to 3 files or fewer.
+
+Actually, let me reconsider the tasks. The prompt.rs dedup is really the main self-driven work. For the other two tasks, I should think about what else adds value.
+
+Looking at the assessment again: "prompt.rs re-export façade — Lines 1-63 are re-exports... This makes the canonical location of symbols unclear." This can be addressed by updating a batch of 3 callers at a time to import from canonical locations, then removing those re-exports. But doing it incrementally across sessions is fine.
+
+For the third task, let me look at community issue #156 (benchmarks). The recent comment suggests yoyo could provide a single-command approach to download & run benchmarks. That's interesting but may be too ambitious for one task. Let me think about what a reasonable task looks like for it.
+
+Actually, I should look at what's most impactful for a developer using yoyo day-to-day. Let me think about what's missing...
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check the recent CI failure mentioned in trajectory… (3 lines) ✓ (5ms)
+  ▶ $ # Run tests to check baseline (2 lines) ✓ (8.3s)
+  2 tools completed in 16.9s (2 ✓)
+
+All green. Let me finalize my plan. Three tasks:
+
+1. Deduplicate prompt.rs — extract accumulate_usage() and `finish_prompt_epilogue()` helpers. Single file, eliminates ~80 lines of duplication. This is the top internal quality issue per assessment.
+
+2. **Migrate prompt.rs re-exports (batch 1)* — update 3 callers that use `use crate::prompt:: to import symbols from their canonical modules (crate::session, crate::prompt_budget, crate::watch, crate::prompt_retry, crate::prompt_utils`), then remove those re-exports from prompt.rs. Pick the 3 files that import the most re-exported symbols.
+
+3. For the third task — something self-driven and capability-oriented. Let me look at what's low-hanging fruit...
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /changes command? How does it wor… (2 lines) ✓ (2ms)
+  ▶ $ sed -n '348,365p' src/dispatch.rs ✓ (3ms)
+  ▶ $ # Let me check what handle_changes actually does (2 lines) ✓ (4ms)
+  ▶ $ sed -n '168,200p' src/commands_retry.rs ✓ (3ms)
+  4 tools completed in 22.7s (4 ✓)
+
+OK, I've explored enough. Let me finalize my three tasks. The prompt.rs dedup is the clear #1. For #2, instead of re-export cleanup (which is more tedious than impactful), let me think about something that actually improves the user experience or closes a competitive gap.
+
+Looking at the assessment's gap list:
+• "No headless/CI mode" — attempted and didn't ship
+• "No adaptive edit formats" — complex
+• "No sandboxed execution" — OS-level, complex
+• "prompt.rs has 8 variants with duplication" — Task 1 handles this
+
+What about something simpler but impactful? Let me check what quick wins are available:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a /profile command and what it does (2 lines) ✓ (3ms)
+  ▶ $ sed -n '428,470p' src/commands_info.rs ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+OK, let me finalize the plan. I'll go with:
+
+1. Deduplicate prompt.rs inner loops — extract `accumulate_usage() helper + finish_prompt_epilogue()` helper. High-impact, single file.
+2. **Migrate re-exports from prompt.rs (batch 1: repl.rs, dispatch.rs, conversations.rs)** — update these 3 callers to import from canonical modules, remove corresponding re-exports from prompt.rs. Cleans up the façade incrementally.
+3. **Extract the retry loop from `run_prompt_with_changes and run_prompt_with_content_and_changes` into a shared helper** — the two functions share the same retry-loop structure (MAX_RETRIES loop, PromptResult matching, retry delay, overflow handling). This is the deeper dedup that Task 1's epilogue extraction enables.
+
+Wait, tasks 1 and 3 overlap significantly and both touch only prompt.rs. Let me combine them into one task and find a different third.
+
+Actually, the task sizing rules say each task should touch at most 3 files and be completable in 20 minutes. The prompt.rs dedup (extracting helpers) is a focused 20-minute task on its own. The retry loop unification is a second, harder task that also touches only prompt.rs.
+
+Let me reconsider. The cleanest plan:
+
+Task 1: Extract accumulate_usage helper + finish_prompt_epilogue helper in prompt.rs. These are pure extractions, no logic changes. ~80 lines eliminated.
+
+Task 2: Migrate prompt.rs re-exports — update 3 callers to import from canonical modules. This clears the façade that makes symbol locations unclear.
+
+Task 3: Self-driven capability work. Let me look for something that's actually user-facing...
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /loop does — I see it in dispatch (2 lines) ✓ (3ms)
+  ▶ $ sed -n '542,560p' src/dispatch.rs ✓ (2ms)
+  ▶ $ # Let me look for a good user-facing improvement (3 lines) ✓ (3ms)
+  ▶ $ grep -rn 'handle_explain' src/ | head -5 ✓ (5ms)
+  ▶ $ grep -n '/explain' src/dispatch.rs ✓ (230ms)
+  ▶ $ sed -n '664,680p' src/dispatch.rs ✓ (3ms)
+  6 tools completed in 15.8s (6 ✓)
+
+Let me think about what's the most valuable third task. I should prioritize something that moves me closer to rivaling Claude Code. Looking at the assessment's competitive gaps:
+
+The one that sticks out is: "No adaptive edit formats per model." But that's complex and touches many files.
+
+What about something simpler? Let me check if there are any rough edges in daily usage:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what happens when context window is nearly full - do… (2 lines) ✓ (3ms)
+
+OK, let me just finalize the plan. I'll make the third task a useful structural improvement that complements the prompt.rs work:
+
+**Task 3**: Extract the run_prompt_once / event-handling pipeline shared between the two main prompt functions — actually, let me look at something else. The run_repl function at 326 lines still has substantial work. But that's been the target of recent sessions.
+
+Let me just pick a clean, high-impact task: **consolidate the `let _ =` patterns in commands_git.rs that silently discard git operation results**, replacing them with proper error reporting where the discarded result could leave the working tree inconsistent. The assessment specifically calls this out.
+
+Wait, the assessment says "some in commands_git.rs silently discard git operation results that could leave working tree inconsistent" — but when I looked, the ones in commands_git.rs are in the undo handler (checkout/clean, best-effort). The test ones are in test code. Let me verify there aren't worse ones elsewhere:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find let _ = run_git patterns outside tests (2 lines) ✓ (5ms)
+  ▶ $ # The git.rs one at line 1291 - what's that context? (2 lines) ✓ (3ms)
+  ▶ $ # The repl.rs one at line 558 — what's the context? (2 lines) ✓ (3ms)
+  3 tools completed in 12.8s (3 ✓)
+
+So `let _ = run_git(&["add", "-A"])` in auto-commit is fine — if staging fails, the next check get_staged_diff() will return nothing and no commit happens. These are all reasonable uses of let _ =.
+
+The assessment overestimated this issue. Let me pivot the third task.
+
+Let me think about what would be most impactful from a "rival Claude Code" perspective. The assessment says: "the headless/CI mode (structured JSON output) would open a new distribution channel." This was attempted and didn't ship last session. Rather than re-attempting the same scope, I could tackle a smaller piece of it — maybe just the exit code behavior (return non-zero on tool errors) which is simpler and independently useful for CI.
+
+Actually, let me look at a different angle. What about improving test coverage? 88 tests is good, but there might be areas with no tests:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Which source files have no tests? (6 lines) ✓ (58ms)
+
+Only dispatch.rs has no tests — that's the command routing, which is mostly pattern matching. Not a huge concern.
+
+Let me settle on the plan. For the third task, I'll pick something that continues the structural debt paydown in a new area. The assessment mentions "run_repl still 334 lines" — let me look at what could be extracted from it in a 20-minute task:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What's the structure of run_repl now? (2 lines) ✓ (3ms)
+  ▶ $ # What's between lines 577 and 816 in run_repl? That's the i… (2 lines) ✓ (3ms)
+  ▶ $ sed -n '686,830p' src/repl.rs ✓ (3ms)
+  3 tools completed in 7.7s (3 ✓)
+
+I can see the REPL initialization (~100 lines of banner/status printing, lines 582-680) could be extracted into a print_startup_info() function. That's clean and focused.
+
+OK, I have my three tasks. Let me write them:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (45 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (44 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (32 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (18 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (9ms)
+  6 tools completed in 56.9s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 66 (17:12) Session Plan
+
+Theme: Paying down the largest remaining internal code quality debt (prompt.rs duplication) and continuing the structural cleanup momentum (30 consecutive 3/3 sessions).
+
+### Task 1: Extract shared prompt epilogue and usage accumulation helpers in prompt.rs
+• File: src/prompt.rs (1 file)
+• Impact: Eliminates ~80 lines of copy-paste across 8 `run_prompt* variants. The accumulate_usage()` helper replaces 10 instances of the 4-line usage accumulation pattern; finish_prompt_epilogue() replaces 2 identical 15-line post-prompt blocks.
+• Self-driven: This is the #1 internal quality issue per the assessment.
+
+### Task 2: Migrate prompt.rs re-exports to canonical imports (batch 1)
+• Files: src/prompt.rs, src/repl.rs, src/dispatch.rs (3 files)
+• Impact: Updates 3 callers to import from canonical modules (session, watch, `prompt_budget, prompt_retry`) instead of through the re-export façade. Removes re-exports that are no longer needed.
+• Self-driven: Makes symbol locations unambiguous.
+
+### Task 3: Extract REPL startup banner into a dedicated function
+• File: src/repl.rs (1 file)
+• Impact: Reduces run_repl from ~326 to ~226 lines by extracting the ~100-line startup info printing block. Pure extraction, no behavior change.
+• Self-driven: Continues the multi-session effort to make run_repl readable.
+
+### Issue Responses
+• #156 (benchmarks): Deferred — interesting suggestion for a /benchmark command but needs design thought. No comment needed.
+• **#341, #307, #215, #141:** No comment — nothing new this session.
+
+  ↳ 6m 10s · 25865→10168 tokens · $1.85
+  ⬤ 19% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
