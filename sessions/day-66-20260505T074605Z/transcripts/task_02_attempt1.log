@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,470p' src/repl.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '456,600p' src/repl.rs ✓ (4ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me find the call site of handle_post_prompt:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_post_prompt" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '850,880p' src/repl.rs ✓ (4ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Now I have a clear picture. Let me look at the imports and types used in handle_post_prompt to understand what Usage and other types are:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/repl.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1..26 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use.*Usage" src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Usage" src/repl.rs | he… ✓ (3ms)
+  5 tools completed in 17.1s (5 ✓)
+
+`Usage comes from yoagent::*`. Now let me check what other types are needed:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionChanges\|TurnHis… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::session" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionChanges\|TurnHis… ✓ (8ms)
+  3 tools completed in 11.5s (3 ✓)
+
+Good - SessionChanges, TurnHistory, TurnSnapshot are re-exported from crate::prompt::*. Now let me check what PromptOutcome is:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct PromptOutcom… ✓ (3ms)
+
+Good. Now I have all the information needed. Let me implement the PostPromptContext struct and refactor. Let me look at the exact function signature to know the exact text to replace:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:442..460 ✓ (1ms)
+
+Now I'll make the change. First, I'll define the struct and rewrite the function signature:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (18 → 21 lines)
+  + /// Bundles the parameters for [`handle_post_prompt`] into a single struct,
+  + /// eliminating a 13-parameter function signature.
+  + struct PostPromptContext<'a> {
+  +     outcome: &'a PromptOutcome,
+  +     agent: &'a mut yoagent::agent::Agent,
+  +     agent_config: &'a mut AgentConfig,
+  +     session_total: &'a mut Usage,
+  +     session_changes: &'a SessionChanges,
+  +     turn_history: &'a mut TurnHistory,
+  +     turn_snap: TurnSnapshot,
+  +     changes_before: &'a [String],
+  +     last_error: &'a mut Option<String>,
+  +     prompt_start: Instant,
+  +     effective_input: &'a str,
+  + }
+  + 
+    /// Post-prompt handling: bell, error tracking, fallback retry, turn snapshots,
+    /// watch-after-prompt, auto-commit, and auto-compact.
+  - #[allow(clippy::too_many_arguments)]
+  - async fn handle_post_prompt(
+  ... (17 more lines)
+ ✓ (1ms)
+
+Now I need to update the function body to use ctx. prefix for all the parameters. Let me see the full function body:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:462..572 ✓ (1ms)
+
+Now I need to replace all bare references to the parameters with ctx. prefixed versions. Let me do this systematically:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (106 → 111 lines)
+        // Notify the user if the context was auto-compacted due to overflow
+  -     if outcome.was_overflow {
+  +     if ctx.outcome.was_overflow {
+            eprintln!("{YELLOW}  ℹ Context was auto-compacted (overflow detected){RESET}");
+        }
+    
+        // Fallback provider: if the API failed and a fallback is configured, switch and retry
+  -     if outcome.last_api_error.is_some() {
+  -         let old_provider = agent_config.provider.clone();
+  -         let fallback_name = agent_config.fallback_provider.clone();
+  -         if agent_config.try_switch_to_fallback() {
+  +     if ctx.outcome.last_api_error.is_some() {
+  +         let old_provider = ctx.agent_config.provider.clone();
+  +         let fallback_name = ctx.agent_config.fallback_provider.clone();
+  +         if ctx.agent_config.try_switch_to_fallback() {
+                let fallback = fallback_name.as_deref().unwrap_or("unknown");
+                eprintln!(
+                    "\n{YELLOW}  ⚡ Primary provider '{}' failed. Switching to fallback '{}'...{RESET}",
+  ···
+                );
+  ... (100 more lines)
+ ✓ (1ms)
+
+Now let me update the call site to construct a `PostPromptContext`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:858..878 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:877..882 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (14 → 14 lines)
+  -         handle_post_prompt(
+  -             &outcome,
+  +         handle_post_prompt(PostPromptContext {
+  +             outcome: &outcome,
+                agent,
+                agent_config,
+  -             &mut session_total,
+  -             &session_changes,
+  -             &mut turn_history,
+  +             session_total: &mut session_total,
+  +             session_changes: &session_changes,
+  +             turn_history: &mut turn_history,
+                turn_snap,
+  -             &changes_before,
+  -             &mut last_error,
+  +             changes_before: &changes_before,
+  +             last_error: &mut last_error,
+                prompt_start,
+  -             &effective_input,
+  -         )
+  ... (3 more lines)
+ ✓ (1ms)
+  3 tools completed in 13.8s (3 ✓)
+
+Now let's try to build:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -50 ✓ (5.2s)
+
+Builds clean. Now let's run clippy:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+
+Clippy passes clean — no too_many_arguments warning. Let's run fmt and tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (504ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (28.0s)
+  2 tools completed in 36.2s (2 ✓)
+
+All 88 tests pass. Let me verify the final state of the refactored code looks correct:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:442..467 ✓ (1ms)
+
+Everything is clean. Now let's commit:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (20ms)
+
+Done. The refactoring:
+
+1. Defined `PostPromptContext<'a>` struct with all 11 fields (the original 13 parameters minus the 2 that were really just one `outcome and effective_input`, which are now inside the struct — it's actually 11 fields which is under the clippy threshold of 12 for structs, but the real win is eliminating the 13-param function signature).
+
+2. **Rewrote handle_post_prompt** to take mut ctx: PostPromptContext<'_> as a single argument, with the body using ctx. prefix for field access.
+
+3. Updated the call site to construct the struct inline.
+
+4. **Removed the `#[allow(clippy::too_many_arguments)]`** attribute — clippy passes clean without it.
+
+All checks green: build ✓, clippy (with `-D warnings`) ✓, fmt ✓, tests (88 passed) ✓.
+
+  ↳ 3m 23s · 15958→6169 tokens · $0.801
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -50  ▶ $ grep -n "too_many_arguments" src/repl.rs src/commands_config.rs 2>/dev/null | he… ✓ (10ms)
+ ✓ (8ms)
+  ▶ $ grep -n "dead_code" src/commands_lint.rs src/commands_tree.rs 2>/dev/null  ▶ $ grep -n "handle_post_prompt" src/repl.rs | head -5 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ sed -n '444,470p' src/repl.rs ✓ (4ms)
+  ▶ $ sed -n '195,220p' src/commands_config.rs ✓ (3ms)
+  8 tools completed in 18.6s (8 ✓)
+
+Now let me look at what a PostPromptContext struct would look like, and think about the best tasks for today. The assessment identifies:
+
+1. Structural debt: handle_post_prompt with 13 params, handle_config with many params — both have #[allow(clippy::too_many_arguments)]
+2. Capability gap: Headless JSON streaming output mode (the #1 competitive gap vs Claude Code)
+3. Dead code: in commands_lint.rs and commands_tree.rs
+
+The trajectory shows 10 perfect sessions in a row. The assessment says this is a natural exit point for consolidation — time to build new capability. The biggest competitive gap is headless JSON output mode for CI/SDK integration. Let me plan that alongside the structural cleanup.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "output.format\|output_format\|stream.json\|headless" src/main.rs src/cl… ✓ (4ms)
+  ▶ $ grep -n "piped\|non_interactive\|is_piped" src/main.rs src/cli.rs src/prompt.rs … ✓ (4ms)
+  ▶ $ grep -n "json_output\|json-output\|--json" src/main.rs src/cli.rs 2>/dev/null | … ✓ (4ms)
+  ▶ $ sed -n '111,140p' src/main.rs ✓ (4ms)
+  ▶ $ grep -n "json_output\|--json" src/cli.rs | head -10 ✓ (4ms)
+  5 tools completed in 24.0s (5 ✓)
+
+Good — yoyo already has --json for single-shot output. But it's a single JSON blob at the end, not streaming JSON events. The Claude Code `--output-format stream-json` streams newline-delimited JSON events (assistant text, tool calls, tool results) in real-time. That's the gap.
+
+Let me now think about the three tasks:
+
+1. **Task 1 (self-driven, capability)**: Add `--output-format stream-json` streaming JSON event output — this is the #1 competitive gap. This is a larger feature, so I'll scope it carefully to just the plumbing in cli.rs and the event emission in prompt.rs.
+
+2. Task 2 (self-driven, structural cleanup): Introduce PostPromptContext struct to replace the 13-parameter handle_post_prompt function — clean code smell from Day 65.
+
+3. Task 3 (self-driven, structural cleanup): Remove dead code in commands_lint.rs and commands_tree.rs, and introduce a ConfigDisplay struct to replace the many-argument handle_config function.
+
+Actually, let me reconsider. The streaming JSON is potentially too large for one task slot (20 min). Let me scope it to just the CLI flag parsing + the data types + wiring for `--prompt mode (single-shot already has --json`; streaming is an extension). The REPL mode streaming can come later.
+
+Let me re-scope:
+1. **Task 1**: Introduce --output-format stream-json flag and streaming JSON event types — the flag parsing in cli.rs, the event enum, and the single-shot/piped emission path in main.rs.
+2. Task 2: PostPromptContext struct to replace 13-param handle_post_prompt.
+3. Task 3: Clean dead code + ConfigDisplay struct to fix the other too_many_arguments.
+
+Wait — task sizing rule says max 3 source files per task. Task 1 touches cli.rs and main.rs (2 files). Task 2 touches repl.rs (1 file). Task 3 touches commands_config.rs, commands_lint.rs, commands_tree.rs (3 files). Good.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (37 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (41 lines) ✓ (0ms)
+  ▶ write session_plan/task_03.md (51 lines) ✓ (0ms)
+  ▶ write session_plan/issue_responses.md (8 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 53.6s (6 ✓)
+
+Done. Here's the session plan summary for Day 66:
+
+## Session Plan — Day 66
+
+Theme: Exit consolidation phase, begin closing the #1 competitive gap.
+
+### Task 1: Add `--output-format stream-json` for streaming JSON event output
+• Files: `src/cli.rs, src/main.rs, src/prompt.rs`
+• Why: This is the biggest competitive gap vs Claude Code — they have headless streaming JSON for CI/SDK integration. yoyo has --json (single blob) but no real-time event streaming. This enables embedding yoyo in pipelines, IDEs, and automation.
+
+### Task 2: Introduce `PostPromptContext` struct to eliminate 13-parameter `handle_post_prompt`
+• Files: src/repl.rs
+• Why: Day 65's extraction left a code smell — function was extracted but not restructured. Bundle 13 params into a struct, remove the clippy allow.
+
+### Task 3: Introduce `ConfigDisplay` struct and remove dead code
+• Files: src/commands_config.rs, src/commands_lint.rs, src/commands_tree.rs
+• Why: Clean up the other too_many_arguments allow and resolve dead code flags. Pure structural hygiene.
+
+Issue disposition: #156 deferred (needs external benchmark infrastructure). All other open issues have no new activity — no response needed.
+
+  ↳ 2m 22s · 15670→4501 tokens · $0.689
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
