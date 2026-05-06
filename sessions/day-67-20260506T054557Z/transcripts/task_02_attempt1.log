@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll make the surgical import changes in the three files, then verify everything builds and passes.
+  ▶ $ grep -n 'use crate::commands::auto_compact_if_needed' src/commands_dev.rs src/co…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+  ▶ $ grep -n 'auto_compact_if_needed' src/commands_dev.rs src/commands_git_review.rs … ✓ (8ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Hmm, only commands_dev.rs has the import. Let me check the other two more carefully.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'auto_compact' src/commands_git_review.rs src/commands_lint.rs ✓ (8ms)
+  ▶ $ grep -rn 'auto_compact_if_needed' src/commands_lint.rs ✓ (40ms)
+  2 tools completed in 6.5s (2 ✓)
+
+All three files have it. The grep was just truncating. Let me make the three edits:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (1 → 1 lines)
+  - use crate::commands::auto_compact_if_needed;
+  + use crate::commands_session::auto_compact_if_needed;
+ ✓ (1ms)
+  ▶ edit src/commands_git_review.rs (1 → 1 lines)
+  - use crate::commands::auto_compact_if_needed;
+  + use crate::commands_session::auto_compact_if_needed;
+ ✓ (0ms)
+  ▶ edit src/commands_lint.rs (1 → 1 lines)
+  - use crate::commands::auto_compact_if_needed;
+  + use crate::commands_session::auto_compact_if_needed;
+ ✓ (0ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now let's verify everything:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (5.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (30.0s)
+  3 tools completed in 53.6s (3 ✓)
+
+All 88 tests pass, clippy clean, build clean. Let me commit:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done. Three files migrated from use crate::commands::auto_compact_if_needed to `use crate::commands_session::auto_compact_if_needed` — pointing directly at where the function lives instead of going through the middleman re-export. The re-export in commands.rs stays for now since `commands_plan.rs and commands_run.rs` still need it.
+
+  ↳ 1m 29s · 9703→1317 tokens · $0.301
+  ⬤ 5% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

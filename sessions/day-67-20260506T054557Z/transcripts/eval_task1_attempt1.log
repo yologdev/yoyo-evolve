@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll verify the implementation by checking what each file actually uses from prompt.rs and confirming the migrations are correct.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (148ms)
+  2 tools completed in 14.5s (2 ✓)
+
+Now let me verify that each file only uses what it imports - checking that no symbols from the old use crate::prompt::* are used beyond what's now explicitly imported.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (9 lines) ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (3ms)
+  5 tools completed in 18.2s (5 ✓)
+
+Everything checks out. Let me also verify the task mentioned `commands_lint.rs` in its title but then scoped the work to only 3 files:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (3 lines) ✓ (3ms)
+
+The task title mentions commands_lint.rs but the task body explicitly scopes to only 3 files. The implementation correctly covers those 3 files. This is fine — the title was slightly broader but the actual spec was clear.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (0ms)
+
+**Verdict: PASS**
+
+The implementation is correct:
+• All 3 files migrated from use crate::prompt::* to explicit imports from canonical modules
+• `commands_dev.rs: only uses run_prompt → imports from crate::prompt`
+• commands_git.rs: uses run_prompt + TurnHistory → imports from crate::prompt and crate::session respectively
+• `commands_git_review.rs: only uses run_prompt → imports from crate::prompt`
+• All fully-qualified `crate::prompt::TurnHistory` references in tests updated to use the new import
+• The `use crate::prompt::TurnHistory` in a test that was redundant with the file-level import was correctly removed
+• Re-exports in prompt.rs preserved for other consumers
+• Build and all 88 tests pass
+
+  ↳ 59.7s · 3537→1908 tokens · $0.297
+  ⬤ 1% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
