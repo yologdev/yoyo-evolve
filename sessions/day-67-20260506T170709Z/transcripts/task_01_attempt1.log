@@ -1,0 +1,93 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task — migrating wildcard imports to canonical imports in three files. Let me start by examining the current state of each file.
+  ▶ $ head -30 src/agent_builder.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ head -15 src/commands_lint.rs  ▶ $ head -15 src/commands_run.rs ✓ (42ms)
+ ✓ (48ms)
+ ✓ (56ms)
+  3 tools completed in 2.7s (3 ✓)
+
+Let me see the exact import lines more carefully:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use crate::prompt' src/agent_builder.rs src/commands_lint.rs src/comman… ✓ (8ms)
+  ▶ $ grep -n 'use crate::' src/agent_builder.rs | head -20  ▶ $ grep -n 'use crate::' src/commands_lint.rs | head -20  ▶ $ grep -n 'use crate::' src/commands_run.rs | head -20 ✓ (4ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  4 tools completed in 5.3s (4 ✓)
+
+Now let me verify exactly which items from prompt each file actually uses:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'PromptOutcome\|is_audit_enabled\|run_prompt\|run_prompt_with_content\|S…  ▶ $ grep -n 'run_prompt\|PromptOutcome\|SessionChanges\|is_audit_enabled\|run_prompt…  ▶ $ grep -n 'run_prompt\|PromptOutcome\|SessionChanges\|is_audit_enabled\|run_prompt… ✓ (5ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  3 tools completed in 1.9s (3 ✓)
+
+Good. Now I can see what each file actually uses. Let me also check that commands_run.rs doesn't already have the SessionChanges import separately — it does on line 7. Let me verify the exact task plan:
+
+• agent_builder.rs: Replace use crate::prompt::*; with explicit imports from prompt and prompt_budget
+• commands_lint.rs: Replace use crate::prompt::*; with `use crate::prompt::run_prompt;`
+• commands_run.rs: Replace use crate::prompt::*; with use crate::prompt::run_prompt_auto_retry; (already has `SessionChanges` import)
+
+Wait, let me check commands_run.rs more carefully — the task says it uses SessionChanges and run_prompt_auto_retry, but it already imports SessionChanges from session.rs on line 7. So I only need to replace the wildcard with the run_prompt_auto_retry import.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'auto_compact_if_needed' src/commands_run.rs ✓ (8ms)
+
+Hmm, line 4 imports auto_compact_if_needed from crate::commands — let me check if that's actually re-exported from commands or if it's in commands_session. Let me look more carefully:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1,12p' src/commands_run.rs ✓ (3ms)
+
+OK so commands_run.rs has this import block (lines 3-7):
+```
+use crate::agent_builder::AgentConfig;
+use crate::commands::auto_compact_if_needed;
+use crate::format::*;
+use crate::prompt::*;
+use crate::session::SessionChanges;
+```
+
+It already has SessionChanges from session. The wildcard from prompt only needs to provide run_prompt_auto_retry. Let me now make all three edits:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (1 → 2 lines)
+  - use crate::prompt::*;
+  + use crate::prompt::{run_prompt, run_prompt_with_content, PromptOutcome};
+  + use crate::prompt_budget::is_audit_enabled;
+  ▶ edit src/commands_lint.rs (1 → 1 lines)
+  - use crate::prompt::*;
+  + use crate::prompt::run_prompt;
+  ▶ edit src/commands_run.rs (1 → 1 lines)
+  - use crate::prompt::*;
+  + use crate::prompt::run_prompt_auto_retry;
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (1ms)
+  3 tools completed in 2.6s (3 ✓)
+
+Now let me verify the edits look correct:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '17,23p' src/agent_builder.rs  ▶ $ sed -n '3,8p' src/commands_lint.rs  ▶ $ sed -n '3,8p' src/commands_run.rs ✓ (3ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  3 tools completed in 1.6s (3 ✓)
+
+Good. Now let me run the full verification suite:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (499ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (29.0s)
+  4 tools completed in 54.7s (4 ✓)
+
+All 2342 unit tests and 88 integration tests pass. Let me commit:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (8 lines) ✓ (14ms)
+
+Clean commit. Three files changed, wildcard imports replaced with explicit canonical imports. All checks pass — fmt, clippy, build, and the full test suite (2342 + 88 tests). 🐙
+
+  ↳ 1m 42s · 8766→2496 tokens · $0.460
+  ⬤ 5% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

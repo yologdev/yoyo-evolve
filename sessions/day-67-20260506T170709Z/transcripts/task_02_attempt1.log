@@ -1,0 +1,507 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: migrating the last two files from use crate::prompt::* to canonical imports, then cleaning up the re-exports in prompt.rs.
+
+Let me start by understanding the current state of the files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::prompt" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::prompt" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use" src/prompt.rs … ✓ (6ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  3 tools completed in 3.0s (3 ✓)
+
+Good. Now let me verify what symbols from prompt are actually used in each file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_session.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_spawn.rs ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me find exactly which symbols from prompt (including its re-exports) are actually used in each file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE '\b(ChangeKind|SessionC…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE '\b(ChangeKind|SessionC… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.5s (2 ✓)
+
+The task description is accurate. Now let me make the changes:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (1 → 2 lines)
+  - use crate::prompt::*;
+  + use crate::prompt_utils::{search_messages, summarize_message};
+  + use crate::session::{ChangeKind, SessionChanges};
+  ▶ edit src/commands_spawn.rs (1 → 2 lines)
+  - use crate::prompt::*;
+  + use crate::prompt::run_prompt;
+  + use crate::prompt_utils::summarize_message;
+ ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Let me verify the build works before removing re-exports:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (5.1s)
+
+Build passes. The warnings confirm the re-exports are now dead code. Let me check if ChangeKind is actually used in commands_session.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ChangeKind' src/command… ✓ (3ms)
+
+It IS used — this is a false warning. Let me check if there's another import of ChangeKind elsewhere in the file:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ChangeKind\|SessionChan… ✓ (4ms)
+
+It's clearly used. The warning might be because it's still available via the re-export in prompt.rs AND via the direct import, and the compiler is picking it up from somewhere else. Wait — there's use crate::format::* at line 4 too. Let me check if ChangeKind gets re-exported through format:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep 'ChangeKind' src/format/mod… ✓ (3ms)
+
+No. The warning says ChangeKind is unused at line 6. But it IS used. This might be because ChangeKind is also brought in through some other path. Let me check all re-exports:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'pub use.*ChangeKind' s… ✓ (5ms)
+
+The re-export in prompt.rs is still active, and commands_session.rs doesn't import from prompt anymore. But wait — does something else bring prompt::* into scope? No, I just replaced that. Let me check if there's maybe a use crate::session::* somewhere:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep 'use crate::session' src/co… ✓ (3ms)
+
+Hmm, the warning is peculiar. But it's just a warning and may disappear when I remove the re-exports. Actually, wait — the ChangeKind usages are all inside #[cfg(test)] blocks:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1720,1730p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1735,1750p' src/commands… ✓ (3ms)
+  3 tools completed in 10.8s (3 ✓)
+
+Yes — ChangeKind is only used in test code. So for non-test builds, it's unused. I need to add a #[cfg(test)] conditional or move the import into the test module. Let me check where the test module starts:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1095,1110p' src/commands… ✓ (3ms)
+
+The test module uses use super::* so it gets everything from the parent. Since ChangeKind is only used in tests, the cleanest fix is to remove it from the top-level import and let the tests import it directly. But `use super::* would bring it in anyway... The issue is that ChangeKind` at the top level is unused in non-test builds. Let me fix this properly:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (2 → 2 lines)
+    use crate::prompt_utils::{search_messages, summarize_message};
+  - use crate::session::{ChangeKind, SessionChanges};
+  + use crate::session::SessionChanges;
+ ✓ (0ms)
+
+Now add ChangeKind import in the test module:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1098,1106p' src/commands… ✓ (3ms)
+  ▶ read src/commands_session.rs:1099..1107 ✓ (1ms)
+  ▶ edit src/commands_session.rs (4 → 5 lines)
+        use super::*;
+        use crate::cli::AUTO_SAVE_SESSION_PATH;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  +     use crate::session::ChangeKind;
+        use yoagent::types::Usage;
+ ✓ (1ms)
+  3 tools completed in 13.1s (3 ✓)
+
+Now let me verify the build is clean:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (5.1s)
+
+Only the prompt.rs re-export warning remains, which is expected since those are about to be removed. Now let me remove all the pub use re-exports from prompt.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1..121 ✓ (2ms)
+
+Now let me check which of these re-exports are still used by other files (after tasks 01 and this task):
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "use crate::prompt::\*"… ✓ (4ms)
+
+No more wildcard imports from prompt. Let me also check if any file imports specific symbols from crate::prompt:: that are actually re-exports:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "use crate::prompt::" s… ✓ (5ms)
+
+Wait — src/commands_retry.rs line 13 imports `build_retry_prompt, format_changes, run_prompt, ChangeKind, SessionChanges from crate::prompt`. Some of these are re-exports! Let me check which:
+
+• build_retry_prompt — re-exported from prompt_retry (line 99)
+• format_changes — re-exported from session (line 27)
+• ChangeKind — re-exported from session (line 27)
+• SessionChanges — re-exported from session (line 27)
+• run_prompt — native to prompt.rs
+
+And hooks.rs imports audit_log_tool_call, is_audit_enabled from crate::prompt — re-exported from prompt_budget (line 22).
+
+And agent_builder.rs imports run_prompt_with_content from crate::prompt — that's native to prompt.rs, let me check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub.*fn run_prompt_with… ✓ (3ms)
+
+OK so run_prompt_with_content is native to prompt.rs. Let me check which other files are importing re-exported symbols:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::prompt::" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::prompt::" sr… ✓ (3ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Hmm, these files are importing re-exported symbols via crate::prompt::. If I remove the re-exports, these will break. The task says I should remove ALL pub use re-export lines, but these files haven't been migrated yet.
+
+Wait — let me re-read the task description. It says "After both consumer files are migrated, remove ALL pub use re-export lines". But the task for batch 4 is only about commands_session.rs and commands_spawn.rs. There seem to be other consumers that were supposed to be handled in task 01 (batch 3). Let me check if task 01 has already run:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+
+Task 01 already ran. Let me check what it did:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 345a0c6^..345a0c6 --sta… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff 345a0c6^..345a0c6 ✓ (5ms)
+  2 tools completed in 3.9s (2 ✓)
+
+OK so task 01 handled agent_builder.rs, commands_lint.rs, and `commands_run.rs`. But there are still files using re-exported symbols: commands_retry.rs and hooks.rs. Let me check if those were already migrated before:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "use crate::prompt::" s… ✓ (5ms)
+
+Wait, that filters out the prompt-native symbols. Let me see which imports would break if I removed re-exports:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "use crate::prompt::" s… ✓ (5ms)
+
+The re-exported symbols still being accessed through crate::prompt:::
+1. hooks.rs — audit_log_tool_call, is_audit_enabled (from prompt_budget)
+2. commands_retry.rs — build_retry_prompt (from prompt_retry), format_changes, ChangeKind, SessionChanges (from session)
+
+These need to be migrated too before I can remove the re-exports. Also let me check main.rs:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::prompt" src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt::" src/main.rs |… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '90,100p' src/main.rs ✓ (3ms)
+  3 tools completed in 7.8s (3 ✓)
+
+So main.rs also uses use prompt::*! That's another consumer. Let me check what it actually uses from prompt:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE '\b(ChangeKind|SessionC… ✓ (5ms)
+
+OK so main.rs uses a LOT of re-exported symbols. I need to migrate main.rs, hooks.rs, and commands_retry.rs too before I can remove re-exports.
+
+The task says to complete the final batch, so I need to handle all remaining consumers. Let me be thorough and migrate everything:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 1s)
+
+Excellent analysis. The task is bigger than described — I need to migrate 4 additional files beyond commands_session.rs and commands_spawn.rs. Let me do it all systematically.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 15.6s (7 ✓)
+
+Now let me migrate the remaining files:
+
+hooks.rs:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (1 → 1 lines)
+  - use crate::prompt::{audit_log_tool_call, is_audit_enabled};
+  + use crate::prompt_budget::{audit_log_tool_call, is_audit_enabled};
+ ✓ (0ms)
+
+**commands_retry.rs:**
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (1 → 3 lines)
+  - use crate::prompt::{build_retry_prompt, format_changes, run_prompt, ChangeKind, SessionChanges};
+  + use crate::prompt::run_prompt;
+  + use crate::prompt_retry::build_retry_prompt;
+  + use crate::session::{format_changes, ChangeKind, SessionChanges};
+ ✓ (0ms)
+
+**dispatch_sub.rs:**
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TurnHistory\|prompt::Tu… ✓ (3ms)
+  ▶ edit src/dispatch_sub.rs (1 → 1 lines)
+  -                 let mut history = crate::prompt::TurnHistory::new();
+  +                 let mut history = crate::session::TurnHistory::new();
+ ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+main.rs — this is the trickiest. Let me first verify all the symbols it uses:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt::" src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE '\b(PromptOutcome|run_p… ✓ (5ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now let me construct the replacement:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (1 → 5 lines)
+  - use prompt::*;
+  + use prompt::{run_prompt, run_prompt_stream_json, run_prompt_stream_json_with_content, run_prompt_with_content, PromptOutcome};
+  + use prompt_budget::enable_audit_log;
+  + use prompt_utils::write_output_file;
+  + use session::SessionChanges;
+  + use watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
+ ✓ (0ms)
+
+Now update the prompt::enable_audit_log() call since enable_audit_log is now imported directly:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt::enable_audit_lo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,475p' src/main.rs ✓ (3ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Since enable_audit_log is now imported from prompt_budget, the prompt:: prefix should be changed:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (1 → 1 lines)
+  -         prompt::enable_audit_log();
+  +         prompt_budget::enable_audit_log();
+ ✓ (0ms)
+
+Wait, since it's imported with use prompt_budget::enable_audit_log;, I can just call it directly. But the qualified path also works since the module exists. Let me just use the unqualified call since it's imported:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (1 → 1 lines)
+  -         prompt_budget::enable_audit_log();
+  +         enable_audit_log();
+ ✓ (1ms)
+
+Now let me verify the build compiles before removing re-exports:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (5.1s)
+
+All the re-exports are now unused. Let me also check ChangeKind and SessionChanges which didn't trigger warnings — maybe they're still used somewhere:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "crate::prompt::ChangeK… ✓ (5ms)
+
+No consumers. The fact the compiler doesn't warn about them means they're technically imported but the unused re-export warning is about the fact that no external crate/test uses them — wait, let me check tests:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "crate::prompt" tests/ ✓ (3ms)
+
+Good. Now let me also check for the watch re-exports:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "use crate::prompt::\|p… ✓ (5ms)
+
+All remaining crate::prompt:: imports are for native symbols (run_prompt, PromptOutcome, etc.) — no re-exports. Now let me also check if the watch re-export is still needed:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "watch"  ✓ (123ms)
+
+Watch re-exports are also unused now. Let me also check the audit ones:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -c "warn… ✓ (121ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "warning… ✓ (122ms)
+  2 tools completed in 4.5s (2 ✓)
+
+All 5 pub use lines are now unused. Time to remove them from prompt.rs.
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me remove all pub use re-exports from prompt.rs:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:11..41 ✓ (0ms)
+  ▶ read src/prompt.rs:95..115 ✓ (1ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now I'll make the surgical edits to remove all re-exports:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (16 → 2 lines)
+  - 
+  - // Extracted into `watch` module (Day 58). Still needed by main.rs and
+  - // other callers via `crate::prompt::*`; will migrate in a future batch.
+  - pub use crate::watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
+    
+  - // Extracted into `prompt_budget` module. Re-exported here for callers that
+  - // still reach these symbols via `crate::prompt::*` (main.rs, hooks.rs,
+  - // agent_builder.rs). `session_budget_exhausted` is only used within this
+  - // module, so it stays private.
+    use crate::prompt_budget::session_budget_exhausted;
+  - pub use crate::prompt_budget::{audit_log_tool_call, enable_audit_log, is_audit_enabled};
+  - 
+  - // Extracted into `session` module (Day 54). Still needed by commands_git.rs,
+  - // commands_session.rs, commands_retry.rs, main.rs via `crate::prompt::*`;
+  - // will migrate in a future batch.
+  - pub use crate::session::{format_changes, ChangeKind, SessionChanges, TurnHistory};
+ ✗ (1ms)
+    │ old_text not found in src/prompt.rs.
+
+There's an extra comment line I missed. Let me see the exact content:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:11..31 ✓ (1ms)
+
+Hmm, there's a line 16 missing from the display — let me check the raw content:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '11,28p' src/prompt.rs | … ✓ (3ms)
+
+There's a Unicode box-drawing comment line. Let me use sed to get the exact text:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '16p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '16p' src/prompt.rs | xxd… ✓ (4ms)
+  2 tools completed in 5.9s (2 ✓)
+
+OK, it's `// ── Audit log + session budget ──────...`. Let me use a different approach — just rewrite the section entirely:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -10 src/prompt.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs ✓ (2ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Let me take a different approach — write out the lines I want to keep and replace lines 11-27:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '28,30p' src/prompt.rs ✓ (3ms)
+
+Wait, there's an empty line 28 before the comment. Let me check:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '27,29p' src/prompt.rs ✓ (3ms)
+
+OK, I'll use sed to replace lines 12-27 (the whole re-export block) with just the private import:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '11,28p' src/prompt.rs | … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (20ms)
+  2 tools completed in 11.5s (2 ✓)
+
+Now handle the second block of re-exports (around the old line 99):
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use\|prompt_retry\|… ✓ (3ms)
+  ▶ read src/prompt.rs:82..102 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now remove the pub use lines and update comments:
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ edit ? (16 → 12 lines)
+  - // Extracted into `prompt_retry` module (Day 64). Only `build_retry_prompt`
+  - // is still needed by external callers (commands_retry.rs); the rest are
+  - // used only within this module.
+  - pub use crate::prompt_retry::build_retry_prompt;
+  + // Extracted into `prompt_retry` module (Day 64). Callers import directly
+  + // from `crate::prompt_retry`.
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, diagnose_api_error, is_overflow_error,
+        is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+  ···
+    // MAX_RETRIES is pub(crate), so import without re-exporting.
+    use crate::prompt_retry::MAX_RETRIES;
+    
+  - // Extracted into `prompt_utils` module (Day 64). Still needed by
+  - // commands_session.rs, commands_spawn.rs, main.rs via `crate::prompt::*`;
+  - // will migrate in a future batch.
+  + // Extracted into `prompt_utils` module (Day 64). Callers import directly
+  + // from `crate::prompt_utils`.
+    use crate::prompt_utils::tool_result_preview;
+  - pub use crate::prompt_utils::{search_messages, summarize_message, write_output_file};
+ ✗ (0ms)
+    │ Invalid arguments: missing 'path' parameter
+  ▶ edit src/prompt.rs (16 → 12 lines)
+  - // Extracted into `prompt_retry` module (Day 64). Only `build_retry_prompt`
+  - // is still needed by external callers (commands_retry.rs); the rest are
+  - // used only within this module.
+  - pub use crate::prompt_retry::build_retry_prompt;
+  + // Extracted into `prompt_retry` module (Day 64). Callers import directly
+  + // from `crate::prompt_retry`.
+    use crate::prompt_retry::{
+        build_auto_retry_prompt, build_overflow_retry_prompt, diagnose_api_error, is_overflow_error,
+        is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+  ···
+    // MAX_RETRIES is pub(crate), so import without re-exporting.
+    use crate::prompt_retry::MAX_RETRIES;
+    
+  - // Extracted into `prompt_utils` module (Day 64). Still needed by
+  - // commands_session.rs, commands_spawn.rs, main.rs via `crate::prompt::*`;
+  - // will migrate in a future batch.
+  + // Extracted into `prompt_utils` module (Day 64). Callers import directly
+  + // from `crate::prompt_utils`.
+    use crate::prompt_utils::tool_result_preview;
+  - pub use crate::prompt_utils::{search_messages, summarize_message, write_output_file};
+ ✓ (1ms)
+  2 tools completed in 10.1s (1 ✓, 1 ✗)
+
+Now verify there are no more pub use re-exports in prompt.rs:
+  ╭─ Turn 80 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use" src/prompt.rs ✓ (3ms)
+
+All pub use re-exports are gone. Let me also verify the top of the file looks clean:
+  ╭─ Turn 81 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1..21 ✓ (0ms)
+
+Clean it up — there are extra blank lines:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (7 → 5 lines)
+    use yoagent::*;
+  - 
+    
+    use crate::prompt_budget::session_budget_exhausted;
+  - 
+    
+    /// Accumulate usage from `delta` into `total`.
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now run all CI checks:
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (502ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (5.5s)
+  3 tools completed in 13.8s (3 ✓)
+
+Oh — prompt.rs itself uses some of the symbols it was re-exporting! It uses SessionChanges etc. from session, which were previously available via the pub use lines. I need to add private use imports for what prompt.rs itself uses.
+  ╭─ Turn 87 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "error\[… ✓ (2.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\baudit_log_tool_call\b… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\bSessionChanges\b\|\bC… ✓ (4ms)
+  3 tools completed in 15.9s (3 ✓)
+
+I need to add private imports for these. Let me add them:
+  ╭─ Turn 90 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (1 → 1 lines)
+  - use crate::prompt_budget::session_budget_exhausted;
+  + use crate::prompt_budget::{audit_log_tool_call, session_budget_exhausted};
+ ✓ (0ms)
+
+Now add the session imports. Let me check what else prompt.rs uses from session:
+  ╭─ Turn 91 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE '\b(ChangeKind|SessionC… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TurnHistory" src/prompt… ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Only in a comment, not actual usage. So I just need `SessionChanges and ChangeKind`:
+  ╭─ Turn 93 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (1 → 2 lines)
+    use crate::prompt_budget::{audit_log_tool_call, session_budget_exhausted};
+  + use crate::session::{ChangeKind, SessionChanges};
+ ✓ (0ms)
+
+Now build again:
+  ╭─ Turn 94 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (5.1s)
+
+Clean build, no warnings! Now run clippy and tests:
+  ╭─ Turn 95 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (29.2s)
+  2 tools completed in 46.4s (2 ✓)
+
+All 88 tests pass. Let me also run fmt check:
+  ╭─ Turn 97 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (503ms)
+
+All clean. Final verification — no remaining `use crate::prompt::*` anywhere:
+  ╭─ Turn 98 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "use crate::prompt::\*\… ✓ (4ms)
+
+And no pub use in prompt.rs:
+  ╭─ Turn 99 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use" src/prompt.rs ✓ (3ms)
+
+Let me verify the final state of the changes:
+  ╭─ Turn 100 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (8ms)
+  2 tools completed in 10.4s (2 ✓)
+
+Everything looks correct. Let me commit:
+  ╭─ Turn 102 ───────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (18ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Done! Here's what I did:
+
+**Migrated 6 files** from using prompt.rs re-exports to canonical imports:
+• commands_session.rs — session::SessionChanges + `prompt_utils::{search_messages, summarize_message} (with ChangeKind` moved to test module since it's test-only)
+• commands_spawn.rs — prompt::run_prompt + prompt_utils::summarize_message
+• commands_retry.rs — prompt::run_prompt + prompt_retry::build_retry_prompt + session::{format_changes, ChangeKind, SessionChanges}
+• hooks.rs — prompt_budget::{audit_log_tool_call, is_audit_enabled}
+• `dispatch_sub.rs — session::TurnHistory` (inline qualified path)
+• main.rs — explicit imports from prompt, prompt_budget, prompt_utils, session, watch
+
+Removed all 5 `pub use` re-export lines from `prompt.rs`, converting the ones prompt.rs itself needs to private use imports.
+
+All checks pass: cargo fmt, `cargo clippy --all-targets -- -D warnings, cargo build, cargo test` (88 passed).
+
+  ↳ 9m 39s · 24602→15048 tokens · $2.86
+  ⬤ 14% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
