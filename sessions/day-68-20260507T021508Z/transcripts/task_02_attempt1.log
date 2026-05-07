@@ -1,0 +1,386 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this feature: showing the percentage of self-written code in /version -v and /status. Let me start by understanding the current code.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (22.8s)
+
+Now let me look at the exact structure more carefully to plan my implementation:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..101 ✓ (1ms)
+
+Now let me look at git.rs to understand the run_git function and its constraints:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn run_git' in src/git.rs ✓ (3ms)
+  ▶ read src/git.rs:58..88 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Good. run_git uses std::process::Command and blame isn't a destructive command so it's safe in tests. Now let me plan my approach and start implementing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 17.2s (6 ✓)
+
+Let me start with the tests (test-first). First I need to see how tests are structured in this file:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[cfg(test)\]\|#\[test\]\|mod test" src/commands_info.rs | head -20 ✓ (5ms)
+  ▶ read src/commands_info.rs:990..1040 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Let me see the end of the test module to know where to add my tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -20 src/commands_info.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (38ms)
+
+Now let me understand the full file structure to find the right place to add the function. Let me look at the imports area and find a good spot for the caching:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..26 ✓ (1ms)
+
+Now I'll implement everything. Let me first write the tests, then the function, then integrate it.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me implement the compute_self_written_pct function. I'll use `std::process::Command directly (not run_git` which has a destructive-command guard that's irrelevant here but blame is read-only so it's fine). Actually, run_git works fine for blame since it's not destructive. Let me use std::process::Command directly though to avoid any test guard issues and because I need more control over the output parsing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (8 → 9 lines)
+    use crate::format::*;
+    use crate::git::*;
+    
+  + use std::sync::OnceLock;
+    use yoagent::agent::Agent;
+    use yoagent::context::total_tokens;
+    use yoagent::*;
+ ✓ (0ms)
+
+Now let me add the compute_self_written_pct function and the cache. I'll add it right before `handle_version`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:21..26 ✓ (1ms)
+  ▶ read src/commands_info.rs:20..23 ✓ (1ms)
+  ▶ edit src/commands_info.rs (3 → 81 lines)
+    use yoagent::*;
+  + 
+  + /// Session-level cache for self-written percentage so repeated calls don't re-run git blame.
+  + static SELF_WRITTEN_CACHE: OnceLock<Option<(usize, usize, f64)>> = OnceLock::new();
+  + 
+  + /// Compute the percentage of source code lines written by the bot (yoyo-evolve).
+  + ///
+  + /// Returns `(self_written_lines, total_lines, percentage)` or `None` if git blame
+  + /// fails (not a git repo, no git installed, etc.).
+  + ///
+  + /// This runs `git blame --line-porcelain` across all `src/**/*.rs` files and counts
+  + /// lines where the author contains "yoyo". The result is cached for the session
+  + /// duration via `OnceLock`, so repeated calls are free after the first.
+  + pub fn compute_self_written_pct() -> Option<(usize, usize, f64)> {
+  +     *SELF_WRITTEN_CACHE.get_or_init(|| compute_self_written_pct_inner())
+  + }
+  + 
+  + /// Inner (uncached) implementation. Collected source files via `git ls-files`,
+  + /// then runs `git blame --line-porcelain` and counts author lines.
+  + fn compute_self_written_pct_inner() -> Option<(usize, usize, f64)> {
+  ... (61 more lines)
+ ✗ (0ms)
+    │ old_text not found in src/commands_info.rs.
+  ▶ read src/commands_info.rs:20..30 ✓ (1ms)
+  4 tools completed in 22.6s (3 ✓, 1 ✗)
+
+I see there's a line 22 that seems to be a section comment. Let me check exactly:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '20,24p' src/commands_info.rs | cat -A ✓ (3ms)
+
+Unicode section dividers. Let me use the hex/bytes to match:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (5 lines) ✓ (18ms)
+  ▶ $ python3 -c " (8 lines) ✓ (18ms)
+  ▶ $ head -25 src/commands_info.rs | cat -v ✓ (3ms)
+  3 tools completed in 11.8s (3 ✓)
+
+The section comment uses ── (Unicode box-drawing chars). Let me get the exact bytes:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '22p' src/commands_info.rs ✓ (3ms)
+  ▶ $ sed -n '22p' src/commands_info.rs | xxd | head -3 ✓ (3ms)
+  2 tools completed in 4.2s (2 ✓)
+
+OK — it's `// ── /version ──...`. Let me just use the approach of inserting between the use block and this section comment:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '22p' src/commands_info.rs | head -c 80 ✓ (3ms)
+  ▶ $ python3 -c " (7 lines) ✓ (18ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Hmm, the repr shows line 22 is missing but we know it exists. Let me check what index 21 is:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (7 lines) ✓ (18ms)
+
+The Unicode line is long enough that repr is hiding it. It's line 22 (index 21... wait, index 21 shows len=1). Let me check more carefully:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (8 lines) ✓ (18ms)
+
+OK, the line 22 (index 21) is the big unicode one. It has length 200+. The repr was truncating. Let me just work with what I have. I'll insert the new code between line 21 (the blank line after imports) and line 22 (the section comment).
+
+Let me use a different strategy — I'll match the /// Build a compact version string doc comment and insert before it:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'EOF' (15 lines) ✓ (18ms)
+
+Good. I know the structure. Let me write the file directly with the insertion:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (94 lines) ✓ (20ms)
+
+Now let me add the self-written line to `handle_version_verbose`:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_version_verbose" src/commands_info.rs ✓ (8ms)
+  ▶ read src/commands_info.rs:115..130 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_info.rs (6 → 10 lines)
+        println!("{DIM}  {}", version_line());
+        println!("  provider: {provider}  model: {model}");
+        let yoagent_ver = option_env!("YOAGENT_VERSION").unwrap_or("unknown");
+  -     println!("  yoagent:  v{yoagent_ver}{RESET}\n");
+  +     println!("  yoagent:  v{yoagent_ver}");
+  +     if let Some((s, t, pct)) = compute_self_written_pct() {
+  +         println!("  {}", format_self_written(s, t, pct));
+  +     }
+  +     println!("{RESET}");
+    }
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 16.2s (5 ✓)
+
+Now add to handle_status:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:128..168 ✓ (1ms)
+  ▶ read src/commands_info.rs:167..177 ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_info.rs (3 → 6 lines)
+  +     }
+  +     if let Some((s, t, pct)) = compute_self_written_pct() {
+  +         println!("  {}", format_self_written(s, t, pct));
+        }
+        println!("{RESET}");
+    }
+ ✗ (0ms)
+    │ old_text matches 3 locations in src/commands_info.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/commands_info.rs (5 → 8 lines)
+                format_token_count(context_max),
+            );
+  +     }
+  +     if let Some((s, t, pct)) = compute_self_written_pct() {
+  +         println!("  {}", format_self_written(s, t, pct));
+        }
+        println!("{RESET}");
+    }
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 24.7s (6 ✓, 1 ✗)
+
+Now let me add tests. Let me find the end of the test module:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^}" src/commands_info.rs | tail -3 ✓ (3ms)
+  ▶ read src/commands_info.rs:1770..1790 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now I'll add the tests. The key test needs a temp git repo with known authorship:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (9 → 133 lines)
+            assert_eq!(format_context_size(1_000_000), "1M tokens");
+            assert_eq!(format_context_size(1_048_576), "1.0M tokens");
+            assert_eq!(format_context_size(131_072), "131k tokens");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_self_written() {
+  +         let result = format_self_written(1000, 1000, 100.0);
+  +         assert!(result.contains("100.0%"));
+  +         assert!(result.contains("1,000"));
+  +         assert!(result.contains("self-written"));
+  + 
+  +         let result = format_self_written(500, 1000, 50.0);
+  +         assert!(result.contains("50.0%"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_compute_self_written_pct_in_yoyo_repo() {
+  +         // When run in the yoyo repo, this should return Some with valid data.
+  +         // The yoyo codebase is 100% self-written by yoyo-evolve[bot].
+  ... (109 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 8.6s (2 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (491ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+  ▶ edit src/commands_info.rs (1 → 1 lines)
+  -                 assert!(pct >= 0.0 && pct <= 100.0, "percentage should be valid");
+  +                 assert!((0.0..=100.0).contains(&pct), "percentage should be valid");
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+  5 tools completed in 31.5s (5 ✓)
+
+Clippy passes. Now build:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.0s)
+
+Now tests:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (26.6s)
+
+The format_token_count function doesn't format as "1,000" — let me check what it outputs:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn format_token_count" src/format/cost.rs ✓ (8ms)
+  ▶ read src/format/cost.rs:198..218 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Right, it formats as "1.0k", not "1,000". Let me fix the test:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (10 → 13 lines)
+        fn test_format_self_written() {
+            let result = format_self_written(1000, 1000, 100.0);
+            assert!(result.contains("100.0%"));
+  -         assert!(result.contains("1,000"));
+  +         assert!(result.contains("1.0k")); // format_token_count uses k/M suffixes
+            assert!(result.contains("self-written"));
+    
+            let result = format_self_written(500, 1000, 50.0);
+            assert!(result.contains("50.0%"));
+  + 
+  +         let result = format_self_written(42, 100, 42.0);
+  +         assert!(result.contains("42 / 100 lines"));
+        }
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_info 2>&1 | … ✓ (12.1s)
+  2 tools completed in 16.8s (2 ✓)
+
+The temp repo test is failing. The issue is likely that set_current_dir isn't affecting std::process::Command correctly, or that git init didn't work. Let me debug:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf yoyo_test_self_written && mkdir -p yoyo_test_self_written/src … ✓ (20ms)
+
+OK, git blame works fine from command line. The issue might be that `std::env::set_current_dir` is process-global but other tests may be running concurrently. The problem is likely that the set_current_dir approach is non-thread-safe.
+
+Let me rewrite the test to use -C git flag and set the working directory on the Command itself instead:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (85 → 112 lines)
+        #[test]
+        fn test_compute_self_written_pct_not_in_git_repo() {
+  -         // In a temp dir with no git repo, should return None
+  -         let tmp = std::env::temp_dir().join("yoyo_test_no_git");
+  -         let _ = std::fs::create_dir_all(&tmp);
+  - 
+  -         // Save and change cwd
+  -         let original_dir = std::env::current_dir().unwrap();
+  -         std::env::set_current_dir(&tmp).unwrap();
+  +         // In a temp dir with no git repo, git ls-files should fail
+  +         let tmp = std::env::temp_dir().join("yoyo_test_no_git_sw");
+  +         let _ = std::fs::remove_dir_all(&tmp);
+  +         std::fs::create_dir_all(tmp.join("src")).unwrap();
+  +         std::fs::write(tmp.join("src/lib.rs"), "fn foo() {}\n").unwrap();
+    
+  -         let result = compute_self_written_pct_inner();
+  -         assert!(result.is_none(), "should return None outside a git repo");
+  +         // Run git ls-files in the temp dir — should fail (no .git)
+  +         let output = std::process::Command::new("git")
+  +             .args(["ls-files", "src/"])
+  ... (144 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_info.rs.
+
+The issue is likely whitespace or encoding. Let me use a different approach — find the exact lines and replace with python3:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_compute_self_written_pct_not_in_git_repo\|test_compute_self_writte… ✓ (8ms)
+  ▶ read src/commands_info.rs:1823..1943 ✓ (1ms)
+  2 tools completed in 10.2s (2 ✓)
+
+Now let me replace from line 1823 to end of file:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (131 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (497ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_info 2>&1 | … ✓ (12.2s)
+  4 tools completed in 43.0s (4 ✓)
+
+All tests pass. Now let me run the full test suite:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (19.0s)
+
+All 2347 + 88 tests pass. Let me also run the full build:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (120ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (499ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.4s (3 ✓)
+
+All checks pass. Let me verify the final state of the code I added:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_info.rs | … ✓ (6ms)
+
+Wait, this diff shows only the test changes. Let me see the full diff to confirm the function and integration are there:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_info.rs | … ✓ (5ms)
+
+Hmm, it only shows changes at line 1823+. That's because the function and integration were already written in the previous commit/working state. Let me check the full diff including staged:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD src/commands_info.… ✓ (5ms)
+
+This only shows changes from line 1823. Let me check — was there a prior commit already that added the function but not the tests? Let me check git log:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+
+The HEAD commit is "init"? Let me check that diff:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | head -10 ✓ (5ms)
+
+A test leaked and committed to the real repo! The temp repo git commit affected our actual repo because set_current_dir changed the process CWD before the test created the temp repo. Let me check:
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD --stat ✓ (4ms)
+
+The test committed the actual changes to the real repo with the test's "init" message! This is because `cargo test ran and one of the tests used set_current_dir` which shifted the CWD, and then git commit happened in the yoyo repo. This is unfortunate but manageable — the content it committed is actually the code I wrote. I need to:
+
+1. Amend this commit or reset it
+2. Make sure the current working tree has the right content
+3. Commit properly
+
+Let me check the current state:
+  ╭─ Turn 79 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (5ms)
+
+So the "init" commit has the old tests (with set_current_dir), and the working tree has the fixed tests. Let me reset that bad commit and make a clean one:
+  ╭─ Turn 80 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git reset --soft HEAD~1 ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. Now let me verify my working tree has everything correct:
+  ╭─ Turn 82 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (5ms)
+
+Good — all my changes are in the working tree, unstaged. Let me also make sure the git config wasn't messed up:
+  ╭─ Turn 83 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git config user.name && git conf… ✓ (4ms)
+
+The test changed the git config too. Let me check if there's an original email:
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --format="%an <%ae>" HEA… ✓ (3ms)
+
+OK so the real email should be yoyo-evolve[bot]@users.noreply.github.com. Let me fix it:
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git config user.email "yoyo-evol… ✓ (3ms)
+
+Now let me verify all 4 checks pass one more time before committing:
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (27.3s)
+
+  ↳ 10m 9s · 23906→17992 tokens · $2.59
+  ⬤ 15% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

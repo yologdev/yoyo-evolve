@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '345,355p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'save_messages().ok()' s… ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Good, I can see all three locations. Let me look at the context around each `save_messages().ok()` call:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,715p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '950,965p' src/prompt.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Now let me check what imports are already available in each file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'use.*format.*DIM\|use.*…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/prompt.rs | grep -n… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.6s (2 ✓)
+
+`DIM and RESET are already available in prompt.rs` via use crate::format::*. Now let me make the changes:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (3 → 6 lines)
+        let mut input = String::new();
+  -     io::stdin().read_to_string(&mut input).ok();
+  +     if let Err(e) = io::stdin().read_to_string(&mut input) {
+  +         eprintln!("Error reading stdin: {e}");
+  +         std::process::exit(1);
+  +     }
+        let input = input.trim();
+ ✓ (1ms)
+
+Now fix the first save_messages().ok() in prompt.rs (around line 707):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '704,710p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'let saved_state = agent… ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Both occurrences have the same text. Let me check what's above each to make a unique match:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,712p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '953,965p' src/prompt.rs ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+I'll use the surrounding context to differentiate the two edits:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (12 → 18 lines)
+        let mut api_error: Option<String> = None;
+    
+        // Save message state before the first attempt so we can restore on retry
+  -     let saved_state = agent.save_messages().ok();
+  +     let saved_state = match agent.save_messages() {
+  +         Ok(state) => Some(state),
+  +         Err(e) => {
+  +             eprintln!("{DIM}  ⚠ Could not save message state for retry: {e}{RESET}");
+  +             None
+  +         }
+  +     };
+    
+        for attempt in 0..=MAX_RETRIES {
+            // On retry, restore pre-prompt state so we don't duplicate the user message
+ ✓ (1ms)
+
+Now the second one — let me check it's still there and find its unique context:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'save_messages().ok()' s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '959,977p' src/prompt.rs ✓ (3ms)
+  ▶ edit src/prompt.rs (15 → 21 lines)
+        });
+    
+        // Save message state before the first attempt so we can restore on retry
+  -     let saved_state = agent.save_messages().ok();
+  +     let saved_state = match agent.save_messages() {
+  +         Ok(state) => Some(state),
+  +         Err(e) => {
+  +             eprintln!("{DIM}  ⚠ Could not save message state for retry: {e}{RESET}");
+  +             None
+  +         }
+  +     };
+    
+        for attempt in 0..=MAX_RETRIES {
+            // On retry, restore pre-prompt state so we don't duplicate the user message
+ ✓ (1ms)
+  3 tools completed in 9.8s (3 ✓)
+
+Now let me verify all three changes are done:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '.ok()' src/main.rs src/… ✓ (3ms)
+
+Good — no more .ok() calls on those patterns. Now let's run the checks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (490ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (29.5s)
+  4 tools completed in 55.1s (4 ✓)
+
+All 88 tests pass. Let me commit:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (10 lines) ✓ (13ms)
+
+Done. Three silent .ok() error-swallowing calls replaced with proper error handling:
+
+1. `src/main.rs` — `io::stdin().read_to_string(&mut input).ok() → proper if let Err(e)` with descriptive error message and exit(1). Users now see the real I/O error instead of the misleading "No input on stdin."
+
+2. `src/prompt.rs` (line ~707) — agent.save_messages().ok() → `match that warns via stderr but still returns None` for the fallback path.
+
+3. `src/prompt.rs` (line ~963) — Same fix for the second retry path.
+
+All checks pass: fmt ✓, clippy ✓, build ✓, 88 tests ✓.
+
+  ↳ 2m 6s · 8620→3122 tokens · $0.542
+  ⬤ 5% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

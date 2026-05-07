@@ -1,0 +1,362 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the AutoCheckTool wrapper. Let me start by understanding the existing code.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 12s)
+
+Now let me look at the exact code I need to modify:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate" src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/tool_wrappers.rs ✓ (3ms)
+ ✓ (6ms)
+  ▶ read src/tool_wrappers.rs:1..21  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct\|pub fn\|pub… ✓ (1ms)
+ ✓ (3ms)
+  4 tools completed in 15.6s (4 ✓)
+
+Now let me look at the exact structure of TruncatingTool (as a model) and the build_tools function:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:140..215  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_tool\|edit_tool\|… ✓ (1ms)
+ ✓ (5ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Let me see the exact build_tools section I'll be modifying:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:650..750 ✓ (2ms)
+  ▶ read src/tools.rs:749..809 ✓ (1ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me check how run_watch_command works and what it returns:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_watch_comman… ✓ (3ms)
+  ▶ read src/watch.rs:154..214 ✓ (1ms)
+  ▶ read src/watch.rs:213..238 ✓ (1ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now I have everything I need. Let me also check the get_watch_command function for the exact return type:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:30..60 ✓ (1ms)
+  ▶ read src/watch.rs:59..84 ✓ (1ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Good. Now let me check what ToolResult and ToolError look like so I know exactly what I'm working with:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub struct ToolResult\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat Cargo.toml | grep yoagent ✓ (3ms)
+  ▶ $ grep -n "pub struct ToolResult\|pub enum ToolError\|pub enum Content" ~/.cargo/r… ✓ (4ms)
+  ▶ $ sed -n '370,395p' ~/.cargo/registry/src/*/yoagent-0.8.*/src/types.rs ✓ (3ms)
+  4 tools completed in 12.9s (4 ✓)
+
+Now I have a complete understanding. Let me also look at the existing tests pattern in tool_wrappers.rs:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes… ✓ (3ms)
+
+Now I have all the context I need. Let me implement this:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 23.0s (6 ✓)
+
+Let me look at the end of the ConfirmTool section and where the test module starts so I know exactly where to insert:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:377..392 ✓ (0ms)
+
+Now let me add the AutoCheckTool wrapper right before the tests section:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (3 → 104 lines)
+  + // ---------------------------------------------------------------------------
+  + // AutoCheckTool — runs check command after successful file edits
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Maximum characters of auto-check output to append to tool results.
+  + const AUTO_CHECK_MAX_CHARS: usize = 2000;
+  + 
+  + /// A tool wrapper that automatically runs a check command after file edits.
+  + /// When a watch command is configured (via `/watch set`), it runs the first
+  + /// watch phase (typically lint) after successful write_file or edit_file
+  + /// operations and appends any errors to the tool result.
+  + ///
+  + /// This gives the agent immediate compilation feedback inline with each edit,
+  + /// catching errors before moving on to the next file — similar to how Aider
+  + /// runs lint+test after each individual file write.
+  + pub(crate) struct AutoCheckTool {
+  +     inner: Box<dyn AgentTool>,
+  + }
+  + 
+  + #[async_trait::async_trait]
+  ... (84 more lines)
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now let me add the tests. First let me see the existing test module:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:489..504 ✓ (0ms)
+
+Now let me find the end of the test module to add my tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:733..763 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+I need to write tests for AutoCheckTool. The tricky part is that `run_watch_command runs a real shell command and get_watch_commands` reads from a global static. In tests I can set/clear the watch command to control behavior. Let me create a mock tool for testing:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (3 → 214 lines)
+            assert_eq!(text, short_text, "Short text should be unchanged");
+  +     }
+  + 
+  +     // === AutoCheckTool tests ===
+  + 
+  +     /// A simple mock tool that always succeeds with the given text.
+  +     struct MockTool {
+  +         tool_name: &'static str,
+  +         result_text: String,
+  +     }
+  + 
+  +     #[async_trait::async_trait]
+  +     impl AgentTool for MockTool {
+  +         fn name(&self) -> &str {
+  +             self.tool_name
+  +         }
+  +         fn label(&self) -> &str {
+  +             self.tool_name
+  +         }
+  +         fn description(&self) -> &str {
+  ... (194 more lines)
+ ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now wire AutoCheckTool into build_tools():
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, update the import in tools.rs:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (1 → 1 lines)
+  - use crate::tool_wrappers::{maybe_confirm, maybe_guard, maybe_guard_arc, with_truncation};
+  + use crate::tool_wrappers::{maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_truncation};
+ ✓ (1ms)
+
+Now wrap write_tool and edit_tool with auto_check. The chain should be: confirm → guard → auto_check → truncate → hook. Currently write_tool and edit_tool are already confirm → guard. I need to wrap them with auto_check before they go into the truncation+hook chain:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (2 → 2 lines)
+  -         maybe_hook(with_truncation(write_tool, max_tool_output), &hooks),
+  -         maybe_hook(with_truncation(edit_tool, max_tool_output), &hooks),
+  +         maybe_hook(with_truncation(with_auto_check(write_tool), max_tool_output), &hooks),
+  +         maybe_hook(with_truncation(with_auto_check(edit_tool), max_tool_output), &hooks),
+ ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 8.4s (2 ✓)
+
+Now let's build and test:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (497ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (5.4s)
+  3 tools completed in 12.4s (3 ✓)
+
+ToolContext doesn't implement Default. Let me check what fields it has:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub struct ToolContext" ~/.cargo/registry/src/*/yoagent-0.8.*/src/types…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (8ms)
+  ▶ $ sed -n '307,340p' ~/.cargo/registry/src/*/yoagent-0.8.*/src/types.rs ✓ (4ms)
+  2 tools completed in 4.6s (2 ✓)
+
+No Default trait. I need to construct it manually. Let me fix the tests:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "ToolContext::default()"… ✓ (3ms)
+
+I'll add a helper function in the test module to create a test ToolContext:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:794..804 ✓ (0ms)
+  ▶ edit src/tool_wrappers.rs (4 → 14 lines)
+  +     }
+  + 
+  +     fn test_tool_context() -> yoagent::types::ToolContext {
+  +         yoagent::types::ToolContext {
+  +             tool_call_id: "test".to_string(),
+  +             tool_name: "test".to_string(),
+  +             cancel: tokio_util::sync::CancellationToken::new(),
+  +             on_update: None,
+  +             on_progress: None,
+  +         }
+        }
+    
+        #[tokio::test]
+ ✓ (0ms)
+  2 tools completed in 13.8s (2 ✓)
+
+Now replace all yoagent::types::ToolContext::default() with test_tool_context():
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/yoagent::types::ToolCo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.4s)
+  2 tools completed in 14.7s (2 ✓)
+
+Clean. Now let's run the tests:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (29.2s)
+
+All tests pass. Let me also do a full build:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (120ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me update the docs:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me check what needs updating in CLAUDE.md's tool_wrappers description:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "tool_wrappers" CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool) and helper wrappers
+  + - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool) and helper wrappers
+ ✓ (0ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now check if CLAUDE_CODE_GAP.md mentions this feature:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto-lint\|auto-check\|… ✓ (3ms)
+  ▶ read CLAUDE_CODE_GAP.md:108..118 ✓ (0ms)
+  ▶ edit CLAUDE_CODE_GAP.md (1 → 1 lines)
+  - | Auto-lint-test per edit | 🟡 | ✅ | Aider runs lint+test after each individual file write; yoyo's `/watch` runs after the full prompt cycle completes. Same capability, different granularity — per-edit vs per-turn (Day 67) |
+  + | Auto-lint-test per edit | ✅ | ✅ | `AutoCheckTool` wrapper runs the first watch phase (typically lint/check) after each write_file/edit_file and appends errors inline; uses existing `/watch set` mechanism (Day 68) |
+ ✓ (0ms)
+  3 tools completed in 13.4s (3 ✓)
+
+Now check the gap analysis section lower down that mentions this:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:160..175 ✓ (1ms)
+  ▶ edit CLAUDE_CODE_GAP.md (4 → 2 lines)
+  - 3. **Per-edit auto-lint-test** (Aider parity, Day 67) — Aider runs lint+test after
+  -    each individual file write, catching errors before the agent moves on. yoyo's
+  -    `/watch` runs after the full prompt cycle. Closing this granularity gap would
+  -    catch more errors earlier.
+  + 3. ~~**Per-edit auto-lint-test** (Aider parity)~~ — ✅ Closed Day 68.
+  +    `AutoCheckTool` wrapper runs the first watch phase after each write_file/edit_file.
+ ✓ (0ms)
+  2 tools completed in 11.2s (2 ✓)
+
+Now let me also update the other mentions:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE_CODE_GAP.md:199..209 ✓ (1ms)
+  ▶ edit CLAUDE_CODE_GAP.md (2 → 2 lines)
+  -   plus per-edit auto-lint-test that catches errors at finer granularity
+  -   than yoyo's per-turn watch mode.
+  +   plus per-edit auto-lint-test — yoyo now matches this with `AutoCheckTool`
+  +   (Day 68).
+ ✓ (0ms)
+  ▶ read CLAUDE_CODE_GAP.md:217..227 ✓ (0ms)
+  ▶ edit CLAUDE_CODE_GAP.md (2 → 2 lines)
+  - commands that competitors offer. The remaining feature-level gaps (per-edit
+  - lint-test, persistent named subagents) are tractable engineering work.
+  + commands that competitors offer. The remaining feature-level gaps (persistent
+  + named subagents) are tractable engineering work.
+ ✓ (1ms)
+  4 tools completed in 27.9s (4 ✓)
+
+Now let me check the docs for the watch feature to see if I should mention auto-check there:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "watch" docs/src/ | gre… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "watch\|auto-check\|Aut… ✓ (3ms)
+  2 tools completed in 7.5s (2 ✓)
+
+The README references are fine — /watch still works the same way from the user perspective. The AutoCheckTool is an internal enhancement. Let me also check if the tool_wrappers.rs line in the Architecture section of CLAUDE.md properly lists AutoCheckTool — I already updated that. Let me verify:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "AutoCheckTool" CLAUDE.md ✓ (3ms)
+
+Good. Now let me verify all checks pass one more time:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (27.8s)
+
+All clean. Let me run just the AutoCheckTool tests specifically to confirm they work:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test auto_check -- --nocap… ✓ (127ms)
+
+The issue is test isolation — the watch command from test_auto_check_appends_failure_output leaks into other tests because they run in parallel and share the global static. These async tests are setting/clearing global state concurrently. Let me fix these tests to be properly isolated — I'll use serial_test or just use unique watch commands and ensure each test is self-contained:
+
+The real problem: tests run in parallel and one test sets the watch command that another test sees. The test_auto_check_silent_on_success sets true but sees the failing command from another test. And test_auto_check_truncates_long_output sees the wrong command too.
+
+Since these share a global `WATCH_COMMANDS`, I need to either serialize them or make each test resilient. The simplest approach: wrap each test body so it sets the command immediately before executing and clears immediately after. But parallel execution means another test could set it in between.
+
+The cleanest fix: use cargo test -- --test-threads=1 for these specific tests, or use a mutex. But the simplest approach is to make the tests not rely on ordering — just run them with #[serial] or restructure to not use the global.
+
+Actually, looking more carefully: the existing test suite passed with 2351 tests. Let me check — the auto_check tests ran in the full suite. Let me see:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "auto_che… ✓ (10.0s)
+
+They all passed in the full suite run! The issue only shows when I filter with --nocapture. Let me try just filtering:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test auto_check 2>&1 ✓ (150ms)
+
+Different failures this time — it's a race condition. The tests share global WATCH_COMMANDS. When they run in parallel (5 threads), they stomp on each other. The full suite works because with 2352 tests running across threads, the timing happens to work out.
+
+I need to serialize these tests. Let me check if the project already has a pattern for this:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "serial\|Mutex.*test\|t… ✓ (10ms)
+
+The project uses serial_test::serial. Let me add `#[serial]` to my tests:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:806..816 ✓ (0ms)
+
+I need to add use serial_test::serial; and #[serial] to each async test:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:494..499 ✓ (0ms)
+  ▶ edit src/tool_wrappers.rs (4 → 5 lines)
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+    
+        // === describe_file_operation tests ===
+ ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now add #[serial] to each auto_check test:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "async fn test_auto_chec… ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (2 → 3 lines)
+        #[tokio::test]
+  +     #[serial]
+        async fn test_auto_check_passthrough_no_watch_command() {
+ ✓ (1ms)
+  ▶ edit src/tool_wrappers.rs (2 → 3 lines)
+        #[tokio::test]
+  +     #[serial]
+        async fn test_auto_check_appends_failure_output() {
+ ✓ (0ms)
+  ▶ edit src/tool_wrappers.rs (2 → 3 lines)
+        #[tokio::test]
+  +     #[serial]
+        async fn test_auto_check_silent_on_success() {
+ ✓ (1ms)
+  ▶ edit src/tool_wrappers.rs (2 → 3 lines)
+        #[tokio::test]
+  +     #[serial]
+        async fn test_auto_check_truncates_long_output() {
+ ✓ (0ms)
+  ▶ edit src/tool_wrappers.rs (2 → 3 lines)
+        #[tokio::test]
+  +     #[serial]
+        async fn test_auto_check_uses_first_phase_only() {
+ ✓ (1ms)
+  6 tools completed in 33.2s (6 ✓)
+
+Now let's run all checks again:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test auto_check 2>&1 ✓ (10.8s)
+  2 tools completed in 28.2s (2 ✓)
+
+  ↳ 10m 2s · 24898→12728 tokens · $2.40
+  ⬤ 14% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
