@@ -1,0 +1,643 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ⚡ retrying (attempt 2/6, waiting 1s)...
+  ⚡ retrying (attempt 3/6, waiting 2s)...
+  ⚡ retrying (attempt 4/6, waiting 5s)...
+  ⚡ retrying (attempt 5/6, waiting 5s)...
+  ⚡ retrying (attempt 6/6, waiting 17s)...
+
+  error: Rate limited, retry after Nonems
+  (failed after 6 attempts)
+  ⬤ 21% of context window used
+
+  ⚡ Primary provider 'anthropic' failed. Switching to fallback 'zai'...
+  now using: zai / glm-4-plus
+
+
+I'll implement the benchmark integration helper for SWE-bench and HumanEval. Let me start by examining the current structure and then implement the required functionality.
+
+  ▶ todo ✓ (0ms)
+
+
+Let me first examine the current structure of the CLI and tools to understand how to integrate the benchmark command:
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs (50 lines) ✓ (1ms)
+
+
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:1..31 ✓ (0ms)
+
+
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs (50 lines) ✓ (1ms)
+
+
+Now let me look at the command structure to understand how to add a new subcommand:
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:48..78 ✓ (1ms)
+
+
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:100..120 ✓ (0ms)
+
+
+Let me check the end of commands_dev.rs to see the structure:
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:680..710 ✓ (1ms)
+
+
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:704..714 ✓ (0ms)
+
+
+Now let me check the end of the file to see the public functions:
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:710..715 ✓ (0ms)
+
+
+Let me check the actual public functions by searching for `pub` in the file:
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn' in src/commands_dev.rs ✓ (3ms)
+
+
+Now let me check the CLI structure to understand how subcommands are defined:
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:930..960 ✓ (0ms)
+
+
+Let me check the end of the file again:
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:700..710 ✓ (0ms)
+
+
+Let me check the actual end of the file:
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -5 src/commands_dev.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (39ms)
+
+
+Now let me check how the dispatch works in main.rs:
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1..51 ✓ (1ms)
+
+
+Let me check the dispatch_sub.rs to understand how CLI subcommands work:
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:1..51 ✓ (0ms)
+
+
+Let me look at the CLI subcommand definitions:
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'match args' in src/dispatch_sub.rs ✓ (2ms)
+
+
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:60..110 ✓ (1ms)
+
+
+Now I understand the structure. Let me implement the benchmark command. I'll need to:
+
+1. Add the benchmark handler to commands_dev.rs
+2. Add the benchmark subcommand to dispatch_sub.rs
+3. Update the KNOWN_COMMANDS list in commands.rs
+
+Let me start by creating the benchmark handler in commands_dev.rs:
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit ? (10 → 10 lines)
+  - //! Dev workflow command handlers: /doctor, /health, /fix.
+  + //! Dev workflow command handlers: /doctor, /health, /fix, /benchmark.
+    
+    use crate::cli;
+    use crate::commands_project::{detect_project_type, ProjectType};
+ ✗ (0ms)
+    │ Invalid arguments: missing 'path' parameter
+
+
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (10 → 10 lines)
+  - //! Dev workflow command handlers: /doctor, /health, /fix.
+  + //! Dev workflow command handlers: /doctor, /health, /fix, /benchmark.
+    
+    use crate::cli;
+    use crate::commands_project::{detect_project_type, ProjectType};
+ ✓ (38.5s)
+
+
+Now let me add the benchmark handler function at the end of the file:
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (5 → 176 lines)
+                prompt.is_empty() || prompt.contains("Fix"),
+                "Empty failures should produce empty or minimal prompt"
+            );
+  +     }
+  + }
+  + 
+  + /// Benchmark command handler - run coding agent benchmarks
+  + /// 
+  + /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  + pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  +     use std::process::Command;
+  +     use std::time::Duration;
+  +     
+  +     println!("🧪 Running {} benchmark...", benchmark_type);
+  +     
+  +     match benchmark_type {
+  +         "swe-bench" => {
+  +             println!("📥 Downloading SWE-bench...");
+  +             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  +             
+  ... (156 more lines)
+ ✓ (9.1s)
+
+
+Let me fix these issues:
+
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (8 → 7 lines)
+    /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+    pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+        use std::process::Command;
+  -     use std::time::Duration;
+        
+        println!("🧪 Running {} benchmark...", benchmark_type);
+ ✓ (9.0s)
+
+
+Let me fix the return statement and move the function to the correct location:
+
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (3 → 2 lines)
+                println!("Usage: yoyo benchmark <type> [--timeout <seconds>]");
+  -             return;
+            }
+ ✓ (9.0s)
+
+
+I need to move the function before the test module. Let me find where the test module starts:
+
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:510..520 ✓ (0ms)
+
+
+Let me move the benchmark function before the test module:
+
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (6 → 175 lines)
+        auto_compact_if_needed(agent);
+        Some(fix_prompt)
+  + }
+  + 
+  + /// Benchmark command handler - run coding agent benchmarks
+  + /// 
+  + /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  + pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  +     use std::process::Command;
+  +     
+  +     println!("🧪 Running {} benchmark...", benchmark_type);
+  +     
+  +     match benchmark_type {
+  +         "swe-bench" => {
+  +             println!("📥 Downloading SWE-bench...");
+  +             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  +             
+  +             // Clone or update SWE-bench
+  +             if std::path::Path::new("SWE-bench").exists() {
+  +                 println!("📂 SWE-bench already exists, updating...");
+  ... (154 more lines)
+ ✓ (5.4s)
+
+
+I need to remove the duplicate function. Let me check the end of the file:
+
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:880..890 ✓ (0ms)
+
+
+
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:885..895 ✓ (1ms)
+
+
+I need to remove the duplicate function at the end:
+
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:885..955 ✓ (1ms)
+
+
+Let me find the end of the file and remove the duplicate:
+
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:1045..1055 ✓ (0ms)
+
+
+
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (168 → 2 lines)
+  - /// Benchmark command handler - run coding agent benchmarks
+  - /// 
+  - /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  - pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  -     use std::process::Command;
+  -     
+  -     println!("🧪 Running {} benchmark...", benchmark_type);
+  -     
+  -     match benchmark_type {
+  -         "swe-bench" => {
+  -             println!("📥 Downloading SWE-bench...");
+  -             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  -             
+  -             // Clone or update SWE-bench
+  -             if std::path::Path::new("SWE-bench").exists() {
+  -                 println!("📂 SWE-bench already exists, updating...");
+  -                 let _ = Command::new("git")
+  -                     .args(["pull"])
+  -                     .current_dir("SWE-bench")
+  -                     .output();
+  ... (148 more lines)
+ ✗ (2ms)
+    │ old_text matches 2 locations in src/commands_dev.rs. Include more surrounding context to make the match unique.
+
+
+Let me check the file size and find the exact duplicate:
+
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_dev.rs ✓ (7ms)
+
+
+
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:1040..1060 ✓ (0ms)
+
+
+The duplicate is already gone. Let me check the current status:
+
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo check ✓ (2.1s)
+
+
+
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build ✓ (2.2s)
+
+
+Let me check the cargo check output:
+
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read ~/.local/share/rtk/tee/1778152433_cargo_check.log ✗ (0ms)
+    │ Cannot access ~/.local/share/rtk/tee/1778152433_cargo_check.log: No such file or directory (os error 2)
+
+
+
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo check --message-format=short 2>&1 | head -20 ✓ (2.0s)
+
+
+There's still a duplicate. Let me find where it is:
+
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn handle_benchmark' in src/commands_dev.rs ✓ (3ms)
+
+
+I need to remove the second one. Let me check line 888:
+
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:885..895 ✓ (0ms)
+
+  ↳ 4m 39s · 1016752→6006 tokens · $0.716
+  ⬤ 17% of context window used
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.10 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0428][0m[1m: the name `handle_benchmark` is defined multiple times[0m
+   [1m[94m--> [0msrc/commands_dev.rs:888:1
+    [1m[94m|[0m
+[1m[94m517[0m [1m[94m|[0m pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+    [1m[94m|[0m [1m[94m-------------------------------------------------------------------[0m [1m[94mprevious definition of the value `handle_benchmark` here[0m
+[1m[94m...[0m
+[1m[94m888[0m [1m[94m|[0m pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+    [1m[94m|[0m [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91m`handle_benchmark` redefined here[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `handle_benchmark` must be defined only once in the value namespace of this module
+
+[1mFor more information about this error, try `rustc --explain E0428`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+I need to remove the duplicate function definition. Let me find and remove the second occurrence:
+
+  ▶ read src/commands_dev.rs:885..1055 ✓ (2ms)
+
+
+I need to remove this duplicate function. Let me replace it with nothing:
+
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (168 → 0 lines)
+  - /// Benchmark command handler - run coding agent benchmarks
+  - /// 
+  - /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  - pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  -     use std::process::Command;
+  -     
+  -     println!("🧪 Running {} benchmark...", benchmark_type);
+  -     
+  -     match benchmark_type {
+  -         "swe-bench" => {
+  -             println!("📥 Downloading SWE-bench...");
+  -             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  -             
+  -             // Clone or update SWE-bench
+  -             if std::path::Path::new("SWE-bench").exists() {
+  -                 println!("📂 SWE-bench already exists, updating...");
+  -                 let _ = Command::new("git")
+  -                     .args(["pull"])
+  -                     .current_dir("SWE-bench")
+  -                     .output();
+  ... (148 more lines)
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/commands_dev.rs. Include more surrounding context to make the match unique.
+
+
+Let me be more specific with the context:
+
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (174 → 5 lines)
+  -     }
+  - }
+  - 
+  - /// Benchmark command handler - run coding agent benchmarks
+  - /// 
+  - /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  - pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  -     use std::process::Command;
+  -     
+  -     println!("🧪 Running {} benchmark...", benchmark_type);
+  -     
+  -     match benchmark_type {
+  -         "swe-bench" => {
+  -             println!("📥 Downloading SWE-bench...");
+  -             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  -             
+  -             // Clone or update SWE-bench
+  -             if std::path::Path::new("SWE-bench").exists() {
+  -                 println!("📂 SWE-bench already exists, updating...");
+  -                 let _ = Command::new("git")
+  ... (152 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_dev.rs.
+
+
+Let me check the current state of the file to understand what happened:
+
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_dev.rs ✓ (2ms)
+
+
+
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:680..690 ✓ (0ms)
+
+
+It looks like the duplicate was already removed. Let me check if there are still any issues:
+
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo check ✓ (2.2s)
+
+
+
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo check --message-format=short 2>&1 | head -10 ✓ (2.0s)
+
+
+There's still an issue. Let me check line 888:
+
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:885..895 ✓ (1ms)
+
+
+There's still a duplicate. Let me check the exact line numbers where the function is defined:
+
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn handle_benchmark" src/commands_dev.rs ✓ (7ms)
+
+
+So there are still two definitions. Let me remove the one at line 888:
+
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:885..1055 ✓ (1ms)
+
+
+I need to remove this duplicate. Let me replace it with the test module:
+
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (171 → 2 lines)
+  - /// Benchmark command handler - run coding agent benchmarks
+  - /// 
+  - /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  - pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  -     use std::process::Command;
+  -     
+  -     println!("🧪 Running {} benchmark...", benchmark_type);
+  -     
+  -     match benchmark_type {
+  -         "swe-bench" => {
+  -             println!("📥 Downloading SWE-bench...");
+  -             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  -             
+  -             // Clone or update SWE-bench
+  -             if std::path::Path::new("SWE-bench").exists() {
+  -                 println!("📂 SWE-bench already exists, updating...");
+  -                 let _ = Command::new("git")
+  -                     .args(["pull"])
+  -                     .current_dir("SWE-bench")
+  -                     .output();
+  ... (151 more lines)
+ ✓ (9.0s)
+
+
+Good, the duplicate is gone. Now I need to move the function before the test module. Let me find where the test module is:
+
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_dev.rs ✓ (2ms)
+
+
+
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:510..520 ✓ (1ms)
+
+
+I need to move the function before line 514. Let me insert it there:
+
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (6 → 175 lines)
+        auto_compact_if_needed(agent);
+        Some(fix_prompt)
+  + }
+  + 
+  + /// Benchmark command handler - run coding agent benchmarks
+  + /// 
+  + /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  + pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  +     use std::process::Command;
+  +     
+  +     println!("🧪 Running {} benchmark...", benchmark_type);
+  +     
+  +     match benchmark_type {
+  +         "swe-bench" => {
+  +             println!("📥 Downloading SWE-bench...");
+  +             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  +             
+  +             // Clone or update SWE-bench
+  +             if std::path::Path::new("SWE-bench").exists() {
+  +                 println!("📂 SWE-bench already exists, updating...");
+  ... (154 more lines)
+ ✓ (5.5s)
+
+
+There's still a duplicate. Let me check where the other definition is:
+
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn handle_benchmark' in src/commands_dev.rs ✓ (2ms)
+
+
+I need to remove the one at line 888. Let me check what's around there:
+
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:885..895 ✓ (0ms)
+
+
+I need to remove this duplicate. Let me replace it with nothing:
+
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (168 → 0 lines)
+  - /// Benchmark command handler - run coding agent benchmarks
+  - /// 
+  - /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  - pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  -     use std::process::Command;
+  -     
+  -     println!("🧪 Running {} benchmark...", benchmark_type);
+  -     
+  -     match benchmark_type {
+  -         "swe-bench" => {
+  -             println!("📥 Downloading SWE-bench...");
+  -             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  -             
+  -             // Clone or update SWE-bench
+  -             if std::path::Path::new("SWE-bench").exists() {
+  -                 println!("📂 SWE-bench already exists, updating...");
+  -                 let _ = Command::new("git")
+  -                     .args(["pull"])
+  -                     .current_dir("SWE-bench")
+  -                     .output();
+  ... (148 more lines)
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/commands_dev.rs. Include more surrounding context to make the match unique.
+
+
+Let me check what's around line 888:
+
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_dev.rs:880..900 ✓ (1ms)
+
+
+Let me be more specific with the context:
+
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (174 → 5 lines)
+  -     }
+  - }
+  - 
+  - /// Benchmark command handler - run coding agent benchmarks
+  - /// 
+  - /// Supports SWE-bench, HumanEval/MBPP, and Terminal-bench with single-command execution.
+  - pub fn handle_benchmark(benchmark_type: &str, timeout: Option<u64>) {
+  -     use std::process::Command;
+  -     
+  -     println!("🧪 Running {} benchmark...", benchmark_type);
+  -     
+  -     match benchmark_type {
+  -         "swe-bench" => {
+  -             println!("📥 Downloading SWE-bench...");
+  -             let swe_bench_url = "https://github.com/princeton-nlp/SWE-bench.git";
+  -             
+  -             // Clone or update SWE-bench
+  -             if std::path::Path::new("SWE-bench").exists() {
+  -                 println!("📂 SWE-bench already exists, updating...");
+  -                 let _ = Command::new("git")
+  ... (152 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_dev.rs.
+
+
+Let me try a different approach. Let me just remove everything after line 883:
+
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ head -883 src/commands_dev.rs > temp_commands_dev.rs && mv temp_commands_dev.rs … ✓ (4ms)
+
+
+Now let me check if the duplicate is gone:
+
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn handle_benchmark" src/commands_dev.rs ✓ (7ms)
+
+
+Good! Now let me add the benchmark subcommand to the dispatch_sub.rs:
+
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:80..110 ✓ (1ms)
+
+
+Let me add the benchmark subcommand after the health command:
+
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (6 → 35 lines)
+                    // handle_health takes no arguments — it auto-detects project type
+                    // from the current directory and runs the appropriate checks.
+                    crate::commands_dev::handle_health();
+  +                 return Some(None);
+  +             }
+  +             "benchmark" => {
+  +                 // Parse benchmark type and optional timeout
+  +                 let mut benchmark_type = None;
+  +                 let mut timeout = None;
+  +                 
+  +                 for i in 2..args.len() {
+  +                     match args[i].as_str() {
+  +                         "--timeout" => {
+  +                             if i + 1 < args.len() {
+  +                                 timeout = args[i + 1].parse().ok();
+  +                             }
+  +                         }
+  +                         _ => {
+  +                             if benchmark_type.is_none() {
+  +                                 benchmark_type = Some(args[i].clone());
+  ... (14 more lines)
+ ✓ (38.1s)
+
+  ↳ 4m 19s · 1034950→9073 tokens · $0.731
+  ⬤ 33% of context window used
+
+  ✓ Watch passed after fix (attempt 1)
+
