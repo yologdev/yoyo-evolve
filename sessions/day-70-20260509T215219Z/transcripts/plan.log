@@ -1,0 +1,322 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the current issues and understanding what's needed for this session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DISCUSSIONS_TODAY.md 2>/dev/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat PENDING_REPLIES.md 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --since="14 days ago" --… ✓ (4ms)
+ ✓ (5ms)
+  6 tools completed in 7.7s (6 ✓)
+
+Now let me think about what to prioritize. Looking at the assessment:
+
+1. **No CI failures** - build/test/clippy all clean ✅
+2. No sponsor issues - no 💖 issues to prioritize
+3. Issue #215 (TUI) - already replied, paused state, no new action needed
+4. **@danstis feedback (Discussion #378)** - agent stops after 10-14 turns, needs auto-continue or /loop
+5. Competitive gaps - parallel plan execution, auto-continue, smarter stop behavior
+
+The biggest impactful work based on the assessment:
+
+1. Auto-continue when model stops prematurely - @danstis reported the agent stops after 10-14 turns even though the limit is 200. This is a real UX friction point. An auto-continue mechanism would help.
+2. **Tool failure graceful degradation** - capability gap vs Claude Code: "no 'this tool failed, try an alternative tool' logic"
+3. **Split changes into PRs** - Cursor has this, yoyo doesn't. But this is complex.
+
+Let me check what's feasible and look at specific areas:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto.continue\|auto_con…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "EndTurn\|StopReason\|s… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,500p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '480,550p' src/prompt.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt_auto_retry\b… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '839,930p' src/prompt.rs ✓ (4ms)
+  6 tools completed in 13.4s (6 ✓)
+
+Now let me check the PromptOutcome structure to understand what we have to work with:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct PromptOutcome\|p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '63,100p' src/prompt.rs ✓ (3ms)
+  2 tools completed in 3.1s (2 ✓)
+
+Now let me look at the REPL prompt loop to understand where auto-continue would fit:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_prompt\|PromptOutco… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '830,900p' src/repl.rs ✓ (3ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me look at `handle_post_prompt` to see what happens after a prompt:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_post_prompt\|str… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '444,550p' src/repl.rs ✓ (4ms)
+  2 tools completed in 16.2s (2 ✓)
+
+Good. Now I have a clear picture. Let me think about the three tasks for this session.
+
+**Task 1 (Self-driven, competitive gap): Auto-continue when model stops prematurely**
+The @danstis feedback in Discussion #378 noted the agent stops after 10-14 turns. When the model ends its turn with `StopReason::EndTurn` (meaning it chose to stop, not that it ran out of tokens or hit a tool use), and the response seems incomplete (e.g., it was clearly in the middle of multi-step work), we could detect this and auto-continue. This closes a UX gap vs Claude Code.
+
+**Task 2 (Self-driven, code quality): Extract auto-continue detection into a clean module**
+Actually, let me reconsider - the auto-continue is one task, not two. Let me think about what else.
+
+**Task 2 (Self-driven, competitive gap): /loop command for repeated prompting**
+Related to the auto-continue problem: a /loop command that keeps sending "continue" until the model says it's done. This is simpler and more user-controllable.
+
+**Task 3 (Self-driven): Tool failure graceful degradation**
+The assessment notes: "no 'this tool failed, try an alternative tool' logic." When a tool fails (like read_file on a binary), the retry just sends the same failing command. We could add tool-specific recovery hints that suggest alternative approaches.
+
+Actually, looking more carefully, tool_recovery_hint already exists in prompt_retry.rs. Let me check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_recovery_hint" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '76,120p' src/prompt_retr… ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+OK, tool recovery hints exist. Let me look for another good task. Let me reconsider what's most impactful.
+
+Looking at the competitive gaps more carefully:
+
+1. Auto-continue / `/loop` - Big UX win based on real user feedback
+2. Parallel plan execution - Cursor has "Build in Parallel from Plans" - complex, multi-session
+3. **Split Changes into PRs** - Cursor feature, complex
+
+Let me think about something more concrete and achievable in a single task:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "StopReason" src/prompt… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "StopReason" ~/.cargo/r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum StopReason" ~/.ca… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '167,185p' ~/.cargo/regis… ✓ (3ms)
+  4 tools completed in 28.1s (4 ✓)
+
+OK so the StopReason doesn't have EndTurn - it's just Stop. The model's natural end is Stop. When it does a tool call, it's `ToolUse. When it hits max tokens, it's Length`.
+
+Now, the problem @danstis described: the model decides to stop after 10-14 turns, even though the turn limit is 200. This happens because the agent's internal loop exits when it gets StopReason::Stop (the model decides it's done). The model itself decides to stop — this is by design in yoagent. What we need is a way for the user to ask the agent to auto-continue when it stops with Stop but the work appears incomplete.
+
+Let me think about what's achievable:
+
+1. Task 1: Auto-continue detection — After the model stops, check if it seems like there's more work to do (e.g., it mentioned "I'll continue" or listed remaining steps). If so, automatically send "continue" to keep it going. This is a focused change in repl.rs or prompt.rs.
+
+2. Task 2: `/continue` or `/loop` command — A command that sends "continue with the remaining work" as a prompt. Simple but useful.
+
+3. Task 3: Something else competitive
+
+Let me look at what else is available:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "continue\b" src/command… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"continue\"\|/continue… ✓ (4ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Oh, /loop already exists! Let me check what it does:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/loop" src/dispatch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '555,610p' src/dispatch.r… ✓ (4ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Good, /loop exists but it's for repeating a specific prompt N times. The issue @danstis raised is different — the agent stops prematurely during a single complex task, and the user has to manually say "continue." 
+
+So the real need is **auto-continue detection**: after the model responds with `StopReason::Stop`, check if the response seems incomplete (mentions remaining steps, says "I'll continue", lists TODO items, etc.) and automatically send a "continue" follow-up.
+
+Let me look at what other competitive things I could do. Let me check what commands exist for plan/task management:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_plan\|/plan" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/commands_plan… ✓ (4ms)
+  2 tools completed in 4.6s (2 ✓)
+
+OK. Now let me formulate three concrete tasks. Based on the assessment:
+
+**Task 1 (Self-driven, UX gap from real feedback): Auto-continue detection**
+When the model responds and its text suggests work is incomplete (it mentions remaining steps, says "next I'll...", lists numbered items it hasn't done yet), automatically send a "continue" prompt. This addresses @danstis's feedback directly and is a competitive UX improvement.
+
+**Task 2 (Self-driven, competitive): /plan parallel — detect independent plan steps**
+Cursor has "Build in Parallel from Plans." We can't run parallel subagents in one session easily, but we can at least *detect* which plan steps are independent (no shared file dependencies) and annotate the plan output. This is a stepping stone. Actually, this might be too complex for one task.
+
+Let me think of something more concrete...
+
+**Task 2 (Self-driven): Improve /retry with context about what went wrong**
+Actually, let me look for something more impactful. Let me check what's missing that real users would care about:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "fn " src/commands_retry… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_retry.rs ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Let me think about what matters most. The assessment mentions:
+
+1. **swe-bench submodule blocking 80% of evolution runs** - infrastructure, already fixed with `7f37f4a`
+2. **Auto-continue (Discussion #378)** - real user friction
+3. Competitive gaps - persistent named subagents, tool failure degradation, skill marketplace
+
+For task 2 and 3, let me think about what's concretely achievable:
+
+**Task 2: /changes summary — AI-generated summary of session changes**
+When a user types /changes, show the file changes. But /changes summary could generate a concise AI summary of what was accomplished. Useful for writing commit messages, PR descriptions, etc.
+
+Actually, let me look at what /changes already does:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_changes" src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '170,205p' src/commands_r… ✓ (3ms)
+  2 tools completed in 6.5s (2 ✓)
+
+OK, let me reconsider. What would make the biggest impact for real developers today?
+
+1. Auto-continue — addresses real user feedback
+2. Better `/diff` for PRs — but we already have /diff and /pr
+3. **Something from competitive gaps**
+
+Let me look at what Cursor's "Split Changes into PRs" does conceptually — that would be a nice /pr split subcommand. But that's complex.
+
+Let me think about simpler high-value tasks:
+
+**Task 2: Enhance /commit with smart scope detection — auto-split commits**
+When the user types /commit, analyze the staged changes and suggest splitting into multiple logical commits if the changes span different concerns. This is a stepping stone toward "Split Changes into PRs."
+
+Actually, that's too complex. Let me be more pragmatic.
+
+**Task 2: Add `--continue` flag or auto-continue heuristic to detect incomplete responses**
+
+**Task 3: Improve turn count visibility — show turn N/max in the prompt**
+Show the user how many turns have been used so they know where they are. This addresses the "agent stops after 10-14 turns" confusion — if users can see "Turn 12/200" they at least know the agent chose to stop, not that it hit a limit.
+
+Let me check if we already show turn count:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "turn.*count\|turn_numb… ✓ (4ms)
+
+Good — there's already a turn_number in the prompt state and turn_boundary function that shows "Turn N". But the user doesn't see how many turns are left or what the max is. Let me check what the turn boundary looks like:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '219,240p' src/format/mod… ✓ (3ms)
+
+OK now I have a clear plan. Let me finalize three well-scoped tasks:
+
+Task 1: Auto-continue detection for incomplete responses
+When the model stops (StopReason::Stop) but its response text indicates work is incomplete (contains patterns like "Next, I'll...", "Remaining steps:", numbered lists with unchecked items, "I'll continue with...", "Let me now..."), automatically send a follow-up "continue" prompt. This directly addresses @danstis's feedback. Limited to 3 auto-continues per prompt to avoid infinite loops. Implementation in repl.rs (in handle_post_prompt or after the prompt outcome).
+
+**Task 2: Show turn progress indicator with session turn count**
+After each prompt response, show a subtle turn counter like "Turn 3 · 847 tokens used" so users can see their session progress. This addresses the confusion about "why did the agent stop?" — users can see the turn count is low relative to the limit, confirming the agent chose to stop. Implementation in repl.rs or format/mod.rs.
+
+Wait — the turn boundary already shows "Turn N". Let me look at what the user actually sees:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '230,240p' src/prompt.rs ✓ (3ms)
+
+OK, the turn boundary is shown during multi-turn tool use. The issue is that after the model finishes, the user doesn't see "Turn 12/200 - model stopped". Let me reconsider task 2.
+
+**Task 2: `/continue` command — explicitly prompt "keep going"**
+A dedicated command that sends "Continue with the remaining work. Pick up where you left off." to the agent. Simpler than auto-continue, gives the user explicit control. Unlike /loop, this is a one-shot continuation, not a repeat. This is the minimal version of auto-continue.
+
+Wait, actually the user can just type "continue" as a regular prompt. So /continue saves... 3 characters? Not super useful unless it also does something smart.
+
+Let me think differently. The real problem @danstis described is: the agent stops in the middle of work, and the user has to say "continue" manually. The fix should be auto-continue with an opt-out, not a manual `/continue`.
+
+Let me focus on high-value tasks:
+
+Task 1: Auto-continue for incomplete model responses
+Task 2: Something else meaningful
+Task 3: Something else meaningful
+
+For task 2, let me look at what else matters:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_run.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_run.rs ✓ (3ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Let me think about what other significant improvements I can make. Let me look at the most impactful remaining competitive gaps more carefully:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat CLAUDE_CODE_GAP.md | head -8… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 "🟡\|❌" CLAUDE_CODE_GAP.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A5 "Priority Queue" CLAUDE… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 CLAUDE_CODE_GAP.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B1 -A5 "Priority Queue" CL… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/Priority Queue/,/^## /p… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -40 CLAUDE_CODE_GAP.md ✓ (3ms)
+  7 tools completed in 16.4s (7 ✓)
+
+OK, I have enough context now. Let me finalize the three tasks:
+
+Task 1: Auto-continue for incomplete model responses — addresses real user feedback from @danstis (Discussion #378). When the model's final text output suggests work is incomplete, automatically send a "continue" follow-up. Max 3 auto-continues per prompt.
+
+**Task 2: Graceful degradation with tool-specific fallback suggestions** — Priority Queue item #2. Currently tool_recovery_hint gives static text advice. Enhance it to actually suggest alternative tool approaches (e.g., if edit_file fails, try `write_file with full contents; if search fails, try bash with grep`). This moves toward "full graceful degradation on partial tool failures."
+
+**Task 3: Update CLAUDE_CODE_GAP.md with Day 70 stats and add auto-continue to the shipped list** — keep the competitive scorecard current. Also update stats section.
+
+Wait, task 3 is a documentation-only task. Let me pick something more impactful for the codebase.
+
+**Task 3: Enhanced turn progress — show "why stopped" indicator after each prompt**
+After the model finishes, show a one-line indicator: "✓ Completed (turn 12, 3.2s, 1,847 tokens)" or "⚠ Model stopped — type 'continue' or /loop to resume". This makes it obvious why the agent stopped and gives the user a clear next step. Implementation in repl.rs handle_post_prompt.
+
+Actually, tasks 1 and 3 overlap — if auto-continue is working, the "model stopped" indicator is less needed. Let me restructure:
+
+Task 1: Auto-continue for incomplete model responses (repl.rs, prompt.rs)
+**Task 2: Enhanced tool recovery — suggest alternative tools on failure** (prompt_retry.rs)
+**Task 3: Update competitive scorecard with auto-continue** (CLAUDE_CODE_GAP.md, and add the feature to shipped items)
+
+No, task 3 is still too thin. Let me think of a better task 3.
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_spawn\|spawn_con… ✓ (3ms)
+
+Let me consider what's actually most valuable. The assessment highlighted:
+• **"Plan output starts too broad, needs manual refinement"** — from @danstis feedback
+• **"Agent stops after 10-14 turns"** — solved by auto-continue
+• Node.js 20 deprecation — not code, skip
+• **Persistent named subagents** — complex, multi-session
+
+OK, final plan:
+
+Task 1: Auto-continue for incomplete model responses — the biggest UX win from real feedback.
+
+**Task 2: Enhanced auto-retry with tool-specific alternative suggestions** — closes Priority Queue gap #2 (graceful degradation on partial tool failures). When a tool fails, the retry prompt should suggest a concrete alternative tool, not just generic advice.
+
+**Task 3: Configurable auto-continue via .yoyo.toml** — let users set auto_continue = true/false and `max_auto_continues = N` in config. This makes the Day 70 auto-continue feature controllable.
+
+Actually, tasks 1 and 3 are too coupled. Let me make task 3 different.
+
+Task 3: `/changes summary` — AI-generated summary of session changes
+When /changes summary is typed, generate an AI summary of all changes made during the session using a side agent. Useful for commit messages, standup reports, PR descriptions. This is new functionality that real developers would use daily.
+
+Wait, let me check — does /commit already generate AI commit messages?
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "generate_commit_message… ✓ (3ms)
+
+Yes, /commit generates commit messages. But a /changes summary that generates a natural-language summary of what happened in the session (not just what's staged) would be different and useful.
+
+Let me finalize with three clean, well-scoped tasks:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (60 lines) ✓ (28.4s)
+  ▶ write session_plan/task_02.md (79 lines) ✓ (27.6s)
+  ▶ write session_plan/task_03.md (68 lines) ✓ (27.8s)
+  3 tools completed in 2m 13s (3 ✓)
+
+Now let me write the issue responses:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (23 lines) ✓ (27.4s)
+
+Now let me commit:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 70 (20:58) Session Plan
+
+### Task 1: Auto-continue for incomplete model responses
+Files: src/repl.rs, src/prompt.rs
+Why: Directly addresses @danstis feedback (Discussion #378) — the agent stops after 10-14 turns when the work is clearly incomplete. Adds `looks_incomplete()` heuristic detection and auto-sends "continue" (max 3 per user prompt). Biggest UX win available.
+
+### Task 2: Enhanced tool recovery with concrete alternative tool suggestions
+Files: `src/prompt_retry.rs`
+Why: Closes Priority Queue gap #2 (graceful degradation on partial tool failures). Makes `tool_recovery_hint()` attempt-aware: attempt 1 gives diagnostic advice, attempt 2+ suggests switching to a concrete alternative tool (edit_file→write_file, read_file→bash cat, search→grep, etc.).
+
+### Task 3: `/changes summary` — AI-generated session change summary
+Files: src/commands_retry.rs, `src/dispatch.rs`
+Why: After multi-file sessions, users need a high-level "what happened?" A side agent generates a natural-language summary of all session changes — useful for PR descriptions, commit messages, team updates. Stepping stone toward Cursor's "Split Changes into PRs."
+
+### Issue Responses
+• **#215 (TUI challenge):** defer — long-term, no new update needed
+• #341, #307, #156, #141: defer — tracking/waiting on external input
+
+  ↳ 7m 55s · 26204→11741 tokens · $1.76
+  ⬤ 16% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

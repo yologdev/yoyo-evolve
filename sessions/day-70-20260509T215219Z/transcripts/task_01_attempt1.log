@@ -1,0 +1,283 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the auto-continue feature.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_post_prompt\|Pos…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_post_prompt\|Pos… ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '63,100p' src/prompt.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,550p' src/repl.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '550,650p' src/repl.rs ✓ (4ms)
+  5 tools completed in 15.9s (5 ✓)
+
+Now let me see the main REPL loop where prompts are sent:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '750,950p' src/repl.rs ✓ (5ms)
+
+Now let me see the full structure of the REPL loop and where things happen:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '690,730p' src/repl.rs ✓ (3ms)
+
+Good. Now I have a clear picture. Let me look at the existing tests in repl.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1000p' src/repl.rs ✓ (4ms)
+
+Now I understand the structure. Let me also check the session_budget_exhausted function:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_budget_exhauste… ✓ (3ms)
+
+Now let me look at what imports repl.rs currently has:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/repl.rs ✓ (3ms)
+
+Now I have a clear understanding. Let me plan and implement:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.1s (4 ✓)
+
+Let me first write the looks_incomplete function and its tests. I'll add it before the existing tests section:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/re… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/repl.rs ✓ (3ms)
+  3 tools completed in 13.4s (3 ✓)
+
+Now let me add the looks_incomplete function right before #[cfg(test)]:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:910..920 ✓ (0ms)
+  ▶ edit src/repl.rs (7 → 119 lines)
+  + }
+  + 
+  + /// Maximum number of automatic follow-up prompts per user turn.
+  + const MAX_AUTO_CONTINUES: u32 = 3;
+  + 
+  + /// Heuristic check: does the agent's response text suggest it stopped mid-work
+  + /// and intends to continue? Conservative — only triggers on clear signals.
+  + pub(crate) fn looks_incomplete(text: &str) -> bool {
+  +     let text = text.trim();
+  +     if text.is_empty() || text.len() < 20 {
+  +         return false;
+  +     }
+  + 
+  +     // Check the tail of the response (last ~300 chars) for continuation signals.
+  +     let tail_start = {
+  +         let target = text.len().saturating_sub(300);
+  +         let mut b = target;
+  +         while b > 0 && !text.is_char_boundary(b) {
+  +             b -= 1;
+  +         }
+  ... (95 more lines)
+ ✓ (9.5s)
+  2 tools completed in 35.5s (2 ✓)
+
+Expected — the functions aren't used yet. Let me add the tests first and then wire up the usage. Let me add the tests now:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/repl.rs | tail … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1460,1468p' src/repl.rs ✓ (3ms)
+  ▶ edit src/repl.rs (10 → 100 lines)
+            // Cursor at position 2, but line is 5 chars
+            let hint = helper.hint("/help", 2, &ctx);
+            assert!(hint.is_none());
+  +     }
+  + 
+  +     // ── looks_incomplete tests ──────────────────────────────────────────
+  + 
+  +     #[test]
+  +     fn test_looks_incomplete_empty_and_short() {
+  +         assert!(!looks_incomplete(""));
+  +         assert!(!looks_incomplete("ok"));
+  +         assert!(!looks_incomplete("short response"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_looks_incomplete_continuation_phrases() {
+  +         assert!(looks_incomplete(
+  +             "I've fixed the first file. Next, I'll update the remaining tests."
+  +         ));
+  +         assert!(looks_incomplete(
+  ... (75 more lines)
+ ✓ (9.3s)
+  3 tools completed in 32.8s (3 ✓)
+
+The dead code warnings are expected because I haven't wired up the usage yet. Let me now add the auto-continue logic in the REPL loop. Let me look at the exact code around where the prompt is called and `handle_post_prompt` is called:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,910p' src/repl.rs ✓ (4ms)
+  3 tools completed in 5.1s (3 ✓)
+
+Now I need to add the auto-continue loop after handle_post_prompt. The logic: after each prompt+post-prompt, check if the response looks incomplete, and if so, automatically send a continuation prompt. Let me replace the section from the prompt call through handle_post_prompt with a version that includes auto-continue:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (15 → 83 lines)
+                effective_input: &effective_input,
+            })
+            .await;
+  + 
+  +         // ── Auto-continue: if the model stopped mid-work, send a follow-up ──
+  +         let mut auto_continue_count: u32 = 0;
+  +         while auto_continue_count < MAX_AUTO_CONTINUES
+  +             && looks_incomplete(&outcome.text)
+  +             && outcome.last_tool_error.is_none()
+  +             && outcome.last_api_error.is_none()
+  +             && !crate::prompt_budget::session_budget_exhausted(30)
+  +         {
+  +             auto_continue_count += 1;
+  +             eprintln!(
+  +                 "\n{DIM}  ⚡ auto-continuing ({}/{MAX_AUTO_CONTINUES} — response appears incomplete)...{RESET}",
+  +                 auto_continue_count
+  +             );
+  + 
+  +             // Snapshot state for the continuation turn
+  +             let cont_changes_before: Vec<String> = session_changes
+  ... (51 more lines)
+ ✓ (40.4s)
+
+Wait, there's a problem — outcome is immutable but I need to check cont_outcome in the loop. The while condition checks outcome.text which is the first one — that won't update. Let me refactor this to use a loop properly:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '876,960p' src/repl.rs ✓ (4ms)
+
+The loop condition references outcome.text from the original prompt, but subsequent iterations should check the continuation outcome. Let me fix this by tracking the "last text" separately:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (83 → 85 lines)
+            .await;
+    
+            // ── Auto-continue: if the model stopped mid-work, send a follow-up ──
+  -         let mut auto_continue_count: u32 = 0;
+  -         while auto_continue_count < MAX_AUTO_CONTINUES
+  -             && looks_incomplete(&outcome.text)
+  -             && outcome.last_tool_error.is_none()
+  -             && outcome.last_api_error.is_none()
+  -             && !crate::prompt_budget::session_budget_exhausted(30)
+            {
+  -             auto_continue_count += 1;
+  -             eprintln!(
+  -                 "\n{DIM}  ⚡ auto-continuing ({}/{MAX_AUTO_CONTINUES} — response appears incomplete)...{RESET}",
+  -                 auto_continue_count
+  -             );
+  +             let mut auto_continue_count: u32 = 0;
+  +             let mut last_text = outcome.text.clone();
+  +             let mut had_error =
+  +                 outcome.last_tool_error.is_some() || outcome.last_api_error.is_some();
+    
+  ... (108 more lines)
+ ✓ (40.0s)
+
+Now let me run the checks:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (511ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (29.0s)
+  6 tools completed in 1m 1s (6 ✓)
+
+All 2366 unit tests and 88 integration tests pass. Let me verify my new tests ran:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- looks_incomplete 2… ✓ (128ms)
+
+All 7 looks_incomplete tests pass. Let me also run the format check:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (517ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+All checks pass. Now let me update the docs before committing. Let me check what CLAUDE.md says about repl.rs:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "repl.rs" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "repl" CLAUDE.md ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+The architecture section in CLAUDE.md doesn't explicitly list repl.rs — let me check the Project Files section where the struct info is:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A5 "src/repl.rs" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "repl" CLAUDE.md ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+I see that `repl.rs` isn't listed in the Architecture section of CLAUDE.md. Let me check if it should be listed in the structure at the end:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/repl" CLAUDE.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_repl" CLAUDE.md ✓ (3ms)
+  2 tools completed in 3.7s (2 ✓)
+
+The CLAUDE.md doesn't explicitly document repl.rs in its Architecture section. That's fine — it's implied by the Repository Structure section. The auto-continue feature is internal behavior, not a new file or command, so CLAUDE.md doesn't need structural updates.
+
+Let me check README.md to see if there's anything relevant:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -in "auto.continu\|continue… ✓ (3ms)
+
+The README doesn't currently mention auto-continue as a feature. This is a user-facing behavior change worth documenting. Let me find the features section of the README:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "## Features\|## What\|#… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,170p' README.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '151,162p' README.md ✓ (3ms)
+  3 tools completed in 6.7s (3 ✓)
+
+Let me add auto-continue to the Agent Core features list:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit README.md (1 → 2 lines)
+    - **Automatic retry** with exponential backoff and rate-limit awareness
+  + - **Auto-continue** — detects when the model stops mid-work and automatically sends follow-up prompts (up to 3 per user turn)
+ ✓ (28.4s)
+
+Now let me also update CLAUDE.md to mention auto-continue in the repl.rs architecture description. Currently repl.rs isn't listed in the Architecture section — let me add it:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "conversations.rs" CLAUD… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '65,75p' CLAUDE.md ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+I see prompt.rs is listed; let me find where it is:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prompt.rs\|repl.rs" CLA… ✓ (3ms)
+
+I see conversations.rs mentions (extracted from repl.rs). Let me add `repl.rs to the architecture section. It should be near prompt.rs`:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic
+  + - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 3 follow-ups per user turn)
+ ✓ (28.9s)
+
+Now let me also check if there are relevant docs pages to update:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "continue\|retry\|auto"… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat docs/src/usage/repl.md | hea… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l docs/src/usage/repl.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '47,65p' docs/src/usage/r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '51,56p' docs/src/usage/r… ✓ (3ms)
+  5 tools completed in 9.9s (5 ✓)
+
+Let me add an auto-continue section after the "How it works" flow:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/usage/repl.md (4 → 17 lines)
+    5. The final text response is printed
+    6. Token usage and cost are shown after each turn
+  + 
+  + ### Auto-continue
+  + 
+  + If the model stops mid-work (e.g., it says "Next, I'll fix the tests..." but stops), yoyo automatically sends a follow-up prompt to continue. You'll see:
+  + 
+  + ```
+  +   ⚡ auto-continuing (1/3 — response appears incomplete)...
+  + ```
+  + 
+  + This happens up to 3 times per user turn. Auto-continue won't fire if:
+  + - The model encountered an error
+  + - The session budget is exhausted
+  + - The response doesn't show clear signs of being incomplete
+    
+    ## Tool output
+ ✓ (28.1s)
+
+Now let me verify everything still builds and tests pass:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (29.2s)
+
+  ↳ 10m 23s · 20464→11071 tokens · $1.79
+  ⬤ 13% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

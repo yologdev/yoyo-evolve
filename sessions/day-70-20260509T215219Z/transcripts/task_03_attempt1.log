@@ -1,0 +1,332 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /changes summary subcommand. Let me start by understanding the existing code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_changes" src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes" src/dispatch.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes" src/help.rs | … ✓ (6ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,240p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/changes" src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,370p' src/dispatch.r… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  6 tools completed in 5.5s (6 ✓)
+
+Now let me look at the broader context of commands_retry.rs, the dispatch context struct, and how side agents work:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_retry.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/dispatch.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_side_agent" src/a… ✓ (4ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,55p' src/dispatch.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '536,580p' src/agent_buil… ✓ (3ms)
+ ✓ (3ms)
+  5 tools completed in 7.6s (5 ✓)
+
+Let me look at how side agents are used elsewhere (like in the handle_quick or similar):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_side_agent\|side_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,280p' src/conversati… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me look at the full DispatchContext struct and the existing /changes dispatch:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '38,80p' src/dispatch.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_config" src/dispa… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,56p' src/dispatch.rs ✓ (3ms)
+  3 tools completed in 4.1s (3 ✓)
+
+Let me see the full struct:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 30 "pub.crate. struct Di… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,58p' src/dispatch.rs ✓ (3ms)
+  2 tools completed in 4.0s (2 ✓)
+
+The file is showing ... for omitted lines. Let me use read_file:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:40..65 ✓ (1ms)
+
+Now let me look at the current handle_changes fully and the imports:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:1..21  ▶ read src/commands_retry.rs:100..240 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/commands_retry.rs:239..379 ✓ (1ms)
+  3 tools completed in 4.5s (3 ✓)
+
+Now let me also check how AgentConfig is imported in dispatch.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/dispatch.rs ✓ (3ms)
+  ▶ read src/dispatch.rs:1..21 ✓ (1ms)
+  2 tools completed in 11.7s (2 ✓)
+
+Good. Now let me look at the help text for /changes:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '875,895p' src/help.rs ✓ (3ms)
+
+Now I have a good understanding. Let me also check the handle_changes function's current exports and what completions/command hints exist:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes" src/commands.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "command_arg_completions… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '192,270p' src/commands.r… ✓ (4ms)
+  3 tools completed in 9.7s (3 ✓)
+
+Now let me check the short description for changes in help.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes" src/help.rs | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1340,1350p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1620,1635p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1945,1960p' src/help.rs ✓ (4ms)
+ ✓ (4ms)
+ ✓ (2ms)
+ ✓ (6ms)
+  4 tools completed in 1.5s (4 ✓)
+
+Good. Now I have a complete picture. Let me plan and implement this:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 25.9s (7 ✓)
+
+Let me start. First, I'll write the tests and the parsing function, then the async handler.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_retry.rs (7 → 15 lines)
+            .split_whitespace()
+            .skip(1) // skip "/changes" itself
+            .any(|arg| arg == "--diff")
+  + }
+  + 
+  + /// Returns `true` if the raw `/changes` input contains the `summary` subcommand.
+  + pub(crate) fn wants_summary(input: &str) -> bool {
+  +     input
+  +         .split_whitespace()
+  +         .skip(1) // skip "/changes" itself
+  +         .any(|arg| arg == "summary")
+    }
+ ✓ (9.6s)
+  2 tools completed in 16.9s (2 ✓)
+
+Expected — I'll add the usage shortly. Now let me add the tests for wants_summary:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (8 → 19 lines)
+            assert!(wants_diff("/changes   --diff"));
+            assert!(!wants_diff("/changes --dif"));
+            assert!(!wants_diff("/changes --verbose"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_wants_summary_parsing() {
+  +         assert!(!wants_summary("/changes"));
+  +         assert!(!wants_summary("/changes --diff"));
+  +         assert!(wants_summary("/changes summary"));
+  +         assert!(wants_summary("/changes   summary"));
+  +         // summary is a subcommand, not a flag — "summari" shouldn't match
+  +         assert!(!wants_summary("/changes summari"));
+  +         assert!(!wants_summary("/changes --summary"));
+        }
+ ✓ (9.5s)
+
+That's fine — the function is used in tests (via `super::*`) but not yet in the non-test binary. I'll add the usage next. Let me now add the handle_changes_summary function:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 8.7s (2 ✓)
+
+Now let me add handle_changes_summary. I need to add the necessary imports and the async function:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:1..21 ✓ (1ms)
+
+I need to add the AgentConfig import and the AgentEvent, `StreamDelta` types for the side agent usage. Let me check what's used in conversations.rs:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/conversations.rs ✓ (3ms)
+  ▶ read src/conversations.rs:1..21 ✓ (0ms)
+  2 tools completed in 10.1s (2 ✓)
+
+Good. yoagent::* should cover `AgentEvent, StreamDelta, Usage`. Now let me add the imports and the function. I'll add AgentConfig and the `MarkdownRenderer`:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (6 → 8 lines)
+    use crate::commands_session::auto_compact_if_needed;
+  + use crate::format::markdown::MarkdownRenderer;
+    use crate::format::*;
+    use crate::git::{colorize_diff, run_git};
+    use crate::prompt::run_prompt;
+    use crate::prompt_retry::build_retry_prompt;
+    use crate::session::{format_changes, ChangeKind, SessionChanges};
+  + use crate::AgentConfig;
+ ✓ (5.9s)
+
+Let me check how MarkdownRenderer is exported:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "MarkdownRenderer" src/form… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "markdown" src/format/mo… ✓ (3ms)
+  2 tools completed in 8.9s (2 ✓)
+
+So it's re-exported via pub use markdown::* which means I can access it through crate::format::MarkdownRenderer:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (8 → 7 lines)
+    use crate::commands_session::auto_compact_if_needed;
+  - use crate::format::markdown::MarkdownRenderer;
+    use crate::format::*;
+    use crate::git::{colorize_diff, run_git};
+    use crate::prompt::run_prompt;
+ ✓ (9.5s)
+
+Good — these are expected since I haven't added the handler function yet. Let me check how MarkdownRenderer is referenced in conversations.rs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "MarkdownRenderer" src/conv… ✓ (3ms)
+
+Good, it's accessible through use crate::format::*. Now let me add the `handle_changes_summary function. I'll insert it right before handle_changes`:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:168..178 ✓ (0ms)
+  ▶ read src/commands_retry.rs:177..192 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I'll add handle_changes_summary after collect_diffs and before handle_changes:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (4 → 96 lines)
+        out
+  + }
+  + 
+  + /// Handle `/changes summary` — generate an AI-written summary of session changes.
+  + ///
+  + /// Collects diffs for every file modified this session, sends them to a
+  + /// side agent, and streams the natural-language summary to stdout.
+  + pub(crate) async fn handle_changes_summary(
+  +     changes: &SessionChanges,
+  +     agent_config: &AgentConfig,
+  + ) {
+  +     let snapshot = changes.snapshot();
+  +     if snapshot.is_empty() {
+  +         eprintln!(
+  +             "{DIM}  No files modified yet this session — nothing to summarize.{RESET}\n"
+  +         );
+  +         return;
+  +     }
+  + 
+  +     // Collect diffs for all changed files
+  ... (76 more lines)
+ ✓ (9.7s)
+
+Good — expected until I wire it up. Now let me add the re-exports in commands.rs:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '26,30p' src/commands.rs ✓ (3ms)
+  ▶ edit src/commands.rs (1 → 3 lines)
+  - pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry};
+  + pub use crate::commands_retry::{
+  +     format_exit_summary, handle_changes, handle_changes_summary, handle_retry, wants_summary,
+  + };
+ ✓ (6.5s)
+  4 tools completed in 27.7s (4 ✓)
+
+I need to use pub(crate) use for these, since they are pub(crate) in the source module:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (3 → 2 lines)
+  - pub use crate::commands_retry::{
+  -     format_exit_summary, handle_changes, handle_changes_summary, handle_retry, wants_summary,
+  - };
+  + pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry};
+  + pub(crate) use crate::commands_retry::{handle_changes_summary, wants_summary};
+ ✓ (10.2s)
+
+Still expected — I need to wire up dispatch.rs. Let me do that now:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:361..371 ✓ (1ms)
+
+I need to route /changes summary to the async handler. The cleanest approach is to check for "summary" within the /changes arm:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 8 lines)
+            s if s == "/changes" || s.starts_with("/changes ") => {
+  -             commands::handle_changes(ctx.session_changes, ctx.input);
+  +             if commands::wants_summary(ctx.input) {
+  +                 commands::handle_changes_summary(ctx.session_changes, ctx.agent_config).await;
+  +             } else {
+  +                 commands::handle_changes(ctx.session_changes, ctx.input);
+  +             }
+                CommandResult::Continue
+            }
+ ✓ (39.9s)
+
+Now let me check if it compiles:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (126ms)
+
+It compiles. Let me run the full checks:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (19.0s)
+  2 tools completed in 32.2s (2 ✓)
+
+All passing. Let me also run fmt:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (514ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (508ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 15.3s (4 ✓)
+
+Now update the help text:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (11 → 15 lines)
+                 Lists all files that were written or edited by the AI during\n\
+                 the current session. Useful for reviewing what the AI touched\n\
+                 before committing.\n\n\
+  +              Subcommands:\n\
+  +              \x20 summary   Generate an AI-written natural-language summary of all\n\
+  +              \x20           session changes (suitable for PR descriptions or commit messages)\n\n\
+                 Flags:\n\
+                 \x20 --diff    Show colorized git diff for each modified file\n\n\
+                 Examples:\n\
+  -              \x20 /changes          List modified files\n\
+  -              \x20 /changes --diff   List files and show diffs",
+  +              \x20 /changes              List modified files\n\
+  +              \x20 /changes --diff       List files and show diffs\n\
+  +              \x20 /changes summary      AI-generated summary of what changed and why",
+            ),
+ ✓ (40.8s)
+
+Now update the short help in the grouped /help output and the CLI help:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "changes" src/help.rs | … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1345,1350p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     let _ = writeln!(s, "    /changes           Show files modified this session");
+  +     let _ = writeln!(s, "    /changes [sub]     Show files modified this session (summary, --diff)");
+ ✓ (40.2s)
+  3 tools completed in 52.9s (3 ✓)
+
+Now the CLI help text:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1625,1640p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     out.push_str("  /changes [--diff]  Show files modified (written/edited) during this session\n");
+  +     out.push_str("  /changes [sub]     Show files modified this session (summary, --diff)\n");
+ ✓ (39.7s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 48.4s (4 ✓)
+
+Now update command hints and completions for /changes:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"changes"' src/commands… ✓ (3ms)
+
+No "changes" in command_arg_hint yet. Let me add it:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '238,250p' src/commands.r… ✓ (3ms)
+  ▶ edit src/commands.rs (2 → 3 lines)
+            "changelog" => Some("[count]"),
+  +         "changes" => Some("summary | --diff"),
+            "evolution" => Some("[count]"),
+ ✓ (39.7s)
+  2 tools completed in 49.8s (2 ✓)
+
+Now add arg completions. Let me check where completions are:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '270,310p' src/commands.r… ✓ (3ms)
+
+  ↳ 10m 4s · 23195→10181 tokens · $2.03
+  ⬤ 14% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
