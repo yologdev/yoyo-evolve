@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the silent `.ok() data loss in save_messages` across the remaining 5 call sites. Let me start by examining the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'save_messages().ok()' s… ✓ (6ms)
+
+All 5 locations confirmed. Let me look at the surrounding context for each and also check the pattern from the Day 68 fix.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'save_messages' src/main… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A4 'save_messages' src/… ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good, I see the established pattern. Now let me check what imports are available in each file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,440p' src/commands.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '628,660p' src/commands_c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,255p' src/dispatch.r… ✓ (4ms)
+  3 tools completed in 10.2s (3 ✓)
+
+Now let me check what format constants are imported in each file:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands.rs | grep … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_config.rs … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/dispatch.rs | grep … ✓ (4ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Good — all three files have DIM and RESET available through their imports. Now let me apply the fixes to all 5 locations:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 7 lines)
+  -     let saved = agent.save_messages().ok();
+  +     let saved = match agent.save_messages() {
+  +         Ok(json) => Some(json),
+  +         Err(e) => {
+  +             eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
+  +             None
+  +         }
+  +     };
+ ✓ (38.2s)
+
+Now fix src/commands_config.rs — there are two occurrences. Let me handle them carefully with enough context:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (3 → 9 lines)
+            "model" => {
+                agent_config.model = value.to_string();
+  -             let saved = agent.save_messages().ok();
+  +             let saved = match agent.save_messages() {
+  +                 Ok(json) => Some(json),
+  +                 Err(e) => {
+  +                     eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
+  +                     None
+  +                 }
+  +             };
+ ✓ (38.5s)
+  ▶ edit src/commands_config.rs (2 → 8 lines)
+                agent_config.thinking = level;
+  -             let saved = agent.save_messages().ok();
+  +             let saved = match agent.save_messages() {
+  +                 Ok(json) => Some(json),
+  +                 Err(e) => {
+  +                     eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
+  +                     None
+  +                 }
+  +             };
+ ✓ (38.4s)
+  2 tools completed in 1m 22s (2 ✓)
+
+Now fix src/dispatch.rs — two occurrences:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (2 → 8 lines)
+                // Rebuild ctx.agent with new model, preserving conversation
+  -             let saved = ctx.agent.save_messages().ok();
+  +             let saved = match ctx.agent.save_messages() {
+  +                 Ok(json) => Some(json),
+  +                 Err(e) => {
+  +                     eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
+  +                     None
+  +                 }
+  +             };
+ ✓ (37.8s)
+  ▶ edit src/dispatch.rs (2 → 8 lines)
+                // Rebuild ctx.agent with new thinking level, preserving conversation
+  -             let saved = ctx.agent.save_messages().ok();
+  +             let saved = match ctx.agent.save_messages() {
+  +                 Ok(json) => Some(json),
+  +                 Err(e) => {
+  +                     eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
+  +                     None
+  +                 }
+  +             };
+ ✓ (38.0s)
+  2 tools completed in 1m 21s (2 ✓)
+
+Now verify no .ok() calls remain on save_messages:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'save_messages().ok()' … ✓ (5ms)
+
+Zero remaining. Let me also verify all save_messages calls now use the match pattern:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'save_messages' src/ ✓ (5ms)
+
+All save_messages calls now properly handle errors. Now run the full CI checks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (499ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (151ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (17.8s)
+  4 tools completed in 36.9s (4 ✓)
+
+All 2439 tests pass. Let me commit:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Done. Clean fix across all 5 remaining `save_messages().ok()` call sites:
+
+1. **`src/commands.rs:430** — handle_provider_switch`
+2. `src/commands_config.rs:634` — `handle_config_set` for "model" key
+3. `src/commands_config.rs:652` — `handle_config_set` for "thinking" key
+4. `src/dispatch.rs:195` — /model command handler
+5. `src/dispatch.rs:248` — /think command handler
+
+Each now uses the `match pattern that warns the user (⚠ could not preserve conversation: {e}`) instead of silently dropping the error. The switch operation still proceeds — the user just starts with a fresh conversation instead of losing history without knowing it. Zero save_messages().ok() calls remain in the codebase.
+
+  ↳ 5m 9s · 10133→2940 tokens · $0.590
+  ⬤ 5% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

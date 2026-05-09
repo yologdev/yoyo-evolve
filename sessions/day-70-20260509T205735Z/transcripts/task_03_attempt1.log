@@ -1,0 +1,390 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by researching the current Anthropic model names, then update the registry and pricing.
+  ▶ $ curl -s https://docs.anthropic.com/en/docs/about-claude/models | grep -iE '(clau…  ▶ $ curl -s https://raw.githubusercontent.com/anthropics/anthropic-cookbook/main/mis… ✓ (107ms)
+ ✓ (121ms)
+  ▶ $ curl -s https://docs.anthropic.com/en/docs/about-claude/mode… (11 lines) ✓ (69ms)
+  3 tools completed in 7.6s (3 ✓)
+
+The HTML page isn't returning content via curl. Let me try other approaches:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check Anthropic API directly for available models (2 lines)  ▶ $ # Check what aider has in their model list for anthropic (2 lines) ✓ (150ms)
+ ✓ (171ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now I have real data. Let me get the full model list from the API:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ curl -s https://api.anthropic.com/v1/models -H "x-api-key: $… (6 lines) ✓ (159ms)
+  ▶ $ # Check if there's a haiku-4-6 or just haiku-4-5 (8 lines) ✓ (171ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me check pricing. Let me look at what Anthropic charges:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check Anthropic pricing page (10 lines) ✓ (272ms)
+  ▶ $ # Check aider's pricing for newer Claude models (8 lines) ✓ (245ms)
+  ▶ $ # Try litellm's pricing data (15 lines) ✓ (389ms)
+  3 tools completed in 18.7s (3 ✓)
+
+Excellent! Now I have a clear picture. Let me summarize what I've found:
+
+New models to add:
+• `claude-sonnet-4-5 / claude-sonnet-4-5-20250929` — Claude Sonnet 4.5 ($3/$15 per M tokens, same as Sonnet 4)
+• claude-sonnet-4-6 — Claude Sonnet 4.6 ($3/$15 per M tokens, same as Sonnet 4)
+• `claude-opus-4-7` — Claude Opus 4.7 ($5/$25 per M tokens, same as Opus 4.5/4.6)
+
+Already in registry but worth noting:
+• claude-haiku-4-5-20251001 — only Haiku variant (no 4.6 Haiku exists)
+• `claude-opus-4-6` — already present
+
+No Haiku 4.6 exists. Let me now look at the current code:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "anthropic" src/providers.rs | head -30📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "known_models_for_provider" src/providers.rs ✓ (4ms)
+ ✓ (12ms)
+  ▶ read src/providers.rs:38..118 ✓ (1ms)
+  3 tools completed in 3.0s (3 ✓)
+
+Now let me check the cost.rs file:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "model_pricing\|opus\|sonnet\|haiku\|fn estimate_cost\|fn model_context_… ✓ (4ms)
+  ▶ read src/format/cost.rs:1..81 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Good. Now let me also check the `model_context_window function and the commands_info.rs`:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "model_context_window" src/commands_info.rs | head -5 ✓ (3ms)
+  ▶ read src/commands_info.rs:337..417 ✓ (1ms)
+  2 tools completed in 5.9s (2 ✓)
+
+I notice model_context_window returns 200k for ALL Claude models, but the API shows newer ones have 1M context. Let me also check for the `KNOWN_MODELS in commands.rs`:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "KNOWN_MODELS" src/commands.rs | head -5 ✓ (3ms)
+  ▶ read src/commands.rs:132..162 ✓ (1ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Now let me check existing tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/providers.rs:140..220 ✓ (1ms)
+  ▶ read src/providers.rs:219..269 ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now let me look at the cost.rs tests more closely:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:445..545 ✓ (1ms)
+
+Now let me look at the openrouter list in providers.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "openrouter" src/providers.rs ✓ (8ms)
+
+Good — OpenRouter doesn't have a known models list, just a default. Now I have all the context I need. Let me also check the model_context_window function more carefully since the API shows several newer Claude models have 1M context:
+
+From the API:
+• claude-opus-4-7: 1M input
+• claude-sonnet-4-6: 1M input
+• claude-opus-4-6: 1M input
+• `claude-sonnet-4-5-20250929`: 1M input
+• claude-sonnet-4-20250514: 1M input
+• claude-opus-4-5-20251101: 200k input
+• `claude-haiku-4-5-20251001`: 200k input
+• claude-opus-4-1-20250805: 200k input
+• `claude-opus-4-20250514`: 200k input
+
+So it's actually a mix! The newer sonnet and opus models have 1M, while older ones and haiku have 200k. The current code says all Claude models are 200k, which is wrong for sonnet 4+, opus 4.5+. But the task is specifically about model registry and pricing. Let me update the context window too since it affects the models I'm adding.
+
+Let me now plan my changes and implement them:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 15.0s (6 ✓)
+
+Let's start implementing:
+
+### Step 1: Update `providers.rs` — known_models_for_provider
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/providers.rs (5 → 9 lines)
+            "anthropic" => &[
+  +             "claude-opus-4-7",
+                "claude-opus-4-6",
+  +             "claude-sonnet-4-6",
+  +             "claude-sonnet-4-5",
+                "claude-sonnet-4-20250514",
+  -             "claude-haiku-4-5-20250414",
+  +             "claude-haiku-4-5",
+  +             "claude-haiku-4-5-20251001",
+            ],
+ ✓ (38.1s)
+  2 tools completed in 44.0s (2 ✓)
+
+Now update the Bedrock models too. Let me check what Bedrock model IDs look like for the newer ones:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check litellm for bedrock model IDs (9 lines) ✓ (176ms)
+  ▶ edit src/providers.rs (6 → 9 lines)
+            "bedrock" => &[
+  +             "anthropic.claude-opus-4-7",
+  +             "anthropic.claude-sonnet-4-6",
+  +             "anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "anthropic.claude-sonnet-4-20250514-v1:0",
+  -             "anthropic.claude-haiku-4-5-20250414-v1:0",
+  +             "anthropic.claude-haiku-4-5-20251001-v1:0",
+                "amazon.nova-pro-v1:0",
+                "amazon.nova-lite-v1:0",
+            ],
+ ✓ (38.1s)
+  2 tools completed in 44.6s (2 ✓)
+
+Now update the OpenRouter default model to use a newer one:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (1 → 1 lines)
+  -         "openrouter" => "anthropic/claude-sonnet-4-20250514".into(),
+  +         "openrouter" => "anthropic/claude-sonnet-4-6".into(),
+ ✓ (37.9s)
+
+Now update the test that references the old haiku model ID:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "haiku-4-5-20250414\|sonnet-4-20250514" src/providers.rs ✓ (8ms)
+
+Let me look at the test that still references the old haiku:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "haiku-4-5-20250414" src/providers.rs ✓ (8ms)
+
+Good, it's already gone. Let me check the bedrock test:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "bedrock" src/providers.rs ✓ (8ms)
+  ▶ read src/providers.rs:209..219 ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Good, that test still passes since we kept the old model ID in the bedrock list.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+### Step 2: Update KNOWN_MODELS in commands.rs
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands.rs (24 → 27 lines)
+    pub const KNOWN_MODELS: &[&str] = &[
+        "info",
+        "list",
+  +     "claude-opus-4-7",
+  +     "claude-opus-4-6",
+  +     "claude-sonnet-4-6",
+  +     "claude-sonnet-4-5",
+        "claude-sonnet-4-20250514",
+  -     "claude-opus-4-20250514",
+  -     "claude-haiku-35-20241022",
+  +     "claude-haiku-4-5",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5.5",
+ ✓ (37.8s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 52.6s (3 ✓)
+
+### Step 3: Update pricing in cost.rs
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me verify the pricing data from litellm:
+• **Opus 4.7**: $5/$25 (same as Opus 4.5/4.6 — the "cheaper opus" tier)
+• Sonnet 4.6: $3/$15 (same as all Sonnet 4.x)
+• Sonnet 4.5: $3/$15 (same)
+• Haiku 4.5: $1/$5 (same)
+• Opus 4.0/4.1: $15/$75 (old expensive tier)
+
+The current pricing logic already handles this correctly:
+• opus with 4-5, 4-6, or 4.5, 4.6 → $5/$25 ✅
+• But opus with 4-7 or 4.7 would fall through to the else branch → $15/$75 ❌
+
+I need to add `4-7 and 4.7` to the opus check:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (11 → 13 lines)
+        if model.contains("opus") {
+  -         if model.contains("4-6")
+  -             || model.contains("4-5")
+  -             || model.contains("4.6")
+  +         if model.contains("4-5")
+  +             || model.contains("4-6")
+  +             || model.contains("4-7")
+                || model.contains("4.5")
+  +             || model.contains("4.6")
+  +             || model.contains("4.7")
+            {
+                return Some((5.0, 6.25, 0.50, 25.0));
+            } else {
+ ✓ (37.7s)
+
+Now let me also check the haiku block — the current code checks for 4-5 and 4.5 already:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:31..46 ✓ (0ms)
+
+Good — sonnet pricing is a flat $3/$15 for all versions (correct), haiku 4.5 is $1/$5 (correct). No haiku 4.6 exists, so no changes needed there.
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+### Step 4: Update model_context_window
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+The API data shows:
+• Opus 4.7, 4.6: 1M context
+• Sonnet 4.6, 4.5, 4.0: 1M context
+• Opus 4.5, 4.1, 4.0: 200k context
+• Haiku 4.5: 200k context
+
+So the newer generation (Sonnet 4+, Opus 4.6+) has 1M, while older Opus and all Haiku remain 200k.
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (4 → 22 lines)
+  -     // Anthropic Claude family — all 200k
+  +     // Anthropic Claude family
+        if model.contains("claude") {
+  +         // Sonnet 4+ and Opus 4.6+ have 1M context
+  +         if model.contains("sonnet-4") || model.contains("sonnet-4.") {
+  +             return Some(1_000_000);
+  +         }
+  +         if model.contains("opus") {
+  +             // Opus 4.5+ (including 4.6, 4.7) have 1M; older Opus (4.0, 4.1) have 200k
+  +             if model.contains("4-5")
+  +                 || model.contains("4.5")
+  +                 || model.contains("4-6")
+  +                 || model.contains("4.6")
+  +                 || model.contains("4-7")
+  +                 || model.contains("4.7")
+  +             {
+  +                 return Some(1_000_000);
+  +             }
+  +             return Some(200_000);
+  +         }
+  ... (3 more lines)
+ ✓ (36.5s)
+
+Wait, I need to double-check: `claude-opus-4-5-20251101` has max_input_tokens=200000 from the API, not 1M. Let me re-verify:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ curl -s https://api.anthropic.com/v1/models -H "x-api-key: $… (7 lines) ✓ (194ms)
+
+Interesting — Opus 4.5 is 200k, but Opus 4.6 and 4.7 are 1M. And ALL Sonnet 4.x are 1M. Let me fix my context window logic:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (22 → 20 lines)
+        // Anthropic Claude family
+        if model.contains("claude") {
+  -         // Sonnet 4+ and Opus 4.6+ have 1M context
+  +         // Sonnet 4+ all have 1M context
+            if model.contains("sonnet-4") || model.contains("sonnet-4.") {
+                return Some(1_000_000);
+            }
+            if model.contains("opus") {
+  -             // Opus 4.5+ (including 4.6, 4.7) have 1M; older Opus (4.0, 4.1) have 200k
+  -             if model.contains("4-5")
+  -                 || model.contains("4.5")
+  -                 || model.contains("4-6")
+  +             // Opus 4.6+ have 1M; older Opus (4.0, 4.1, 4.5) have 200k
+  +             if model.contains("4-6")
+                    || model.contains("4.6")
+                    || model.contains("4-7")
+                    || model.contains("4.7")
+ ✓ (36.0s)
+
+The auto-check message is truncated. Let me run the tests explicitly to see if any fail:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | tail -30 ✓ (7.9s)
+
+Let me check the failing test:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1693..1723 ✓ (1ms)
+
+The test asserts claude-sonnet-4-20250514 → 200k, but it's actually 1M according to the API. The test is wrong (the old code was wrong). Let me fix the test:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (11 → 33 lines)
+        #[test]
+        fn test_model_context_window_known_models() {
+  -         // Anthropic
+  +         // Anthropic — Sonnet 4+ has 1M context
+            assert_eq!(
+                model_context_window("claude-sonnet-4-20250514"),
+  -             Some(200_000)
+  +             Some(1_000_000)
+  +         );
+  +         assert_eq!(
+  +             model_context_window("claude-sonnet-4-6"),
+  +             Some(1_000_000)
+  +         );
+  +         assert_eq!(
+  +             model_context_window("claude-sonnet-4-5"),
+  +             Some(1_000_000)
+  +         );
+  +         // Opus 4.6+ has 1M, older Opus has 200k
+  +         assert_eq!(
+  +             model_context_window("claude-opus-4-7"),
+  ... (15 more lines)
+ ✓ (38.0s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 44.2s (2 ✓)
+
+### Step 5: Add tests
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, add tests for the new models in providers.rs:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read src/providers.rs:243..253 ✓ (1ms)
+  ▶ read src/providers.rs:252..255 ✓ (0ms)
+  ▶ edit src/providers.rs (2 → 53 lines)
+  +     }
+  + 
+  +     #[test]
+  +     fn test_anthropic_known_models_includes_new_variants() {
+  +         let models = known_models_for_provider("anthropic");
+  +         assert!(
+  +             models.contains(&"claude-opus-4-7"),
+  +             "anthropic should include claude-opus-4-7"
+  +         );
+  +         assert!(
+  +             models.contains(&"claude-sonnet-4-6"),
+  +             "anthropic should include claude-sonnet-4-6"
+  +         );
+  +         assert!(
+  +             models.contains(&"claude-sonnet-4-5"),
+  +             "anthropic should include claude-sonnet-4-5"
+  +         );
+  +         assert!(
+  +             models.contains(&"claude-haiku-4-5"),
+  +             "anthropic should include claude-haiku-4-5"
+  ... (33 more lines)
+ ✗ (0ms)
+    │ old_text matches 4 locations in src/providers.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/providers.rs (9 → 60 lines)
+            assert!(
+                models.contains(&"gemini-2.5-flash-lite"),
+                "google should include gemini-2.5-flash-lite"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_anthropic_known_models_includes_new_variants() {
+  +         let models = known_models_for_provider("anthropic");
+  +         assert!(
+  +             models.contains(&"claude-opus-4-7"),
+  +             "anthropic should include claude-opus-4-7"
+  +         );
+  +         assert!(
+  +             models.contains(&"claude-sonnet-4-6"),
+  +             "anthropic should include claude-sonnet-4-6"
+  +         );
+  +         assert!(
+  +             models.contains(&"claude-sonnet-4-5"),
+  +             "anthropic should include claude-sonnet-4-5"
+  ... (37 more lines)
+ ✓ (38.2s)
+  4 tools completed in 58.6s (3 ✓, 1 ✗)
+
+  ↳ 10m 23s · 21936→11209 tokens · $1.69
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
