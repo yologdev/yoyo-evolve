@@ -1,0 +1,240 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat CHANGELOG.md | head -50📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ git tag --sort=-v:refname | head -5  ▶ $ git log v0.1.10..HEAD --oneline | wc -l ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ git tag -l 'v*' --sort=-v:refname | head -5 ✓ (3ms)
+  ▶ $ git tag -l | head -20 ✓ (3ms)
+  8 tools completed in 16.9s (8 ✓)
+
+No v* release tags exist — releases are tracked differently. Let me look at what the assessment identifies as the most impactful buildable gap and plan accordingly.
+
+Now let me think about the 3 task slots:
+
+1. **Self-driven (HIGH priority gap): The assessment identifies semantic codebase indexing** as the highest-priority buildable gap. But that's a large project. A more achievable high-impact self-driven improvement would be something that directly improves the coding agent experience. Looking at the test count (89 tests for 64K lines), and the fact that prompt caching was just added without tests — I should look for a different angle.
+
+Actually, let me focus on what makes yoyo more competitive as a coding agent. One thing Claude Code does exceptionally well is understanding and navigating large codebases quickly. We have `/map with ast-grep, /grep, /find, /index` — but we don't have **smart context management** that automatically pulls in relevant files based on what the user is asking about. Let me check what we have:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -l "auto.*context\|relevant.*file\|smart.*context\|file.*mention" src/*.rs …  ▶ $ grep -n "expand_file_mentions" src/commands_file.rs | head -5 ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ grep -n "expand_file_mentions" src/repl.rs src/prompt.rs src/main.rs 2>/dev/null ✓ (3ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Good — we already have expand_file_mentions in the REPL that picks up @-mentions. Let me think about what's truly high-impact for this session:
+
+Task 1 (Self-driven, competitive): Add a /retry command that re-sends the last user message with optional modifications. This is something Claude Code has (the ability to regenerate/retry a response) and it's a significant UX improvement. Let me check if we already have this:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_retry\|fn.*retry" src/commands_retry.rs | head -10 ✓ (3ms)
+
+We already have /retry. Let me think about what else is high-value...
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_" src/commands_dev.rs | head -10  ▶ $ grep -rn "auto_compact\|proactive_compact" src/commands_session.rs | head -5 ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Let me look at what would genuinely move the needle. The assessment says test count is low (89 tests for 64K lines). But more impactful would be a feature that helps developers. Let me look at something that's both high-impact and achievable in one task:
+
+**Idea 1:** /diff improvements — show what the agent changed in the current session as a unified diff (session-aware). Check current state:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_diff\|session.*diff\|changes.*diff" src/commands_git.rs | head -…  ▶ $ grep -n "format_changes\|session_changes\|SessionChanges" src/session.rs | head … ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Good — we have session change tracking. Let me think about what's most impactful...
+
+**Key competitive angle: One thing that's genuinely missing and would be very impactful is streaming progress for file operations** — when the agent writes/edits files, showing a brief indicator of what's happening. But that's yoagent-level.
+
+Let me look at a different angle — **conversation forking**. Claude Code allows you to "branch" a conversation. We have /checkpoint but not true forking. That's too big.
+
+What about improved error messages when tools fail? We just did that (Day 70). 
+
+Let me focus on something concrete and impactful:
+
+1. Task 1 (Self-driven): Add **fuzzy file completion** in the REPL — when users type partial filenames in their prompt, tab-complete against project files. This is a massive UX improvement that every competitor has.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "complete\|Completer\|tab.*comp" src/repl.rs | head -20 ✓ (3ms)
+
+We already have file completion! Tab-completing file paths is already there. Let me look at what's really lacking...
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "complete_file_path" src/repl.rs | head -5  ▶ $ sed -n '128,180p' src/repl.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.9s (2 ✓)
+
+OK so file path completion exists. Let me think differently about what would be the most impactful improvement for Day 71.
+
+Looking at the assessment more carefully:
+
+• **9/10 sessions successful** — very stable
+• Prompt caching just enabled — good
+• **89 tests for 64K lines** — low test coverage
+• **No open agent-self issues** — backlog is clear
+• **No sponsor issues** — no priority overrides
+
+The real competitive gap I should work on: Let me think about what makes a coding agent great in daily use. The biggest things:
+
+1. **Smart context selection** — automatically knowing which files are relevant
+2. **Multi-file coordinated edits** — making consistent changes across files
+3. Understanding the *intent* behind errors — not just retrying but actually diagnosing
+
+We have #3 (enhanced in Day 70). We have #2 (agent does multi-file edits naturally). For #1, we have context loading and file mentions but not **automatic relevance detection**.
+
+Let me look at something more concrete and achievable:
+
+Task 1: Add a /symbols command that quickly shows all symbols (functions, structs, traits) in a file — like a mini-outline that's faster than /map for a single file. Useful for navigation.
+
+Wait, we have /outline:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_outline" src/commands_search.rs | head -5 ✓ (3ms)
+
+OK we have that too. Let me think about what's genuinely missing...
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "clipboard\|copy.*to\|pbcopy\|xclip" src/*.rs | head -10 ✓ (7ms)
+
+No clipboard support! That's a real UX feature. When the agent produces code or a command, users often want to copy it. A /copy command or automatic clipboard support for code blocks would be useful.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "yank\|paste\|snippet" src/*.rs | head -10 ✓ (7ms)
+
+Good — no clipboard integration exists. Let me also think about another high-value feature:
+
+**Smart input expansion** — when users mention something like "the function that handles git commits", the agent should be able to look it up. But this is really an agent behavior, not a CLI feature.
+
+Let me plan three solid tasks:
+
+1. **Task 1 (Self-driven, competitive):** Add clipboard integration — /copy command that copies the last code block or specified text to the system clipboard. macOS (pbcopy), Linux (xclip/xsel/wl-copy), Windows (clip.exe). This is a small but meaningful UX feature that most coding tools have.
+
+2. Task 2 (Self-driven, quality): Add a test for prompt caching configuration — verifying that `CacheConfig is actually applied correctly in build_agent`. The Day 71 earlier session added this feature without a test. Also verify the notification logic has a test.
+
+3. Task 3 (Self-driven, competitive): Add **input history search** — Ctrl+R reverse history search is already provided by rustyline, but add a /history search <pattern> subcommand that searches through past commands and shows matches with context. This helps users find and reuse complex prompts they've used before.
+
+Wait, let me check if /history search already exists:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_search\|history.*search\|search.*history" src/commands_session.r… ✓ (3ms)
+  ▶ $ sed -n '406,440p' src/commands_session.rs ✓ (3ms)
+  2 tools completed in 6.3s (2 ✓)
+
+OK we have /search for conversation history already. Let me think about what would really matter...
+
+Let me reconsider. What about **input preprocessing for common patterns**? One thing that makes Claude Code great is how it handles @-file references smoothly. We have that. What about **response streaming improvements**? We have that.
+
+Actually, let me think about a truly high-value competitive feature: **Automatic file watching / hot reload**. When the user edits a file externally, the agent notices and can react. But that's complex.
+
+How about something simpler but impactful: **Command chaining** — the ability to run multiple slash commands in one line, like `/lint && /test or /diff | /copy`. This is something power users of coding agents want.
+
+Actually, let me focus on three things that are both achievable and impactful:
+
+1. Clipboard integration (/copy) — genuinely missing, small, high value
+2. Test coverage for recent features — prompt caching and notification tests  
+3. `/edit` command — open a file in the user's $EDITOR directly from yoyo (like Claude Code's ability to pop open files). Quick check:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "EDITOR\|handle_edit\|open.*editor" src/*.rs | head -10 ✓ (7ms)
+
+We have `/config edit that opens config in $EDITOR. But we don't have a general /edit <file>` command. However, that's pretty simple — maybe not the highest-value...
+
+Let me reconsider the three tasks holistically. The goal: **make yoyo more competitive with real coding agents for real daily work.**
+
+Top 3 choices:
+1. Clipboard integration (`/copy`) — missing, high UX value, simple to implement
+2. **Inline diff preview for file edits** — when the agent edits a file, show a colored diff of what changed (pre/post). Check if we have this:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "show.*diff\|edit.*diff\|file.*change.*diff\|after.*edit.*show" src/*.r…  ▶ $ grep -rn "colorize_diff\|format_diff\|render_diff" src/*.rs | head -10 ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ grep -n "format_edit_diff" src/prompt.rs  ▶ $ grep -rn "format_edit_diff" src/*.rs ✓ (8ms)
+ ✓ (40ms)
+  ▶ $ grep -rn "format_edit_diff" src/format/*.rs  ▶ $ grep -rn "fn format_edit_diff" src/ ✓ (39ms)
+ ✓ (42ms)
+  6 tools completed in 15.1s (6 ✓)
+
+Good — we already show inline diffs for edits. That's handled. 
+
+Let me look at the /prompt side to see how edits are displayed:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '255,275p' src/prompt.rs ✓ (3ms)
+
+Great — edits already show colored diffs. We're in good shape on the display side.
+
+Now let me finalize my plan. Three high-value tasks:
+
+1. `/copy` clipboard command — Copy last code block / agent output / specified text to system clipboard. High UX value, genuinely missing.
+
+2. `/open` command — Open a file in user's $EDITOR at an optional line number. Every IDE integration has "jump to file:line" — a CLI agent should too. Simple to build (one command, `$EDITOR +N file`).
+
+3. **Streaming word-count / progress indicator** — Show a live word/token count as the agent responds, so users know how long the response is getting. Actually... that might conflict with the existing markdown renderer. Let me think of something else.
+
+Task 3 alternative: Add `/context add`/`/context remove` to dynamically manage what files are in the agent's context window — persistent file pinning so the agent always has certain files available. Check if we have this:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "context.*add\|context.*remove\|pin.*file\|context_files" src/commands_p…  ▶ $ sed -n '1,30p' src/commands_project.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 3.2s (2 ✓)
+
+So /context shows what's in context but doesn't let you add/remove files dynamically. But actually, /add already adds files to context. The issue is there's no "unpin" or "forget" mechanism. That's a deeper change though.
+
+Let me go with a cleaner third task. What about **response time tracking per turn** — showing how long each agent turn took? This helps users understand performance:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "elapsed\|duration\|turn.*time\|response.*time" src/prompt.rs | head -1… ✓ (4ms)
+
+We already show elapsed time per tool call and per turn. Let me look at what `print_usage` shows:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn print_usage" src/format/mod.rs ✓ (8ms)
+
+OK so we already show turn duration. Good.
+
+Let me think about this differently. What are the things I personally find friction-y when using a coding agent?
+
+1. Can't easily copy agent output to clipboard — /copy
+2. Can't quickly open a file the agent mentioned — /open
+3. **Hard to see what the agent will do before it does it** — we have /plan mode
+
+Let me also think about the TUI issue (#215). The issue asks for a full TUI redesign — that's enormous and won't fit in one task. But I could do a *very* small step toward it: improving the visual layout of tool output to be more panel-like. But that's risky for a 20-min task.
+
+Final plan:
+
+**Task 1 (Self-driven, competitive):** /copy command — clipboard integration. Copy the last code block, last agent message, or specific text to the system clipboard using platform-appropriate tools.
+
+**Task 2 (Self-driven, competitive):** /open command — open a file in the user's $EDITOR at an optional line number. Supports $VISUAL, $EDITOR, falls back to common editors. Formats as editor +N file.
+
+**Task 3 (Self-driven, quality):** Add tests for the prompt caching configuration (CacheConfig applied to agents) and the notification system (threshold logic, platform detection). The Day 71 morning session added both features without tests.
+
+Now let me write the plan:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (33 lines)  ▶ write session_plan/task_02.md (30 lines)  ▶ write session_plan/task_03.md (24 lines) ✓ (28.0s)
+  ▶ write session_plan/issue_responses.md (11 lines) ✓ (56.7s)
+ ✓ (1m 24s)
+ ✓ (1m 25s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  5 tools completed in 2m 3s (5 ✓)
+
+The session_plan directory is gitignored. Let me force-add:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+
+Plan committed. Here's the summary:
+
+## Day 71 (16:39) Session Plan
+
+**3 tasks, all self-driven (no sponsor issues, no urgent community issues):**
+
+### Task 1: `/copy` command — Clipboard integration
+Copy agent output (last message, last code block, or literal text) to system clipboard using platform-appropriate tools (pbcopy/xclip/wl-copy/clip.exe). Genuinely missing UX feature that every competitor has.
+Files: commands_file.rs, dispatch.rs, help.rs
+
+### Task 2: `/open` command — Launch $EDITOR on files
+Open any file in the user's preferred editor at an optional line number (`/open src/main.rs:42`). Resolves $VISUAL → $EDITOR → fallback editors. Every IDE has "jump to file:line" — a CLI agent should too.
+Files: commands_file.rs, dispatch.rs, help.rs
+
+### Task 3: Tests for prompt caching and notifications
+The Day 71 morning session added CacheConfig and desktop notifications without tests. Add unit tests for the configuration wiring and notification threshold logic.
+Files: agent_builder.rs, format/mod.rs
+
+### Issue Responses
+• #215 (TUI challenge): Deferred — no new update needed; last response was Day 62 with streaming progress; today's UX features are incremental wins regardless of TUI direction.
+• #341, #307, #156, #141: No engagement needed — long-term tracking issues with no new activity.
+
+  ↳ 5m 50s · 14737→7368 tokens · $0.875
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

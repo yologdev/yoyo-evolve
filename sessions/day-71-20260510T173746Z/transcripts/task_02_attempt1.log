@@ -1,0 +1,263 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/commands_file.rs | head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_web\|handle_add\… ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -100 src/commands_file.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "open\|Open" src/dispatc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "web\|add\|apply\|copy\|… ✓ (5ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_web\|handle_add\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/web\|/add\|/apply\|/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "help_command_completion… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '13,35p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "command_short_descripti… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1833,1900p' src/help.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1900,1940p' src/help.rs ✓ (3ms)
+  12 tools completed in 24.1s (12 ✓)
+
+Now let me look at the KNOWN_COMMANDS list in commands.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/commands.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/open\|"/mov\|"/map\|"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '46,120p' src/commands.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,140p' src/commands.r… ✓ (3ms)
+  4 tools completed in 18.8s (4 ✓)
+
+Now let me look at how dispatch.rs routes commands — specifically the area near /web and /add:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,610p' src/dispatch.r… ✓ (4ms)
+
+Now I have enough context. Let me also check how handle_web is re-exported:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_web\|handle_add\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_file\|handle_w… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '513,516p' src/commands.r… ✓ (3ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now let me look at command_help for a file-related command to understand the pattern:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '35,100p' src/help.rs ✓ (3ms)
+
+Now let me look at the help_text function (the main /help output):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn help_text" src/help.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '680,760p' src/help.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Now let's find where the help_text groups commands — specifically the "Files & Context" section:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1616,1830p' src/help.rs ✓ (5ms)
+
+I have all the context I need. Let me now implement the /open command. I'll start with the implementation in `commands_file.rs`, then wire it into dispatch and help.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1930,1940p' src/commands… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1125,1135p' src/commands… ✓ (3ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Good. Now let me find the end of the non-test code (just before #[cfg(test)]), to place my handle_open function. Let me also look at what's around line 1110-1126:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1100,1127p' src/commands… ✓ (4ms)
+
+Now I'll add the handle_open function and supporting parsing functions. Let me write the implementation:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (3 → 130 lines)
+  + // ── /open command ──
+  + 
+  + /// Parse the input for `/open`, extracting file path and optional line number.
+  + /// Supports:
+  + /// - `/open path/to/file`
+  + /// - `/open path/to/file:42`
+  + /// - `/open path/to/file 42`
+  + pub fn parse_open_args(input: &str) -> (String, Option<u32>) {
+  +     let args = input
+  +         .strip_prefix("/open")
+  +         .unwrap_or("")
+  +         .trim()
+  +         .to_string();
+  +     if args.is_empty() {
+  +         return (String::new(), None);
+  +     }
+  + 
+  +     // Try "path:line" syntax first
+  +     if let Some(colon_pos) = args.rfind(':') {
+  +         let path_part = &args[..colon_pos];
+  ... (110 more lines)
+ ✓ (9.6s)
+
+The functions are not yet used because I need to wire them into dispatch and commands. Let me fix the unused editor parameter and wire everything up:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (1 → 1 lines)
+  - pub fn format_editor_args(editor: &str, file: &str, line: Option<u32>) -> Vec<String> {
+  + pub fn format_editor_args(_editor: &str, file: &str, line: Option<u32>) -> Vec<String> {
+ ✓ (9.5s)
+
+These errors are expected - the functions aren't used until I wire them into dispatch. Let me now add the re-export in commands.rs and the dispatch routing:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (4 → 4 lines)
+    pub use crate::commands_file::{
+  -     build_explain_prompt, expand_file_mentions, handle_add, handle_apply, handle_copy, handle_web,
+  -     AddResult, COPY_SUBCOMMANDS,
+  +     build_explain_prompt, expand_file_mentions, handle_add, handle_apply, handle_copy, handle_open,
+  +     handle_web, AddResult, COPY_SUBCOMMANDS,
+    };
+ ✓ (9.5s)
+
+I need to add the dispatch routing first. Let me add it in src/dispatch.rs:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '548,558p' src/dispatch.r… ✓ (4ms)
+  ▶ edit src/dispatch.rs (5 → 9 lines)
+            s if s == "/web" || s.starts_with("/web ") => {
+                commands::handle_web(ctx.input);
+  +             CommandResult::Continue
+  +         }
+  +         s if s == "/open" || s.starts_with("/open ") => {
+  +             commands::handle_open(ctx.input);
+                CommandResult::Continue
+            }
+            s if s == "/copy" || s.starts_with("/copy ") => {
+ ✓ (40.2s)
+  2 tools completed in 48.2s (2 ✓)
+
+Now add /open to the KNOWN_COMMANDS list:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (4 → 5 lines)
+        "/ast",
+        "/changelog",
+        "/map",
+  +     "/open",
+        "/outline",
+ ✓ (38.9s)
+
+Progress! Let me check if it actually compiled now:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (126ms)
+
+It builds. Let me run clippy and tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (17.5s)
+  2 tools completed in 33.6s (2 ✓)
+
+Good - I need to add help content and short description. Let me fix these:
+
+1. Add command_short_description for "open"
+2. Add command_help for "open"
+3. Add /open to the `help_text()` output
+4. Add /open mention in CLI help
+
+Let me fix the `command_short_description` first:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (2 → 3 lines)
+            "web" => Some("Fetch a web page"),
+  +         "open" => Some("Open a file in your editor"),
+            _ => None,
+ ✓ (38.5s)
+
+Now let me add command_help for "open". Let me find where to insert it — near the "web" entry:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"web" => Some(' src/hel… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '921,940p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (10 → 27 lines)
+                 Examples:\n\
+                 \x20 /web https://docs.rs/serde/latest\n\
+                 \x20 /web https://rust-lang.org",
+  +         ),
+  +         "open" => Some(
+  +             "/open <file>[:<line>] — Open a file in your editor\n\n\
+  +              Usage:\n\
+  +              \x20 /open <file>          Open file in $VISUAL/$EDITOR/fallback\n\
+  +              \x20 /open <file>:<line>   Open file at a specific line number\n\
+  +              \x20 /open <file> <line>   Alternative line number syntax\n\n\
+  +              Editor resolution order:\n\
+  +              \x20 1. $VISUAL environment variable\n\
+  +              \x20 2. $EDITOR environment variable\n\
+  +              \x20 3. First found in PATH: code, vim, vi, nano\n\n\
+  +              Line numbers use +N syntax (works with vim, nano, VS Code, emacs).\n\
+  +              If the file doesn't exist, the editor is still launched (it may create it).\n\n\
+  +              Examples:\n\
+  +              \x20 /open src/main.rs\n\
+  +              \x20 /open src/main.rs:42\n\
+  +              \x20 /open Cargo.toml 10",
+  ... (1 more lines)
+ ✓ (38.9s)
+  3 tools completed in 1m 0s (3 ✓)
+
+Now add /open to the help_text() in the Project section. Let me find the right spot:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '/web\|/open' src/help.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1744,1748p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (4 → 7 lines)
+        out.push_str("  /web <url>         Fetch a web page and display clean readable text content\n");
+  +     out.push_str(
+  +         "  /open <file>[:<line>]  Open a file in $EDITOR (supports line number with +N)\n",
+  +     );
+        out.push_str(
+            "  /watch [cmd|all|lint]  Auto-run lint+test after agent edits (off/status to control)\n",
+        );
+ ✓ (37.2s)
+  3 tools completed in 49.2s (3 ✓)
+
+Now I need to add /open to the CLI --help text. Let me find where REPL commands are listed in that text:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn cli_help_text" src/h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/web\|/open" src/help.r… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1515p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (8 → 12 lines)
+        let _ = writeln!(
+            s,
+            "    /web <url>         Fetch and display web page content"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /open <file>[:<line>]  Open a file in $EDITOR"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (40.9s)
+  4 tools completed in 53.0s (4 ✓)
+
+Now let me run the tests again:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "(FAIL… ✓ (10.7s)
+
+All tests pass. Now let me add my own tests for the /open parsing logic:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    #\[test\]" src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_file.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_file.rs ✓ (2ms)
+  ▶ edit src/commands_file.rs (5 → 73 lines)
+                // args can be empty (pbcopy, clip.exe) or non-empty (xclip)
+                let _ = args;
+            }
+  +     }
+  + 
+  +     // ── /open tests ──
+  + 
+  +     #[test]
+  +     fn test_parse_open_args_empty() {
+  +         let (file, line) = parse_open_args("/open");
+  +         assert!(file.is_empty());
+  +         assert_eq!(line, None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_open_args_file_only() {
+  +         let (file, line) = parse_open_args("/open src/main.rs");
+  +         assert_eq!(file, "src/main.rs");
+  +         assert_eq!(line, None);
+  +     }
+  ... (53 more lines)
+ ✓ (40.8s)
+  4 tools completed in 1m 4s (4 ✓)
+
+Now let me run the full check:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "(FAIL… ✓ (31.6s)
+  2 tools completed in 46.1s (2 ✓)
+
+  ↳ 10m 35s · 19961→8915 tokens · $1.35
+  ⬤ 12% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

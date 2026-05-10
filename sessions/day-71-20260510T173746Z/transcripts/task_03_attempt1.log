@@ -1,0 +1,250 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/agent_builder.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CacheConfig\|cache_conf…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_notification_mess… ✓ (7ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  3 tools completed in 2.5s (3 ✓)
+
+It looks like tests already exist for both features. Let me inspect the existing test modules to understand what's already covered and what might still be missing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '980,1030p' src/agent_bui…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1420,1500p' src/format/m… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Good — there are already tests for cache config and notification message formatting. Let me check what's missing. The task mentions testing the notification threshold logic (durations <10s don't trigger, >=10s do) and platform detection logic. Let me look at the full notification code:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,140p' src/format/mod.… ✓ (4ms)
+
+Now let me check the existing tests more closely and see what's missing. The task specifically asks for:
+1. Notification threshold logic test (durations <10s don't trigger)
+2. Platform detection logic (which command is selected per OS)
+3. More cache config tests if needed
+
+Let me look at the complete test section at the end of the file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/age… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,625p' src/format/mod… ✓ (3ms)
+  3 tools completed in 6.7s (3 ✓)
+
+Now let me look at the full test module to find the end and see what's there:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/mod.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -10 src/format/mod.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now let me check the agent_builder tests at the end:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/agent_builder.rs ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Now let me understand what tests are missing. Looking at the task requirements vs existing tests:
+
+Cache config (agent_builder.rs): Already has test_cache_config_enabled_on_all_agents. This is good. But we could add more: test that CacheConfig has the right min_cached_tokens value, and test for the editor agent path.
+
+**Notification (format/mod.rs):** Has build_notification_message tests and smoke tests. Missing:
+1. Threshold logic test — verify that maybe_ring_bell with <10s doesn't send notification (the decision logic)
+2. Platform detection — the send_desktop_notification uses #[cfg] so we can't test "which command" at runtime since it's compile-time. But we can test that the function doesn't panic and verify the threshold logic.
+
+Let me look at what maybe_ring_bell does and how we can test the threshold:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '45,57p' src/format/mod.r… ✓ (3ms)
+
+The threshold logic is inline in maybe_ring_bell. The task suggests testing the decision function. Since the platform detection is compile-time (#[cfg), I can't test which command is selected. But I can:
+
+1. Add a helper function should_notify(elapsed: Duration) -> bool that encapsulates the threshold logic, making it testable
+2. Test that function with various durations
+3. Add a test for the editor agent's cache config (missed in existing test)
+
+Let me also check the existing cache_config test and what CacheConfig fields are available:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "CacheConfig\|CacheStra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "CacheConfig\|CacheStra… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 20 "pub struct CacheConf… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 2 -A 25 "pub struct Cach… ✓ (3ms)
+  4 tools completed in 11.5s (4 ✓)
+
+Now let me look at the build_editor_agent function that might not be tested:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_editor_agent\|fn …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '590,620p' src/agent_buil… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '630,680p' src/agent_buil… ✓ (3ms)
+  3 tools completed in 5.2s (3 ✓)
+
+Now I have a clear picture. Let me look at the existing test helper in agent_builder:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '762,800p' src/agent_buil… ✓ (4ms)
+
+Now I have a clear picture of what exists and what to add. Let me plan the additions:
+
+For `src/format/mod.rs`:
+• Add a should_notify(elapsed: Duration) -> bool helper that encapsulates the threshold decision
+• Add tests for it: <10s returns false, >=10s returns true
+• Add a test that maybe_ring_bell with different durations (smoke test, since actual notification is side-effect)
+
+For `src/agent_builder.rs`:
+• Add test for build_editor_agent cache config
+• Add test that verifies CacheConfig default values are the expected ones (enabled=true, strategy=Auto)
+
+Let me start implementing:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,56p' src/format/mod.r… ✓ (3ms)
+
+I'll extract the notification threshold into a testable function and add tests. Let me first add the helper function:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:44..59 ✓ (1ms)
+
+Now I'll add a should_send_notification helper that makes the threshold testable:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (1 → 11 lines)
+    // --- Desktop notification support with YOYO_NO_NOTIFY and --no-notify ---
+  + 
+  + /// Notification duration threshold in seconds.
+  + const NOTIFICATION_THRESHOLD_SECS: u64 = 10;
+  + 
+  + /// Returns true if the elapsed duration meets the threshold for sending a
+  + /// desktop notification (≥10s). This is the pure decision logic, separated
+  + /// from the side-effectful `send_desktop_notification` for testability.
+  + pub fn should_send_notification(elapsed: Duration) -> bool {
+  +     elapsed.as_secs() >= NOTIFICATION_THRESHOLD_SECS
+  + }
+ ✓ (9.6s)
+
+I need to use the constant and function. Let me update maybe_ring_bell to use the new helper:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (13 → 13 lines)
+            let _ = io::stdout().write_all(b"\x07");
+            let _ = io::stdout().flush();
+        }
+  -     if notify_enabled() && elapsed.as_secs() >= 10 {
+  +     if notify_enabled() && should_send_notification(elapsed) {
+            send_desktop_notification(elapsed);
+        }
+    }
+ ✓ (41.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (122ms)
+  2 tools completed in 47.3s (2 ✓)
+
+Good. Now let me add the notification threshold tests to the test module at the end of format/mod.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (9 → 67 lines)
+                msg.contains("2m") && !msg.contains("0s"),
+                "exact minutes should omit seconds: {msg}"
+            );
+  +     }
+  + 
+  +     // --- Notification threshold tests ---
+  + 
+  +     #[test]
+  +     fn test_should_send_notification_below_threshold() {
+  +         // Durations below 10s should NOT trigger a notification.
+  +         assert!(!should_send_notification(Duration::from_secs(0)));
+  +         assert!(!should_send_notification(Duration::from_secs(1)));
+  +         assert!(!should_send_notification(Duration::from_secs(5)));
+  +         assert!(!should_send_notification(Duration::from_secs(9)));
+  +         assert!(!should_send_notification(Duration::from_millis(9999)));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_should_send_notification_at_threshold() {
+  +         // Exactly 10s should trigger.
+  ... (43 more lines)
+ ✓ (39.6s)
+
+Now let me add the editor agent cache config test to agent_builder.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1027..1067 ✓ (1ms)
+
+Now let me find the right place to add the editor agent test - after the cache config test:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (6 → 18 lines)
+                architect.cache_config.strategy,
+                CacheStrategy::Auto,
+                "architect agent should use Auto caching strategy"
+  +         );
+  + 
+  +         // Editor agent (delegates to build_agent internally)
+  +         let editor = config.build_editor_agent("claude-sonnet-4-20250514");
+  +         assert!(
+  +             editor.cache_config.enabled,
+  +             "editor agent cache should be enabled"
+  +         );
+  +         assert_eq!(
+  +             editor.cache_config.strategy,
+  +             CacheStrategy::Auto,
+  +             "editor agent should use Auto caching strategy"
+            );
+        }
+ ✓ (40.6s)
+
+Now let me also add a test that verifies the cache config default values are what we expect (ensuring yoagent's CacheConfig defaults align with what we're setting):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn builtin_tool_names_i… ✓ (3ms)
+  ▶ read src/agent_builder.rs:1827..1842 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (10 → 43 lines)
+            assert!(
+                BUILTIN_TOOL_NAMES.contains(&"shared_state"),
+                "BUILTIN_TOOL_NAMES must include 'shared_state' to guard against MCP collisions"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_cache_config_values_match_expected() {
+  +         // Verify that the CacheConfig we set has the exact fields we expect:
+  +         // enabled=true and strategy=Auto. This catches silent changes to yoagent
+  +         // defaults or accidental overwrites.
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         let agent = config.build_agent();
+  + 
+  +         let cache = &agent.cache_config;
+  +         assert!(cache.enabled, "caching must be enabled");
+  +         assert_eq!(cache.strategy, CacheStrategy::Auto);
+  + 
+  +         // Verify the explicit construction matches CacheConfig default
+  +         let expected = CacheConfig {
+  ... (19 more lines)
+ ✓ (40.1s)
+  3 tools completed in 55.2s (3 ✓)
+
+Now let me run the full check suite:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (19.4s)
+  2 tools completed in 34.9s (2 ✓)
+
+All 88 tests pass. Let me verify my new tests are in there:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "notif… ✓ (10.5s)
+
+All new tests are running and passing. Let me do the full build check one more time cleanly:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (29.3s)
+
+All checks pass. Let me commit:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (20ms)
+
+Done. Here's what I added:
+
+**src/format/mod.rs:**
+• Extracted NOTIFICATION_THRESHOLD_SECS constant (10s) and should_send_notification(elapsed) -> bool helper from the inline check in maybe_ring_bell, making the threshold decision logic independently testable
+• Added 7 new tests:
+  • test_should_send_notification_below_threshold — verifies 0s, 1s, 5s, 9s, 9.999s all return false
+  • `test_should_send_notification_at_threshold` — verifies exactly 10s returns true
+  • test_should_send_notification_above_threshold — verifies 11s, 30s, 120s, 3600s all return true
+  • test_notification_threshold_constant — asserts the constant is 10
+  • test_maybe_ring_bell_does_not_panic_short_duration — smoke test for sub-threshold
+  • test_maybe_ring_bell_does_not_panic_long_duration — smoke test for above-threshold
+  • test_notification_platform_command_selection — verifies the compile-time platform branch doesn't panic
+
+`src/agent_builder.rs`:
+• Extended `test_cache_config_enabled_on_all_agents to also test build_editor_agent`
+• Added `test_cache_config_values_match_expected` — verifies the explicit CacheConfig struct matches expected values and the Default
+• Added test_cache_config_openai_provider — verifies caching is enabled for non-Anthropic providers too
+
+  ↳ 6m 53s · 13326→6974 tokens · $0.871
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
