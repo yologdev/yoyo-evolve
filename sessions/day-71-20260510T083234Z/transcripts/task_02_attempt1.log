@@ -1,0 +1,218 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement native desktop notifications for long completions. Let me start by understanding the existing code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "bell\|notify\|BEL\|ring…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no.bell\|no-bell\|disab…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no.bell\|no-bell" src/h… ✓ (6ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  3 tools completed in 2.0s (3 ✓)
+
+Now let me read the relevant sections more closely.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '29,55p' src/format/mod.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,460p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1105,1115p' src/help.rs ✓ (3ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  3 tools completed in 1.7s (3 ✓)
+
+Now let me look at the existing tests in format/mod.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '520,600p' src/format/mod… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -100 src/format/mod.rs ✓ (4ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Good. Now I have a clear picture. Let me implement this step by step.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 15.3s (6 ✓)
+
+Let me start implementing. First, the notification state and function in `src/format/mod.rs`:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -10 src/format/mod.rs ✓ (2ms)
+  ▶ read src/format/mod.rs:1..8 ✓ (1ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now add the notification support block right after the bell support block:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (9 → 100 lines)
+    /// Ring the terminal bell if enabled and elapsed time exceeds threshold.
+    /// The bell character (\x07) causes most terminal emulators to flash the tab
+    /// or play a sound, alerting multitasking developers.
+  + /// Also sends a desktop notification for genuinely long waits (≥10s).
+    pub fn maybe_ring_bell(elapsed: Duration) {
+        if bell_enabled() && elapsed.as_secs() >= 3 {
+            let _ = io::stdout().write_all(b"\x07");
+            let _ = io::stdout().flush();
+  +     }
+  +     if notify_enabled() && elapsed.as_secs() >= 10 {
+  +         send_desktop_notification(elapsed);
+  +     }
+  + }
+  + 
+  + // --- Desktop notification support with YOYO_NO_NOTIFY and --no-notify ---
+  + 
+  + /// Whether desktop notifications have been disabled (via --no-notify flag or YOYO_NO_NOTIFY env).
+  + static NOTIFY_DISABLED: OnceLock<bool> = OnceLock::new();
+  + 
+  + /// Disable desktop notifications. Call from CLI arg parsing.
+  ... (80 more lines)
+ ✓ (8.1s)
+
+That's expected — disable_notify isn't called yet from `main.rs`. Let me proceed with all changes before the final check.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Now wire --no-notify in main.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/main.rs (3 → 7 lines)
+        if args.iter().any(|a| a == "--no-bell") {
+            disable_bell();
+  +     }
+  + 
+  +     if args.iter().any(|a| a == "--no-notify") {
+  +         disable_notify();
+        }
+ ✓ (36.6s)
+  2 tools completed in 42.0s (2 ✓)
+
+Now check if disable_notify is imported properly:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "disable_bell\|disable_noti… ✓ (3ms)
+
+Good — use format::* covers it.
+
+Now the help text:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 2 lines)
+        let _ = writeln!(s, "  --no-bell         Disable terminal bell on long completions (also respects YOYO_NO_BELL env)");
+  +     let _ = writeln!(s, "  --no-notify       Disable desktop notifications on long completions (also respects YOYO_NO_NOTIFY env)");
+ ✓ (36.7s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 46.1s (2 ✓)
+
+Now add tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/format/mod.rs |… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1420,1427p' src/format/m… ✓ (2ms)
+  ▶ edit src/format/mod.rs (8 → 59 lines)
+            // We verify it's at least callable and stable.
+            let result = is_quiet();
+            assert_eq!(result, is_quiet());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_send_desktop_notification_does_not_panic() {
+  +         // Best-effort fire-and-forget — should never panic regardless of platform.
+  +         send_desktop_notification(Duration::from_secs(15));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_notify_enabled_returns_bool() {
+  +         // Like bell_enabled, just verify it's callable and stable (OnceLock is global).
+  +         let result = notify_enabled();
+  +         assert_eq!(result, notify_enabled());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_disable_notify_is_callable() {
+  ... (36 more lines)
+ ✓ (36.0s)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 56.7s (5 ✓)
+
+Now let's run the full check suite:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (475ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.5s)
+  5 tools completed in 53.0s (5 ✓)
+
+All 2472 tests pass (2384 + 88), clippy clean, build clean. Let me also check the `--no-notify` is in the known flags list so it doesn't trigger an "unknown flag" warning:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no-bell\|no-notify\|kno… ✓ (3ms)
+
+I need to add --no-notify to KNOWN_FLAGS:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '232,270p' src/cli.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '270,285p' src/cli.rs ✓ (2ms)
+  ▶ edit src/cli.rs (1 → 2 lines)
+        "--no-bell",
+  +     "--no-notify",
+ ✓ (35.7s)
+  3 tools completed in 45.2s (3 ✓)
+
+Now let me also check if there's a test that validates `KNOWN_FLAGS content to make sure --no-notify` is tested:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1379,1410p' src/cli.rs ✓ (3ms)
+
+Good, the test checks value-taking flags only — --no-notify is a boolean flag so it won't be in that list. Let me verify it's properly in the help text and update the `apply_cli_flags` function doc comment:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,465p' src/main.rs ✓ (3ms)
+
+Let me update the doc comment:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (2 → 2 lines)
+    /// Apply early CLI flags that must take effect before `parse_args()` produces
+  - /// any output.  Handles `--no-color`, `--no-bell`, and `--no-rtk`.
+  + /// any output.  Handles `--no-color`, `--no-bell`, `--no-notify`, and `--no-rtk`.
+ ✓ (35.8s)
+
+Now run the full check again to be sure everything passes:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (25.9s)
+
+All green. Let me also verify the new tests ran:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "notif… ✓ (10.1s)
+
+All 7 notification-related tests pass. Let me verify the final state of my changes:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now commit:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (20 lines) ✓ (15ms)
+
+Committed. Let me verify the commit is clean:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && git diff… ✓ (4ms)
+
+Clean commit, no remaining changes. Here's what I did:
+
+src/format/mod.rs — Core implementation:
+• Added `NOTIFY_DISABLED OnceLock, disable_notify(), notify_enabled()` (mirrors the bell pattern)
+• Added `build_notification_message(elapsed)` — formats "yoyo finished after Xs" or "yoyo finished after Xm Ys"
+• Added `send_desktop_notification(elapsed) — platform-conditional fire-and-forget via std::process::Command::spawn`:
+  • macOS: `osascript -e 'display notification "..." with title "yoyo"'`
+  • Linux: `notify-send "yoyo" "..."`
+  • Windows: PowerShell toast notification
+• Modified maybe_ring_bell() to also call `send_desktop_notification()` when elapsed ≥ 10s and notifications are enabled
+• Added 7 tests covering: no-panic smoke test, enable/disable flag logic, message content validation, duration formatting (seconds, minutes, exact minutes)
+
+src/main.rs — --no-notify flag handling in `apply_cli_flags()` (4 lines)
+
+src/help.rs — Added --no-notify to CLI help text (1 line)
+
+src/cli.rs — Added `"--no-notify" to KNOWN_FLAGS` (1 line)
+
+  ↳ 7m 35s · 13066→7279 tokens · $1.12
+  ⬤ 8% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

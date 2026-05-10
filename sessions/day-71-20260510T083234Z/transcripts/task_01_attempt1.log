@@ -1,0 +1,231 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding what yoagent's CacheConfig looks like, then implement the change.
+  ▶ $ find ~/.cargo/registry/src/ -path "*/yoagent-*/src/*" -name "*.rs" | head -20  ▶ $ grep -r "CacheConfig\|CacheStrategy\|cache_config\|with_cache_config" ~/.cargo/r… ✓ (5ms)
+ ✓ (31ms)
+  ▶ $ grep -r "CacheConfig\|CacheStrategy\|cache_config\|with_cache_config" ~/.cargo/r…  ▶ $ cat Cargo.toml | grep yoagent ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 8.2s (4 ✓)
+
+Good, yoagent 0.8 is already in use. Let me examine the CacheConfig types:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 20 "pub struct CacheConfig" ~/.cargo/registry/src/index.crates.io-1949cf…📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -A 10 "pub enum CacheStrategy" ~/.cargo/registry/src/index.crates.io-1949cf…  ▶ $ grep -A 5 "fn with_cache_config" ~/.cargo/registry/src/index.crates.io-1949cf8c6… ✓ (31ms)
+ ✓ (40ms)
+ ✓ (42ms)
+  3 tools completed in 1.8s (3 ✓)
+
+Interesting — the CacheConfig::default() already has enabled: true and CacheStrategy::Auto. Let me check if yoyo's agent building is somehow overriding or not getting the default:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cache" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0…  ▶ $ grep -n "cache_config" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yo… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.4s (2 ✓)
+
+So the Agent already defaults to CacheConfig { enabled: true, strategy: Auto }. Let me check how the cache_config is actually used in the provider:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cache_config\|cache_control\|cache" ~/.cargo/registry/src/index.crates.…  ▶ $ grep -n "cache" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.2s (2 ✓)
+
+This is great. The caching is already fully implemented in yoagent 0.8 and the default is `enabled: true, strategy: Auto. Since Agent::new() already creates CacheConfig::default()`, caching should already be active unless yoyo is somehow overriding it.
+
+Let me verify that yoyo's current agent building doesn't touch cache_config at all:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cache" src/agent_builder.rs ✓ (6ms)
+  ▶ $ grep -rn "cache_config\|CacheConfig\|CacheStrategy\|with_cache" src/ 2>/dev/null ✓ (6ms)
+  2 tools completed in 3.8s (2 ✓)
+
+So yoyo never calls with_cache_config(), which means it's getting the default (`enabled: true, strategy: Auto`). Caching is already active by default!
+
+But the task says to explicitly wire it up. Let me think about this... The task is valid in spirit — being explicit about cache configuration is better than silently relying on a library default that could change. Let me now look at the agent building code:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1..31 ✓ (1ms)
+  ▶ $ grep -n "pub struct AgentConfig" src/agent_builder.rs ✓ (6ms)
+  ▶ read src/agent_builder.rs:388..468 ✓ (1ms)
+  ▶ read src/agent_builder.rs:467..527 ✓ (1ms)
+  4 tools completed in 8.3s (4 ✓)
+
+Now let me find build_side_agent and build_architect_agent:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn build_side_agent\|pub fn build_architect_agent\|pub fn build_edi… ✓ (6ms)
+  ▶ read src/agent_builder.rs:536..656 ✓ (2ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I have the full picture. The default is already enabled: true, strategy: Auto, so caching should technically be working. But being explicit is better — it documents the intent and protects against default changes. Let me implement this.
+
+Let me check what yoagent exports at the top level:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CacheConfig\|CacheStrategy" ~/.cargo/registry/src/index.crates.io-1949c… ✓ (2ms)
+  ▶ $ grep "pub use\|pub mod" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/y… ✓ (3ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Good, CacheConfig and CacheStrategy are in types.rs which is re-exported via `pub use types::*. So they're available as yoagent::CacheConfig and yoagent::CacheStrategy`.
+
+Now let me check the existing tests in the file:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[cfg(test)\]\|#\[test\]\|mod tests" src/agent_builder.rs ✓ (7ms)
+  ▶ read src/agent_builder.rs:744..784 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me check if the Agent struct's cache_config field is public:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 5 "pub cache_config" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (28ms)
+
+`cache_config is a public field on Agent`. Now I have everything I need. Let me implement:
+
+1. Add explicit with_cache_config() call in configure_agent()
+2. Also add to `build_side_agent() and build_architect_agent()` 
+3. Write a test
+
+Let me start with the test:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_agent_config_struct_fields" src/agent_builder.rs ✓ (6ms)
+
+Let me find where to add my test — near the existing agent building tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_" src/agent_builder.rs | head -20 ✓ (3ms)
+
+Let me look at one of the existing build_agent tests for the pattern:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:813..848 ✓ (0ms)
+
+Good. Now let me also see how side_agent and architect_agent tests look (if any):
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "side_agent\|architect_agent\|build_side\|build_architect" src/agent_bui… ✓ (3ms)
+
+No existing tests for those. Now let me implement the changes. First, let me add the import and the explicit cache config in configure_agent:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:8..16 ✓ (1ms)
+
+Since CacheConfig and CacheStrategy are in yoagent::types and re-exported via pub use types::*, they're available through yoagent::* already. Let me verify:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "^pub use\|^pub mod" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f… ✓ (6ms)
+
+Yes, pub use types::* means CacheConfig and CacheStrategy are available through the wildcard import `use yoagent::*;` on line 15. No additional import needed.
+
+Now let me make the changes. First, add explicit cache config to configure_agent:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (6 → 16 lines)
+  +         // Enable prompt caching — Anthropic caches the system prompt, tool
+  +         // definitions, and conversation history prefix, reducing input-token
+  +         // costs by ~90% for cached content.  CacheStrategy::Auto places cache
+  +         // breakpoints automatically at system prompt, last tool, and the
+  +         // second-to-last message.
+  +         agent = agent.with_cache_config(CacheConfig {
+  +             enabled: true,
+  +             strategy: CacheStrategy::Auto,
+  +         });
+  + 
+            // Always set execution limits — use user's --max-turns or a generous default
+            agent = agent.with_execution_limits(ExecutionLimits {
+                max_turns: self.max_turns.unwrap_or(200),
+ ✓ (35.5s)
+
+Now add cache config to build_side_agent — this one doesn't go through configure_agent, so it needs its own:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:556..596 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (17 → 21 lines)
+                .with_system_prompt(side_prompt)
+                .with_model(&self.model)
+                .with_api_key(&self.api_key)
+  +             .with_cache_config(CacheConfig {
+  +                 enabled: true,
+  +                 strategy: CacheStrategy::Auto,
+  +             })
+                .with_execution_limits(ExecutionLimits {
+                    max_turns: 1,
+                    ..ExecutionLimits::default()
+ ✓ (35.4s)
+  2 tools completed in 41.1s (2 ✓)
+
+Now add to build_architect_agent:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:604..634 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (8 → 12 lines)
+                .with_system_prompt(&self.system_prompt)
+                .with_model(architect_model)
+                .with_api_key(&self.api_key)
+  +             .with_cache_config(CacheConfig {
+  +                 enabled: true,
+  +                 strategy: CacheStrategy::Auto,
+  +             })
+                .with_execution_limits(ExecutionLimits {
+                    max_turns: 1,
+                    ..ExecutionLimits::default()
+ ✓ (35.9s)
+  2 tools completed in 45.8s (2 ✓)
+
+Now add the test. Let me find a good spot — right after the existing build_agent tests:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_agent_config_rebuild_produces_fresh_agent" src/agent_builder.rs ✓ (8ms)
+  ▶ read src/agent_builder.rs:957..987 ✓ (1ms)
+  2 tools completed in 3.3s (2 ✓)
+
+I'll add the test right after this function. Let me also check what's on line 987:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:986..991 ✓ (0ms)
+  ▶ edit src/agent_builder.rs (5 → 41 lines)
+  +     }
+  + 
+  +     #[test]
+  +     fn test_cache_config_enabled_on_all_agents() {
+  +         // All agent construction paths should enable prompt caching with Auto strategy
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  + 
+  +         // Main agent
+  +         let agent = config.build_agent();
+  +         assert!(agent.cache_config.enabled, "main agent cache should be enabled");
+  +         assert_eq!(
+  +             agent.cache_config.strategy,
+  +             CacheStrategy::Auto,
+  +             "main agent should use Auto caching strategy"
+  +         );
+  + 
+  +         // Side agent
+  +         let side = config.build_side_agent();
+  +         assert!(side.cache_config.enabled, "side agent cache should be enabled");
+  +         assert_eq!(
+  ... (19 more lines)
+ ✓ (35.6s)
+  2 tools completed in 43.5s (2 ✓)
+
+Now let's build and test:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (465ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (4.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (26.2s)
+  4 tools completed in 51.0s (4 ✓)
+
+All 88 tests pass. Let me also run the specific new test to make sure it's included:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_cache_config_ena… ✓ (115ms)
+
+Everything passes. Let me verify the changes look right:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/agent_builder.rs ✓ (4ms)
+
+Clean diff. Three agent construction paths now explicitly enable prompt caching, and a test verifies all three. Now let me commit:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (15 lines) ✓ (10ms)
+
+Done. Here's what happened:
+
+What I did: Explicitly enabled prompt caching on all three agent construction paths in src/agent_builder.rs:
+
+1. **`configure_agent()** (used by build_agent() and build_editor_agent()) — added with_cache_config(CacheConfig { enabled: true, strategy: CacheStrategy::Auto })` 
+2. `build_side_agent()` — same cache config added to the builder chain
+3. `build_architect_agent()` — same cache config added to the builder chain
+
+**The test:** test_cache_config_enabled_on_all_agents verifies all three paths produce agents with cache_config.enabled == true and cache_config.strategy == CacheStrategy::Auto.
+
+Why this matters: yoagent 0.8's CacheStrategy::Auto places cache_control: ephemeral breakpoints on the system prompt, last tool definition, and second-to-last message — exactly what Anthropic needs to cache the conversation prefix. This can reduce input token costs by ~90% for cached content across multi-turn sessions (yoyo's primary use case). The default happened to already be `enabled: true`, but being explicit documents the intent and guards against future library changes.
+
+  ↳ 5m 58s · 18628→6759 tokens · $1.21
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

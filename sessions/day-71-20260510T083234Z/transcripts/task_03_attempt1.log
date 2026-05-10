@@ -1,0 +1,168 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/format/cost.rs | head -8…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cache_hit_rate\|cache_r… ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn format_token_cou…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cache_hit_rate" ~/.carg… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cache_hit_rate" ~/.carg…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Usage" ~/.ca… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '170,220p' ~/.cargo/regis… ✓ (3ms)
+  7 tools completed in 18.2s (7 ✓)
+
+Good. Now I understand the Usage struct and its cache_hit_rate() method. Let me look at the current `handle_cost and handle_tokens` functions:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn handle_cost\|pub…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_cost\|fn hand… ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '181,300p' src/commands_i… ✓ (4ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Now I have a clear picture. Let me look at the format_token_count function and the imports in cost.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '220,250p' src/format/cos… ✓ (3ms)
+
+Now let me look at the existing tests in cost.rs to understand the testing pattern:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,520p' src/format/cos… ✓ (3ms)
+
+Now let me see where the tests section begins and the end of the file:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/format/cost.rs ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Now let me see what's around line 220 of cost.rs to find a good place to add the new function:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '195,230p' src/format/cos… ✓ (3ms)
+
+Now I have enough context. Let me implement the format_cache_stats function. I'll add it right after format_token_count:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '228,260p' src/format/cos… ✓ (3ms)
+
+Good. Now I'll add format_cache_stats after format_token_count (line 228):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (1 → 17 lines)
+  + /// Format cache statistics for display. Returns `None` if there's no caching activity.
+  + /// Example output: `"Cache: 85% hit rate (150.2k read, 12.0k written)"`
+  + pub fn format_cache_stats(usage: &yoagent::Usage) -> Option<String> {
+  +     if usage.cache_read == 0 && usage.cache_write == 0 {
+  +         return None;
+  +     }
+  +     let rate = usage.cache_hit_rate();
+  +     let pct = (rate * 100.0) as u32;
+  +     Some(format!(
+  +         "Cache: {}% hit rate ({} read, {} written)",
+  +         pct,
+  +         format_token_count(usage.cache_read),
+  +         format_token_count(usage.cache_write),
+  +     ))
+  + }
+  + 
+    pub fn context_bar(used: u64, max: u64) -> String {
+ ✓ (8.1s)
+
+Expected — I need to export it and use it. Let me first check how the format module exports things:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use\|pub mod" src/f… ✓ (3ms)
+
+Good, `pub use cost::* means format_cache_stats` is already exported. Now let me wire it into handle_cost and handle_tokens in `commands_info.rs`:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::format" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/commands_info… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.8s (2 ✓)
+
+Good, use crate::format::* imports everything including the new function. Now let me add the cache stats to handle_tokens:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '205,226p' src/commands_i… ✓ (3ms)
+
+I'll add the cache hit rate line after the cache write line and before the cost estimate:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (9 → 12 lines)
+            "    cache write: {} tokens",
+            format_token_count(session_total.cache_write)
+        );
+  +     if let Some(cache_line) = format_cache_stats(session_total) {
+  +         println!("    {cache_line}");
+  +     }
+        if let Some(cost) = estimate_cost(session_total, model) {
+            println!("    est. cost:   {}", format_cost(cost));
+        }
+ ✓ (36.4s)
+
+Now let me add it to handle_cost. Let me see the relevant section again:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '230,280p' src/commands_i… ✓ (3ms)
+
+I'll add the cache hit rate after the cache read/write line in handle_cost:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (7 → 10 lines)
+                    format_token_count(session_total.cache_read),
+                    format_token_count(session_total.cache_write)
+                );
+  +             if let Some(cache_line) = format_cache_stats(session_total) {
+  +                 println!("    {cache_line}");
+  +             }
+            }
+ ✓ (36.0s)
+
+Now let me add the tests. Let me find the end of the test module in cost.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/format/cost.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ edit src/format/cost.rs (5 → 64 lines)
+            let output = format_turn_costs(&costs);
+            // Should show dash for unknown cost
+            assert!(output.contains("—"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_cache_stats_no_activity() {
+  +         let usage = yoagent::Usage {
+  +             input: 10_000,
+  +             output: 5_000,
+  +             cache_read: 0,
+  +             cache_write: 0,
+  +             total_tokens: 15_000,
+  +         };
+  +         assert!(format_cache_stats(&usage).is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_cache_stats_with_reads() {
+  +         let usage = yoagent::Usage {
+  ... (44 more lines)
+ ✓ (36.7s)
+  3 tools completed in 51.7s (3 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (8.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (17.5s)
+  2 tools completed in 33.1s (2 ✓)
+
+All 88 tests pass. Let me verify the new tests specifically ran:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_cache_stats 2>… ✓ (115ms)
+
+All 4 new tests pass. Let me also run the full build to confirm:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (106ms)
+
+Everything passes. Now let me commit:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (10ms)
+
+Done. Clean implementation:
+
+1. **`format_cache_stats()** in src/format/cost.rs — returns None` when there's no caching activity, otherwise returns a human-readable string like "Cache: 72% hit rate (80.0k read, 10.0k written)" using yoagent's Usage::cache_hit_rate().
+
+2. Wired into `/tokens` — shows cache hit rate after the cache write token count.
+
+3. Wired into `/cost` — shows cache hit rate inside the cache read/write block.
+
+4. 4 unit tests covering all edge cases: no activity (None), reads only, writes only, and mixed.
+
+  ↳ 4m 47s · 14365→5107 tokens · $0.739
+  ⬤ 8% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
