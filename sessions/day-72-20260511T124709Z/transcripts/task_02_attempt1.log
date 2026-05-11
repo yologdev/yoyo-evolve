@@ -1,0 +1,391 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current commands_map.rs to understand the existing pattern for language detection and symbol extraction.
+  ▶ $ grep -n "fn detect_language\|fn extract_symbols\|fn extract_.*_symbols" src/comm…  ▶ $ grep -n "\"rs\"\|\"py\"\|\"js\"\|\"ts\"\|\"go\"\|\"java\"" src/commands_map.rs |… ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me read the key sections in detail:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:111..141  ▶ read src/commands_map.rs:467..587 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me see the SymbolKind enum and the regex patterns used by existing extractors:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1..111 ✓ (1ms)
+
+Now let me see the existing tests to understand the pattern:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1350..1450 ✓ (2ms)
+
+Now let me see the `is_public_symbol logic and the format_repo_map` function to understand how SymbolKind::Module and other kinds are displayed:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Module\|Macro\|Namespace\|SymbolKind::Const\|is_public_symbol\|format_s… ✓ (4ms)
+
+Let me see how symbol kinds are formatted to understand what keyword prefix is used for each kind:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:930..980 ✓ (2ms)
+  ▶ read src/commands_map.rs:979..1009 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Let me see the third format block too:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1008..1038 ✓ (0ms)
+
+Now I also need to check is_public_symbol logic used for some languages and the build_repo_map to see how it decides public vs not:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "is_public\|first_ident_uppercase" src/commands_map.rs | head -20 ✓ (4ms)
+
+Now I have a comprehensive picture. Let me also check the SymbolKind enum doesn't already have a Macro or Namespace variant — I'll need to add Macro and Namespace for the new C/C++ extractors:
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Macro\|Namespace" src/commands_map.rs ✓ (8ms)
+
+I need to add Macro and Namespace to SymbolKind, and update all the match arms that use it. Let me also check the `parse_ast_grep_symbols` function:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:586..686 ✓ (1ms)
+  ▶ read src/commands_map.rs:685..765 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I have a thorough understanding of the codebase. Let me plan and implement:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 25.2s (8 ✓)
+
+Let me start. First, add Macro and Namespace to the SymbolKind enum:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (4 → 6 lines)
+        Const,
+        Impl,
+        Module,
+  +     Macro,
+  +     Namespace,
+    }
+ ✓ (5.7s)
+  2 tools completed in 10.9s (2 ✓)
+
+Good, as expected — I need to update all the match arms. Let me do that now:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+There are 3 match blocks for kind formatting. Let me update them all:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (2 → 4 lines)
+                    SymbolKind::Impl => format!("{MAGENTA}impl{RESET}"),
+                    SymbolKind::Module => format!("{MAGENTA}mod{RESET}"),
+  +                 SymbolKind::Macro => format!("{CYAN}macro{RESET}"),
+  +                 SymbolKind::Namespace => format!("{MAGENTA}namespace{RESET}"),
+ ✓ (5.9s)
+
+Two more match blocks:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (39 → 43 lines)
+                    SymbolKind::Impl => "impl",
+                    SymbolKind::Module => "mod",
+  +                 SymbolKind::Macro => "macro",
+  +                 SymbolKind::Namespace => "namespace",
+                };
+                output.push_str(&format!("  {kind_label} {}\n", sym.name));
+            }
+  ···
+                        SymbolKind::Const => "const",
+                        SymbolKind::Impl => "impl",
+                        SymbolKind::Module => "mod",
+  +                     SymbolKind::Macro => "macro",
+  +                     SymbolKind::Namespace => "namespace",
+ ✓ (5.9s)
+
+There are also matches in commands_search.rs. Let me fix those:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "SymbolKind::" src/commands_search.rs | head -30 ✓ (4ms)
+  ▶ edit src/commands_search.rs (2 → 4 lines)
+            SymbolKind::Impl => format!("{MAGENTA}impl{RESET}"),
+            SymbolKind::Module => format!("{MAGENTA}mod{RESET}"),
+  +         SymbolKind::Macro => format!("{CYAN}macro{RESET}"),
+  +         SymbolKind::Namespace => format!("{MAGENTA}namespace{RESET}"),
+ ✓ (5.8s)
+  ▶ edit src/commands_search.rs (2 → 4 lines)
+            SymbolKind::Impl => "impl",
+            SymbolKind::Module => "mod",
+  +         SymbolKind::Macro => "macro",
+  +         SymbolKind::Namespace => "namespace",
+ ✓ (9.5s)
+  3 tools completed in 25.8s (3 ✓)
+
+Good — the match arms are all updated now. The only remaining error is that Macro and Namespace aren't used yet. Let me now add the regex statics and the extractor functions. Let me do everything in one go:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Add the regex statics after the Java regexes (line 75-76 area):
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:73..78 ✓ (0ms)
+  ▶ read src/commands_map.rs:75..78 ✓ (1ms)
+  ▶ edit src/commands_map.rs (3 → 36 lines)
+        .unwrap()
+  + });
+  + 
+  + // ── C regexes ──
+  + static RE_C_FUNC: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(r"^[a-zA-Z_][\w\s\*]*\s+(\w+)\s*\(").unwrap()
+    });
+  + static RE_C_STRUCT: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^(?:typedef\s+)?struct\s+(\w+)").unwrap());
+  + static RE_C_ENUM: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^(?:typedef\s+)?enum\s+(\w+)").unwrap());
+  + static RE_C_DEFINE: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^#define\s+(\w+)").unwrap());
+  + 
+  + // ── C++ regexes (extends C) ──
+  + static RE_CPP_CLASS: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^(?:template\s*<[^>]*>\s*)?class\s+(\w+)").unwrap());
+  + static RE_CPP_NAMESPACE: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^namespace\s+(\w+)").unwrap());
+  + 
+  ... (16 more lines)
+ ✓ (9.6s)
+  3 tools completed in 24.6s (3 ✓)
+
+Expected — they're unused until I add the extractor functions. Let me now update `detect_language() and extract_symbols()`, then add the extractor functions:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (9 → 13 lines)
+            "ts" | "tsx" => Some("typescript"),
+            "go" => Some("go"),
+            "java" => Some("java"),
+  +         "c" | "h" => Some("c"),
+  +         "cc" | "cpp" | "cxx" | "hpp" | "hxx" | "hh" => Some("cpp"),
+  +         "rb" => Some("ruby"),
+  +         "sh" | "bash" | "zsh" => Some("shell"),
+            _ => None,
+        }
+ ✓ (9.6s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 26.3s (4 ✓)
+
+Now update extract_symbols() and add the 4 new extractors:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (9 → 13 lines)
+            "typescript" => extract_ts_symbols(code),
+            "go" => extract_go_symbols(code),
+            "java" => extract_java_symbols(code),
+  +         "c" => extract_c_symbols(code),
+  +         "cpp" => extract_cpp_symbols(code),
+  +         "ruby" => extract_ruby_symbols(code),
+  +         "shell" => extract_shell_symbols(code),
+            _ => Vec::new(),
+        }
+ ✓ (5.9s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 15.4s (3 ✓)
+
+Now add the 4 extractor functions. Let me find where to insert them — after extract_java_symbols:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^fn extract_java_symbols" src/commands_map.rs ✓ (8ms)
+  ▶ $ grep -n "^fn extract_java\|^/// Build the ast" src/commands_map.rs ✓ (8ms)
+  ▶ read src/commands_map.rs:568..573 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (2 → 250 lines)
+  +     symbols
+  + }
+  + 
+  + /// C keywords that match the function regex but aren't function definitions.
+  + const C_NON_FUNC_KEYWORDS: &[&str] = &[
+  +     "if", "for", "while", "switch", "return", "else", "do", "sizeof", "typedef", "extern",
+  +     "static", "inline", "volatile", "register", "goto", "case", "break", "continue",
+  + ];
+  + 
+  + /// Extract symbols from C source code.
+  + fn extract_c_symbols(code: &str) -> Vec<Symbol> {
+  +     let mut symbols = Vec::new();
+  + 
+  +     let re_func = &*RE_C_FUNC;
+  +     let re_struct = &*RE_C_STRUCT;
+  +     let re_enum = &*RE_C_ENUM;
+  +     let re_define = &*RE_C_DEFINE;
+  + 
+  +     for (line_num, line) in code.lines().enumerate() {
+  +         let trimmed = line.trim_start();
+  ... (230 more lines)
+ ✗ (0ms)
+    │ old_text matches 7 locations in src/commands_map.rs. Include more surrounding context to make the match unique.
+  5 tools completed in 48.0s (4 ✓, 1 ✗)
+
+I need to be more specific. Let me use the surrounding context of the extract_java_symbols closing:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:565..575 ✓ (1ms)
+  ▶ edit src/commands_map.rs (4 → 252 lines)
+  +     symbols
+  + }
+  + 
+  + /// C keywords that match the function regex but aren't function definitions.
+  + const C_NON_FUNC_KEYWORDS: &[&str] = &[
+  +     "if", "for", "while", "switch", "return", "else", "do", "sizeof", "typedef", "extern",
+  +     "static", "inline", "volatile", "register", "goto", "case", "break", "continue",
+  + ];
+  + 
+  + /// Extract symbols from C source code.
+  + fn extract_c_symbols(code: &str) -> Vec<Symbol> {
+  +     let mut symbols = Vec::new();
+  + 
+  +     let re_func = &*RE_C_FUNC;
+  +     let re_struct = &*RE_C_STRUCT;
+  +     let re_enum = &*RE_C_ENUM;
+  +     let re_define = &*RE_C_DEFINE;
+  + 
+  +     for (line_num, line) in code.lines().enumerate() {
+  +         let trimmed = line.trim_start();
+  ... (231 more lines)
+ ✓ (41.8s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 9s (3 ✓)
+
+Now let me try building to see if the basic structure compiles:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (124ms)
+
+Builds clean. Let me also check for the C struct/enum regex capture group logic — I need to verify the regex patterns actually work as expected. The regex `^(?:typedef\s+)?struct\s+(\w+) — when typedef` is present, the struct name is in group 1. When absent, the struct name is also in group 1. Wait, the issue is that (?:typedef\s+)? is non-capturing, so `(\w+)` is always group 1. Let me fix my extractor code — I was using group 2 which won't exist:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n <<'EO… (14 lines) ✓ (3ms)
+
+Right — the non-capturing group (?:...) means both cases use group 1. My extractors are looking at group 2 first, which is always None. I need to fix the struct/enum capture logic in both extract_c_symbols and extract_cpp_symbols:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "caps.get(2)" src/commands_map.rs ✓ (8ms)
+
+Wait, the existing Rust extractors also use group 2 because their regex has (pub...)? as group 1 and the name as group 2. For C, the regex ^(?:typedef\s+)?struct\s+(\w+) uses non-capturing for typedef, so group 1 IS the name. Let me fix:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "caps.get(2)" src/commands_map.rs ✓ (8ms)
+  ▶ $ grep -n "caps.get(2)" src/commands_map.rs ✓ (8ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Let me find the exact lines in my newly added extractors:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "caps.get(2)\|caps.get(1)" src/commands_map.rs | grep -A0 -B0 "59[0-9]\|… ✓ (3ms)
+
+The struct/enum regex for C is ^(?:typedef\s+)?struct\s+(\w+) — only 1 capture group. But my code tries group 2 first. Since group 2 is always None, it falls back to group 1 — which is correct! The fallback logic actually works fine. Let me verify:
+
+For struct point:
+• Group 1 = "point", group 2 = None
+• Code: `name = caps.get(2) -> None -> "", then if name.is_empty() → caps.get(1) -> "point"` ✓
+
+For typedef struct point:
+• Group 1 = "point", group 2 = None
+• Same path: falls back to group 1 → "point" ✓
+
+So the logic is correct (it's a bit redundant — always using group 2 then falling back — but it works). Good.
+
+Now let me add the tests:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find the end of the test module to see where to insert:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -30 src/commands_map.rs ✓ (38ms)
+  ▶ $ wc -l src/commands_map.rs ✓ (7ms)
+  ▶ read src/commands_map.rs:1998..2003 ✓ (0ms)
+  3 tools completed in 10.9s (3 ✓)
+
+Now I'll add the tests before the closing } of the module. Let me also check the detect_language test to update it:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1593..1613 ✓ (1ms)
+
+Let me also check if there's a test that checks the language list (like the `for lang in &["rust", "python", ...` one):
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "for lang in" src/commands_map.rs ✓ (8ms)
+  ▶ read src/commands_map.rs:1775..1790 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+That test is about ast-grep rules — I'm not adding ast-grep rules for the new languages (regex-only for now), so I'll leave it.
+
+Now let me add all the tests:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (8 → 329 lines)
+            assert_eq!(MapBackend::AstGrep, MapBackend::AstGrep);
+            assert_eq!(MapBackend::Regex, MapBackend::Regex);
+            assert_ne!(MapBackend::AstGrep, MapBackend::Regex);
+  +     }
+  + 
+  +     // ── C extraction tests ──
+  + 
+  +     #[test]
+  +     fn extract_c_symbols_basic() {
+  +         let code = r#"
+  + #include <stdio.h>
+  + 
+  + #define MAX_SIZE 100
+  + #define MIN(a,b) ((a)<(b)?(a):(b))
+  + 
+  + typedef struct point {
+  +     int x;
+  +     int y;
+  + } Point;
+  + 
+  ... (306 more lines)
+ ✓ (39.9s)
+
+Now let's run the tests:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_map 2>&1 ✓ (1.3s)
+
+All 52 tests pass. Let me now run the full CI check:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 && cargo test 2… ✓ (34.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (536ms)
+  5 tools completed in 1m 0s (5 ✓)
+
+All clean. Let me now update the CLAUDE.md to reflect the new language count:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "6 languages\|supports 6\|Rust, Python, JavaScript, TypeScript, Go, Java… ✓ (8ms)
+  ▶ $ grep -n "commands_map" CLAUDE.md ✓ (8ms)
+  2 tools completed in 4.3s (2 ✓)
+
+No doc references to the language count in CLAUDE.md. Let me check README too:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "language\|repo map\|/map" README.md | head -10 ✓ (3ms)
+  ▶ $ grep -n "language\|repo map\|/map" docs/src/usage/commands.md 2>/dev/null | head… ✓ (3ms)
+  ▶ read docs/src/usage/commands.md:723..753 ✓ (0ms)
+  ▶ read docs/src/usage/commands.md:752..772 ✓ (1ms)
+  4 tools completed in 12.9s (4 ✓)
+
+Found it! Line 755. Let me update:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - **Supported languages:** Rust, Python, JavaScript, TypeScript, Go, Java.
+  + **Supported languages:** Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, Ruby, Shell.
+ ✓ (29.5s)
+
+Now let me also check the help.rs file to see if there's a mention of supported languages:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "language\|Rust, Python\|supported lang" src/help.rs | head -10 ✓ (4ms)
+  ▶ read src/help.rs:340..345 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -              Supported languages: Rust, Python, JavaScript, TypeScript, Go, Java.\n\n\
+  +              Supported languages: Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, Ruby, Shell.\n\n\
+ ✓ (40.6s)
+  3 tools completed in 50.1s (3 ✓)
+
+  ↳ 10m 44s · 27443→19407 tokens · $2.75
+  ⬤ 17% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

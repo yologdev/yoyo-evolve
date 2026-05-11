@@ -1,0 +1,194 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the help system and KNOWN_COMMANDS, then add the guard tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const KNOWN_COMMAND…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/hel… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '49,160p' src/commands.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -n +1967 src/help.rs | head… ✓ (4ms)
+ ✓ (5ms)
+  4 tools completed in 5.3s (4 ✓)
+
+Now let me see the existing tests and understand help_command_completions, `command_help, and command_short_description`:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn help_command_com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn command_help" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn command_short_de… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '13,36p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help.rs ✓ (2ms)
+ ✓ (3ms)
+  5 tools completed in 11.6s (5 ✓)
+
+Let me see the end of the tests section to know where to insert:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -100 src/help.rs ✓ (3ms)
+
+Now let me check what existing tests already exist that overlap — there's a `test_command_short_description_covers_all_commands` that does some of what we need. Let me see it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_command_short_desc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/help.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Let me check the existing exhaustive tests to understand what they already cover:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2191,2290p' src/help.rs ✓ (4ms)
+
+Interesting! There are already tests that cover most of what we need:
+
+1. `test_command_help_exhaustive_for_known_commands — checks command_help()` for all KNOWN_COMMANDS (skips /exit)
+2. test_command_short_description_coverage — checks command_short_description() for all KNOWN_COMMANDS
+3. test_help_text_contains_all_commands — but uses a hardcoded list, not KNOWN_COMMANDS
+
+The task asks for:
+1. A test that checks all KNOWN_COMMANDS have `command_help()` entries (excluding aliases) — **partially exists** but only skips /exit, not /clear! and /quit
+2. A test that checks all KNOWN_COMMANDS have `command_short_description()` — exists but doesn't skip aliases
+3. A test that all commands with command_help() also appear in help_text() output — partially exists with hardcoded list
+4. A help_command_completions_covers_known_commands test
+
+Let me check which aliases need special treatment by verifying what currently passes:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -q test_command_help_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -q test_command_short… ✓ (197ms)
+ ✓ (216ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -q -- help::tests 2>&… ✓ (133ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Good, all existing tests pass. Now let me check: do /clear! and /quit actually have help entries already?
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"clear!"' src/help.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"quit"' src/help.rs | h… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 3.2s (2 ✓)
+
+So /clear! and /quit actually DO have both command_help() and command_short_description() entries. They're not missing — they have help. Let me verify what the `help_text()` output contains:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "clear!" src/help.rs | h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn help_text" src/help.… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Good — /clear! IS in help_text(). Let me check if `/quit and /exit` are too:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/quit\|/exit" src/help.… ✓ (4ms)
+
+So /quit and /exit are both in help_text() but as a combined entry. The text contains both /quit and /exit as substrings. So actually NO commands are truly "missing" from the help system — they all have entries.
+
+The task asks to add guard tests that will catch future regressions. The existing test_command_help_exhaustive_for_known_commands only skips /exit, and test_command_short_description_coverage skips nothing. The task wants a cleaner version that explicitly names aliases.
+
+The task also wants a new test `all_help_commands_in_help_text` that uses KNOWN_COMMANDS dynamically (the existing test uses a hardcoded list), and a `help_command_completions_covers_known_commands` test.
+
+Let me now add the three new tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:2370.. ✓ (1ms)
+  ▶ edit src/help.rs (7 → 69 lines)
+            // The cli::help_text() wrapper must return identical output
+            // to the canonical cli_help_text() in help.rs.
+            assert_eq!(crate::cli::help_text(), cli_help_text());
+  +     }
+  + 
+  +     /// Regression guard: every command in KNOWN_COMMANDS (except aliases) must
+  +     /// have both a detailed `command_help()` entry and a `command_short_description()`.
+  +     #[test]
+  +     fn all_known_commands_have_help() {
+  +         // Aliases and special variants that share help with their base command
+  +         let aliases = ["/exit", "/clear!", "/quit"];
+  + 
+  +         for &cmd in KNOWN_COMMANDS {
+  +             let name = cmd.strip_prefix('/').unwrap_or(cmd);
+  +             if aliases.contains(&cmd) {
+  +                 continue;
+  +             }
+  +             assert!(
+  +                 command_help(name).is_some(),
+  +                 "command_help(\"{name}\") returned None — add help text for /{name}"
+  ... (47 more lines)
+ ✓ (38.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -q -- help::tests 2>&… ✓ (132ms)
+  3 tools completed in 58.6s (3 ✓)
+
+Some commands are in KNOWN_COMMANDS but not in help_text(). Let me find which ones:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat <<'EOF' … (4 lines) ✓ (128ms)
+
+It fails on first missing. Let me check all at once by making the test collect failures instead of asserting each one. But first let me check the help_text() function to see what commands are actually listed:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1655,1870p' src/help.rs ✓ (5ms)
+
+Now let me find which commands are in KNOWN_COMMANDS but NOT in `help_text()`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (7 lines) ✓ (30ms)
+
+Let me approach this differently — search for the missing commands in help_text():
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for cmd in /… (5 lines) ✓ (46ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for cmd in c… (6 lines) ✓ (23ms)
+  2 tools completed in 7.8s (2 ✓)
+
+So /copy and /evolution are in KNOWN_COMMANDS but not in help_text(). The task says "right now all 82 commands are covered" but that's not quite accurate — these two are missing from help_text(). The task's intent is a regression guard, so I should handle this properly.
+
+Looking at the existing test test_help_text_contains_all_commands — it has a hardcoded list that doesn't include /copy or /evolution. The task wants a dynamic test that uses KNOWN_COMMANDS.
+
+The right approach: I should add /copy and /evolution to help_text() so the new guard test passes. But actually, let me re-read the task more carefully. It says: "Every command that has `command_help() also appears in the help_text()` output." So the test should verify that if command_help() exists, it's also in help_text(). Let me verify /copy and /evolution DO have command_help() entries:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"copy"\|"evolution"' sr… ✓ (3ms)
+
+Yes — both have command_help() and command_short_description() entries. They're just missing from the help_text() summary. I should fix that discrepancy and then the guard test catches it. Let me add them to help_text():
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '638,660p' src/help.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '978,1000p' src/help.rs ✓ (3ms)
+  2 tools completed in 7.5s (2 ✓)
+
+Now let me add /copy and /evolution to the help_text() function. /copy fits in Session section, /evolution fits in Session or a subsection. Let me see where they belong:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1655,1680p' src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1678,1720p' src/help.rs ✓ (3ms)
+  2 tools completed in 5.7s (2 ✓)
+
+I'll add /copy after /export (Session section, it's about copying conversation content) and /evolution after /changelog (Session section, it shows history):
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (4 → 10 lines)
+        out.push_str("  /changelog [N]     Show recent git commit history (default: 15, max: 100)\n");
+  +     out.push_str(
+  +         "  /evolution [N]     Show evolution history, session stats, and CI runs\n",
+  +     );
+        out.push_str(
+            "  /export [path]     Export conversation as readable markdown (default: conversation.md)\n",
+  +     );
+  +     out.push_str(
+  +         "  /copy [last|code]  Copy text to the system clipboard (last message, code block, etc.)\n",
+        );
+ ✓ (40.2s)
+
+Now let's run the tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -q -- help::tests 2>&… ✓ (136ms)
+
+All 25 tests pass (3 new ones + 22 existing). Now run the full check suite:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (30.3s)
+  3 tools completed in 54.9s (3 ✓)
+
+All checks pass. Let me verify the final state of the new tests:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2376,2445p' src/help.rs ✓ (4ms)
+
+Everything looks good. Now commit:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done. Here's what I did:
+
+**Three new guard tests added to src/help.rs:**
+
+1. `all_known_commands_have_help` — iterates every entry in KNOWN_COMMANDS, skipping aliases (/exit, /clear!, /quit), and asserts both command_help() and command_short_description() return Some(...). Any future command added to KNOWN_COMMANDS without help documentation will fail this test with a clear message.
+
+2. `all_help_commands_in_help_text` — verifies every non-alias command in `KNOWN_COMMANDS appears in the help_text() output, ensuring users can discover all commands via /help`. This test immediately caught that /copy and /evolution were missing from help_text().
+
+3. **`help_command_completions_covers_known_commands** — verifies help_command_completions("") returns entries for all commands (except /exit` which is explicitly filtered by the function itself), ensuring tab-completion is complete.
+
+Bug fix: Added /copy and /evolution to the `help_text() function — they had command_help() and command_short_description()` entries but were invisible in the /help summary output. The new guard test caught this discrepancy.
+
+  ↳ 5m 29s · 15491→6571 tokens · $1.01
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

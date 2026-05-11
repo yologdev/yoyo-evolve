@@ -1,0 +1,317 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the plan command, then implement the changes.
+  ▶ read src/commands_plan.rs  ▶ $ grep -n "plan" src/dispatch.rs | head -40  ▶ $ grep -n "plan" src/help.rs | head -30 ✓ (6ms)
+ ✓ (6ms)
+ ✓ (5ms)
+  3 tools completed in 1.8s (3 ✓)
+
+Now let me look at how the dispatch handles /plan and how the agent messages are accessed:
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n -A 30 "CommandRoute::Plan =>" src/dispatch.rs  ▶ $ grep -n "last_input" src/dispatch.rs | head -20 ✓ (3ms)
+ ✓ (39ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me look at how CommandResult::Prompt works:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CommandResult" src/dispatch.rs | head -20 ✓ (3ms)
+  ▶ $ grep -n -A 3 "enum CommandResult" src/dispatch.rs ✓ (38ms)
+  ▶ read src/dispatch.rs:264..294 ✓ (1ms)
+  3 tools completed in 9.6s (3 ✓)
+
+Good. So CommandResult::SendToAgent(String) exists. Now let me understand how the plan currently captures the agent's output. After run_prompt is called in handle_plan, the plan is in the agent's messages. Let me check how messages are accessed:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "agent.messages\b" src/prompt.rs | head -20  ▶ $ grep -n "agent.messages\b" src/dispatch.rs | head -20 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me understand the full picture. The plan output comes from the agent's response. I need to capture it. Let me look at how messages look:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "assistant" src/prompt.rs | grep -i "message\|text\|content" | head -20  ▶ $ grep -n "extract_last_assistant_text" src/commands_file.rs | head -5 ✓ (4ms)
+ ✓ (5ms)
+  ▶ read src/commands_file.rs:957..997 ✓ (1ms)
+  3 tools completed in 6.1s (3 ✓)
+
+Good. Now I have a clear picture. Let me set up a plan and implement:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 19.0s (7 ✓)
+
+Let me now look at how handle_plan's return value is used in dispatch — it seems the function returns Option<String> which gets stored in `last_input. I need to think about the design for /plan apply`. 
+
+Looking at the current flow:
+• `handle_plan returns Option<String> — when Some(plan_prompt), dispatch stores it in last_input`
+• For /plan apply, I need to return a signal that says "run this prompt through the agent"
+
+The task says to return CommandResult::Prompt(prompt) but looking at the actual enum, it's CommandResult::SendToAgent(String). Let me check how SendToAgent is handled in the REPL:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "SendToAgent" src/repl.rs src/dispatch.rs ✓ (8ms)
+  ▶ read src/repl.rs:770..795 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+`SendToAgent falls through to the agent prompt handling. That's exactly what I need for /plan apply`.
+
+Now, the key design question: handle_plan currently returns Option<String> and is called from dispatch with special handling. I need to change the return type to accommodate the `/plan apply case returning SendToAgent`. Let me think about this...
+
+The cleanest approach: change handle_plan to return a new enum that distinguishes between:
+1. No action needed (None equivalent) → CommandResult::Continue
+2. Plan was run, store last_input (Some(plan_prompt)) → CommandResult::Continue (with side effects)  
+3. Apply requested → `CommandResult::SendToAgent(apply_prompt)`
+
+Actually, looking at it more carefully, the simplest change is to make handle_plan return a CommandResult directly instead of Option<String>. Let me check what fields of dispatch context it would need:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:940..960 ✓ (0ms)
+
+OK, I think the cleanest approach is:
+1. Keep handle_plan returning Option<String> for backward compatibility
+2. Add a new enum to distinguish the return types, or...
+3. Actually, let me just have handle_plan handle the show/clear cases internally and return None, and for apply, have it return a special marker.
+
+Wait, I think the simplest approach: change handle_plan to return an enum PlanResult. Let me implement this cleanly.
+
+Let me start implementing:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_plan.rs (9 → 10 lines)
+    use crate::prompt::run_prompt;
+    
+    use std::sync::atomic::{AtomicBool, Ordering};
+  + use std::sync::Mutex;
+    use yoagent::agent::Agent;
+    use yoagent::*;
+ ✓ (9.7s)
+  2 tools completed in 17.4s (2 ✓)
+
+Expected — I'll add the LAST_PLAN storage that uses the Mutex:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (1 → 27 lines)
+    static PLAN_MODE: AtomicBool = AtomicBool::new(false);
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Last plan storage — holds the text of the most recently generated plan so
+  + // the user can review (/plan show) or execute (/plan apply) it later.
+  + // ---------------------------------------------------------------------------
+  + 
+  + static LAST_PLAN: Mutex<Option<String>> = Mutex::new(None);
+  + 
+  + /// Store the text of the last generated plan.
+  + pub fn set_last_plan(plan: String) {
+  +     if let Ok(mut guard) = LAST_PLAN.lock() {
+  +         *guard = Some(plan);
+  +     }
+  + }
+  + 
+  + /// Retrieve the last stored plan, if any.
+  + pub fn get_last_plan() -> Option<String> {
+  +     LAST_PLAN.lock().ok().and_then(|g| g.clone())
+  + }
+  ... (7 more lines)
+ ✓ (9.6s)
+
+Expected — these will be used once I add the subcommands. Let me continue with the full implementation. Let me now update the return type and add the subcommands:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now update PLAN_SUBCOMMANDS and parse_plan_task:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (2 → 2 lines)
+    /// Subcommand names for `/plan <Tab>` completion.
+  - pub const PLAN_SUBCOMMANDS: &[&str] = &["on", "off", "open", "close"];
+  + pub const PLAN_SUBCOMMANDS: &[&str] = &["on", "off", "open", "close", "show", "apply", "clear"];
+ ✓ (9.5s)
+  ▶ edit src/commands_plan.rs (2 → 2 lines)
+            match task.as_str() {
+  -             "on" | "off" | "open" | "close" => None,
+  +             "on" | "off" | "open" | "close" | "show" | "apply" | "clear" => None,
+ ✓ (9.6s)
+  2 tools completed in 50.7s (2 ✓)
+
+Now let me add the PlanResult enum and update `handle_plan`:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (3 → 3 lines) ✓ (9.6s)
+
+Let me now add the PlanResult enum before build_plan_prompt and rewrite handle_plan:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_plan.rs:73..173 ✓ (1ms)
+  ▶ read src/commands_plan.rs:170..180 ✓ (0ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Now let me implement the full update. I need to:
+
+1. Add PlanResult enum 
+2. Update handle_plan to return PlanResult, add show/apply/clear subcommands, and capture plan text after run_prompt
+3. Update the usage display to mention the new subcommands
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (95 → 169 lines)
+        )
+    }
+    
+  - /// Handle the `/plan` command: toggle plan mode or create a structured plan.
+  + /// Build a prompt that instructs the agent to execute a previously generated plan.
+  + pub fn build_apply_prompt(plan_text: &str) -> String {
+  +     format!(
+  +         "Execute the following plan. Implement each step, writing code and running tests as you go.\n\n\
+  +          ## Plan\n{plan_text}\n\n\
+  +          Work through each step. After completing all steps, verify with `cargo build && cargo test` \
+  +          (or the project's equivalent)."
+  +     )
+  + }
+  + 
+  + /// Result of handling a `/plan` command.
+  + pub enum PlanResult {
+  +     /// Command handled internally (toggle, show, clear, or no-op). Continue the REPL.
+  +     Handled,
+  +     /// A plan was generated. Contains the plan prompt used (stored as last_input).
+  +     PlanGenerated(String),
+  ... (135 more lines)
+ ✓ (5.8s)
+
+Good — now I need to update dispatch.rs to handle the new return type:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/dispatch.rs (15 → 22 lines)
+            CommandRoute::Plan => {
+  -             if let Some(plan_prompt) = commands::handle_plan(
+  +             match commands::handle_plan(
+                    ctx.input,
+                    ctx.agent,
+                    ctx.session_total,
+  ···
+                )
+                .await
+                {
+  -                 *ctx.last_input = Some(plan_prompt);
+  -                 *ctx.last_error = None;
+  -                 auto_compact_if_needed(ctx.agent);
+  +                 commands::PlanResult::PlanGenerated(plan_prompt) => {
+  +                     *ctx.last_input = Some(plan_prompt);
+  +                     *ctx.last_error = None;
+  +                     auto_compact_if_needed(ctx.agent);
+  +                     CommandResult::Continue
+  +                 }
+  +                 commands::PlanResult::Apply(apply_prompt) => {
+  ... (7 more lines)
+ ✓ (6.0s)
+  4 tools completed in 20.5s (4 ✓)
+
+I need to check how commands re-exports things from commands_plan:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "plan" src/commands.rs | head -20 ✓ (3ms)
+
+I need to add PlanResult to the re-export:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_plan::{handle_plan, is_plan_mode, PLAN_MODE_PROMPT};
+  + pub use crate::commands_plan::{handle_plan, is_plan_mode, PlanResult, PLAN_MODE_PROMPT};
+ ✓ (40.5s)
+  ▶ $ cargo build 2>&1 | head -30 ✓ (123ms)
+  2 tools completed in 45.9s (2 ✓)
+
+Build passes. Let me now update help.rs:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ read src/help.rs:843..863 ✓ (0ms)
+  ▶ edit src/help.rs (15 → 23 lines)
+            "plan" => Some(
+  -             "/plan — Plan mode toggle & one-shot planning (architect mode)\n\n\
+  +             "/plan — Plan mode toggle, one-shot planning, and plan-then-apply workflow\n\n\
+                 Usage:\n\
+                 \x20 /plan on|open        Enter plan mode (read-only, agent thinks but won't modify)\n\
+                 \x20 /plan off|close      Exit plan mode (return to normal operation)\n\
+                 \x20 /plan                Show current plan mode status\n\
+  -              \x20 /plan <task>         One-shot plan: create a step-by-step plan without tools\n\n\
+  +              \x20 /plan <task>         One-shot plan: create a step-by-step plan without tools\n\
+  +              \x20 /plan show           Display the last generated plan\n\
+  +              \x20 /plan apply          Execute the last generated plan (agent runs it with tools)\n\
+  +              \x20 /plan clear          Discard the stored plan\n\n\
+                 Plan mode restricts the agent to read-only operations — it can read files,\n\
+                 search, and analyze, but will not modify files or run destructive commands.\n\
+                 Useful for understanding a codebase before making changes.\n\n\
+  +              Plan-then-apply workflow:\n\
+  +              \x20 1. /plan <task>  — generate a structured plan (stored automatically)\n\
+  +              \x20 2. /plan show    — review the plan\n\
+  +              \x20 3. /plan apply   — agent executes the plan with full tool access\n\n\
+                 Examples:\n\
+  ... (6 more lines)
+ ✓ (40.7s)
+  4 tools completed in 58.5s (4 ✓)
+
+Now let me also update the /plan help in the main help_text and the command_short_description:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "plan" src/help.rs | grep -v "test\|fn\|assert\|//\|#\[" | head -20 ✓ (4ms)
+  ▶ $ grep -n "/plan" src/help.rs | grep -v "test\|fn\|assert\|//\|#\[" | tail -20 ✓ (4ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Let me update lines 1570 and 1802:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1568..1573 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     let _ = writeln!(s, "    /plan <task>       Plan a task without executing");
+  +     let _ = writeln!(s, "    /plan <task>       Plan a task without executing (show/apply/clear)");
+ ✓ (40.9s)
+  ▶ read src/help.rs:1800..1805 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     out.push_str("  /plan [on|off|task] Plan mode toggle or one-shot task plan (architect mode)\n");
+  +     out.push_str("  /plan [on|off|task] Plan mode toggle, one-shot plan, show/apply/clear\n");
+ ✓ (40.8s)
+  4 tools completed in 1m 32s (4 ✓)
+
+Now update command_short_description for plan:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1935..1938 ✓ (0ms)
+  ▶ $ grep -n '"plan"' src/help.rs | tail -5 ✓ (3ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "plan" => Some("Plan mode toggle or one-shot task plan"),
+  +         "plan" => Some("Plan mode toggle, one-shot plan, show/apply/clear"),
+ ✓ (40.1s)
+  3 tools completed in 49.3s (3 ✓)
+
+Now update the command_arg_hint for plan:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:249..252 ✓ (0ms)
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "plan" => Some("on | off | open | close | <description>"),
+  +         "plan" => Some("on | off | show | apply | clear | <task>"),
+ ✓ (40.9s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 49.3s (3 ✓)
+
+Now let me add the tests:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_plan.rs:253..333 ✓ (1ms)
+  ▶ read src/commands_plan.rs:332..417 ✓ (1ms)
+  3 tools completed in 10.1s (3 ✓)
+
+Now let me add the new tests:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (7 → 10 lines)
+            assert!(PLAN_SUBCOMMANDS.contains(&"off"));
+            assert!(PLAN_SUBCOMMANDS.contains(&"open"));
+            assert!(PLAN_SUBCOMMANDS.contains(&"close"));
+  +         assert!(PLAN_SUBCOMMANDS.contains(&"show"));
+  +         assert!(PLAN_SUBCOMMANDS.contains(&"apply"));
+  +         assert!(PLAN_SUBCOMMANDS.contains(&"clear"));
+        }
+ ✓ (40.9s)
+
+  ↳ 10m 40s · 19303→10892 tokens · $1.68
+  ⬤ 13% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
