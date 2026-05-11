@@ -520,10 +520,17 @@ pub use crate::commands_file::{
 
 // Session-related handlers
 pub use crate::commands_session::{
-    auto_compact_if_needed, auto_save_on_exit, checkpoint_subcommands, clear_confirmation_message,
-    handle_checkpoint, handle_compact, handle_export, handle_fork, handle_history,
+    auto_compact_if_needed, auto_save_on_exit, handle_compact, handle_export, handle_history,
     handle_history_detail, handle_jump, handle_load, handle_mark, handle_marks, handle_save,
-    handle_search, handle_stash, last_session_exists, reset_compact_thrash, Bookmarks,
+    handle_search, last_session_exists, reset_compact_thrash, Bookmarks,
+};
+
+// Stash subsystem
+pub use crate::commands_stash::handle_stash;
+
+// Fork and checkpoint handlers
+pub use crate::commands_fork::{
+    checkpoint_subcommands, clear_confirmation_message, handle_checkpoint, handle_fork,
     CheckpointStore, FORK_SUBCOMMANDS,
 };
 

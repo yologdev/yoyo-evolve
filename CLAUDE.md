@@ -83,6 +83,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
 - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
 - `commands_move.rs` — move methods between impl blocks, cross-file method relocation
+- `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`)
 - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` for poisoned `Mutex` recovery (deduplicated Day 58)
 
 Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an optional `SkillSet`.
