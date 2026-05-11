@@ -1,0 +1,85 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create a focused plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cat sponsors/sponsor_info.json 2>/dev/null | head -50  ▶ $ cat CHANGELOG.md 2>/dev/null | head -40 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what's happened since last release (0.1.10 on Day 63… (2 lines) ✓ (5ms)
+  ▶ $ # Check dispatch.rs for test coverage - the assessment says … (8 lines) ✓ (6ms)
+  ▶ $ # Check what dispatch.rs actually does - need to understand … (2 lines) ✓ (3ms)
+  ▶ $ # See what's testable in dispatch.rs - pure functions, routi… (2 lines) ✓ (4ms)
+  ▶ $ # dispatch.rs only has one big async fn - hard to unit test … (3 lines) ✓ (4ms)
+  ▶ $ # Let's see if there are any pure-function extraction opport… (3 lines) ✓ (4ms)
+  ▶ $ # Look at the commands_retry.rs module - assessment mentions… (3 lines) ✓ (4ms)
+  ▶ $ # Check what competitive features would be high-impact (4 lines) ✓ (4ms)
+  ▶ $ # Check checkpoint implementation - we already have checkpoi… (2 lines) ✓ (4ms)
+  ▶ $ # Let's think about conversation branching - this is a real … (4 lines) ✓ (4ms)
+  ▶ $ # Let's see what conversation branching would need from the … (2 lines) ✓ (4ms)
+  ▶ $ # What about conversation forking? This is a genuine gap vs … (5 lines) ✓ (4ms)
+  ▶ $ # Let me check what the most impactful self-driven tasks wou… (6 lines) ✓ (3ms)
+  ▶ $ # Let me look at a different angle - conversation branching/… (4 lines) ✓ (4ms)
+  18 tools completed in 58.4s (18 ✓)
+
+Now let me think about what tasks to plan. Looking at the assessment:
+
+Priority analysis:
+1. No CI failures - skip tier 0
+2. Competitive gaps: Conversation branching/forking is a real gap vs Claude Code and Gemini CLI. But it's complex. 
+3. Self-discovered bugs: dispatch.rs at 766 lines with 0 tests — the REPL traffic cop. commands_update.rs has 10 tests already (assessment was slightly off). 
+4. **Test coverage moat**: 2,502 tests is our moat, but dispatch.rs having zero tests weakens it
+5. **Release**: Last release was 0.1.10 on Day 63 (May 2). We're now at Day 72 with 9 sessions of work. That's significant — prompt caching, desktop notifications, /copy, tool recovery, model pricing updates, .ok() fixes, cache hit rate display. Definitely time for a release.
+
+Let me plan 3 tasks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what conversation branching would look like - is /fo… (3 lines) ✓ (4ms)
+  ▶ $ # Check what the latest release tag is and what's happened s… (4 lines) ✓ (6ms)
+  ▶ $ # Hmm, no v0.1.10 tag? Let's check for version tags (5 lines) ✓ (6ms)
+  ▶ $ # No v* tags in the repo? Check releases skill (2 lines) ✓ (3ms)
+  ▶ $ # Release is a multi-step process requiring version bump, ta… (9 lines) ✓ (4ms)
+  ▶ $ # dispatch.rs is basically one giant match statement in an a… (27 lines) ✓ (2ms)
+  ▶ $ # Actually, let me reconsider. The release task involves mod… (21 lines) ✓ (2ms)
+  ▶ $ # Let me verify the conversation save/restore API we'll use … (2 lines) ✓ (4ms)
+  ▶ $ # Check what KNOWN_COMMANDS list looks like to understand ho… (2 lines) ✓ (4ms)
+  ▶ $ # See full KNOWN_COMMANDS list (2 lines) ✓ (4ms)
+  ▶ $ # Count how many commands there are (2 lines) ✓ (4ms)
+  11 tools completed in 53.7s (11 ✓)
+
+Now I have a clear picture. Let me create the task files.
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (85 lines) ✓ (28.6s)
+  ▶ write session_plan/task_02.md (201 lines) ✓ (29.2s)
+  ▶ write session_plan/task_03.md (65 lines) ✓ (28.8s)
+  ▶ write session_plan/issue_responses.md (14 lines) ✓ (29.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+  6 tools completed in 3m 25s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 72 Session Plan
+
+### Task 1: `/fork` — Conversation Branching
+Files: `commands_session.rs, dispatch.rs, help.rs`  
+Why: Closes a genuine competitive gap vs Claude Code and Gemini CLI. We have /stash (push/pop) and /checkpoint (file snapshots), but no way to branch the conversation into parallel explorations. /fork <name> creates a named branch, /fork switch <name> switches between them. Built on the same save_messages/`restore_messages` API that stash uses.
+
+### Task 2: Extract Testable Command Routing from `dispatch.rs`
+Files: dispatch.rs  
+Why: 766 lines, 0 tests — the REPL's traffic cop is completely untested. Extract a pure route_command() function that maps input strings to a CommandRoute enum, then add 15-20 tests. This strengthens our test moat (2,502 → ~2,520) and makes the routing logic verifiable without mocking agents.
+
+### Task 3: Release Prep — 0.1.11
+Files: Cargo.toml, CHANGELOG.md  
+Why: 9 sessions since 0.1.10 (May 2). Major additions: prompt caching, desktop notifications, /copy, cache hit rate display, tool recovery hints, model pricing updates, multiple .ok() fixes. Enough for a point release. Version bump + changelog entry only — tagging is done by humans.
+
+### Issue Responses
+• #215 (TUI challenge): Deferred — replied last, no promise of follow-up. /fork is more impactful for interactive UX today.
+• All other issues: tracking/external/policy — no action needed this session.
+
+  ↳ 6m 16s · 17550→8664 tokens · $1.05
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

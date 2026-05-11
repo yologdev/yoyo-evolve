@@ -1,0 +1,479 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /fork command for conversation branching. Let me start by understanding the existing patterns.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 21.9s (7 ✓)
+
+Let me study the existing stash implementation and related patterns:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 3s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 2m 15s (2 ✓)
+
+Now let me look at the dispatch.rs routing and help.rs patterns:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (59.1s)
+
+Now let me check the `command_arg_completions` function to understand the tab-completion pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'command_arg_completions' in src/commands.rs ✓ (3ms)
+  ▶ read src/commands.rs:261..341 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me look at the dispatch.rs area around /stash and /checkpoint to understand exactly where to insert:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:270..300 ✓ (1ms)
+
+Now let me check the help_text area to see where stash/checkpoint are listed (the summary listing section):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Session Management|stash.*Stash|/checkpoint.*Named' in src/help.rs ✓ (3ms)
+  ▶ search '/stash' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:1666..1696 ✓ (1ms)
+  3 tools completed in 11.1s (3 ✓)
+
+Let me also see where the cli_help_text lists these:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1379..1409 ✓ (1ms)
+
+Now let me check the `command_short_description` for stash and checkpoint:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'command_short_description' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:1854..1954 ✓ (2ms)
+  2 tools completed in 10.7s (2 ✓)
+
+Now let me look at what the help_command_completions returns (it probably needs /fork added):
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1..41 ✓ (1ms)
+
+Now let me check the `stash_default_description function and handle_stash_push` more carefully to see how timestamps are done:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:806..836 ✓ (1ms)
+
+Now let me see the exact handle_stash_push for the timestamp creation:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:677..727 ✓ (1ms)
+  ▶ read src/commands_session.rs:726..806 ✓ (1ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Now let me check how the stash tests look at the end of the file:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_session.rs ✓ (3ms)
+  ▶ search 'mod tests' in src/commands_session.rs ✓ (3ms)
+  ▶ read src/commands_session.rs:1096..1196 ✓ (1ms)
+  3 tools completed in 12.8s (3 ✓)
+
+Let me see the end of the tests module to understand where to insert new tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:1800..2000 ✓ (2ms)
+
+Good, I now have a thorough understanding of the patterns. Let me also check what's exported from commands_session.rs via commands.rs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_session' in src/commands.rs ✓ (3ms)
+  ▶ read src/commands.rs:520..550 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 14.2s (4 ✓)
+
+Now I have a clear picture. Let me implement everything. I'll start with the core implementation in commands_session.rs:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:628..633 ✓ (1ms)
+  ▶ read src/commands_session.rs:631..651 ✓ (1ms)
+  2 tools completed in 8.8s (2 ✓)
+
+Now I'll add the fork data structures and implementation. I'll insert them right after the stash section (after handle_stash), before `stash_default_description`:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:803..813 ✓ (0ms)
+
+Now I'll add the fork implementation:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (6 → 280 lines)
+    #[cfg(test)]
+    pub fn stash_default_description(index: usize) -> String {
+        format!("stash@{{{index}}}")
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Conversation branching — /fork
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// A named branch of the conversation.
+  + struct ConversationBranch {
+  +     name: String,
+  +     messages_json: String,
+  +     created_at: String, // HH:MM:SS UTC
+  +     message_count: usize,
+  + }
+  + 
+  + /// Global branch store: named conversation branches + current branch tracker.
+  + struct BranchStore {
+  +     branches: HashMap<String, ConversationBranch>,
+  ... (258 more lines)
+ ✓ (6.1s)
+
+Let me fix these issues:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (10 → 27 lines)
+  - impl BranchStore {
+  -     const fn new() -> Self {
+  -         Self {
+  -             branches: HashMap::new(),
+  -             current: None,
+  + static BRANCH_STORE: RwLock<Option<BranchStore>> = RwLock::new(None);
+  + 
+  + /// Acquire a mutable reference to the branch store, initializing it if needed.
+  + fn with_branch_store_mut<R>(f: impl FnOnce(&mut BranchStore) -> R) -> R {
+  +     let mut guard = rw_write_or_recover(&BRANCH_STORE);
+  +     let store = guard.get_or_insert_with(|| BranchStore {
+  +         branches: HashMap::new(),
+  +         current: None,
+  +     });
+  +     f(store)
+  + }
+  + 
+  + /// Acquire a read reference to the branch store.
+  + fn with_branch_store<R>(f: impl FnOnce(&BranchStore) -> R) -> R {
+  +     let guard = rw_read_or_recover(&BRANCH_STORE);
+  ... (14 more lines)
+ ✓ (6.1s)
+
+I need to rewrite the functions to use the with_branch_store / with_branch_store_mut helpers instead of directly accessing the RwLock. Let me do a complete rewrite of all the fork functions:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (5 → 4 lines)
+    /// Return the name of the current conversation branch, if any.
+    pub fn current_branch_name() -> Option<String> {
+  -     let store = rw_read_or_recover(&BRANCH_STORE);
+  -     store.current.clone()
+  +     with_branch_store(|store| store.current.clone())
+    }
+ ✓ (6.0s)
+
+The remaining functions still use direct lock access. I need to rewrite all the handler functions to use with_branch_store_mut. Let me rewrite them all at once:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (169 → 179 lines)
+    
+        let msg_count = agent.messages().len();
+        let timestamp = utc_timestamp();
+  - 
+  -     let mut store = rw_write_or_recover(&BRANCH_STORE);
+    
+  -     // If we're currently on a branch, auto-save it before creating the new one
+  -     if let Some(ref cur) = store.current {
+  -         if let Some(branch) = store.branches.get_mut(cur) {
+  -             branch.messages_json = messages_json.clone();
+  -             branch.message_count = msg_count;
+  +     with_branch_store_mut(|store| {
+  +         // If we're currently on a branch, auto-save it before creating the new one
+  +         if let Some(cur) = store.current.clone() {
+  +             if let Some(branch) = store.branches.get_mut(&cur) {
+  +                 branch.messages_json = messages_json.clone();
+  +                 branch.message_count = msg_count;
+  +             }
+            }
+  -     }
+  ... (232 more lines)
+ ✓ (9.7s)
+
+Everything is "never used" because nothing wires to it yet. I need to add the re-exports and dispatch routing. Let me do all the wiring now:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.6s (3 ✓)
+
+First, add the re-export in commands.rs:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (6 → 7 lines)
+    pub use crate::commands_session::{
+        auto_compact_if_needed, auto_save_on_exit, checkpoint_subcommands, clear_confirmation_message,
+  -     handle_checkpoint, handle_compact, handle_export, handle_history, handle_history_detail,
+  -     handle_jump, handle_load, handle_mark, handle_marks, handle_save, handle_search, handle_stash,
+  -     last_session_exists, reset_compact_thrash, Bookmarks, CheckpointStore,
+  +     handle_checkpoint, handle_compact, handle_export, handle_fork, handle_history,
+  +     handle_history_detail, handle_jump, handle_load, handle_mark, handle_marks, handle_save,
+  +     handle_search, handle_stash, last_session_exists, reset_compact_thrash, Bookmarks,
+  +     CheckpointStore, FORK_SUBCOMMANDS,
+    };
+ ✓ (9.7s)
+
+The exports are wired but unused until dispatch.rs uses them. Let me add the routing in dispatch.rs and KNOWN_COMMANDS in commands.rs now:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (6 → 7 lines)
+        "/architect",
+        "/bg",
+        "/checkpoint",
+  +     "/fork",
+        "/help",
+ ✓ (9.7s)
+
+Now add the dispatch routing and the tab completion:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (5 → 10 lines)
+            s if s == "/stash" || s.starts_with("/stash ") => {
+                let result = commands::handle_stash(ctx.agent, s);
+  +             print!("{result}");
+  +             CommandResult::Continue
+  +         }
+  +         s if s == "/fork" || s.starts_with("/fork ") => {
+  +             let result = commands::handle_fork(ctx.agent, s);
+                print!("{result}");
+                CommandResult::Continue
+            }
+ ✓ (9.6s)
+
+Good progress — only FORK_SUBCOMMANDS and current_branch_name unused. Let me wire up the tab completion in command_arg_completions:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 2 lines)
+            "/checkpoint" => filter_candidates(checkpoint_subcommands(), &partial_lower),
+  +         "/fork" => filter_candidates(FORK_SUBCOMMANDS, &partial_lower),
+ ✓ (9.6s)
+
+Just current_branch_name isn't used yet. It's a public utility for status display. I'll add #[allow(dead_code)] to it since it's a public API for future use, or better yet, I'll export it and reference it somewhere. Actually, the task description says it's a helper "for status display" — let me just allow it since it's deliberately exposed:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (2 → 3 lines)
+    /// Return the name of the current conversation branch, if any.
+  + #[allow(dead_code)]
+    pub fn current_branch_name() -> Option<String> {
+ ✓ (39.2s)
+
+  ↳ 10m 0s · 29693→12449 tokens · $1.70
+  ⬤ 16% of context window used
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 2415 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_on_anthropic_build_agent ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the specific test failure to understand what's needed:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_text_documents_a… ✓ (146ms)
+
+The `--help text (in cli_help_text() in help.rs) needs to mention /fork`. Let me also check if there are other tests that verify coverage:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "FAILE… ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED" ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "^test.*F… ✓ (8.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED" … ✓ (8.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "\.\.\..*… ✓ (8.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED" … ✓ (8.5s)
+  7 tools completed in 1m 24s (7 ✓)
+
+4 failures. Let me see the actual test names by running with `--no-capture`:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED" … ✓ (8.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -P "^test… ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --test-threads=1 2… ✓ (22.7s)
+  3 tools completed in 49.4s (3 ✓)
+
+Let me run the failures individually to see all 4:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -B0 "FAIL… ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | awk '/FAILED/ … ✓ (8.4s)
+  2 tools completed in 22.5s (2 ✓)
+
+There are 4 FAILED lines but grep is collapsing duplicates. Let me try differently:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED" … ✓ (8.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 > /tmp/test_outp… ✓ (8.3s)
+  ▶ $ grep "FAILED" /tmp/test_output.txt📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (15ms)
+  3 tools completed in 26.0s (3 ✓)
+
+Now I can see all 4 failures:
+1. cli::tests::help_text_documents_all_repl_commands — /fork missing from `cli_help_text()`
+2. help::tests::test_command_help_exhaustive_for_known_commands — /fork missing from command_help()
+3. help::tests::test_command_short_description_coverage — /fork missing from command_short_description()
+4. `repl::tests::test_slash_completion_display_is_padded — /fork` completion entry needs padding
+
+Let me look at each failure's context and fix them all:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_command_help_exh… ✓ (165ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_command_short_de… ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_slash_completion… ✓ (136ms)
+  3 tools completed in 9.0s (3 ✓)
+
+Now I know exactly what to fix. Let me look at the repl test to understand what it expects:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_slash_completion_d… ✓ (3ms)
+  ▶ read src/repl.rs:1408..1448 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+This test requires that /fork has a short description (used in the completion display). That comes from command_short_description. Let me now apply all 4 fixes:
+
+**Fix 1: `cli_help_text() — add /fork` entry**
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1393..1403 ✓ (1ms)
+  ▶ edit src/help.rs (8 → 12 lines)
+        let _ = writeln!(
+            s,
+            "    /stash [desc]      Stash conversation and start fresh"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /fork [sub]        Branch conversations (switch/list/delete/rename)"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (39.1s)
+  2 tools completed in 46.7s (2 ✓)
+
+**Fix 2: command_help() — add /fork detailed help**
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:883..898 ✓ (1ms)
+
+I'll add the /fork entry right after the find entry. Let me find the alphabetical position:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ search '^        "find" => Some' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:173..198 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+I'll add `/fork between find and grep`:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (10 → 27 lines)
+                 Examples:\n\
+                 \x20 /find main\n\
+                 \x20 /find test",
+  +         ),
+  +         "fork" => Some(
+  +             "/fork — Conversation branching\n\n\
+  +              Usage:\n\
+  +              \x20 /fork <name>             Create a named branch from current conversation\n\
+  +              \x20 /fork switch <name>      Switch to a named branch (auto-saves current)\n\
+  +              \x20 /fork list               List all branches\n\
+  +              \x20 /fork delete <name>      Delete a branch (cannot delete current)\n\
+  +              \x20 /fork rename <old> <new> Rename a branch\n\n\
+  +              Like git branches for your conversation. Explore different directions\n\
+  +              and switch between them freely. When you switch, the current branch\n\
+  +              is auto-saved so you never lose work.\n\n\
+  +              Examples:\n\
+  +              \x20 /fork refactor-approach\n\
+  +              \x20 /fork switch main-idea\n\
+  +              \x20 /fork list\n\
+  +              \x20 /fork rename old-idea better-name",
+  ... (1 more lines)
+ ✓ (39.7s)
+
+**Fix 3: `command_short_description() — add fork` entry**
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (3 → 4 lines)
+            "find" => Some("Find files by name pattern"),
+            "fix" => Some("Auto-fix build/lint errors"),
+            "forget" => Some("Remove a saved memory"),
+  +         "fork" => Some("Branch conversations and switch between them"),
+ ✓ (41.0s)
+
+**Fix 4: `help_text() summary listing — add /fork`**
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1698..1710 ✓ (1ms)
+  ▶ edit src/help.rs (6 → 9 lines)
+        out.push_str(
+            "  /stash [desc]      Stash conversation and start fresh (like git stash for chat)\n",
+  +     );
+  +     out.push_str(
+  +         "  /fork [sub]        Branch conversations (switch, list, delete, rename)\n",
+        );
+        out.push_str(
+            "  /todo [subcmd]     Track tasks: add, done, wip, remove, clear (in-session checklist)\n",
+ ✓ (41.2s)
+  2 tools completed in 48.7s (2 ✓)
+
+Now let me run the full checks:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.2s)
+
+Clippy passes. Now tests:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (19.7s)
+
+All tests pass. Now let me add the fork-specific tests:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_session.rs:2178..2183 ✓ (1ms)
+  ▶ read src/commands_session.rs:2261..2264 ✓ (1ms)
+  3 tools completed in 14.6s (3 ✓)
+
+Now I'll add the fork tests at the end of the test module:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (3 → 79 lines)
+            handle_history_detail(&agent);
+  +     }
+  + 
+  +     // --- Fork tests ---
+  + 
+  +     #[test]
+  +     fn test_fork_list_empty() {
+  +         // Clear state for test isolation
+  +         {
+  +             let mut guard = rw_write_or_recover(&BRANCH_STORE);
+  +             *guard = None;
+  +         }
+  +         let result = handle_fork_list();
+  +         assert!(result.contains("no branches"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_fork_delete_nonexistent() {
+  +         {
+  +             let mut guard = rw_write_or_recover(&BRANCH_STORE);
+  ... (59 more lines)
+ ✓ (6.2s)
+
+Need to add the import that's already used by the last test:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:2249..2254 ✓ (1ms)
+
+I see — the imports are local to that test function. Let me do the same:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (3 → 6 lines)
+        #[test]
+        fn test_fork_help_on_bare_command() {
+  +         use yoagent::agent::Agent;
+  +         use yoagent::provider::AnthropicProvider;
+  + 
+            let agent = Agent::new(AnthropicProvider)
+ ✓ (40.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10

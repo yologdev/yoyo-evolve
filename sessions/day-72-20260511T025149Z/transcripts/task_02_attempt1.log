@@ -1,0 +1,332 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/dispatch.rs ✓ (5ms)
+
+Let me see the full file to understand all the command patterns:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:99..399 ✓ (3ms)
+  ▶ read src/dispatch.rs:398..798 ✓ (3ms)
+  ▶ read src/dispatch.rs:496..721 ✓ (2ms)
+  3 tools completed in 15.4s (3 ✓)
+
+Now let me check the is_unknown_command function to understand the logic:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn is_unknown_command' in src/commands.rs ✓ (3ms)
+  ▶ read src/commands.rs:328..343 ✓ (1ms)
+  2 tools completed in 8.3s (2 ✓)
+
+Now let me check KNOWN_COMMANDS:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:1..121 ✓ (2ms)
+  ▶ read src/commands.rs:120..150 ✓ (1ms)
+  2 tools completed in 10.9s (2 ✓)
+
+Now I have a complete picture. Let me also check the /goal handler to understand its return type:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn handle_goal' in src/commands_goal.rs ✓ (3ms)
+
+Good — handle_goal returns a CommandResult directly, and the dispatch at line 640 just returns it. Now let me also check a few more patterns:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn handle_loop' in src/commands.rs ✓ (3ms)
+  ▶ search 'pub.* fn handle_loop"' in src ✓ (8ms)
+  ▶ search 'fn handle_loop' in src ✓ (7ms)
+  3 tools completed in 11.7s (3 ✓)
+
+Good. Now I have a complete understanding of the dispatch logic. Let me implement the route_command function and tests. The key insight is that the routing is purely based on string matching — I just need to extract that matching into a pure function.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 26.7s (6 ✓)
+
+Now, let me carefully analyze all the command patterns in dispatch_command. I need to understand the special cases:
+
+1. /quit, /exit → Quit
+2. /help or /help ... → Help
+3. /version → Version
+4. /status → Status
+5. `/tokens` → Tokens
+6. /cost → Cost
+7. /profile → Profile
+8. /changelog or /changelog ... → Changelog
+9. /evolution or /evolution ... → Evolution
+10. /clear → Clear (with confirmation)
+11. /clear! → ClearForce
+12. /model (bare) → Model
+13. /model ... → Model
+14. /provider (bare) → Provider
+15. /provider ... → Provider
+16. /think (bare) → Think
+17. /think ... → Think
+18. /save or /save ... → Save
+19. `/load or /load ...` → Load
+20. /stash or /stash ... → Stash
+21. /fork or /fork ... → Fork
+22. `/checkpoint or /checkpoint ...` → Checkpoint
+23. /diff or /diff ... → Diff
+24. /blame or /blame ... → Blame
+25. /undo or /undo ... → Undo
+26. /health → Health
+27. /doctor → Doctor
+28. /test → Test
+29. /lint fix → LintFix (special case)
+30. /lint or /lint ... → Lint
+31. /fix → Fix
+32. /history or /history ... → History
+33. /search or /search ... → Search
+34. /marks → Marks
+35. /changes or /changes ... → Changes
+36. /export or /export ... → Export
+37. /mark or /mark ... → Mark
+38. /jump or /jump ... → Jump
+39. /config (bare) → Config
+40. `/config show or /config show ...` → ConfigShow
+41. /config edit or /config edit ... → ConfigEdit
+42. `/config set...` → ConfigSet
+43. /config get or /config get ... → ConfigGet
+44. /hooks → Hooks
+45. /permissions → Permissions
+46. /compact → Compact
+47. `/commit or /commit ...` → Commit
+48. /context or /context ... → Context
+49. /add or /add ... → Add
+50. /docs or /docs ... → Docs
+51. /find or /find ... → Find
+52. /grep or /grep ... → Grep
+53. `/init` → Init
+54. /rename or /rename ... → Rename
+55. /extract or /extract ... → Extract
+56. /move or /move ... → Move
+57. /refactor or /refactor ... → Refactor
+58. /remember or /remember ... → Remember
+59. /memories or /memories ... → Memories
+60. /forget or /forget ... → Forget
+61. /index → Index
+62. /map or /map ... → Map
+63. /outline or /outline ... → Outline
+64. /retry → Retry
+65. /tree or /tree ... → Tree
+66. /web or /web ... → Web
+67. /open or /open ... → Open
+68. /copy or /copy ... → Copy
+69. /watch or /watch ... → Watch
+70. /loop or /loop ... → Loop
+71. /todo or /todo ... → Todo
+72. /teach or /teach ... → Teach
+73. /architect or /architect ... → Architect
+74. /mcp or /mcp ... → Mcp
+75. /ast or /ast ... → Ast
+76. /apply or /apply ... → Apply
+77. /bg or /bg ... → Bg
+78. `/run ... or !...` → Run
+79. /run (bare) → Run
+80. `/pr or /pr ...` → Pr
+81. /git or /git ... → Git
+82. /goal or /goal ... → Goal
+83. `/spawn or /spawn ...` → Spawn
+84. /review or /review ... → Review
+85. /update → Update
+86. /skill or /skill ... → Skill
+87. /explain or /explain ... → Explain
+88. /plan or /plan ... → Plan
+89. /extended or /extended ... → Extended
+90. /side or /side ... → Side
+91. /quick or /quick ... → Quick
+92. Starts with / → CustomOrUnknown
+93. Otherwise → NotACommand
+
+Note the special handling of ! prefix for run, and /lint fix as a special sub-case of /lint. Also /config has sub-routes (show, edit, set, get).
+
+Now let me implement this. I'll add the enum and route function at the top of the file, then refactor dispatch_command to use it.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (21 → 260 lines)
+    //! The [`dispatch_command`] function routes `/`-prefixed REPL commands to their
+    //! handlers. It was extracted from `repl.rs` to keep the REPL loop focused on
+    //! readline mechanics and the command table easy to navigate.
+  + //!
+  + //! The pure routing layer ([`route_command`]) maps input strings to
+  + //! [`CommandRoute`] variants without any side effects — making command dispatch
+  + //! fully testable without a live agent.
+    //!
+    //! CLI subcommand dispatch (`yoyo <subcmd>`) lives in [`crate::dispatch_sub`].
+    
+  ···
+    use crate::AgentConfig;
+    use yoagent::context::total_tokens;
+    use yoagent::*;
+  + 
+  + /// What category of command the input maps to, determined purely from the input
+  + /// string. This is the testable, pure routing layer — no agent state needed.
+  + #[derive(Debug, PartialEq)]
+  + pub(crate) enum CommandRoute {
+  +     Quit,
+  ... (229 more lines)
+ ✓ (9.7s)
+
+Good — expected dead code warnings since I haven't added tests or the dispatch usage yet. Let me now add the tests module and then update dispatch_command to use the routing function. Let me add the tests first:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 10.3s (3 ✓)
+
+Now let me add the test module at the end of the file. First let me see the current end of the file:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1006..1011 ✓ (0ms)
+  ▶ edit src/dispatch.rs (3 → 269 lines)
+            _ => CommandResult::NotACommand,
+  +     }
+  + }
+  + 
+  + #[cfg(test)]
+  + mod tests {
+  +     use super::*;
+  + 
+  +     #[test]
+  +     fn test_route_quit() {
+  +         assert_eq!(route_command("/quit"), CommandRoute::Quit);
+  +         assert_eq!(route_command("/exit"), CommandRoute::Quit);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_route_help() {
+  +         assert_eq!(route_command("/help"), CommandRoute::Help);
+  +         assert_eq!(route_command("/help commands"), CommandRoute::Help);
+  +         assert_eq!(route_command("/help model"), CommandRoute::Help);
+  +     }
+  ... (249 more lines)
+ ✓ (9.5s)
+  2 tools completed in 53.5s (2 ✓)
+
+Still getting the dead code warnings because dispatch_command doesn't use route_command yet. The tests should fix it for the test target, but clippy complains about the non-test target. Let me now update dispatch_command to use the routing function. This is Step 3:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now I need to rewrite dispatch_command to use route_command. The key challenge is that the original function uses match guards (`s if s == "/..." || s.starts_with("/... ")`) and captures the variable s for use within the arm. With route_command, I can dispatch on the route but still need access to `ctx.input` for the handlers.
+
+Let me rewrite dispatch_command:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:297..307 ✓ (1ms)
+  ▶ read src/dispatch.rs:302..352 ✓ (1ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now let me replace the entire dispatch_command function. I'll read the full range first to get exact text:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:302..1012 ✓ (5ms)
+
+Now I need to replace the dispatch_command function body to use route_command. The approach: match on `route_command(ctx.input)` and call the same handlers. I'll rewrite the function:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit ? ✗ (0ms)
+    │ Invalid arguments: missing 'path' parameter
+
+The old_text is too long. Let me use a different approach - I'll write the entire file from scratch:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (5m 31s)
+
+  ↳ 11m 13s · 26207→18679 tokens · $1.47
+  ⬤ 19% of context window used
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.10 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: enum `CommandRoute` is never used[0m
+  [1m[94m--> [0msrc/dispatch.rs:30:17
+   [1m[94m|[0m
+[1m[94m30[0m [1m[94m|[0m pub(crate) enum CommandRoute {
+   [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `route_command` is never used[0m
+   [1m[94m--> [0msrc/dispatch.rs:128:15
+    [1m[94m|[0m
+[1m[94m128[0m [1m[94m|[0m pub(crate) fn route_command(input: &str) -> CommandRoute {
+    [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `route_command_prefix` is never used[0m
+   [1m[94m--> [0msrc/dispatch.rs:165:4
+    [1m[94m|[0m
+[1m[94m165[0m [1m[94m|[0m fn route_command_prefix(input: &str) -> CommandRoute {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 3 previous errors
+  → Auto-fixing (attempt 1/3)...
+  ▶ read src/dispatch.rs:300..315 ✓ (1ms)
+
+The issue is clear: dispatch_command still uses the old match ctx.input instead of match route_command(ctx.input). The route_command function and CommandRoute enum were added but never wired in. I need to rewrite dispatch_command to use them. Let me read the full function to understand the scope of changes needed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:302..1022 ✓ (5ms)
+
+Now I need to rewrite dispatch_command to use route_command. The function is large (~710 lines), so I'll write it in its entirety. Let me use bash to do a targeted replacement:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -301 src/dispatch.rs > /tmp… ✓ (7ms)
+
+Good. Now I'll write the new dispatch_command function and then concatenate everything:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/dispatch_middle.rs (705 lines) ✓ (3.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat /tmp/dispatch_top.rs /tmp/di… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.5s)
+  3 tools completed in 27.1s (3 ✓)
+
+Clippy passes. Now let's run the tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (30.2s)
+
+All tests pass. Let me also run cargo fmt:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (1.1s)
+
+Let me run the full check suite to be sure:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.3s)
+
+All four checks pass (build, test, clippy, fmt). Let me verify the tests module specifically to make sure all our dispatch tests pass:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test dispatch -- 2>&1 ✓ (19.7s)
+
+All 85 dispatch-related tests pass (including the new `route_command` tests). Let me verify the specific new tests are in there:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test dispatch::tests -- 2>… ✓ (160ms)
+
+All 18 new route_command tests pass. Let me now commit:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (18 lines) ✓ (19ms)
+
+Now let me update the todos:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 17.1s (3 ✓)
+
+Done! The task is complete. Here's a summary of what was accomplished:
+
+## Summary
+
+**Extracted testable command routing from `dispatch.rs` and added comprehensive tests.**
+
+### What changed:
+
+1. `CommandRoute` enum (92 variants) — A pure data type representing which command category an input maps to, with no side effects.
+
+2. `route_command()` function — Pure synchronous routing logic extracted from the pattern-matching in dispatch_command. Handles:
+   • Exact matches (/quit, /version, /clear!, etc.)
+   • Prefix matches (/model sonnet, /diff --staged, etc.)
+   • Special cases (!cmd → Run, `/lint fix → LintFix vs /lint strict` → Lint, /config show|edit|set|get subcommands)
+   • UnknownSlash for unrecognized / commands
+   • NotACommand for non-slash input
+
+3. `dispatch_command()` refactored — Now `match route_command(ctx.input)` instead of raw string patterns. All handler logic preserved identically.
+
+4. **18 test functions** covering every route category — quit, help, info, model, provider, think, clear, session, git, lint/test, search/nav, config subcommands, file commands, refactoring, memory, conversations, workflow, display, marks, miscellaneous, and edge cases (unknown commands, non-commands, bang prefix).
+
+  ↳ 4m 2s · 4478→8889 tokens · $1.26
+  ⬤ 25% of context window used
+
+  ✓ Watch passed after fix (attempt 1)
+
