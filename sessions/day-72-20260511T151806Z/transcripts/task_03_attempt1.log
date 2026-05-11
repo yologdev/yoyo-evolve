@@ -1,0 +1,382 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement context lines support for /grep. Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct GrepArgs" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_grep_args\|fn … ✓ (5ms)
+ ✓ (3ms)
+  ▶ read src/commands_search.rs:648..808 ✓ (1ms)
+  ▶ read src/commands_search.rs:807..917 ✓ (1ms)
+  4 tools completed in 7.7s (4 ✓)
+
+Now let me see the GREP_MAX_MATCHES constant and the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GREP_MAX_MATCHES" src/c…  ▶ read src/commands_search.rs:1250..1450 ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me check the help text for grep:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 10 "/grep" src/help.r… ✓ (4ms)
+
+Now I have a clear picture. Let me plan and implement this. I'll start with tests, then the implementation.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 21.3s (8 ✓)
+
+Let me start implementing. First, extend GrepArgs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_search.rs (5 → 9 lines)
+        pub pattern: String,
+        pub path: String,
+        pub case_sensitive: bool,
+  +     /// Lines of context around matches: (before, after).
+  +     /// Set by `-C N` (symmetric), `-B N` (before only), `-A N` (after only).
+  +     /// Flags combine: `-B 2 -A 1` → `Some((2, 1))`.
+  +     pub context_lines: Option<(u32, u32)>,
+    }
+ ✓ (6.2s)
+  2 tools completed in 13.1s (2 ✓)
+
+Expected — I need to update all the GrepArgs construction sites. Let me now update `parse_grep_args` to handle the new flags:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_search.rs (45 → 87 lines)
+    /// Parse `/grep` arguments.
+    ///
+  - /// Syntax: `/grep [-s|--case] <pattern> [path]`
+  + /// Syntax: `/grep [-s|--case] [-C N|--context N] [-B N|--before N] [-A N|--after N] <pattern> [path]`
+    ///
+    /// Supports double-quoted patterns for multi-word searches:
+    /// `/grep "fn main" src/` → pattern = "fn main", path = "src/"
+  + ///
+  + /// Context flags:
+  + /// - `-C N` / `--context N` — show N lines before and after each match
+  + /// - `-B N` / `--before N` — show N lines before each match
+  + /// - `-A N` / `--after N` — show N lines after each match
+  + /// Flags combine: `-B 2 -A 1` shows 2 before, 1 after.
+    ///
+    /// Returns `None` if the pattern is empty.
+    pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
+  ···
+        let tokens = tokenize_quoted(rest);
+    
+        let mut case_sensitive = false;
+  ... (64 more lines)
+ ✓ (6.1s)
+  3 tools completed in 25.5s (3 ✓)
+
+Fix the doc comment indentation and the test:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (5 → 6 lines)
+    /// - `-C N` / `--context N` — show N lines before and after each match
+    /// - `-B N` / `--before N` — show N lines before each match
+    /// - `-A N` / `--after N` — show N lines after each match
+  + ///
+    /// Flags combine: `-B 2 -A 1` shows 2 before, 1 after.
+ ✓ (6.3s)
+
+Now fix the test's GrepArgs constructor:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1438..1458 ✓ (1ms)
+  ▶ edit src/commands_search.rs (5 → 6 lines)
+                pattern: "fn main".to_string(),
+                path: "src/".to_string(),
+                case_sensitive: true,
+  +             context_lines: None,
+            };
+ ✓ (41.4s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 49.0s (3 ✓)
+
+Now update run_grep to pass context flags:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+I need to redesign run_grep slightly. When context lines are active, the output format changes — we need a different return type or a different code path. Let me think about the approach:
+
+• When context_lines is `None: existing behavior (parse into Vec<GrepMatch>`)
+• When `context_lines is Some`: return raw output and format it differently
+
+The cleanest approach: add a separate function run_grep_with_context that returns the raw output string, and route handle_grep to the right path. Actually, let me look at how run_grep and handle_grep interact more carefully.
+
+handle_grep calls run_grep → format_grep_results → print. I'll add a parallel path: when context is active, run grep with context flags and format the raw output directly. This keeps existing behavior completely untouched.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (69 → 133 lines)
+                    })
+                    .collect();
+                Ok(matches)
+  +         }
+  +         Err(e) => Err(format!("Failed to run grep: {e}")),
+  +     }
+  + }
+  + 
+  + /// Run grep with context lines and return the raw output string.
+  + ///
+  + /// When context lines are requested, the output includes match lines,
+  + /// context lines, and `--` group separators. We return the raw string
+  + /// for formatting rather than parsing into `GrepMatch` structs.
+  + fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
+  +     let (before, after) = args.context_lines.unwrap_or((0, 0));
+  + 
+  +     let in_git_repo = std::process::Command::new("git")
+  +         .args(["rev-parse", "--is-inside-work-tree"])
+  +         .stdout(std::process::Stdio::null())
+  +         .stderr(std::process::Stdio::null())
+  ... (51 more lines)
+ ✓ (9.8s)
+
+Good — just an unused function warning. I'll wire it up next. Let me now add the formatting function and update handle_grep:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now add the context-aware format function. I'll place it right after format_grep_results:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:875..925 ✓ (1ms)
+  ▶ read src/commands_search.rs:924..934 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I'll add the context formatting function after format_grep_results:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (4 → 129 lines)
+        output
+    }
+    
+  - /// Highlight occurrences of a pattern in a line of text.
+  + /// Format raw grep output that includes context lines.
+  + ///
+  + /// `git grep -C N` / `grep -C N` output has three line types:
+  + /// - Match lines: `file:linenum:text` (colon separator after linenum)
+  + /// - Context lines: `file-linenum-text` (dash separator after linenum)
+  + /// - Group separators: `--`
+  + ///
+  + /// Match lines get highlighted; context lines are dimmed.
+  + /// Truncation respects `GREP_MAX_MATCHES` counting only match lines.
+  + pub fn format_grep_results_with_context(
+  +     raw_output: &str,
+  +     pattern: &str,
+  +     case_sensitive: bool,
+  + ) -> String {
+  +     if raw_output.trim().is_empty() {
+  +         return format!("{DIM}  No matches found.{RESET}\n");
+  ... (110 more lines)
+ ✓ (9.7s)
+
+All dead-code errors because nothing uses the new functions yet. Let me wire up handle_grep:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_search.rs:960..990 ✓ (1ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Now find and update handle_grep:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_grep" src/com… ✓ (3ms)
+  ▶ read src/commands_search.rs:1085..1120 ✓ (1ms)
+  ▶ edit src/commands_search.rs (26 → 52 lines)
+        let args = match parse_grep_args(input) {
+            Some(a) => a,
+            None => {
+  -             println!("{DIM}  usage: /grep [-s|--case] <pattern> [path]");
+  +             println!("{DIM}  usage: /grep [-s|--case] [-C N] [-B N] [-A N] <pattern> [path]");
+                println!("  Search file contents directly — no AI, no tokens, instant results.");
+                println!("  Case-insensitive by default. Use -s or --case for case-sensitive.");
+  +             println!();
+  +             println!("  Context lines:");
+  +             println!("    -C N / --context N  Show N lines before and after each match");
+  +             println!("    -B N / --before N   Show N lines before each match");
+  +             println!("    -A N / --after N    Show N lines after each match");
+                println!();
+                println!("  Examples:");
+                println!("    /grep TODO");
+                println!("    /grep \"fn main\" src/");
+  -             println!("    /grep -s MyStruct src/lib.rs{RESET}\n");
+  +             println!("    /grep -s MyStruct src/lib.rs");
+  +             println!("    /grep -C 3 \"fn main\" src/");
+  +             println!("    /grep -B 2 -A 1 TODO{RESET}\n");
+  ... (39 more lines)
+ ✓ (40.8s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 57.8s (4 ✓)
+
+Let me quickly check if it compiles:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (130ms)
+
+Builds clean. Now let me write the tests and update help:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find the right place to add tests — after the existing grep tests:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1670..1685 ✓ (1ms)
+
+I'll add the new tests right after the grep_in_help_text test:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1682..1687 ✓ (1ms)
+  ▶ edit src/commands_search.rs (4 → 129 lines)
+        fn grep_in_help_text() {
+            let help = help_text();
+            assert!(help.contains("/grep"), "/grep should appear in help text");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_grep_args_context_c_flag() {
+  +         let args = parse_grep_args("/grep -C 3 TODO src/").unwrap();
+  +         assert_eq!(args.pattern, "TODO");
+  +         assert_eq!(args.path, "src/");
+  +         assert_eq!(args.context_lines, Some((3, 3)));
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_grep_args_context_long_flag() {
+  +         let args = parse_grep_args("/grep --context 5 TODO").unwrap();
+  +         assert_eq!(args.pattern, "TODO");
+  +         assert_eq!(args.context_lines, Some((5, 5)));
+  +     }
+  + 
+  ... (109 more lines)
+ ✓ (38.7s)
+  2 tools completed in 1m 0s (2 ✓)
+
+Let me check the full output:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAIL|… ✓ (8.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_context_line_co… ✓ (168ms)
+  2 tools completed in 13.5s (2 ✓)
+
+The context line parsing is failing. Let me check the format more carefully. The issue is with context lines — git grep -C uses `file-linenum-text` but the dash in filename causes ambiguity. Let me look at what actual git grep -C output looks like:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git grep -n --color=never -C 1 "… ✓ (5ms)
+
+So the format is file-linenum-text for context lines. My parser tries line.find(':') first, which finds the colon in `src/main.rs, then the rest after that colon is 553:async fn main() for the match line or -554-    let args...` for the context line. Wait — let me trace the test case:
+
+Test input: "src/main.rs-43-    println!(\"hello\");"
+
+line.find(':') finds the colon in src/main.rs at position 11 (the colon in the path). Then rest = "-43-    println!...". The digit_end would be 0 because the first char is -, not a digit. So it fails and returns None.
+
+The problem is that for context lines, the separator between filename and linenum is - not :. I need to handle both cases. Let me rethink the parser:
+
+For context lines, the format is file-linenum-text where the separator is -. But files can have dashes too (src/main.rs has no dashes, but src/some-file.rs would).
+
+The key insight: for match lines, the file:linenum separator is : — same as regular grep. For context lines, it uses - for both separators. But git grep outputs the filename consistently — so the first separator after the filename is what differs.
+
+Looking at actual git grep output more carefully:
+• Match: src/main.rs:553:async fn main() {
+• Context: `src/main.rs-554-    let args...`
+
+The file part is the same in both. For match lines, the first separator after filename is :. For context lines, it's -. But how do we distinguish the end of filename?
+
+For `src/main.rs:553:text — first : is in the .rs:` part. The file is src/main.rs, then 553:text.
+For `src/main.rs-554-text — there's no :` at all (unless text contains one).
+
+Actually wait, src/main.rs-554-text does have src/main.rs which contains a colon? No! .rs doesn't have a colon. The colon in `src/main.rs:553:text` is the separator, not part of the filename.
+
+Let me re-examine: src/main.rs-554-    println!("hello");
+
+line.find(':') — this finds nothing if the text doesn't have a colon... wait, the text might have one. Let me check the test input:
+
+"src/main.rs-43-    println!(\"hello\");" — the only potential colon-like chars... actually there's no colon at all in this string! So find(':') returns None and the function returns None. That's the bug.
+
+I need to handle context lines differently. Let me rewrite the parser:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (43 → 102 lines)
+    /// Parse a single line from `grep -C` output.
+    ///
+  - /// Match lines:   `file:linenum:text`  (colon after linenum)
+  - /// Context lines: `file-linenum-text`  (dash after linenum)
+  + /// Match lines:   `file:linenum:text`  (colon separators)
+  + /// Context lines: `file-linenum-text`  (dash separators)
+    ///
+  - /// `git grep` uses the same format. The tricky part: filenames can contain
+  - /// dashes, so we look for the first colon to find the filename boundary,
+  - /// then check if the separator after the linenum is `:` (match) or `-` (context).
+  + /// Strategy: try match-line format first (file:num:text), then context-line
+  + /// format (file-num-text). For context lines we scan backwards from the end
+  + /// to find `\d+-` and `-\d+-` patterns to locate the linenum, since filenames
+  + /// can contain dashes.
+    fn parse_context_line(line: &str) -> Option<ContextLine> {
+  -     // First, try match line format: file:linenum:text
+  -     if let Some(first_colon) = line.find(':') {
+  -         let file = &line[..first_colon];
+  -         let rest = &line[first_colon + 1..];
+  +     // Strategy 1: match line — find `:<digits>:` pattern
+  ... (112 more lines)
+ ✓ (41.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_context_line --… ✓ (139ms)
+  2 tools completed in 46.1s (2 ✓)
+
+Now let me run all the grep-related tests:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test grep -- --nocapture 2… ✓ (153ms)
+
+All 57 grep-related tests pass. Now let me run clippy:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.9s)
+
+Clean. Now update help:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ read src/help.rs:197..222 ✓ (1ms)
+  ▶ edit src/help.rs (14 → 21 lines)
+            "grep" => Some(
+  -             "/grep [-s|--case] <pattern> [path] — Search file contents directly\n\n\
+  +             "/grep [-s|--case] [-C N] [-B N] [-A N] <pattern> [path] — Search file contents directly\n\n\
+                 Usage:\n\
+                 \x20 /grep <pattern>           Search all files for pattern\n\
+                 \x20 /grep <pattern> <path>    Search within a specific file or directory\n\
+  -              \x20 /grep -s <pattern>        Case-sensitive search\n\n\
+  +              \x20 /grep -s <pattern>        Case-sensitive search\n\
+  +              \x20 /grep -C N <pattern>      Show N lines of context around each match\n\
+  +              \x20 /grep -B N <pattern>      Show N lines before each match\n\
+  +              \x20 /grep -A N <pattern>      Show N lines after each match\n\n\
+                 Fast, direct file content search — no AI, no token cost, instant results.\n\
+                 Uses git grep in git repos (respects .gitignore), falls back to grep.\n\
+                 Case-insensitive by default. Limited to 50 results.\n\n\
+  +              Context flags can be combined: /grep -B 2 -A 1 TODO shows 2 lines\n\
+  +              before and 1 line after each match.\n\n\
+                 Examples:\n\
+                 \x20 /grep TODO\n\
+                 \x20 /grep \"fn main\" src/\n\
+  -              \x20 /grep -s MyStruct src/lib.rs",
+  ... (4 more lines)
+ ✓ (41.2s)
+  4 tools completed in 56.1s (4 ✓)
+
+Now update the short help text that lists /grep:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1509..1514 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "grep.*pat.*path.*Search… ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+The short help lines at 1516 and 1778 are fine as-is — they're compact summaries. The detailed help is what I updated. Let me also check the CLI help text:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1776..1779 ✓ (1ms)
+
+These compact lines are fine. Now let me run the full checks:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (5.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (31.0s)
+  5 tools completed in 58.5s (5 ✓)
+
+  ↳ 10m 12s · 22761→16217 tokens · $2.00
+  ⬤ 14% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
