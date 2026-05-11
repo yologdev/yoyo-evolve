@@ -649,14 +649,25 @@ pub struct GrepArgs {
     pub pattern: String,
     pub path: String,
     pub case_sensitive: bool,
+    /// Lines of context around matches: (before, after).
+    /// Set by `-C N` (symmetric), `-B N` (before only), `-A N` (after only).
+    /// Flags combine: `-B 2 -A 1` → `Some((2, 1))`.
+    pub context_lines: Option<(u32, u32)>,
 }
 
 /// Parse `/grep` arguments.
 ///
-/// Syntax: `/grep [-s|--case] <pattern> [path]`
+/// Syntax: `/grep [-s|--case] [-C N|--context N] [-B N|--before N] [-A N|--after N] <pattern> [path]`
 ///
 /// Supports double-quoted patterns for multi-word searches:
 /// `/grep "fn main" src/` → pattern = "fn main", path = "src/"
+///
+/// Context flags:
+/// - `-C N` / `--context N` — show N lines before and after each match
+/// - `-B N` / `--before N` — show N lines before each match
+/// - `-A N` / `--after N` — show N lines after each match
+///
+/// Flags combine: `-B 2 -A 1` shows 2 before, 1 after.
 ///
 /// Returns `None` if the pattern is empty.
 pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
@@ -669,14 +680,42 @@ pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
     let tokens = tokenize_quoted(rest);
 
     let mut case_sensitive = false;
+    let mut context_before: Option<u32> = None;
+    let mut context_after: Option<u32> = None;
     let mut remaining_parts: Vec<String> = Vec::new();
 
-    for token in &tokens {
-        if token == "-s" || token == "--case" {
-            case_sensitive = true;
-        } else {
-            remaining_parts.push(token.clone());
+    let mut i = 0;
+    while i < tokens.len() {
+        let token = &tokens[i];
+        match token.as_str() {
+            "-s" | "--case" => {
+                case_sensitive = true;
+            }
+            "-C" | "--context" => {
+                if let Some(n) = tokens.get(i + 1).and_then(|v| v.parse::<u32>().ok()) {
+                    context_before = Some(n);
+                    context_after = Some(n);
+                    i += 1; // consume the number
+                }
+                // If no valid number follows, flag is silently ignored
+            }
+            "-B" | "--before" => {
+                if let Some(n) = tokens.get(i + 1).and_then(|v| v.parse::<u32>().ok()) {
+                    context_before = Some(n);
+                    i += 1;
+                }
+            }
+            "-A" | "--after" => {
+                if let Some(n) = tokens.get(i + 1).and_then(|v| v.parse::<u32>().ok()) {
+                    context_after = Some(n);
+                    i += 1;
+                }
+            }
+            _ => {
+                remaining_parts.push(token.clone());
+            }
         }
+        i += 1;
     }
 
     if remaining_parts.is_empty() {
@@ -690,10 +729,18 @@ pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
         ".".to_string()
     };
 
+    let context_lines = match (context_before, context_after) {
+        (Some(b), Some(a)) => Some((b, a)),
+        (Some(b), None) => Some((b, 0)),
+        (None, Some(a)) => Some((0, a)),
+        (None, None) => None,
+    };
+
     Some(GrepArgs {
         pattern,
         path,
         case_sensitive,
+        context_lines,
     })
 }
 
@@ -775,6 +822,70 @@ pub fn run_grep(args: &GrepArgs) -> Result<Vec<GrepMatch>, String> {
     }
 }
 
+/// Run grep with context lines and return the raw output string.
+///
+/// When context lines are requested, the output includes match lines,
+/// context lines, and `--` group separators. We return the raw string
+/// for formatting rather than parsing into `GrepMatch` structs.
+fn run_grep_with_context(args: &GrepArgs) -> Result<String, String> {
+    let (before, after) = args.context_lines.unwrap_or((0, 0));
+
+    let in_git_repo = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let output = if in_git_repo {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["grep", "-n", "--color=never"]);
+        if !args.case_sensitive {
+            cmd.arg("-i");
+        }
+        if before > 0 {
+            cmd.args(["-B", &before.to_string()]);
+        }
+        if after > 0 {
+            cmd.args(["-A", &after.to_string()]);
+        }
+        cmd.arg("--");
+        cmd.arg(&args.pattern);
+        if args.path != "." {
+            cmd.arg(&args.path);
+        }
+        cmd.output()
+    } else {
+        let mut cmd = std::process::Command::new("grep");
+        cmd.args(["-rn", "--color=never"]);
+        if !args.case_sensitive {
+            cmd.arg("-i");
+        }
+        if before > 0 {
+            cmd.args(["-B", &before.to_string()]);
+        }
+        if after > 0 {
+            cmd.args(["-A", &after.to_string()]);
+        }
+        cmd.args([
+            "--exclude-dir=.git",
+            "--exclude-dir=target",
+            "--exclude-dir=node_modules",
+            "--exclude-dir=__pycache__",
+            "--exclude-dir=.venv",
+        ]);
+        cmd.arg(&args.pattern);
+        cmd.arg(&args.path);
+        cmd.output()
+    };
+
+    match output {
+        Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+        Err(e) => Err(format!("Failed to run grep: {e}")),
+    }
+}
+
 /// Format grep results with colors and truncation.
 ///
 /// Returns the formatted string to display.
@@ -813,7 +924,190 @@ pub fn format_grep_results(matches: &[GrepMatch], pattern: &str, case_sensitive:
     output
 }
 
-/// Highlight occurrences of a pattern in a line of text.
+/// Format raw grep output that includes context lines.
+///
+/// `git grep -C N` / `grep -C N` output has three line types:
+/// - Match lines: `file:linenum:text` (colon separator after linenum)
+/// - Context lines: `file-linenum-text` (dash separator after linenum)
+/// - Group separators: `--`
+///
+/// Match lines get highlighted; context lines are dimmed.
+/// Truncation respects `GREP_MAX_MATCHES` counting only match lines.
+pub fn format_grep_results_with_context(
+    raw_output: &str,
+    pattern: &str,
+    case_sensitive: bool,
+) -> String {
+    if raw_output.trim().is_empty() {
+        return format!("{DIM}  No matches found.{RESET}\n");
+    }
+
+    let mut output = String::new();
+    let mut match_count: usize = 0;
+    let mut truncated = false;
+
+    for line in raw_output.lines() {
+        if line == "--" {
+            // Group separator
+            if !truncated {
+                output.push_str(&format!("  {DIM}--{RESET}\n"));
+            }
+            continue;
+        }
+
+        // Try to parse as match line (file:linenum:text — colon after linenum)
+        if let Some(parsed) = parse_context_line(line) {
+            if parsed.is_match {
+                match_count += 1;
+                if match_count > GREP_MAX_MATCHES {
+                    truncated = true;
+                    continue;
+                }
+                let highlighted = highlight_grep_match(&parsed.text, pattern, case_sensitive);
+                output.push_str(&format!(
+                    "  {GREEN}{}{RESET}:{CYAN}{}{RESET}: {}\n",
+                    parsed.file, parsed.line_num, highlighted
+                ));
+            } else if !truncated {
+                // Context line — dimmed
+                output.push_str(&format!(
+                    "  {DIM}{}{RESET}:{DIM}{}{RESET}: {DIM}{}{RESET}\n",
+                    parsed.file, parsed.line_num, parsed.text
+                ));
+            }
+        } else if !truncated {
+            // Unparseable line — show as-is, dimmed
+            output.push_str(&format!("  {DIM}{line}{RESET}\n"));
+        }
+    }
+
+    if match_count > GREP_MAX_MATCHES {
+        output.push_str(&format!(
+            "\n{DIM}  ({} more matches, narrow your search){RESET}\n",
+            match_count - GREP_MAX_MATCHES
+        ));
+    } else {
+        output.push_str(&format!(
+            "\n{DIM}  {} match{}{RESET}\n",
+            match_count,
+            if match_count == 1 { "" } else { "es" }
+        ));
+    }
+
+    output
+}
+
+/// A parsed line from context-mode grep output.
+struct ContextLine {
+    file: String,
+    line_num: String,
+    text: String,
+    /// true if this is a match line (colon separator), false if context (dash separator)
+    is_match: bool,
+}
+
+/// Parse a single line from `grep -C` output.
+///
+/// Match lines:   `file:linenum:text`  (colon separators)
+/// Context lines: `file-linenum-text`  (dash separators)
+///
+/// Strategy: try match-line format first (file:num:text), then context-line
+/// format (file-num-text). For context lines we scan backwards from the end
+/// to find `\d+-` and `-\d+-` patterns to locate the linenum, since filenames
+/// can contain dashes.
+fn parse_context_line(line: &str) -> Option<ContextLine> {
+    // Strategy 1: match line — find `:<digits>:` pattern
+    // We look for a colon followed by digits followed by another colon.
+    if let Some(m) = find_line_num_pattern(line, ':') {
+        return Some(ContextLine {
+            file: line[..m.file_end].to_string(),
+            line_num: line[m.num_start..m.num_end].to_string(),
+            text: line[m.text_start..].to_string(),
+            is_match: true,
+        });
+    }
+
+    // Strategy 2: context line — find `-<digits>-` pattern
+    // Scan from the right to handle filenames with dashes.
+    if let Some(m) = find_line_num_pattern(line, '-') {
+        return Some(ContextLine {
+            file: line[..m.file_end].to_string(),
+            line_num: line[m.num_start..m.num_end].to_string(),
+            text: line[m.text_start..].to_string(),
+            is_match: false,
+        });
+    }
+
+    None
+}
+
+/// Positions of a `sep<digits>sep` match in a line.
+struct LineNumPos {
+    file_end: usize,
+    num_start: usize,
+    num_end: usize,
+    text_start: usize,
+}
+
+/// Find a `<sep><digits><sep>` pattern in `line` where `sep` is `:` or `-`.
+///
+/// For `:`, scans left-to-right (first match — shortest filename).
+/// For `-`, scans right-to-left (last match — longest filename) because
+/// filenames can contain dashes but the linenum is always the rightmost
+/// `-<digits>-` before the text.
+fn find_line_num_pattern(line: &str, sep: char) -> Option<LineNumPos> {
+    let bytes = line.as_bytes();
+    let sep_byte = sep as u8;
+
+    if sep == ':' {
+        // Scan left-to-right: find first :<digits>:
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == sep_byte {
+                // Check if digits follow
+                let num_start = i + 1;
+                let mut j = num_start;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > num_start && j < bytes.len() && bytes[j] == sep_byte {
+                    return Some(LineNumPos {
+                        file_end: i,
+                        num_start,
+                        num_end: j,
+                        text_start: j + 1,
+                    });
+                }
+            }
+            i += 1;
+        }
+    } else {
+        // Scan right-to-left for -<digits>-: find the rightmost match
+        // where the digits portion is valid. This handles filenames with dashes.
+        let mut best: Option<LineNumPos> = None;
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == sep_byte {
+                let num_start = i + 1;
+                let mut j = num_start;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > num_start && j < bytes.len() && bytes[j] == sep_byte {
+                    best = Some(LineNumPos {
+                        file_end: i,
+                        num_start,
+                        num_end: j,
+                        text_start: j + 1,
+                    });
+                }
+            }
+            i += 1;
+        }
+        return best;
+    }
+    None
+}
 fn highlight_grep_match(text: &str, pattern: &str, case_sensitive: bool) -> String {
     if pattern.is_empty() {
         return text.to_string();
@@ -850,25 +1144,47 @@ pub fn handle_grep(input: &str) {
     let args = match parse_grep_args(input) {
         Some(a) => a,
         None => {
-            println!("{DIM}  usage: /grep [-s|--case] <pattern> [path]");
+            println!("{DIM}  usage: /grep [-s|--case] [-C N] [-B N] [-A N] <pattern> [path]");
             println!("  Search file contents directly — no AI, no tokens, instant results.");
             println!("  Case-insensitive by default. Use -s or --case for case-sensitive.");
+            println!();
+            println!("  Context lines:");
+            println!("    -C N / --context N  Show N lines before and after each match");
+            println!("    -B N / --before N   Show N lines before each match");
+            println!("    -A N / --after N    Show N lines after each match");
             println!();
             println!("  Examples:");
             println!("    /grep TODO");
             println!("    /grep \"fn main\" src/");
-            println!("    /grep -s MyStruct src/lib.rs{RESET}\n");
+            println!("    /grep -s MyStruct src/lib.rs");
+            println!("    /grep -C 3 \"fn main\" src/");
+            println!("    /grep -B 2 -A 1 TODO{RESET}\n");
             return;
         }
     };
 
-    match run_grep(&args) {
-        Ok(matches) => {
-            let formatted = format_grep_results(&matches, &args.pattern, args.case_sensitive);
-            print!("{formatted}");
+    if args.context_lines.is_some() {
+        // Context mode: use raw output with context-aware formatting
+        match run_grep_with_context(&args) {
+            Ok(raw) => {
+                let formatted =
+                    format_grep_results_with_context(&raw, &args.pattern, args.case_sensitive);
+                print!("{formatted}");
+            }
+            Err(e) => {
+                println!("{RED}  Error: {e}{RESET}\n");
+            }
         }
-        Err(e) => {
-            println!("{RED}  Error: {e}{RESET}\n");
+    } else {
+        // Standard mode: structured parsing
+        match run_grep(&args) {
+            Ok(matches) => {
+                let formatted = format_grep_results(&matches, &args.pattern, args.case_sensitive);
+                print!("{formatted}");
+            }
+            Err(e) => {
+                println!("{RED}  Error: {e}{RESET}\n");
+            }
         }
     }
 }
@@ -1398,6 +1714,7 @@ mod tests {
             pattern: "fn main".to_string(),
             path: "src/".to_string(),
             case_sensitive: true,
+            context_lines: None,
         };
         let matches = run_grep(&args).unwrap();
         assert!(
@@ -1419,6 +1736,131 @@ mod tests {
     fn grep_in_help_text() {
         let help = help_text();
         assert!(help.contains("/grep"), "/grep should appear in help text");
+    }
+
+    #[test]
+    fn parse_grep_args_context_c_flag() {
+        let args = parse_grep_args("/grep -C 3 TODO src/").unwrap();
+        assert_eq!(args.pattern, "TODO");
+        assert_eq!(args.path, "src/");
+        assert_eq!(args.context_lines, Some((3, 3)));
+    }
+
+    #[test]
+    fn parse_grep_args_context_long_flag() {
+        let args = parse_grep_args("/grep --context 5 TODO").unwrap();
+        assert_eq!(args.pattern, "TODO");
+        assert_eq!(args.context_lines, Some((5, 5)));
+    }
+
+    #[test]
+    fn parse_grep_args_before_flag() {
+        let args = parse_grep_args("/grep -B 2 TODO").unwrap();
+        assert_eq!(args.pattern, "TODO");
+        assert_eq!(args.context_lines, Some((2, 0)));
+    }
+
+    #[test]
+    fn parse_grep_args_after_flag() {
+        let args = parse_grep_args("/grep -A 4 TODO").unwrap();
+        assert_eq!(args.pattern, "TODO");
+        assert_eq!(args.context_lines, Some((0, 4)));
+    }
+
+    #[test]
+    fn parse_grep_args_before_and_after_combined() {
+        let args = parse_grep_args("/grep -B 2 -A 1 TODO src/").unwrap();
+        assert_eq!(args.pattern, "TODO");
+        assert_eq!(args.path, "src/");
+        assert_eq!(args.context_lines, Some((2, 1)));
+    }
+
+    #[test]
+    fn parse_grep_args_context_with_case_flag() {
+        let args = parse_grep_args("/grep -s -C 3 MyStruct").unwrap();
+        assert_eq!(args.pattern, "MyStruct");
+        assert!(args.case_sensitive);
+        assert_eq!(args.context_lines, Some((3, 3)));
+    }
+
+    #[test]
+    fn parse_grep_args_context_without_number_ignored() {
+        // -C without a number should be silently ignored, not consume pattern
+        let args = parse_grep_args("/grep -C TODO").unwrap();
+        assert_eq!(args.pattern, "TODO");
+        assert_eq!(args.context_lines, None);
+    }
+
+    #[test]
+    fn parse_grep_args_no_context_by_default() {
+        let args = parse_grep_args("/grep TODO").unwrap();
+        assert_eq!(args.context_lines, None);
+    }
+
+    #[test]
+    fn format_grep_context_empty() {
+        let formatted = format_grep_results_with_context("", "pattern", false);
+        assert!(formatted.contains("No matches found"));
+    }
+
+    #[test]
+    fn format_grep_context_match_and_context_lines() {
+        // Simulate git grep -C 1 output
+        let raw = "\
+src/main.rs-1-// comment before
+src/main.rs:2:fn main() {
+src/main.rs-3-    println!(\"hello\");";
+        let formatted = format_grep_results_with_context(raw, "fn main", false);
+        // Should contain the match
+        assert!(formatted.contains("main.rs"));
+        assert!(formatted.contains("2"));
+        assert!(formatted.contains("1 match"));
+    }
+
+    #[test]
+    fn format_grep_context_group_separator() {
+        let raw = "\
+src/a.rs:10:match one
+--
+src/b.rs:20:match two";
+        let formatted = format_grep_results_with_context(raw, "match", false);
+        assert!(formatted.contains("--"));
+        assert!(formatted.contains("2 matches"));
+    }
+
+    #[test]
+    fn parse_context_line_match() {
+        let parsed = parse_context_line("src/main.rs:42:fn main() {").unwrap();
+        assert_eq!(parsed.file, "src/main.rs");
+        assert_eq!(parsed.line_num, "42");
+        assert_eq!(parsed.text, "fn main() {");
+        assert!(parsed.is_match);
+    }
+
+    #[test]
+    fn parse_context_line_context() {
+        let parsed = parse_context_line("src/main.rs-43-    println!(\"hello\");").unwrap();
+        assert_eq!(parsed.file, "src/main.rs");
+        assert_eq!(parsed.line_num, "43");
+        assert_eq!(parsed.text, "    println!(\"hello\");");
+        assert!(!parsed.is_match);
+    }
+
+    #[test]
+    fn run_grep_with_context_finds_matches() {
+        // Test that context mode actually works on the real project
+        let args = GrepArgs {
+            pattern: "fn main".to_string(),
+            path: "src/main.rs".to_string(),
+            case_sensitive: true,
+            context_lines: Some((1, 1)),
+        };
+        let result = run_grep_with_context(&args).unwrap();
+        assert!(
+            !result.is_empty(),
+            "Should find 'fn main' with context in src/main.rs"
+        );
+        assert!(result.contains("fn main"));
     }
 
     #[test]
