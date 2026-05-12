@@ -1,0 +1,248 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by clearing the session plan directory and reviewing what's needed.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons… ✓ (6ms)
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -100 ✓ (4ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | grep -E "^## Priority Queue|❌|🟡" | head -30 ✓ (4ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | tail -40 ✓ (3ms)
+  ▶ $ grep -c "^## Priority Queue" CLAUDE_CODE_GAP.md && sed -n '/^## Priority Queue/,… ✓ (4ms)
+  ▶ $ sed -n '/^## Priority Queue/,$p' CLAUDE_CODE_GAP.md | head -30 ✓ (3ms)
+  7 tools completed in 22.5s (7 ✓)
+
+Now let me look at what would be most impactful. The assessment highlights three key areas of internal debt and opportunity:
+
+1. **Test density on core files** - prompt.rs (1.05/100), tools.rs (1.30/100), help.rs (1.01/100)
+2. **`commands_project.rs` (1,721 lines)** - largest catch-all file with mixed concerns
+3. Competitive gaps - persistent named subagents, graceful tool failure degradation
+
+Let me check what specific things would be most impactful:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's in commands_project.rs at a high level (2 lines) ✓ (4ms)
+  ▶ $ # Check tools.rs test density more closely (2 lines) ✓ (3ms)
+  ▶ $ # Check prompt.rs structure for testable units (2 lines) ✓ (3ms)
+  ▶ $ # Check what tests exist in prompt.rs (2 lines) ✓ (3ms)
+  ▶ $ # What's in tools.rs that could be tested? (2 lines) ✓ (3ms)
+  ▶ $ # Check what's testable in tools.rs - look at the test modul… (2 lines) ✓ (3ms)
+  ▶ $ sed -n '874,900p' src/tools.rs ✓ (3ms)
+  7 tools completed in 42.1s (7 ✓)
+
+Now let me think about the three tasks. Looking at the assessment:
+
+1. **Self-driven competitive improvement**: Graceful tool failure degradation is a real gap (#2 in priority queue). But it's complex. A more tractable self-driven improvement would be extracting `commands_project.rs` (1,721 lines of mixed concerns) — this improves code health and maintainability. Or I could focus on test density for tools.rs which is a core file.
+
+2. Test backfill on `tools.rs` — 1,691 lines with only 22 tests (1.30/100). This is the tool infrastructure that everything depends on. Good self-driven work.
+
+3. `commands_project.rs` extraction — 1,721 lines is the largest catch-all. Could split out the `/init and /docs` functionality, or the project detection logic.
+
+Let me check what's actually testable in tools.rs more carefully:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '900,1000p' src/tools.rs ✓ (4ms)
+  ▶ $ # Check what else is in tools.rs - RenameSymbolTool, TodoToo… (2 lines) ✓ (4ms)
+  ▶ $ # Look at the TodoTool more closely - it likely has pure log… (2 lines) ✓ (6ms)
+  3 tools completed in 8.9s (3 ✓)
+
+Now let me look at what would be a genuinely impactful competitive improvement. Let me check for something concrete:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a /grep -C N feature gap (mentioned in as… (2 lines) ✓ (4ms)
+
+OK so grep -C is already implemented. Let me look for other competitive opportunities:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the /init command - does it do something useful… (3 lines) ✓ (3ms)
+  ▶ $ # Check for any interesting features we could add (4 lines) ✓ (3ms)
+  ▶ $ # Let me check what "extended thinking summary" looks like a… (4 lines) ✓ (3ms)
+  3 tools completed in 12.6s (3 ✓)
+
+Let me think about what three tasks would be most impactful:
+
+**Task 1: Extract `/init, /docs, and project detection from commands_project.rs`** — This is the largest catch-all file. The /init command, `/docs command, and ProjectType/detect_project_type` are self-contained and can be split. But actually, that's 3 different concerns - let me be targeted. The project detection + init is the most cohesive group.
+
+**Task 2: Add tests for `tools.rs`** — TodoTool and RenameSymbolTool have testable parameter validation and error paths. AskUserTool has less testable surface (stdin), but the schema and error handling are testable.
+
+Task 3: Something competitive — Let me think about what would genuinely help a developer. One thing Claude Code does well is multi-file edit planning — showing the user what it intends to change before doing it. Another is smart context management — knowing which files are most relevant. Let me look at something specific...
+
+Actually, let me look at a concrete UX improvement that would matter:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we have a /changes command that shows what the ag… (2 lines) ✓ (7ms)
+  ▶ $ # Do we have /diff already? Yes. What about showing changed … (2 lines) ✓ (4ms)
+  ▶ $ # What does /changes do? (2 lines) ✓ (3ms)
+  ▶ $ grep -n "handle_changes" src/commands.rs | head -5 ✓ (3ms)
+  ▶ $ # Let me look at what would be a really impactful competitiv… (8 lines) ✓ (3ms)
+  5 tools completed in 17.9s (5 ✓)
+
+OK, let me step back and think strategically about what three tasks would be most valuable today:
+
+1. **Test backfill for tools.rs** — Core infrastructure, test density 1.30/100. Tests for TodoTool parameter validation, RenameSymbolTool schema/error handling, build_tools behavior. Self-driven quality work.
+
+2. **Extract `/init + /docs + ProjectType from commands_project.rs`** — 1,721 lines, the largest catch-all. Extracting the init/docs/project-detection logic into a new commands_init.rs or splitting concerns would reduce complexity. This is structural debt.
+
+3. **Something competitive/UX-forward** — Let me think about what matters to real developers... One concrete thing: **`/compact` feedback** — when context is compacted, showing what was kept/dropped. Or improving error messages. Or... actually, let me look at something users might encounter:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /status command to show more usef… (4 lines) ✓ (3ms)
+  ▶ $ sed -n '131,230p' src/commands_info.rs ✓ (4ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Let me now think carefully about the three most impactful tasks. The assessment says:
+
+• 10 consecutive sessions with 0 reverts — stability is high
+• Test density on core files is the clearest internal debt
+• `commands_project.rs` (1,721 lines) remains the largest catch-all
+• No new community issues need attention
+
+Given no sponsor issues and no urgent community issues, I should focus on self-driven work (tiers 1-3 and 7). Let me pick three tasks that genuinely improve the codebase:
+
+1. **Test backfill for `tools.rs`** — TodoTool has rich testable logic (parameter validation, state management through commands_todo). 22 tests for 1,691 lines is thin. This is self-driven quality (tier 2).
+
+2. **Extract project detection and `/init into commands_init.rs** — commands_project.rs` at 1,721 lines is the largest catch-all. The /init command (generate_init_content, handle_init), /docs (handle_docs), and project detection (ProjectType, detect_project_type, detect_project_name) are cohesive and separable. This is self-driven structural health (tier 3).
+
+3. **Add tool retry hints for common failure modes** — When a tool fails, the agent currently gets the raw error. Adding structured hints for common failures (file not found → suggest list_files, permission denied → suggest checking path, etc.) would close the "graceful degradation" competitive gap incrementally. This is tier 1 competitive work.
+
+Wait, let me check the tool retry hints idea more concretely:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if tool_recovery_hint already exists (2 lines) ✓ (3ms)
+  ▶ $ sed -n '81,130p' src/prompt_retry.rs ✓ (3ms)
+  2 tools completed in 9.1s (2 ✓)
+
+OK, tool_recovery_hint already exists and is quite comprehensive. Let me think about what else is competitive.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /plan command? Or adding better c… (8 lines) ✓ (3ms)
+  ▶ $ # Let me check how the write_file diff preview was just adde… (2 lines) ✓ (3ms)
+  ▶ $ grep -rn "format_edit_diff\|diff_preview\|show.*diff" src/ | head -15 ✓ (6ms)
+  3 tools completed in 9.6s (3 ✓)
+
+OK, I have a good picture now. Let me finalize my three tasks:
+
+**Task 1 (self-driven quality):** Tests for tools.rs — specifically TodoTool, RenameSymbolTool, and build_tools edge cases. Focus on parameter validation, error handling, and schema correctness.
+
+**Task 2 (self-driven structural):** Extract /init, /docs, `ProjectType/detect_project_type/detect_project_name from commands_project.rs into a new commands_init.rs`. This reduces the largest catch-all file.
+
+Task 3 (competitive UX): Something that real developers would notice. Let me think about what's a real gap... One thing Claude Code has that we're partial on: **extended thinking display quality. But we have that. What about showing git diff stats in the turn summary** — after each agent turn that modifies files, show a compact summary of what changed? We already have session_changes tracking, but making it more visible...
+
+Actually, let me think about something more concrete and impactful. Let me check if we properly handle the case where the user's context is almost full:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the prompt system? Or adding a /summa… (3 lines) ✓ (3ms)
+  ▶ $ # Let me think about a concrete competitive feature (10 lines) ✓ (3ms)
+  ▶ $ # Does /grep support --include for file filtering? (2 lines) ✓ (4ms)
+  ▶ $ # Check what GrepArgs has (2 lines) ✓ (3ms)
+  ▶ $ # Does /grep support --include for file type filtering? No, … (13 lines) ✓ (515ms)
+  ▶ $ # How does git grep handle file filtering? It uses -- '*.rs'… (4 lines) ✓ (18ms)
+  6 tools completed in 34.5s (6 ✓)
+
+Good — git grep supports -- '*.ext' for file filtering. This would be a practical improvement to /grep. But let me reconsider whether this is the best use of a task slot vs other improvements.
+
+Let me settle on my three tasks. Here's my thinking:
+
+1. **Tests for tools.rs** — Core infrastructure, 22 tests for 1,691 lines. TodoTool and RenameSymbolTool have testable parameter validation/error paths. High internal value.
+
+2. **Extract /init + /docs + project detection from commands_project.rs** — Largest catch-all at 1,721 lines. Clean extraction of cohesive functionality.
+
+3. Add `--include` glob filter to `/grep` — Real developer UX improvement. git grep already supports -- '*.rs' syntax; we just need to parse the flag and pass it through. Small change, high utility.
+
+Wait, actually task 2 needs to be bounded to ≤3 files. Let me make sure:
+• commands_project.rs (source file being split)
+• New file commands_init.rs (destination)
+• Maybe `commands.rs or dispatch.rs` if imports need updating
+
+Let me verify the routing:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Where are handle_init and handle_docs dispatched from? (2 lines) ✓ (3ms)
+  ▶ $ # Where are ProjectType/detect_project_type used? (2 lines) ✓ (12ms)
+  2 tools completed in 13.2s (2 ✓)
+
+That's a lot of imports from commands_project.rs. Extracting would touch many files (>3). Let me reconsider — maybe a better structural task is something that stays within 3 files.
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Count unique files that import from commands_project (2 lines) ✓ (6ms)
+
+7 files import from commands_project. That extraction would touch too many files (violates the 3-file rule). Let me pick a different structural task.
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about splitting commands_git.rs (2,068 lines)? (4 lines) ✓ (6ms)
+  ▶ $ # What about adding tests for prompt.rs? It has 18 tests for… (5 lines) ✓ (3ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Only 2 non-async pure functions. Not much surface for unit tests without mocking the agent.
+
+Let me reconsider. Instead of a structural extraction (which would touch too many files), let me do a competitive UX feature:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about adding --include glob to /grep? Let me check th… (2 lines) ✓ (4ms)
+  ▶ $ # Check how run_grep works (2 lines) ✓ (3ms)
+  ▶ $ sed -n '759,830p' src/commands_search.rs ✓ (4ms)
+  3 tools completed in 22.1s (3 ✓)
+
+Adding --include to /grep would be straightforward — add a field to GrepArgs, parse --include flag, and pass it through to git grep -- '*.ext' or grep --include='*.ext'. Touches only `commands_search.rs (and maybe help.rs` for the help text). Very clean, practical feature.
+
+Let me finalize and write the plan:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (46 lines) ✓ (31.1s)
+  ▶ write session_plan/task_02.md (43 lines) ✓ (30.5s)
+  ▶ write session_plan/task_03.md (42 lines) ✓ (30.2s)
+  3 tools completed in 2m 22s (3 ✓)
+
+Wait — I should reconsider task 3. It depends on task 1 (the --include field added in task 01). Tasks are executed by separate agents, so task 03 needs to either be independent or explicitly state the dependency. But more importantly, the 3-file limit applies per task, and tasks 1 and 3 both touch the same files. Let me reconsider whether combining include+exclude+count into one task (touching only 2 files) is better, or pick a different task 3.
+
+Actually, tasks 1 and 3 both touch commands_search.rs and help.rs. The implementation agents work sequentially (task 01 first, then task 02, then task 03), so task 03 will see the changes from task 01. But bundling too much into one task risks it being too large. Let me make task 3 something independent.
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me think of a different task 3 that's independent (10 lines) ✓ (4ms)
+  ▶ $ sed -n '1873,1920p' src/help.rs ✓ (3ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Actually, I think a better task 3 would be independent of task 1. Let me think about what's most valuable:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about adding a /grep --exclude and --count in the SAM… (17 lines) ✓ (4ms)
+  ▶ $ # Actually, let me think more practically. What would make t… (6 lines) ✓ (5ms)
+  2 tools completed in 19.6s (2 ✓)
+
+Let me think about something genuinely different for task 3. I want something that helps real developers and is self-contained.
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /find command to show file sizes … (3 lines) ✓ (3ms)
+  ▶ $ sed -n '245,310p' src/commands_search.rs ✓ (3ms)
+  2 tools completed in 8.8s (2 ✓)
+
+OK, let me settle on my final three tasks. I'll combine the grep enhancements into task 1 (include + exclude + count), keep tests for tools.rs as task 2, and pick a third task:
+
+Actually, wait. The combined grep task might be too large for 20 minutes. Let me keep it focused:
+• Task 1: /grep --include and --exclude (natural pair, same mechanism)  
+• Task 2: tools.rs tests
+• Task 3: Something independent
+
+For task 3, let me look at something practical that touches different files:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /outline command to show better f… (2 lines) ✓ (3ms)
+  ▶ $ sed -n '564,650p' src/commands_search.rs ✓ (3ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Let me pick a genuinely useful task 3. Looking at the codebase holistically:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about adding a --limit/-l flag to /grep to control ma… (9 lines) ✓ (3ms)
+
+OK, /diff --stat already exists. Let me look for something else.
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about making /find show file sizes? That's useful inf… (6 lines) ✓ (3ms)
+  ▶ $ # 12 tests, how many lines? (2 lines) ✓ (2ms)
+  2 tools completed in 4.7s (2 ✓)
+
+12 tests for 317 lines = 3.78/100. That's decent. What about commands_fork.rs?
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -c "#\[test\]" src/commands_fork.rs (2 lines) ✓ (44ms)
+
+21 tests for 881 lines = 2.38/100. Not terrible but could be better.
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Actually, let me reconsider the third task. What about som… (15 lines) ✓ (3ms)
+  ▶ $ sed -n '58,108p' src/commands_search.rs ✓ (3ms)
+  ▶ $ # The /find output currently just shows paths. Adding file s… (18 lines) ✓ (4ms)
+  ▶ $ # Check what tests exist for commands_fork.rs (2 lines) ✓ (3ms)
+  ▶ $ # Actually 21 tests is decent for 881 lines. Let me look els… (11 lines) ✓ (133ms)
+  5 tools completed in 25.8s (5 ✓)
+
+OK, grep -C is working. The assessment was wrong about it being a recurring failure — it was actually fixed.
+
+Let me finalize my plan. Three tasks:
+
+1. **/grep --include and --exclude glob filters** — practical developer feature, 2 files
+2. **Tests for `tools.rs`** — core infrastructure test density, 1 file  
+3. **Something independent** — let me pick something that genuinely matters
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me look at one more option: improving the safety.rs mo… (17 lines) ✓ (3ms)

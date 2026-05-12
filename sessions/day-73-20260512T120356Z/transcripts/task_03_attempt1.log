@@ -1,0 +1,455 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --exclude glob filter and --count/-c flag for /grep. Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct GrepArgs" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_grep_args\|fn … ✓ (5ms)
+ ✓ (3ms)
+  ▶ read src/commands_search.rs:648..778 ✓ (1ms)
+  ▶ read src/commands_search.rs:775..975 ✓ (2ms)
+  4 tools completed in 7.4s (4 ✓)
+
+Now let me see the handle_grep function and the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1171..1271 ✓ (1ms)
+
+Now let me look at the help.rs grep section:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "grep" src/help.rs | hea… ✓ (4ms)
+
+Now let me see the existing tests for --include:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1835..1915 ✓ (1ms)
+
+Good, I have a thorough understanding of the code. Let me also check the `GREP_MAX_MATCHES` constant and how context line formatting works:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GREP_MAX_MATCHES" src/c… ✓ (3ms)
+
+Now let me look at the rest of handle_grep and the format_grep_results_with_context:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:964..1064 ✓ (1ms)
+
+I have a solid understanding. Now let me implement the changes. I'll start with tests, then the implementation.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.6s (7 ✓)
+
+Let me find all places where GrepArgs is constructed directly (not through parse_grep_args):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GrepArgs {" src/command… ✓ (3ms)
+
+Let me also check if GrepArgs is used elsewhere in the codebase:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "GrepArgs" src/ --inclu… ✓ (6ms)
+
+Good — GrepArgs is only used within commands_search.rs. Let me also check for run_grep calls outside:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_grep\|handle_grep\… ✓ (6ms)
+
+Only handle_grep is called externally. Now let me implement everything.
+
+**Step 1: Add fields to GrepArgs struct and update the parse function.**
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_search.rs (5 → 11 lines)
+        /// For git grep, added as a pathspec after `--`.
+        /// For plain grep, passed as `--include=<glob>`.
+        pub include: Option<String>,
+  +     /// Glob pattern to exclude files (e.g. `*.md`).
+  +     /// For git grep, added as a negative pathspec `:(exclude)<glob>`.
+  +     /// For plain grep, passed as `--exclude=<glob>`.
+  +     pub exclude: Option<String>,
+  +     /// When true, show match counts per file instead of individual lines.
+  +     pub count_only: bool,
+    }
+ ✓ (6.0s)
+  2 tools completed in 16.0s (2 ✓)
+
+Expected — I need to update all the construction sites. Let me do that now.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now update the doc comment and parse function:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (18 → 22 lines)
+    /// Parse `/grep` arguments.
+    ///
+  - /// Syntax: `/grep [-s|--case] [-C N|--context N] [-B N|--before N] [-A N|--after N] [--include <glob>] <pattern> [path]`
+  + /// Syntax: `/grep [-s|--case] [-c|--count] [-C N|--context N] [-B N|--before N] [-A N|--after N] [--include <glob>] [--exclude <glob>] <pattern> [path]`
+    ///
+    /// Supports double-quoted patterns for multi-word searches:
+    /// `/grep "fn main" src/` → pattern = "fn main", path = "src/"
+  ···
+    ///
+    /// File filter:
+    /// - `--include <glob>` — only search files matching the glob (e.g. `*.rs`)
+  + /// - `--exclude <glob>` — skip files matching the glob (e.g. `*.md`)
+  + ///
+  + /// Count mode:
+  + /// - `-c` / `--count` — show match counts per file instead of individual lines
+    ///
+    /// Flags combine: `-B 2 -A 1` shows 2 before, 1 after.
+    ///
+ ✓ (6.2s)
+
+Now let me update the parse function to handle the new flags, and update the constructor:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (5 → 7 lines)
+        let mut case_sensitive = false;
+  +     let mut count_only = false;
+        let mut context_before: Option<u32> = None;
+        let mut context_after: Option<u32> = None;
+        let mut include: Option<String> = None;
+  +     let mut exclude: Option<String> = None;
+        let mut remaining_parts: Vec<String> = Vec::new();
+ ✓ (6.0s)
+
+Now add the new flag parsing arms. Note: -c is already used for -C N (context). Let me check — wait, -C is uppercase C for context, -c is lowercase for count. Let me verify:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"-C"\|"-c"' src/command… ✓ (3ms)
+
+Good — -C (uppercase) is context, -c (lowercase) is free for count. Now add the new flag arms:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (7 → 17 lines)
+                "--include" => {
+                    if let Some(glob) = tokens.get(i + 1) {
+                        include = Some(glob.clone());
+  +                     i += 1; // consume the glob pattern
+  +                 }
+  +                 // If no value follows, flag is silently ignored
+  +             }
+  +             "--exclude" => {
+  +                 if let Some(glob) = tokens.get(i + 1) {
+  +                     exclude = Some(glob.clone());
+                        i += 1; // consume the glob pattern
+                    }
+                    // If no value follows, flag is silently ignored
+  +             }
+  +             "-c" | "--count" => {
+  +                 count_only = true;
+                }
+ ✓ (6.0s)
+
+Now update the GrepArgs constructor in parse_grep_args:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (7 → 9 lines)
+            case_sensitive,
+            context_lines,
+            include,
+  +         exclude,
+  +         count_only,
+        })
+ ✓ (6.0s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 13.5s (3 ✓)
+
+Now update all 4 test GrepArgs construction sites. Let me see each one:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1766..1786 ✓ (1ms)
+  ▶ edit src/commands_search.rs (7 → 9 lines)
+                case_sensitive: true,
+                context_lines: None,
+                include: None,
+  +             exclude: None,
+  +             count_only: false,
+            };
+ ✓ (6.4s)
+  ▶ read src/commands_search.rs:1889..1904 ✓ (1ms)
+  ▶ edit src/commands_search.rs (7 → 9 lines)
+                case_sensitive: true,
+                context_lines: None,
+                include: Some("*.rs".to_string()),
+  +             exclude: None,
+  +             count_only: false,
+            };
+ ✓ (6.1s)
+  ▶ read src/commands_search.rs:1916..1931 ✓ (1ms)
+  ▶ edit src/commands_search.rs (7 → 9 lines)
+                case_sensitive: false,
+                context_lines: None,
+                include: Some("*.toml".to_string()),
+  +             exclude: None,
+  +             count_only: false,
+            };
+ ✓ (6.4s)
+  ▶ read src/commands_search.rs:1988..2003 ✓ (1ms)
+  ▶ edit src/commands_search.rs (7 → 9 lines)
+                case_sensitive: true,
+                context_lines: Some((1, 1)),
+                include: None,
+  +             exclude: None,
+  +             count_only: false,
+            };
+ ✓ (42.9s)
+  ▶ todo ✓ (0ms)
+  9 tools completed in 1m 29s (9 ✓)
+
+Now let me verify it builds:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (126ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.0s)
+  2 tools completed in 17.5s (2 ✓)
+
+Good — builds clean. Now let me wire `--exclude into run_grep and run_grep_with_context`.
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+For run_grep, git grep path — add exclude pathspec:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (5 → 7 lines)
+            if let Some(ref glob) = args.include {
+                cmd.arg(glob);
+  +         }
+  +         if let Some(ref glob) = args.exclude {
+  +             cmd.arg(format!(":(exclude){glob}"));
+            }
+            cmd.output()
+  -     } else {
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/commands_search.rs. Include more surrounding context to make the match unique.
+
+Need more context to disambiguate. Let me read around both locations:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:798..828 ✓ (1ms)
+  ▶ edit src/commands_search.rs (14 → 17 lines)
+            }
+            if let Some(ref glob) = args.include {
+                cmd.arg(glob);
+  +         }
+  +         if let Some(ref glob) = args.exclude {
+  +             cmd.arg(format!(":(exclude){glob}"));
+            }
+            cmd.output()
+        } else {
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/commands_search.rs. Include more surrounding context to make the match unique.
+  2 tools completed in 7.1s (1 ✓, 1 ✗)
+
+The two functions have very similar structure. Let me use function name context:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (33 → 45 lines)
+            cmd.args(["grep", "-n", "--color=never"]);
+            if !args.case_sensitive {
+                cmd.arg("-i");
+  +         }
+  +         if args.count_only {
+  +             cmd.arg("-c");
+            }
+            cmd.arg("--");
+            cmd.arg(&args.pattern);
+  ···
+            }
+            if let Some(ref glob) = args.include {
+                cmd.arg(glob);
+  +         }
+  +         if let Some(ref glob) = args.exclude {
+  +             cmd.arg(format!(":(exclude){glob}"));
+            }
+            cmd.output()
+        } else {
+  ···
+  ... (13 more lines)
+ ✓ (42.2s)
+
+Now update the non-git grep branch too — add --exclude for the non-git path:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:840..860 ✓ (1ms)
+
+Good, both the git and non-git branches now have --exclude support. Now I also need to handle the count_only parsing in the output. When count_only is true, `git grep -c and grep -c produce file:count` format instead of file:linenum:text. The current parser expects file:linenum:text, so I need to handle this differently.
+
+Let me now update run_grep_with_context similarly:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:880..940 ✓ (1ms)
+  ▶ edit src/commands_search.rs (24 → 30 lines)
+            }
+            if let Some(ref glob) = args.include {
+                cmd.arg(glob);
+  +         }
+  +         if let Some(ref glob) = args.exclude {
+  +             cmd.arg(format!(":(exclude){glob}"));
+            }
+            cmd.output()
+        } else {
+  ···
+            }
+            if let Some(ref glob) = args.include {
+                cmd.arg(format!("--include={glob}"));
+  +         }
+  +         if let Some(ref glob) = args.exclude {
+  +             cmd.arg(format!("--exclude={glob}"));
+            }
+ ✓ (42.4s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 55.2s (3 ✓)
+
+Now let me implement count mode. When count_only is true, the output from `grep -c / git grep -c is file:count` (with 0-count lines from plain grep). I need to:
+1. Parse this output into a different format
+2. Add a `format_grep_count_results` function
+3. Update handle_grep to use count mode
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add a struct for count results and a function to run grep in count mode and format results. I'll add them right after run_grep:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:875..885 ✓ (0ms)
+
+Now I need to handle the case where count_only is true in run_grep. When -c is passed, the output format changes from file:linenum:text to file:count. The current parser expects three-part format. I should handle this in handle_grep rather than trying to parse count output as GrepMatch. Let me add a separate function for running and formatting count mode:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (5 → 122 lines)
+  +         Err(e) => Err(format!("Failed to run grep: {e}")),
+  +     }
+  + }
+  + 
+  + /// A single file's match count from `grep -c` output.
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub struct GrepCountEntry {
+  +     pub file: String,
+  +     pub count: u32,
+  + }
+  + 
+  + /// Run grep in count mode (`-c`) and return per-file match counts.
+  + ///
+  + /// Uses `git grep -c` or `grep -rc` depending on whether we're in a git repo.
+  + /// Filters out files with 0 matches (plain grep includes them, git grep doesn't).
+  + fn run_grep_count(args: &GrepArgs) -> Result<Vec<GrepCountEntry>, String> {
+  +     let in_git_repo = std::process::Command::new("git")
+  +         .args(["rev-parse", "--is-inside-work-tree"])
+  +         .stdout(std::process::Stdio::null())
+  +         .stderr(std::process::Stdio::null())
+  ... (102 more lines)
+ ✓ (10.2s)
+
+Expected — the new functions aren't used yet. Now update handle_grep to use count mode:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1288..1323 ✓ (1ms)
+  ▶ read src/commands_search.rs:1330..1370 ✓ (1ms)
+  ▶ read src/commands_search.rs:1369..1389 ✓ (1ms)
+  3 tools completed in 7.8s (3 ✓)
+
+Now update handle_grep with the new usage text and count mode:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (29 → 46 lines)
+        let args = match parse_grep_args(input) {
+            Some(a) => a,
+            None => {
+  -             println!("{DIM}  usage: /grep [-s|--case] [-C N] [-B N] [-A N] [--include <glob>] <pattern> [path]");
+  +             println!("{DIM}  usage: /grep [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path]");
+                println!("  Search file contents directly — no AI, no tokens, instant results.");
+                println!("  Case-insensitive by default. Use -s or --case for case-sensitive.");
+                println!();
+  ···
+                println!();
+                println!("  File filter:");
+                println!("    --include <glob>    Only search files matching the glob (e.g. *.rs)");
+  +             println!("    --exclude <glob>    Skip files matching the glob (e.g. *.md)");
+  +             println!();
+  +             println!("  Count mode:");
+  +             println!("    -c / --count        Show match counts per file instead of lines");
+                println!();
+                println!("  Examples:");
+                println!("    /grep TODO");
+  ···
+  ... (23 more lines)
+ ✓ (41.9s)
+
+Now let me verify it builds:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (124ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.2s)
+  2 tools completed in 14.8s (2 ✓)
+
+Clean build and clippy pass. Now let me run existing tests:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_search 2>… ✓ (612ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now let me add tests for the new functionality:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find the end of the tests section to add new tests:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:2110..2160 ✓ (1ms)
+  ▶ read src/commands_search.rs:2155..2185 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now I'll add the new tests right after the run_grep_with_context_finds_matches test:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (2 → 149 lines)
+            assert!(result.contains("fn main"));
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_grep_args_exclude_flag() {
+  +         let args = parse_grep_args(r#"/grep --exclude "*.md" TODO"#).unwrap();
+  +         assert_eq!(args.pattern, "TODO");
+  +         assert_eq!(args.exclude, Some("*.md".to_string()));
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_grep_args_count_short_flag() {
+  +         let args = parse_grep_args("/grep -c fn src/").unwrap();
+  +         assert_eq!(args.pattern, "fn");
+  +         assert_eq!(args.path, "src/");
+  +         assert!(args.count_only);
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_grep_args_count_long_flag() {
+  ... (129 more lines)
+ ✓ (42.7s)
+
+Now let's run the tests:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_search 2>… ✓ (574ms)
+
+All 126 tests pass including the 13 new ones. Let me verify specifically which new tests ran:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_search 2>… ✓ (570ms)
+
+All new tests pass. Now update the help text in help.rs:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ read src/help.rs:200..230 ✓ (1ms)
+  ▶ edit src/help.rs (26 → 33 lines)
+            "grep" => Some(
+  -             "/grep [-s|--case] [-C N] [-B N] [-A N] [--include <glob>] <pattern> [path] — Search file contents directly\n\n\
+  +             "/grep [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path] — Search file contents directly\n\n\
+                 Usage:\n\
+                 \x20 /grep <pattern>           Search all files for pattern\n\
+                 \x20 /grep <pattern> <path>    Search within a specific file or directory\n\
+  ···
+                 \x20 /grep -C N <pattern>      Show N lines of context around each match\n\
+                 \x20 /grep -B N <pattern>      Show N lines before each match\n\
+                 \x20 /grep -A N <pattern>      Show N lines after each match\n\
+  -              \x20 /grep --include \"*.rs\" <pattern>  Only search files matching glob\n\n\
+  +              \x20 /grep --include \"*.rs\" <pattern>  Only search files matching glob\n\
+  +              \x20 /grep --exclude \"*.md\" <pattern>  Skip files matching glob\n\
+  +              \x20 /grep -c <pattern>        Show match counts per file\n\n\
+                 Fast, direct file content search — no AI, no token cost, instant results.\n\
+                 Uses git grep in git repos (respects .gitignore), falls back to grep.\n\
+                 Case-insensitive by default. Limited to 50 results.\n\n\
+                 Context flags can be combined: /grep -B 2 -A 1 TODO shows 2 lines\n\
+                 before and 1 line after each match.\n\n\
+                 The --include flag filters by file glob (e.g. *.rs, *.toml, *.md).\n\
+  ... (16 more lines)
+ ✓ (42.0s)
+  4 tools completed in 59.4s (4 ✓)
+
+  ↳ 10m 53s · 28735→15689 tokens (24 tok/s) · $2.31
+  ⬤ 16% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,152 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current test structure in tools.rs and the types I need to work with.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/too…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -200 src/tools.rs ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Now let me see the existing test module from the #[cfg(test)] line, and understand the tool implementations:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '873,1000p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl Tool for" src/tool… ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl.*Tool.*for\|fn exe… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,462p' src/tools.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '548,680p' src/tools.rs ✓ (4ms)
+  5 tools completed in 13.0s (5 ✓)
+
+Now let me see how test_tool_context is defined and what imports are used:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '873,920p' src/tools.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_tool_context\|u… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1070,1100p' src/tools.rs ✓ (3ms)
+  3 tools completed in 10.9s (3 ✓)
+
+Good, I have a clear picture now. Let me also check what `commands_project::rename_in_project` is (used in RenameSymbolTool):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn rename_in_projec… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use.*commands_rename\|m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod commands_project\|p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rename_in_project" src/… ✓ (3ms)
+  4 tools completed in 11.3s (4 ✓)
+
+Now I understand the full picture. Let me check what tests already exist and what I need to add:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/tools.rs ✓ (3ms)
+
+Good — I can see existing tests. Now let me identify what's missing from the task list vs what already exists:
+
+**Already exists:**
+• TodoTool schema test ✓ (test_todo_tool_schema)
+• TodoTool list empty ✓ (test_todo_tool_list_empty)
+• TodoTool add and list ✓ (test_todo_tool_add_and_list)
+• TodoTool done ✓ (test_todo_tool_done)
+• TodoTool invalid action ✓ (test_todo_tool_invalid_action)
+• TodoTool missing description ✓ (test_todo_tool_missing_description)
+• RenameSymbolTool schema ✓ (`test_rename_symbol_tool_schema`)
+• Tool names in build_tools ✓ (various)
+
+**Still needed:**
+1. TodoTool: missing "id" for wip, remove actions
+2. TodoTool: `clear` action
+3. TodoTool: schema validation (action enum has all 6 values, action is required)
+4. RenameSymbolTool: missing `old_name` → ToolError
+5. RenameSymbolTool: missing new_name → ToolError
+6. RenameSymbolTool: required field has both params
+7. Tool metadata: all names unique
+8. Tool metadata: all descriptions non-empty
+9. build_tools with directory restrictions
+10. build_tools with audit hook
+
+Let me check the schema test more carefully and the rename schema test:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1421,1500p' src/tools.rs ✓ (3ms)
+
+Now I have a clear view. Let me see the existing todo schema test:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1527,1540p' src/tools.rs ✓ (3ms)
+
+Good. The existing schema test doesn't check the enum values or required field. Now let me write all the new tests. I'll find the end of the test module and add them:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/tools.rs ✓ (2ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I'll add the new tests. Let me insert them before the closing } of the test module:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (5 → 265 lines)
+                }
+  +             _ => panic!("Expected text content"),
+  +         }
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // TodoTool — additional parameter validation tests
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[tokio::test]
+  +     async fn test_todo_tool_wip_missing_id() {
+  +         let tool = TodoTool;
+  +         let ctx = test_tool_context(None);
+  +         let result = tool
+  +             .execute(serde_json::json!({"action": "wip"}), ctx)
+  +             .await;
+  +         assert!(result.is_err(), "wip without id should fail");
+  +         let err_msg = result.unwrap_err().to_string();
+  +         assert!(
+  +             err_msg.contains("id"),
+  ... (245 more lines)
+ ✓ (43.1s)
+
+Now let's run the checks:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (536ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (31.6s)
+  4 tools completed in 57.0s (4 ✓)
+
+All 88 tests pass. Let me verify my new tests are specifically running:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (132ms)
+
+All 14 new tests are listed and running. Let me do a final format check:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (541ms)
+
+Everything passes. Let me commit:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (17ms)
+
+Done! Here's what I added — 14 new tests covering the gaps:
+
+TodoTool parameter validation (6 tests):
+• `test_todo_tool_wip_missing_id — wip without id` → InvalidArgs
+• test_todo_tool_remove_missing_id — remove without id → InvalidArgs
+• test_todo_tool_clear — clear empties the list, then list confirms empty
+• `test_todo_tool_wip_marks_in_progress` — full add→wip flow, verifies "in-progress" text
+• `test_todo_tool_schema_action_required — action is in the required` array
+• test_todo_tool_schema_action_enum_values — enum has exactly 6 values (list, add, done, wip, remove, clear)
+
+**RenameSymbolTool parameter validation (3 tests):**
+• test_rename_symbol_tool_missing_old_name — missing old_name → InvalidArgs
+• test_rename_symbol_tool_missing_new_name — missing new_name → InvalidArgs
+• test_rename_symbol_tool_schema_required_fields — required array has exactly old_name and new_name
+
+**Tool metadata consistency (2 tests):**
+• test_all_tool_names_unique — no duplicate names in `build_tools` output
+• test_all_tools_have_descriptions — every tool has a non-empty description
+
+**build_tools edge cases (2 tests + 1 combined):**
+• test_build_tools_with_dir_restrictions — allow/deny restrictions don't change tool count
+• test_build_tools_with_audit_wrapping — audit=true preserves count and tool names survive wrapping
+
+Test density for tools.rs went from 22 tests (1.30/100 lines) to 36 tests (~1.84/100 lines). All 88 tests pass, clippy clean, fmt clean.
+
+  ↳ 3m 54s · 14795→6201 tokens (26 tok/s) · $0.782
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

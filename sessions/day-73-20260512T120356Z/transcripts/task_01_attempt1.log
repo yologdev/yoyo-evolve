@@ -1,0 +1,329 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --include glob filter for /grep. Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct GrepArgs" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_grep_args\|fn … ✓ (5ms)
+ ✓ (3ms)
+  ▶ read src/commands_search.rs:648..778 ✓ (2ms)
+  ▶ read src/commands_search.rs:777..897 ✓ (1ms)
+  4 tools completed in 19.6s (4 ✓)
+
+Now let me look at the help text for /grep:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "grep" src/help.rs | hea… ✓ (4ms)
+
+Now I have a clear picture. Let me also check the existing tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1579..1679 ✓ (1ms)
+
+Now let me also check the handle_grep function and the existing tests at the end:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1143..1223 ✓ (1ms)
+
+Now let me check the integration test at the bottom:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1711..1791 ✓ (1ms)
+  ▶ read src/commands_search.rs:1790..1850 ✓ (1ms)
+  ▶ read src/commands_search.rs:1849..1899 ✓ (1ms)
+  3 tools completed in 7.8s (3 ✓)
+
+Good. I have a clear understanding of the code. Let me now implement the changes. I'll start with tests first, then the implementation.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 20.2s (6 ✓)
+
+Let me start implementing. First, add the include field to GrepArgs and parse it:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_search.rs (9 → 13 lines)
+        /// Set by `-C N` (symmetric), `-B N` (before only), `-A N` (after only).
+        /// Flags combine: `-B 2 -A 1` → `Some((2, 1))`.
+        pub context_lines: Option<(u32, u32)>,
+  +     /// Glob pattern to filter files (e.g. `*.rs`).
+  +     /// For git grep, added as a pathspec after `--`.
+  +     /// For plain grep, passed as `--include=<glob>`.
+  +     pub include: Option<String>,
+    }
+ ✓ (6.3s)
+  2 tools completed in 15.1s (2 ✓)
+
+Expected — need to add the field everywhere. Let me do all the changes now.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Now add --include parsing to parse_grep_args:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (88 → 100 lines)
+    /// Parse `/grep` arguments.
+    ///
+  - /// Syntax: `/grep [-s|--case] [-C N|--context N] [-B N|--before N] [-A N|--after N] <pattern> [path]`
+  + /// Syntax: `/grep [-s|--case] [-C N|--context N] [-B N|--before N] [-A N|--after N] [--include <glob>] <pattern> [path]`
+    ///
+    /// Supports double-quoted patterns for multi-word searches:
+    /// `/grep "fn main" src/` → pattern = "fn main", path = "src/"
+  ···
+    /// - `-C N` / `--context N` — show N lines before and after each match
+    /// - `-B N` / `--before N` — show N lines before each match
+    /// - `-A N` / `--after N` — show N lines after each match
+  + ///
+  + /// File filter:
+  + /// - `--include <glob>` — only search files matching the glob (e.g. `*.rs`)
+    ///
+    /// Flags combine: `-B 2 -A 1` shows 2 before, 1 after.
+    ///
+  ···
+        let mut case_sensitive = false;
+        let mut context_before: Option<u32> = None;
+  ... (27 more lines)
+ ✓ (6.1s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 10.7s (2 ✓)
+
+Now fix the existing test structs that need the new field, and update run_grep and run_grep_with_context:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, fix the two existing test structs:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1725..1735 ✓ (1ms)
+  ▶ edit src/commands_search.rs (8 → 9 lines)
+                path: "src/".to_string(),
+                case_sensitive: true,
+                context_lines: None,
+  +             include: None,
+            };
+ ✓ (6.3s)
+  ▶ read src/commands_search.rs:1865..1875 ✓ (1ms)
+  ▶ edit src/commands_search.rs (8 → 9 lines)
+                path: "src/main.rs".to_string(),
+                case_sensitive: true,
+                context_lines: Some((1, 1)),
+  +             include: None,
+            };
+ ✓ (43.3s)
+  4 tools completed in 1m 0s (4 ✓)
+
+Now update run_grep to pass the include filter:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (38 → 44 lines)
+            cmd.arg(&args.pattern);
+            if args.path != "." {
+                cmd.arg(&args.path);
+  +         }
+  +         if let Some(ref glob) = args.include {
+  +             cmd.arg(glob);
+            }
+            cmd.output()
+        } else {
+  ···
+            cmd.args(["-rn", "--color=never"]);
+            if !args.case_sensitive {
+                cmd.arg("-i");
+  +         }
+  +         if let Some(ref glob) = args.include {
+  +             cmd.arg(format!("--include={glob}"));
+            }
+            cmd.args([
+                "--exclude-dir=.git",
+ ✓ (43.5s)
+
+Now update run_grep_with_context:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (41 → 47 lines)
+            cmd.arg(&args.pattern);
+            if args.path != "." {
+                cmd.arg(&args.path);
+  +         }
+  +         if let Some(ref glob) = args.include {
+  +             cmd.arg(glob);
+            }
+            cmd.output()
+        } else {
+  ···
+            }
+            if after > 0 {
+                cmd.args(["-A", &after.to_string()]);
+  +         }
+  +         if let Some(ref glob) = args.include {
+  +             cmd.arg(format!("--include={glob}"));
+            }
+            cmd.args([
+                "--exclude-dir=.git",
+ ✓ (44.0s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 55.3s (2 ✓)
+
+Now update the help text and usage message:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, update handle_grep's inline usage:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (16 → 21 lines)
+            None => {
+  -             println!("{DIM}  usage: /grep [-s|--case] [-C N] [-B N] [-A N] <pattern> [path]");
+  +             println!("{DIM}  usage: /grep [-s|--case] [-C N] [-B N] [-A N] [--include <glob>] <pattern> [path]");
+                println!("  Search file contents directly — no AI, no tokens, instant results.");
+                println!("  Case-insensitive by default. Use -s or --case for case-sensitive.");
+                println!();
+  ···
+                println!("    -C N / --context N  Show N lines before and after each match");
+                println!("    -B N / --before N   Show N lines before each match");
+                println!("    -A N / --after N    Show N lines after each match");
+  +             println!();
+  +             println!("  File filter:");
+  +             println!("    --include <glob>    Only search files matching the glob (e.g. *.rs)");
+                println!();
+                println!("  Examples:");
+                println!("    /grep TODO");
+                println!("    /grep \"fn main\" src/");
+                println!("    /grep -s MyStruct src/lib.rs");
+                println!("    /grep -C 3 \"fn main\" src/");
+  -             println!("    /grep -B 2 -A 1 TODO{RESET}\n");
+  ... (3 more lines)
+ ✓ (42.0s)
+
+Now update the help text in help.rs:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:200..225 ✓ (1ms)
+  ▶ edit src/help.rs (21 → 26 lines)
+            "grep" => Some(
+  -             "/grep [-s|--case] [-C N] [-B N] [-A N] <pattern> [path] — Search file contents directly\n\n\
+  +             "/grep [-s|--case] [-C N] [-B N] [-A N] [--include <glob>] <pattern> [path] — Search file contents directly\n\n\
+                 Usage:\n\
+                 \x20 /grep <pattern>           Search all files for pattern\n\
+                 \x20 /grep <pattern> <path>    Search within a specific file or directory\n\
+                 \x20 /grep -s <pattern>        Case-sensitive search\n\
+                 \x20 /grep -C N <pattern>      Show N lines of context around each match\n\
+                 \x20 /grep -B N <pattern>      Show N lines before each match\n\
+  -              \x20 /grep -A N <pattern>      Show N lines after each match\n\n\
+  +              \x20 /grep -A N <pattern>      Show N lines after each match\n\
+  +              \x20 /grep --include \"*.rs\" <pattern>  Only search files matching glob\n\n\
+                 Fast, direct file content search — no AI, no token cost, instant results.\n\
+                 Uses git grep in git repos (respects .gitignore), falls back to grep.\n\
+                 Case-insensitive by default. Limited to 50 results.\n\n\
+                 Context flags can be combined: /grep -B 2 -A 1 TODO shows 2 lines\n\
+                 before and 1 line after each match.\n\n\
+  +              The --include flag filters by file glob (e.g. *.rs, *.toml, *.md).\n\
+  +              For git grep this is a pathspec; for plain grep it uses --include.\n\n\
+                 Examples:\n\
+  ... (9 more lines)
+ ✓ (41.7s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 57.6s (3 ✓)
+
+Now add the tests:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find a good insertion point for the new tests — after the existing grep tests:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1800..1815 ✓ (1ms)
+  ▶ read src/commands_search.rs:1822..1842 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+I'll insert the new tests right after the existing context-related parse tests, before `format_grep_context_empty`:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (5 → 81 lines)
+        fn parse_grep_args_no_context_by_default() {
+            let args = parse_grep_args("/grep TODO").unwrap();
+            assert_eq!(args.context_lines, None);
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_grep_args_include_flag() {
+  +         let args = parse_grep_args(r#"/grep --include "*.rs" fn_main"#).unwrap();
+  +         assert_eq!(args.pattern, "fn_main");
+  +         assert_eq!(args.include, Some("*.rs".to_string()));
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_grep_args_include_with_other_flags() {
+  +         let args = parse_grep_args(r#"/grep -C 3 --include "*.rs" TODO src/"#).unwrap();
+  +         assert_eq!(args.pattern, "TODO");
+  +         assert_eq!(args.path, "src/");
+  +         assert_eq!(args.context_lines, Some((3, 3)));
+  +         assert_eq!(args.include, Some("*.rs".to_string()));
+  +     }
+  ... (60 more lines)
+ ✓ (9.9s)
+
+Let me fix that test — clippy is right, the assertion is silly. Let me make it meaningful:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (7 → 7 lines)
+        #[test]
+        fn parse_grep_args_include_without_value_ignored() {
+  -         // --include at end with no value should be silently ignored
+  -         let args = parse_grep_args("/grep --include").unwrap();
+  -         // --include consumed the flag but had no next token; nothing left → None
+  -         assert!(args.include.is_none() || args.pattern.is_empty() || true);
+  +         // --include at end with no value: --include is consumed but has no next token,
+  +         // so include stays None. The word after --include would be consumed as pattern.
+  +         // With just "/grep --include" there's no pattern left → returns None.
+  +         assert!(parse_grep_args("/grep --include").is_none());
+        }
+ ✓ (42.7s)
+
+Wait — I need to think about what actually happens. --include without a value: the match arm checks `tokens.get(i + 1). If i+1 is out of bounds, get` returns None, so include stays None. No token is consumed. So it just falls through. But there are no remaining tokens to be a pattern, so remaining_parts is empty and we return None. That's correct.
+
+But what about /grep --include TODO? In that case, --include matches, `tokens.get(i + 1) is Some("TODO"), so include = Some("TODO") and i` advances past both. Then remaining_parts is empty → returns None. That's actually a problem — the user intended TODO as a pattern, but `--include` consumed it.
+
+Actually wait, that's the intended behavior. --include takes a value argument — if you write --include TODO, then TODO is the glob pattern for include filter. You need to provide a separate pattern. This is the same behavior as -C 3 consuming the number. The user should write `/grep --include "*.rs" TODO`.
+
+Let me verify my test is correct:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_grep_args_inclu… ✓ (148ms)
+
+Good. Now let's run the full suite:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (146ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (19.7s)
+  5 tools completed in 45.4s (5 ✓)
+
+All 88 tests pass. Let me also run the specific new tests to confirm they're exercised:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test grep_args_include 2>&… ✓ (131ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test run_grep 2>&1 ✓ (136ms)
+  2 tools completed in 8.1s (2 ✓)
+
+All tests pass including the integration tests that verify the include filter actually works on the real repo. Let me also check that `parse_grep_args_no_include_by_default` passes:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test no_include 2>&1 ✓ (130ms)
+
+Everything is clean. Now let me check if CLAUDE.md needs updating — the GrepArgs struct description:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_grep_args\|GrepAr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "grep" CLAUDE.md ✓ (3ms)
+  2 tools completed in 6.7s (2 ✓)
+
+No CLAUDE.md references to the grep command directly. Let me check the struct listing in the architecture section:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GrepArgs\|run_grep\|han… ✓ (3ms)
+
+The CLAUDE.md Repository Structure section lists functions but doesn't detail struct fields, so no update needed there. Let me check the README:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "grep" README.md ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/grep" README.md ✓ (3ms)
+  2 tools completed in 3.5s (2 ✓)
+
+No specific /grep mention in README. Let me check the docs:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "/grep" docs/ ✓ (3ms)
+
+  ↳ 10m 1s · 21736→12300 tokens (20 tok/s) · $1.71
+  ⬤ 12% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
