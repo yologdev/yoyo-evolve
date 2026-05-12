@@ -1,0 +1,211 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: adding output tokens/sec to the usage line and /profile display. Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_usage_line\|fn p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_profile" src/com… ✓ (6ms)
+ ✓ (4ms)
+  ▶ read src/format/mod.rs:460..520  ▶ read src/commands_info.rs:534..634 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 4.6s (4 ✓)
+
+Now let me look at the existing tests for format_usage_line:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1150..1300 ✓ (2ms)
+
+Good. Now I have a clear picture. Let me implement the changes:
+
+1. First, update format_usage_line in src/format/mod.rs to include tok/s
+2. Then, update handle_profile in `src/commands_info.rs` to add a Speed row
+3. Add tests
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 12.5s (5 ✓)
+
+Now let me implement the changes. Starting with format_usage_line:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/format/mod.rs (28 → 41 lines)
+  +     // Calculate output tokens/sec (only meaningful when elapsed > 0.1s)
+  +     let tok_per_sec = if elapsed.as_secs_f64() > 0.1 {
+  +         Some((usage.output as f64 / elapsed.as_secs_f64()) as u32)
+  +     } else {
+  +         None
+  +     };
+  + 
+        if verbose {
+            let cache_info = if usage.cache_read > 0 || usage.cache_write > 0 {
+                format!(
+  ···
+                .unwrap_or_default();
+            let total_cost_info = estimate_cost(total, model)
+                .map(|c| format!("  total: {}", format_cost(c)))
+  +             .unwrap_or_default();
+  +         let speed_info = tok_per_sec
+  +             .map(|s| format!("  speed: {} tok/s", s))
+                .unwrap_or_default();
+            Some(format!(
+  -             "tokens: {} in / {} out{cache_info}  (session: {} in / {} out){cost_info}{total_cost_info}  ⏱ {elapsed_str}",
+  ... (16 more lines)
+ ✓ (41.8s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 59.8s (3 ✓)
+
+Now let me add the Speed row to handle_profile:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_info.rs (18 → 29 lines)
+  +     // Speed string (avg output tok/s, only if session > 1s)
+  +     let speed_str = if elapsed.as_secs_f64() > 1.0 && session_total.output > 0 {
+  +         let tps = (session_total.output as f64 / elapsed.as_secs_f64()) as u32;
+  +         format!("~{} tok/s", tps)
+  +     } else {
+  +         String::new()
+  +     };
+  + 
+        let label = "Session Profile";
+        // Build content lines: (key, plain_value, display_value)
+        // plain_value is for width calculation, display_value may contain ANSI
+        let duration_str = format_duration(elapsed);
+        let turns_str = format!("{turns}");
+  -     let lines: Vec<(&str, &str, String)> = vec![
+  +     let mut lines: Vec<(&str, &str, String)> = vec![
+            ("Model", model, model.to_string()),
+            ("Provider", provider, provider.to_string()),
+            ("Duration", &duration_str, duration_str.clone()),
+            ("Turns", &turns_str, turns_str.clone()),
+            ("Tokens", &tokens_str, tokens_str.clone()),
+  ... (15 more lines)
+ ✓ (41.5s)
+  2 tools completed in 56.7s (2 ✓)
+
+Wait — since speed_str is conditionally added, I need to make sure the borrow checker is happy. The &speed_str reference needs to live long enough. Let me verify by checking if there's a lifetime issue — the speed_str is defined before the lines vec, so it should be fine.
+
+Let me also re-read the edited area to make sure it looks right:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:556..606 ✓ (1ms)
+  ▶ read src/commands_info.rs:605..635 ✓ (1ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Good. Now let me add the tests:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Let me find the end of the existing format_usage_line tests to add new ones:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1270..1300 ✓ (1ms)
+
+Now I'll add tests right after the existing format_usage_line tests, before the context_usage_color tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1284..1289 ✓ (1ms)
+  ▶ read src/format/mod.rs:1284..1294 ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+I see there are some blank/empty lines 1286 and 1288. Let me look at the exact raw bytes:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1284,1291p' src/format/m… ✓ (3ms)
+
+OK, those are unicode divider comment lines. Let me insert my tests after line 1284 (the closing `}` of the last format_usage test), before the ThinkBlockFilter comment:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1285,1289p' src/format/m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (18ms)
+  2 tools completed in 4.7s (2 ✓)
+
+There seem to be some lines with special chars (the lines that read_file shows but aren't showing in the python output). Let me use a different approach:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1283,1293p' src/format/m… ✓ (3ms)
+
+OK, lines 4 and 6 are the divider comment lines that cat doesn't show numbers for because they contain special chars. Let me insert my tests after the closing brace of the last test (line 1284) before those dividers:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_format_usage_compa… ✓ (3ms)
+
+I'll add my tests after the closing brace of that test function. Let me use edit_file with the exact text:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (2 → 82 lines)
+            assert!(line.contains("100→50 tokens"), "got: {line}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_usage_compact_shows_tok_per_sec() {
+  +         let usage = yoagent::Usage {
+  +             input: 500,
+  +             output: 100,
+  +             cache_read: 0,
+  +             cache_write: 0,
+  +             total_tokens: 0,
+  +         };
+  +         let total = usage.clone();
+  +         // 100 output tokens in 2.0s = 50 tok/s
+  +         let elapsed = Duration::from_secs_f64(2.0);
+  +         let line = format_usage_line(&usage, &total, "unknown-model-xyz", elapsed, false)
+  +             .expect("should produce output");
+  +         assert!(
+  +             line.contains("(50 tok/s)"),
+  +             "compact should include tok/s: {line}"
+  ... (62 more lines)
+ ✓ (41.2s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 45.4s (2 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (540ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (146ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (18.8s)
+  5 tools completed in 44.7s (5 ✓)
+
+All 88 tests pass. Let me also verify the existing tests that reference format_usage_line still work correctly by checking if the existing test assertions need updating:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_usage 2>&1 ✓ (128ms)
+
+All 10 format_usage tests pass, including my 4 new ones. Let me also quickly verify the profile tests pass:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test handle_profile 2>&1 ✓ (128ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Everything passes. Now let me commit:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Two files changed, exactly as planned. Let me review the diff to make sure everything looks right:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/format/mod.rs | hea… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_info.rs ✓ (4ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Everything looks clean. Time to commit:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (14ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Done. Here's what I implemented:
+
+**`src/format/mod.rs — format_usage_line`:**
+• Calculate `tok_per_sec` when elapsed > 0.1s (avoids division by near-zero for cached responses)
+• Compact mode: ↳ 3.2s · 1234→567 tokens (177 tok/s) · $0.012 — speed shown in parentheses after token counts, before cost
+• Verbose mode: speed: 177 tok/s appended to the detail line before the timer
+• 4 new tests: tok/s appears when expected, omitted when elapsed < 0.1s, correct calculation (100 tokens / 2s = 50), and verbose mode
+
+`src/commands_info.rs` — `handle_profile`:
+• New "Speed" row showing `~N tok/s` (average output tokens/sec for the whole session)
+• Only displayed when session elapsed > 1.0s and there are output tokens
+• Positioned between "Cost" and "Context" rows in the profile box
+
+  ↳ 5m 54s · 15835→6908 tokens · $1.10
+  ⬤ 8% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

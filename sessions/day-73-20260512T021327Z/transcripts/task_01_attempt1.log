@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant functions in main.rs to understand what I need to test.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/main.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_json_output\|f… ✓ (3ms)
+  ▶ read src/main.rs:123..183 ✓ (1ms)
+  ▶ read src/main.rs:330..380 ✓ (1ms)
+  ▶ read src/main.rs:440..495 ✓ (1ms)
+  5 tools completed in 13.0s (5 ✓)
+
+Now let me see the existing tests and the imports:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:670..970 ✓ (2ms)
+
+Now let me check the imports at the top of main.rs and understand what types are used:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1..41 ✓ (1ms)
+  ▶ read src/main.rs:80..120 ✓ (0ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Now I understand the codebase. Let me check what disable_color, `disable_bell, disable_notify` functions look like (to know if they're testable):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn disable_color\|p… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn enable_verbose\|… ✓ (3ms)
+  2 tools completed in 19.9s (2 ✓)
+
+Good. Now let me check the PromptOutcome and Usage types to understand how to construct them:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct PromptOutcom… ✓ (3ms)
+  ▶ read src/prompt.rs:63..78 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Usage" ~/.ca… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 15 "pub struct Usage" ~/… ✓ (3ms)
+  4 tools completed in 10.4s (4 ✓)
+
+Now let me check what enable_audit_log and `is_audit_enabled` look like:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn enable_audit_log… ✓ (3ms)
+
+Let me also check the rtk::disable_rtk function:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn disable_rtk" src… ✓ (3ms)
+
+Now I have a good understanding of all the functions. Let me write the tests. I need to be careful about global state — apply_cli_flags and `apply_config_flags` mutate global atomics, so those tests should use #[serial].
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:675..680 ✓ (0ms)
+
+Let me also check what Config struct looks like so I can construct it for apply_config_flags tests:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Config" src/… ✓ (3ms)
+  ▶ read src/cli.rs:74..129 ✓ (1ms)
+  2 tools completed in 4.1s (2 ✓)
+
+I notice VERBOSE uses OnceLock — once set, it can't be changed. That means testing apply_config_flags with verbose=true is tricky since it's process-global and one-shot. Let me also check quiet:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:14..39 ✓ (1ms)
+
+OK, these are all OnceLock-based. They can only be set once per process. This means I can't reliably test the setter side-effects across multiple tests (since tests run in the same process). But I can test:
+
+1. **`build_json_output`** — pure function, fully testable. Already has 2 tests, I'll add more edge cases.
+2. `looks_like_slash_command` — pure function, already has 4 tests. I'll add edge cases.
+3. **`apply_cli_flags** and **apply_config_flags`** — I can test the logic/structure but need to be careful with OnceLock globals. I'll test what I can (e.g., the print_system_prompt early-exit path returns false, default config returns true, etc.).
+
+Let me now write the tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:958..963 ✓ (0ms)
+
+Now let me check if Config has a Default impl:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 3 "impl Default for Conf… ✓ (3ms)
+
+No Default impl. Let me check if Config derives Default:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 2 "pub struct Config" sr… ✓ (3ms)
+
+No derive. I'll need to construct it manually. Let me check what the `PermissionConfig, DirectoryRestrictions, ContextStrategy, OutputFormat` defaults look like:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 1 "impl Default for Perm… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 2 "enum OutputFormat" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 10 "enum OutputFormat" s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 2 "impl Default for Perm… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 2 "pub struct Permission… ✓ (3ms)
+  5 tools completed in 14.1s (5 ✓)
+
+Good, both have Default. Now let me write a helper to construct a test Config, and add all the tests:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (18 → 291 lines)
+            unsafe {
+                std::env::remove_var("AWS_SECRET_ACCESS_KEY");
+                std::env::remove_var("AWS_SESSION_TOKEN");
+  +         }
+  +     }
+  + 
+  +     // --- build_json_output tests ---
+  + 
+  +     #[test]
+  +     fn test_build_json_output_empty_text() {
+  +         let response = PromptOutcome {
+  +             text: String::new(),
+  +             last_tool_error: None,
+  +             last_tool_name: None,
+  +             was_overflow: false,
+  +             last_api_error: None,
+  +         };
+  +         let usage = Usage {
+  +             input: 0,
+  +             output: 0,
+  ... (259 more lines)
+ ✓ (41.8s)
+
+Now let's run the checks:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (528ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (29.6s)
+  4 tools completed in 59.9s (4 ✓)
+
+All 88 tests pass. Let me verify my new tests are actually being run:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test_… ✓ (11.2s)
+
+All new tests are running and passing. Let me count the new tests I added:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/main.rs ✓ (3ms)
+
+Started with 16, now at 32 — 16 new tests added. Let me verify format check too:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (540ms)
+
+All checks pass. Let me commit:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (10 lines) ✓ (11ms)
+
+Done. 16 new tests added to main.rs, doubling the test count from 16 to 32. All tests pass, clippy clean, properly formatted. Here's what I covered:
+
+**build_json_output (5 new tests):**
+• Empty text produces valid JSON
+• Special characters (quotes, newlines, tabs, unicode ✓) are properly escaped
+• JSON structure has exactly the 5 expected top-level keys and 2 usage sub-keys
+• Cost is always non-negative
+• Unknown model names still produce valid JSON
+
+**looks_like_slash_command (5 new edge case tests):**
+• Slash followed by numbers (/123)
+• Various whitespace types before slash
+• Empty string and whitespace-only strings
+• Bare / alone
+• Unicode characters after slash
+
+**apply_config_flags (2 new tests):**
+• Default config returns true (continue)
+• print_system_prompt = true returns false (early exit)
+
+`apply_cli_flags` (4 new tests):
+• Unknown flags silently ignored
+• Empty args list handled
+• Mixed known/unknown flags work
+• YOYO_NO_RTK=1 env var triggers RTK disable
+
+  ↳ 5m 1s · 17780→7894 tokens · $1.19
+  ⬤ 9% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
