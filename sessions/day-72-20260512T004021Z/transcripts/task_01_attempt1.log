@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement URL support for /add.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 48s)
+
+Now let me check the fetch_url function and the existing test infrastructure:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn fetch_url' in src/commands_file.rs ✓ (3ms)
+  ▶ read src/commands_file.rs:230..260 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me check for existing tests and the WEB_MAX_CHARS constant:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'WEB_MAX_CHARS|#\[cfg\(test\)\]|mod tests' in src/commands_file.rs ✓ (2ms)
+  ▶ search 'WEB_MAX_CHARS' in src/commands_file.rs ✓ (3ms)
+  ▶ read src/commands_file.rs:7..27 ✓ (1ms)
+  3 tools completed in 7.7s (3 ✓)
+
+Now let me check the help.rs for the current /add help entry:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search '/add' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:36..56 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me see the /add help in the help text and short description:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1468..1478 ✓ (0ms)
+  ▶ read src/help.rs:1746..1756 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me check the `command_short_description for /add`:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'command_short_description' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:1898..1906 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me also check the byte_offset helper used in expand_file_mentions:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn byte_offset' in src/commands_file.rs ✓ (3ms)
+  ▶ read src/commands_file.rs:708..715 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Good. Now I have a complete picture. Let me check what expand_file_mentions does with URL-like patterns — specifically, the character set it accepts after @:
+
+The character set `chars[j].is_alphanumeric() || matches!(chars[j], '/' | '.' | '-' | '_' | ':') would match most URL characters but NOT ?, &, =, #, %, +. So @https://example.com/page` would partially work but complex URLs with query strings wouldn't. That's acceptable for now — the task says to support `@http://example.com` in file mentions too.
+
+Now let me plan the implementation:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 12.7s (5 ✓)
+
+Let me start with tests. First, let me check the bottom of the file to see where to add the test module:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:2430..2450 ✓ (1ms)
+
+Good, there's already a test module. Let me see the #[cfg(test)] line:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_file.rs ✓ (3ms)
+  ▶ search 'mod test' in src/commands_file.rs ✓ (2ms)
+  ▶ read src/commands_file.rs:1244..1254 ✓ (0ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Now let me write the tests first, then implement the feature.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me add the test functions right before the closing brace of the test module:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (9 → 48 lines)
+            let editor = resolve_editor();
+            assert_eq!(editor, Some("test-editor-that-doesnt-exist".to_string()));
+            std::env::remove_var("VISUAL");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_is_valid_url_detection() {
+  +         // URLs should be detected
+  +         assert!(is_valid_url("https://docs.rs/some-crate"));
+  +         assert!(is_valid_url("http://example.com"));
+  +         assert!(is_valid_url("https://doc.rust-lang.org/book/ch01-01-installation.html"));
+  + 
+  +         // Regular file paths should NOT be detected as URLs
+  +         assert!(!is_valid_url("src/main.rs"));
+  +         assert!(!is_valid_url("Cargo.toml"));
+  +         assert!(!is_valid_url("src/*.rs"));
+  +         assert!(!is_valid_url("./relative/path.txt"));
+  +         assert!(!is_valid_url(""));
+  +         assert!(!is_valid_url("http://x")); // too short, no dot
+  +     }
+  ... (24 more lines)
+ ✓ (41.0s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 46.1s (2 ✓)
+
+Now implement the URL handling in handle_add:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+I need to add URL detection inside the `for arg in args.split_whitespace()` loop, before the file-path processing. Let me insert a URL branch right at the start of the loop:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (3 → 41 lines)
+        // Split on whitespace to support multiple paths: /add foo.rs bar.rs
+        for arg in args.split_whitespace() {
+  +         // Check if argument is a URL — fetch web content instead of reading a file
+  +         if is_valid_url(arg) {
+  +             println!("{DIM}  Fetching {arg}...{RESET}");
+  +             match fetch_url(arg) {
+  +                 Ok(html) => {
+  +                     let text = strip_html_tags(&html, WEB_MAX_CHARS);
+  +                     if text.is_empty() {
+  +                         println!("{RED}  ✗ no readable text content at {arg}{RESET}");
+  +                         continue;
+  +                     }
+  +                     // Apply smart truncation for large web content
+  +                     let (text, was_truncated, original_lines) =
+  +                         smart_truncate_for_context(&text, ADD_MAX_LINES);
+  +                     let line_count = text.lines().count();
+  +                     let char_count = text.len();
+  +                     let formatted = format!("**{arg}**\n```\n{text}\n```");
+  +                     let summary = if was_truncated {
+  +                         format!(
+  ... (21 more lines)
+ ✓ (41.9s)
+
+Now update the usage help text in handle_add itself:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (3 → 4 lines)
+  -         println!("{DIM}  usage: /add <path> — inject file contents into conversation");
+  +         println!("{DIM}  usage: /add <path|url> — inject file or web contents into conversation");
+            println!("         /add <path>:<start>-<end> — inject specific line range");
+  -         println!("         /add src/*.rs — inject multiple files via glob{RESET}\n");
+  +         println!("         /add src/*.rs — inject multiple files via glob");
+  +         println!("         /add https://example.com — fetch and inject web page{RESET}\n");
+ ✓ (41.5s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 46.1s (2 ✓)
+
+Now update the help text:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/help.rs (12 → 14 lines)
+            "add" => Some(
+  -             "/add <path> — Inject file contents into the conversation\n\n\
+  +             "/add <path|url> — Inject file or web contents into the conversation\n\n\
+                 Usage:\n\
+                 \x20 /add <path>              Add entire file\n\
+                 \x20 /add <path>:<start>-<end> Add specific line range\n\
+                 \x20 /add src/*.rs            Add files matching a glob pattern\n\
+  -              \x20 /add file1 file2         Add multiple files at once\n\n\
+  +              \x20 /add file1 file2         Add multiple files at once\n\
+  +              \x20 /add <url>               Fetch and add web page content\n\n\
+                 Examples:\n\
+                 \x20 /add src/main.rs\n\
+                 \x20 /add Cargo.toml:1-20\n\
+  -              \x20 /add src/*.rs tests/*.rs",
+  +              \x20 /add src/*.rs tests/*.rs\n\
+  +              \x20 /add https://docs.rs/some-crate",
+            ),
+ ✓ (41.9s)
+  2 tools completed in 53.0s (2 ✓)
+
+Now update the short description and help text references:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "add" => Some("Add file contents to conversation"),
+  +         "add" => Some("Add file or URL contents to conversation"),
+ ✓ (42.1s)
+
+Now update the /help output where /add is mentioned:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "    /add <path>        Add file contents to conversation"
+  +         "    /add <path|url>    Add file or URL contents to conversation"
+ ✓ (41.5s)
+
+Now update the help_text function with the expanded description:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (6 → 9 lines)
+        out.push_str(
+  -         "  /add <path>        Add file contents to conversation (like @file in Claude Code)\n",
+  +         "  /add <path|url>    Add file or URL contents to conversation (like @file in Claude Code)\n",
+        );
+        out.push_str(
+            "                     /add <path>:<start>-<end> for line ranges, /add src/*.rs for globs\n",
+  +     );
+  +     out.push_str(
+  +         "                     /add https://... to fetch and inject web page content\n",
+        );
+ ✓ (41.4s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 48.7s (2 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (531ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (29.9s)
+  5 tools completed in 55.0s (5 ✓)
+
+  ↳ 10m 9s · 15219→6217 tokens · $1.14
+  ⬤ 8% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
