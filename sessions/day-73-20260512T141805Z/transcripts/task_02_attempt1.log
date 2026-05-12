@@ -1,0 +1,383 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure for ProjectType and the related functions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enum ProjectType" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_project_type\|fn…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_command_for_projec… ✓ (5ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  3 tools completed in 3.1s (3 ✓)
+
+Now let me read the full relevant sections:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:655..785  ▶ read src/commands_lint.rs:1..26  ▶ read src/commands_lint.rs:110..170  ▶ read src/commands_lint.rs:530..660 ✓ (2ms)
+ ✓ (3ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 5.7s (4 ✓)
+
+Now let me see the build_commands_for_project and `project_type_display` test:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:415..475  ▶ read src/commands_project.rs:780..820 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Let me also check scan_important_files to see if it has project-type specific logic:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:335..415 ✓ (1ms)
+
+Now let me check the `auto_detect_watch_command` in watch.rs to see if it also uses ProjectType:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ProjectType" src/watch.… ✓ (3ms)
+
+Good — watch.rs doesn't reference ProjectType directly. Now I have a clear picture. Let me implement the changes.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 35.4s (7 ✓)
+
+Let's start. First, add the enum variants and Display:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_project.rs (8 → 11 lines)
+        Node,
+        Python,
+        Go,
+  +     Java,
+  +     Ruby,
+  +     Cpp,
+        Make,
+        Unknown,
+    }
+ ✓ (6.0s)
+  2 tools completed in 11.8s (2 ✓)
+
+Good — the compiler tells me all the places I need to update. Let me fix them all:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "error\[… ✓ (2.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "error\[… ✓ (2.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "\-\->" … ✓ (2.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "^   -->… ✓ (2.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "^\s*-->… ✓ (2.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 2>&1 | grep -E … ✓ (2.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -80 ✓ (2.4s)
+  7 tools completed in 40.6s (7 ✓)
+
+Good. I see the four files that need match arm updates: cli.rs:175, commands_dev.rs:295, commands_lint.rs:15, commands_lint.rs:119. Plus the Display impl and detection logic in commands_project.rs. Let me read each location and make all changes.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:170..190 ✓ (1ms)
+  ▶ read src/commands_dev.rs:285..345 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now I have all the context. Let me make all the changes at once:
+
+**1. Display impl in commands_project.rs:**
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (8 → 11 lines)
+                ProjectType::Node => write!(f, "Node.js (npm)"),
+                ProjectType::Python => write!(f, "Python"),
+                ProjectType::Go => write!(f, "Go"),
+  +             ProjectType::Java => write!(f, "Java"),
+  +             ProjectType::Ruby => write!(f, "Ruby"),
+  +             ProjectType::Cpp => write!(f, "C/C++ (CMake)"),
+                ProjectType::Make => write!(f, "Makefile"),
+                ProjectType::Unknown => write!(f, "Unknown"),
+            }
+ ✓ (6.2s)
+
+**2. detect_project_type — insert Java, Ruby, Cpp before Make:**
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (18 → 27 lines)
+            ProjectType::Rust
+        } else if dir.join("package.json").exists() {
+            ProjectType::Node
+  +     } else if dir.join("pom.xml").exists()
+  +         || dir.join("build.gradle").exists()
+  +         || dir.join("build.gradle.kts").exists()
+  +     {
+  +         ProjectType::Java
+  +     } else if dir.join("Gemfile").exists() {
+  +         ProjectType::Ruby
+        } else if dir.join("pyproject.toml").exists()
+            || dir.join("setup.py").exists()
+            || dir.join("setup.cfg").exists()
+  ···
+            ProjectType::Python
+        } else if dir.join("go.mod").exists() {
+            ProjectType::Go
+  +     } else if dir.join("CMakeLists.txt").exists() {
+  +         ProjectType::Cpp
+        } else if dir.join("Makefile").exists() || dir.join("makefile").exists() {
+  ... (2 more lines)
+ ✓ (6.0s)
+
+**3. build_commands_for_project:**
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (6 → 18 lines)
+                ("Build", "go build ./..."),
+                ("Test", "go test ./..."),
+                ("Vet", "go vet ./..."),
+  +         ],
+  +         ProjectType::Java => vec![
+  +             ("Build", "mvn compile"),
+  +             ("Test", "mvn test"),
+  +         ],
+  +         ProjectType::Ruby => vec![
+  +             ("Test", "bundle exec rake test"),
+  +             ("Lint", "bundle exec rubocop"),
+  +         ],
+  +         ProjectType::Cpp => vec![
+  +             ("Build", "cmake --build build"),
+  +             ("Test", "ctest --test-dir build"),
+            ],
+            ProjectType::Make => vec![("Build", "make"), ("Test", "make test")],
+ ✓ (6.0s)
+
+**4. scan_important_files — add Java, Ruby, Cpp marker files:**
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (4 → 15 lines)
+            // Go
+            "go.mod",
+            "go.sum",
+  +         // Java
+  +         "pom.xml",
+  +         "build.gradle",
+  +         "build.gradle.kts",
+  +         // Ruby
+  +         "Gemfile",
+  +         "Gemfile.lock",
+  +         "Rakefile",
+  +         ".rubocop.yml",
+  +         // C/C++
+  +         "CMakeLists.txt",
+            // Build/CI
+ ✓ (6.0s)
+
+Now let me fix the remaining match arms in other files:
+
+**5. cli.rs — banner_project_line:**
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (8 → 11 lines)
+            ProjectType::Node => "Node.js",
+            ProjectType::Python => "Python",
+            ProjectType::Go => "Go",
+  +         ProjectType::Java => "Java",
+  +         ProjectType::Ruby => "Ruby",
+  +         ProjectType::Cpp => "C/C++",
+            ProjectType::Make => "Make",
+            ProjectType::Unknown => unreachable!(),
+        };
+ ✓ (6.0s)
+
+**6. commands_dev.rs — health_checks_for_project:**
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (13 → 39 lines)
+                #[cfg(test)]
+                {
+                    vec![]
+  +             }
+  +         }
+  +         ProjectType::Java => {
+  +             let mut checks: Vec<(&str, Vec<&str>)> = vec![];
+  +             if std::path::Path::new("pom.xml").exists() {
+  +                 checks.push(("build", vec!["mvn", "compile"]));
+  +                 #[cfg(not(test))]
+  +                 checks.push(("test", vec!["mvn", "test"]));
+  +             } else {
+  +                 checks.push(("build", vec!["./gradlew", "build"]));
+  +                 #[cfg(not(test))]
+  +                 checks.push(("test", vec!["./gradlew", "test"]));
+                }
+  +             checks
+  +         }
+  +         ProjectType::Ruby => {
+  +             let mut checks: Vec<(&str, Vec<&str>)> = vec![];
+  ... (12 more lines)
+ ✓ (6.1s)
+
+**7. commands_lint.rs — test_command_for_project:**
+
+For Java, I need runtime detection (pom.xml → mvn, else → gradlew). The function takes a &ProjectType but needs to check the filesystem. Let me look at the function signature:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (8 → 17 lines)
+            ProjectType::Node => Some(("npm test", vec!["npm", "test"])),
+            ProjectType::Python => Some(("python -m pytest", vec!["python", "-m", "pytest"])),
+            ProjectType::Go => Some(("go test ./...", vec!["go", "test", "./..."])),
+  +         ProjectType::Java => {
+  +             if std::path::Path::new("pom.xml").exists() {
+  +                 Some(("mvn test", vec!["mvn", "test"]))
+  +             } else {
+  +                 Some(("./gradlew test", vec!["./gradlew", "test"]))
+  +             }
+  +         }
+  +         ProjectType::Ruby => Some(("bundle exec rake test", vec!["bundle", "exec", "rake", "test"])),
+  +         ProjectType::Cpp => Some(("ctest --test-dir build", vec!["ctest", "--test-dir", "build"])),
+            ProjectType::Make => Some(("make test", vec!["make", "test"])),
+            ProjectType::Unknown => None,
+        }
+ ✓ (6.0s)
+
+**8. commands_lint.rs — lint_command_for_project:**
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (5 → 9 lines)
+                "golangci-lint run".into(),
+                vec!["golangci-lint".into(), "run".into()],
+            )),
+  -         ProjectType::Make | ProjectType::Unknown => None,
+  +         ProjectType::Ruby => Some((
+  +             "bundle exec rubocop".into(),
+  +             vec!["bundle".into(), "exec".into(), "rubocop".into()],
+  +         )),
+  +         ProjectType::Java | ProjectType::Cpp | ProjectType::Make | ProjectType::Unknown => None,
+ ✓ (43.3s)
+
+Now let me check if it compiles:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (124ms)
+
+It compiles. Now let me mark tasks done and add tests:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 12.8s (5 ✓)
+
+Now add tests. Let me find the end of the existing tests in both files to add new ones:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_project.rs:790..820 ✓ (1ms)
+  ▶ read src/commands_project.rs:818..838 ✓ (1ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now I'll add tests for all three new project types. Insert them after the priority test and before project_type_display:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (8 → 52 lines)
+            fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+            fs::write(dir.path().join("Makefile"), "all:").unwrap();
+            assert_eq!(detect_project_type(dir.path()), ProjectType::Rust);
+  +     }
+  + 
+  +     #[test]
+  +     fn detect_project_type_java_maven() {
+  +         let dir = TempDir::new().unwrap();
+  +         fs::write(dir.path().join("pom.xml"), "<project/>").unwrap();
+  +         assert_eq!(detect_project_type(dir.path()), ProjectType::Java);
+  +     }
+  + 
+  +     #[test]
+  +     fn detect_project_type_java_gradle() {
+  +         let dir = TempDir::new().unwrap();
+  +         fs::write(dir.path().join("build.gradle"), "plugins {}").unwrap();
+  +         assert_eq!(detect_project_type(dir.path()), ProjectType::Java);
+  +     }
+  + 
+  +     #[test]
+  ... (28 more lines)
+ ✓ (42.0s)
+
+Now update the project_type_display test to include new variants:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (9 → 12 lines)
+            assert_eq!(format!("{}", ProjectType::Node), "Node.js (npm)");
+            assert_eq!(format!("{}", ProjectType::Python), "Python");
+            assert_eq!(format!("{}", ProjectType::Go), "Go");
+  +         assert_eq!(format!("{}", ProjectType::Java), "Java");
+  +         assert_eq!(format!("{}", ProjectType::Ruby), "Ruby");
+  +         assert_eq!(format!("{}", ProjectType::Cpp), "C/C++ (CMake)");
+            assert_eq!(format!("{}", ProjectType::Make), "Makefile");
+            assert_eq!(format!("{}", ProjectType::Unknown), "Unknown");
+        }
+ ✓ (42.7s)
+
+Now add tests in commands_lint.rs. Let me find the right spot:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_lint.rs:650..700 ✓ (1ms)
+  ▶ read src/commands_lint.rs:699..769 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. I'll add tests after the make test (line 674):
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (12 → 49 lines)
+                "Make test label should mention make"
+            );
+            assert_eq!(args[0], "make");
+  +         assert!(args.contains(&"test"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_test_command_for_java_project() {
+  +         let cmd = test_command_for_project(&ProjectType::Java);
+  +         assert!(cmd.is_some(), "Java project should have a test command");
+  +         let (label, _) = cmd.unwrap();
+  +         // Should be either mvn or gradlew depending on pom.xml presence
+  +         assert!(
+  +             label.contains("mvn") || label.contains("gradlew"),
+  +             "Java test label should mention mvn or gradlew, got: {label}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_test_command_for_ruby_project() {
+  ... (22 more lines)
+ ✓ (43.0s)
+
+Now add lint command tests after the make/unknown lint tests:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (8 → 39 lines)
+            assert!(
+                cmd.is_none(),
+                "Unknown project should not have a lint command"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_lint_command_for_ruby_project() {
+  +         let cmd = lint_command_for_project(&ProjectType::Ruby, LintStrictness::Default);
+  +         assert!(cmd.is_some(), "Ruby project should have a lint command");
+  +         let (label, args) = cmd.unwrap();
+  +         assert!(
+  +             label.contains("rubocop"),
+  +             "Ruby lint label should mention rubocop"
+  +         );
+  +         assert_eq!(args[0], "bundle");
+  +         assert!(args.iter().any(|a| a == "rubocop"));
+  +     }
+  + 
+  +     #[test]
+  ... (16 more lines)
+ ✓ (43.1s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 47.7s (2 ✓)
+
+Now let's run the full check suite:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (32.8s)
+  3 tools completed in 51.4s (3 ✓)
+
+All 88 tests pass, no clippy warnings. Let me also run the specific new tests to confirm they're there:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (130ms)
+
+All new tests are present and passing. Let me also verify fmt check:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (548ms)
+
+Everything's clean. Let me also do a quick sanity build check:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (126ms)
+
+  ↳ 10m 7s · 20978→10541 tokens (17 tok/s) · $1.68
+  ⬤ 13% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

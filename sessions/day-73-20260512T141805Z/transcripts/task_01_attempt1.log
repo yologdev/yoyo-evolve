@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the `prompt_retry.rs` file to understand the functions I need to test.
+  ▶ read src/prompt_retry.rs ✓ (6ms)
+
+Let me see the existing tests and the key functions more carefully:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:280..480  ▶ read src/prompt_retry.rs:380..480 ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now let me see the rest of the existing tests and check what `provider_api_key_env and known_models_for_provider` look like:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:479..879  ▶ search 'pub fn provider_api_key_env' (*.rs)  ▶ search 'pub fn known_models_for_provider' (*.rs) ✓ (7ms)
+ ✓ (21ms)
+ ✓ (20ms)
+  3 tools completed in 2.6s (3 ✓)
+
+The functions are in providers.rs, not cli.rs. Let me check the re-exports:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'provider_api_key_env|known_models_for_provider' in src/cli.rs (*.rs)  ▶ read src/providers.rs:1..81 ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me check how the functions are referenced from `prompt_retry.rs`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'crate::cli::' in src/prompt_retry.rs  ▶ search 'crate::providers::' in src/prompt_retry.rs ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 2.5s (2 ✓)
+
+So they're referenced as crate::cli::. Let me check if cli.rs re-exports from providers.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub use.*provider' in src/cli.rs  ▶ search 'mod cli|mod providers' in src/main.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/cli.rs:41..46 ✓ (1ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Good — cli.rs re-exports from providers.rs. Now I have the full picture. Let me also check `safe_truncate` to understand truncation behavior:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn safe_truncate' in src/format/mod.rs ✓ (3ms)
+  ▶ read src/format/mod.rs:225..240 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now I have all I need. Let me also see the is_overflow_error and `build_overflow_retry_prompt` since those may be tested or untested:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:135..215 ✓ (1ms)
+
+Good. Now I have a complete understanding. Let me look at what tests already exist to avoid duplication:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:575..675 ✓ (1ms)
+
+Good. There are already tests for diagnose_api_error for stream-related cases, but not for the auth/model-not-found/connection/403 branches. And there are zero tests for build_retry_prompt and infer_provider_from_model. Let me now write the tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:845..875 ✓ (1ms)
+
+Now I'll add the tests. I need to append them before the closing } of the test module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (17 → 332 lines)
+            assert!(
+                prompt.contains("something broke"),
+                "retry prompt should include error summary: {prompt}"
+  +         );
+  +     }
+  + 
+  +     // ---------------------------------------------------------------
+  +     // build_retry_prompt tests
+  +     // ---------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_build_retry_prompt_no_error() {
+  +         let result = build_retry_prompt("hello world", &None);
+  +         assert_eq!(result, "hello world");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_retry_prompt_short_error() {
+  +         let err = Some("file not found".to_string());
+  +         let result = build_retry_prompt("fix the bug", &err);
+  ... (301 more lines)
+ ✓ (43.6s)
+
+Now let's run the checks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (33.1s)
+  2 tools completed in 48.1s (2 ✓)
+
+All 88 tests pass (up from the previous count — the new tests are included). Let me verify my new tests specifically ran:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_retry 2>&1 ✓ (132ms)
+
+Wait, 74 tests in prompt_retry? Let me check the filter is right:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_retry -- --lis… ✓ (127ms)
+
+74 tests in the prompt_retry module. Let me count just my new ones:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_retry -- --lis… ✓ (127ms)
+
+Wait, that seems like too many. Let me just list them:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_retry -- --lis… ✓ (128ms)
+
+That's 30 lines. Let me check the actual count of new test functions I added:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '#\[test\]' src/prompt_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (4ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me verify the build one more time cleanly:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (119ms)
+
+All checks pass. Let me count specifically how many new tests I added:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/prompt_retry.rs | g… ✓ (5ms)
+
+30 new tests covering all three functions. Let me commit:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Done. Here's what I added — 30 new tests across three previously untested functions in prompt_retry.rs:
+
+`build_retry_prompt` (5 tests):
+• None error → returns input unchanged
+• Short error → wraps with `[Previous attempt failed: ...]` prefix
+• Long error (300 chars) → truncated with … via safe_truncate
+• Boundary: exactly 200 chars → no truncation
+• Boundary: 201 chars → truncation kicks in
+
+`infer_provider_from_model` (11 tests):
+• Claude/opus/sonnet/haiku keywords → `"anthropic"`
+• gpt-*, `o3, o4 → "openai"`
+• gemini-* → "google"
+• `grok-* → "xai"`
+• deepseek-* → "deepseek"
+• mistral-*, codestral-* → "mistral"
+• `llama-`, `mixtral-, gemma-* → "groq"`
+• glm-* → "zai"
+• Unknown model → defaults to "anthropic"
+• Case-insensitive matching
+
+**diagnose_api_error (14 tests):**
+• 401/unauthorized → mentions correct env var for the inferred provider
+• invalid api key → openai branch with correct env var
+• Key not set → says "is not set"
+• Key is set → says "is set but the API rejected it"
+• model not found / model_not_found / does not exist → lists available models
+• OpenAI model-not-found → lists gpt models
+• connection refused → network error message
+• dns resolution failed → network error
+• connection reset → network error
+• 403 Forbidden → access forbidden with provider and model
+• permission denied → access forbidden
+• Unrecognized errors → returns None
+• Empty string → returns None
+
+  ↳ 3m 47s · 16295→7609 tokens (33 tok/s) · $1.02
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
