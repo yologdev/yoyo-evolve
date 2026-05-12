@@ -1,0 +1,250 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current looks_incomplete function and related code in repl.rs to understand the existing implementation.
+  ▶ $ grep -n "looks_incomplete\|MAX_AUTO_CONTINUE" src/repl.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (13ms)
+  ▶ $ grep -n "MAX_AUTO_CONTINUES\|looks_incomplete" src/repl.rs | head -40 ✓ (3ms)
+  ▶ $ sed -n '980,1080p' src/repl.rs ✓ (3ms)
+  ▶ $ sed -n '1080,1180p' src/repl.rs ✓ (4ms)
+  4 tools completed in 10.5s (4 ✓)
+
+Now let me see the existing tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1540,1660p' src/repl.rs ✓ (4ms)
+
+Now I have a clear picture of the code. Let me implement the changes:
+
+1. Raise MAX_AUTO_CONTINUES from 3 to 5
+2. Add patterns 5-8 to looks_incomplete
+3. Add tests for each new pattern
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 23.3s (7 ✓)
+
+Let me start with the constant change:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/repl.rs (1 → 1 lines)
+  - const MAX_AUTO_CONTINUES: u32 = 3;
+  + const MAX_AUTO_CONTINUES: u32 = 5;
+ ✓ (42.7s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 50.2s (3 ✓)
+
+Now let's add all the new patterns. I need to insert them before the final `false at the end of looks_incomplete`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ sed -n '1060,1078p' src/repl.rs ✓ (3ms)
+  ▶ edit src/repl.rs (7 → 65 lines)
+        if max_announced >= 3 && max_reached > 0 && max_reached < max_announced {
+            // Announced N steps but only reached step M < N
+            return true;
+  +     }
+  + 
+  +     // ── Pattern 5: unclosed code blocks ──
+  +     // If the number of ``` fences in the full text is odd, the model was cut off mid-code.
+  +     {
+  +         let fence_count = text.matches("```").count();
+  +         if fence_count % 2 == 1 {
+  +             return true;
+  +         }
+  +     }
+  + 
+  +     // ── Pattern 6: action intent phrases near the end ──
+  +     let action_phrases = [
+  +         "let me update",
+  +         "let me fix",
+  +         "let me modify",
+  +         "let me add",
+  ... (44 more lines)
+ ✓ (5.9s)
+  3 tools completed in 22.7s (3 ✓)
+
+I need to add the step_x_of_y_incomplete helper function. Let me add it after `extract_step_number`:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1093,1160p' src/repl.rs ✓ (3ms)
+  ▶ edit src/repl.rs (5 → 56 lines)
+        None
+  + }
+  + 
+  + /// Check for "step X of Y" or "step X/Y" patterns where X < Y, indicating
+  + /// the model stopped before completing all steps.
+  + fn step_x_of_y_incomplete(text: &str) -> Option<bool> {
+  +     // Search for patterns like "step 2 of 5", "step 3/7", "step 1 of 4 complete"
+  +     let mut found = false;
+  +     let mut i = 0;
+  +     let bytes = text.as_bytes();
+  +     while i + 5 < bytes.len() {
+  +         // Look for "step "
+  +         if i + 5 <= bytes.len() && &text[i..i + 5] == "step " {
+  +             let after_step = &text[i + 5..];
+  +             // Parse X
+  +             let x_digits: String = after_step
+  +                 .chars()
+  +                 .take_while(|c| c.is_ascii_digit())
+  +                 .collect();
+  +             if !x_digits.is_empty() {
+  ... (35 more lines)
+ ✓ (40.2s)
+  2 tools completed in 53.6s (2 ✓)
+
+The tests are running, let me check the full output:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -5 ✓ (121ms)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -10 ✓ (9.9s)
+  ▶ $ cargo test 2>&1 | tail -20 ✓ (19.6s)
+  3 tools completed in 37.3s (3 ✓)
+
+Build, clippy, and tests all pass. Now let me mark the patterns done and add the tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 9.2s (4 ✓)
+
+Now let me add the tests. Let me find where the existing tests end:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_looks_incomplete_step_number_extraction\|^}" src/repl.rs | tail -1… ✓ (3ms)
+  ▶ $ sed -n '1720,1740p' src/repl.rs ✓ (3ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/repl.rs (10 → 115 lines)
+            assert_eq!(extract_step_number("12) twelfth item"), Some(12));
+            assert_eq!(extract_step_number("no number here"), None);
+            assert_eq!(extract_step_number(""), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_looks_incomplete_unclosed_code_block() {
+  +         // Odd number of ``` fences = unclosed code block
+  +         assert!(looks_incomplete(
+  +             "Here's the fix:\n```rust\nfn main() {\n    println!(\"hello\");\n"
+  +         ));
+  +         // Even number = properly closed
+  +         assert!(!looks_incomplete(
+  +             "Here's the fix:\n```rust\nfn main() {}\n```\nAll done."
+  +         ));
+  +         // Multiple blocks, last one unclosed
+  +         assert!(looks_incomplete(
+  +             "First block:\n```\nfoo\n```\nSecond block:\n```\nbar\n"
+  +         ));
+  +     }
+  ... (90 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/repl.rs.
+  4 tools completed in 33.1s (3 ✓, 1 ✗)
+
+Let me get the exact text:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1727,1736p' src/repl.rs ✓ (3ms)
+  ▶ $ cat -A src/repl.rs | sed -n '1727,1736p' ✓ (3ms)
+  ▶ read src/repl.rs:1726.. ✓ (1ms)
+  ▶ edit src/repl.rs (10 → 115 lines)
+            assert_eq!(extract_step_number("12) twelfth item"), Some(12));
+            assert_eq!(extract_step_number("no step here"), None);
+            assert_eq!(extract_step_number(""), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_looks_incomplete_unclosed_code_block() {
+  +         // Odd number of ``` fences = unclosed code block
+  +         assert!(looks_incomplete(
+  +             "Here's the fix:\n```rust\nfn main() {\n    println!(\"hello\");\n"
+  +         ));
+  +         // Even number = properly closed
+  +         assert!(!looks_incomplete(
+  +             "Here's the fix:\n```rust\nfn main() {}\n```\nAll done."
+  +         ));
+  +         // Multiple blocks, last one unclosed
+  +         assert!(looks_incomplete(
+  +             "First block:\n```\nfoo\n```\nSecond block:\n```\nbar\n"
+  +         ));
+  +     }
+  ... (90 more lines)
+ ✓ (42.4s)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 1m 18s (5 ✓)
+
+Now let's run the full check suite:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cargo fmt 2>&1 ✓ (544ms)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 ✓ (9.9s)
+  ▶ $ cargo build 2>&1 ✓ (5.3s)
+  ▶ $ cargo test 2>&1 ✓ (32.5s)
+  5 tools completed in 1m 7s (5 ✓)
+
+All 2627 unit tests + 88 integration tests pass. Let me verify the specific new tests ran:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test looks_incomplete 2>&1 ✓ (127ms)
+
+All 12 looks_incomplete tests pass (6 existing + 6 new). Let me also run the step_x_of_y test:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test step_x_of_y 2>&1 ✓ (126ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Everything passes. Let me verify the CLAUDE.md architecture description for repl.rs mentions auto-continue:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto-continue\|looks_incomplete\|MAX_AUTO" CLAUDE.md ✓ (8ms)
+  ▶ $ grep "repl.rs" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "repl.rs" CLAUDE.md ✓ (7ms)
+  ▶ $ sed -n '78p' CLAUDE.md ✓ (3ms)
+  4 tools completed in 9.5s (4 ✓)
+
+The CLAUDE.md says "up to 3 follow-ups" — I need to update it to 5:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 3 follow-ups per user turn)
+  + - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn)
+ ✓ (30.6s)
+
+Now let me commit:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 73 (22:59): Strengthen auto… (12 lines) ✓ (2ms)
+
+The backticks in the commit message are interfering. Let me use a file for the message:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/commit_msg.txt (12 lines) ✓ (30.5s)
+  ▶ $ git add -A && git commit -F /tmp/commit_msg.txt || true ✓ (12ms)
+  2 tools completed in 34.9s (2 ✓)
+
+Committed. Let me verify the final state:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -1 ✓ (11ms)
+  ▶ $ git diff --stat HEAD~1 ✓ (9ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.8s (3 ✓)
+
+All done! Here's a summary of what I implemented:
+
+Changes to `src/repl.rs`:
+
+1. `MAX_AUTO_CONTINUES`: 3 → 5 — gives the agent room for 8-12 step plans without being unbounded.
+
+2. Pattern 5 (unclosed code blocks) — counts triple-backtick fences; an odd count means the model was cut off mid-code block.
+
+3. Pattern 6 (action intent phrases) — 15 new phrases like "let me update", "let me fix", "i'll implement", "i'll handle" that signal the model intends to take action next.
+
+4. Pattern 7 (ordinal progression) — detects "first" in the tail without "finally"/"lastly", indicating more steps are expected. Handles the "first + second but no third" case too.
+
+5. Pattern 8 (step X of Y) — new step_x_of_y_incomplete() helper that parses "step 2 of 5" and "step 3/7" patterns, returning true when X < Y.
+
+6. 6 new test functions — `test_looks_incomplete_unclosed_code_block, test_looks_incomplete_action_phrases, test_looks_incomplete_ordinal_progression, test_looks_incomplete_step_x_of_y, test_looks_incomplete_negative_cases_new_patterns, test_step_x_of_y_incomplete`.
+
+7. **CLAUDE.md updated** — "up to 3 follow-ups" → "up to 5 follow-ups".
+
+  ↳ 8m 45s · 15669→9321 tokens (17 tok/s) · $1.50
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

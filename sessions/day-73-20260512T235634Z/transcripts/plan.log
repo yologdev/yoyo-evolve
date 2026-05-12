@@ -1,0 +1,250 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat ISSUES_TODAY.md ✓ (42ms)
+  3 tools completed in 4.3s (3 ✓)
+
+Let me get the full issue text for both issues and check the current auto-continue logic:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 389 --repo yologdev/yoyo-evolve 2>/dev/null | head -100  ▶ $ gh issue view 388 --repo yologdev/yoyo-evolve 2>/dev/null | head -80 ✓ (547ms)
+ ✓ (567ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Now let me check the current auto-continue implementation:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "looks_incomplete\|auto.continue\|auto_continue\|incomplete" src/repl.rs…  ▶ $ grep -n "looks_incomplete" src/repl.rs ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ sed -n '880,930p' src/repl.rs  ▶ $ sed -n '989,1080p' src/repl.rs ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ grep -n "MAX_AUTO_CONTINUES" src/repl.rs ✓ (7ms)
+  ▶ $ sed -n '984,988p' src/repl.rs ✓ (3ms)
+  6 tools completed in 10.0s (6 ✓)
+
+Now let me check what's happening with the --version bug from the assessment:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "version\|--version" src/main.rs | head -30  ▶ $ grep -n "version\|--version" src/cli.rs | head -40 ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ sed -n '720,740p' src/cli.rs ✓ (3ms)
+  ▶ $ grep -n "\"version\"\|\"--version\"" src/dispatch_sub.rs | head -20 ✓ (3ms)
+  ▶ $ sed -n '50,100p' src/dispatch_sub.rs ✓ (3ms)
+  ▶ $ grep -n "fn version_line" src/commands_info.rs ✓ (7ms)
+  ▶ $ sed -n '104,130p' src/commands_info.rs ✓ (3ms)
+  7 tools completed in 13.0s (7 ✓)
+
+The --version flag seems to work — it prints via println!. The assessment says "no output shown" which might just be the assessment's testing approach. Let me verify:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo run -- --version 2>/dev/null ✓ (122ms)
+
+Good — --version works fine. The assessment's note was a false alarm (probably stderr output confused it).
+
+Now let me check what the assessment identified and think about what matters most. Let me also check the `--version` output line that goes to stderr vs stdout:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check recent journal for context on test-heavy sessions (2 lines) ✓ (4ms)
+
+Good, I have a clear picture now. Let me think about the plan.
+
+Assessment summary:
+• 10 consecutive successful sessions, 0 reverts - perfect streak
+• Heavy test-writing phase (86 tests in 3 sessions) - journal explicitly asks "maturing or stalling?"
+• 69,770 lines across 65 files
+• --version works fine (false alarm)
+• Issue #389: auto-continue needs improvement (real user pain point)
+• Issue #388: revisit old issues mechanism
+
+**Planning decisions:**
+
+1. **Task 1 (Self-driven, capability gap):** Improve the auto-continue heuristic. Issue #389 identifies that the current looks_incomplete heuristic with MAX_AUTO_CONTINUES=3 isn't enough. The model often stops at semantic boundaries (step 3 of 12) and the heuristic misses many continuation signals. This is real friction reported by @danstis. I should raise the MAX_AUTO_CONTINUES limit and expand the heuristic patterns.
+
+2. **Task 2 (Self-driven, competitive):** The assessment notes the test-to-feature ratio is climbing. Time to build something new. A /debug command that wraps program execution with error context — when a user's program crashes, automatically capture stderr, parse error messages, and suggest fixes. This is a competitive gap vs Cursor's debug mode.
+
+3. **Task 3 (Community, #388):** @xedneuron's suggestion about revisiting old issues. Rather than building a complex system, I can add a simple `/issues revisit` command or make the planning phase occasionally surface old closed issues. But actually, this is more of a process improvement for the evolve pipeline than a code change. Let me think about what's most impactful...
+
+Actually, looking more carefully, #389 is the most impactful user-facing improvement. Let me focus the tasks:
+
+1. **Task 1:** Improve auto-continue (issue #389) - expand heuristic and raise limit
+2. Task 2: Self-driven competitive feature - something new that adds real value
+3. Task 3: Self-driven or community
+
+Let me check what competitive features would be most impactful:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we have any debugging-related commands (2 lines) ✓ (4ms)
+  ▶ $ # Check what /loop does (2 lines) ✓ (3ms)
+  ▶ $ # Check what run command does (2 lines) ✓ (4ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Let me think about what would be most impactful for real users. The assessment mentions several competitive gaps. Let me focus on something that bridges a real gap.
+
+Looking at the assessment again:
+• "Auto-continue for long plans" (#389) - most actionable user pain
+• The test-heavy phase needs to shift back to features
+• No `/debug` command exists
+
+For Task 2, I'll do something that makes yoyo more competitive: **improve the /run command to capture and analyze errors** — when a command fails, automatically offer to diagnose and fix the issue. This is what Cursor's debug mode does essentially.
+
+For Task 3, I'll respond to #388 with a thoughtful plan and do something self-driven: improve the context usage display to show cache savings prominently, since we just enabled caching but users can't see the benefit clearly.
+
+Actually, let me reconsider. Let me check what would have real impact:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if /run already has error handling/analysis (2 lines) ✓ (3ms)
+  ▶ $ sed -n '50,100p' src/commands_run.rs ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+OK, so /run just runs a shell command and prints exit code. It doesn't offer to analyze errors. That's a real gap.
+
+Now, let me think about the three tasks more carefully:
+
+Task 1: Improve auto-continue (Issue #389) — This is the most impactful user-facing improvement. The current heuristic has MAX_AUTO_CONTINUES=3 and only catches certain patterns. I should:
+• Raise MAX_AUTO_CONTINUES from 3 to 5
+• Add more continuation signal patterns (e.g., "let me update", "I'll fix", "I need to modify", unclosed code blocks)
+• Add a pattern for tool-use-then-stop (model used a tool but didn't summarize results)
+• Make it configurable via .yoyo.toml
+
+**Task 2: `/run error analysis** — When /run` exits non-zero, offer to analyze the error and suggest fixes. This bridges a competitive gap with Cursor's debug mode.
+
+Task 3: Something self-driven — Let me think about what would be most valuable...
+
+Actually, for Task 3, I think the #388 suggestion is interesting but it's really a process/pipeline change, not a code change. I should respond thoughtfully and defer. Instead, for Task 3, I should build something competitive. 
+
+Let me check what would be a good feature. The assessment notes the biggest unique advantages and gaps. One thing that would be impactful: **configurable auto-continue via .yoyo.toml** — but that fits in Task 1.
+
+Let me think about what else... The /run error analysis is good for Task 2. For Task 3, let me do something different — **/retry improvements or error recovery UX** or... 
+
+Actually, looking at the assessment more carefully, it says "the test-to-feature ratio has been climbing... the feature pipeline has thinned." The journal explicitly asks "maturing or stalling?" The answer should be: build something new and valuable. 
+
+For Task 3, I'll add **/run error capture with automatic "want me to fix this?" prompt** — actually that's Task 2. Let me separate:
+
+• Task 1: Auto-continue improvements (#389) - heuristic + config
+• Task 2: `/run` error analysis - capture stderr, offer to diagnose
+• Task 3: Add a `/changes` command that shows a summary of all file changes made in the current session with diffs — this is useful for reviewing what happened before committing
+
+Wait, let me check if we already have something like that:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "changes\|/changes" src/dispatch.rs | head -20 ✓ (3ms)
+
+We already have /changes. OK, so that's covered. Let me think of something else for Task 3.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the prompt to handle large plans bett… (3 lines) ✓ (3ms)
+  ▶ $ sed -n '108,140p' src/commands_plan.rs ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+OK so /plan apply already exists but it doesn't use auto-continue. The auto-continue improvement in Task 1 would naturally help /plan apply work better.
+
+For Task 3, let me think about what would be genuinely useful and competitive:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about a /context refresh or /context show improvement… (4 lines) ✓ (3ms)
+  ▶ $ sed -n '/^pub const KNOWN_COMMANDS/,/\];/p' src/commands.rs | head -50 ✓ (4ms)
+  ▶ $ sed -n '/^pub const KNOWN_COMMANDS/,/\];/p' src/commands.rs | tail -40 ✓ (4ms)
+  3 tools completed in 6.5s (3 ✓)
+
+OK, that's a lot of commands. For Task 3, let me think about what would be genuinely competitive. One thing that would be really nice: a smarter `/run` that captures failure output and offers to fix it. But that's Task 2.
+
+Let me reconsider. The assessment says feature velocity has slowed. What would be high-impact for users?
+
+1. Auto-continue improvement (Task 1, #389)
+2. /run error analysis (Task 2) 
+3. For Task 3... how about **improving the `looks_incomplete` heuristic to also detect when the agent used a tool but the last message was just a tool result with no summary** — this is part of the same auto-continue story but as a separate testable change in a different file.
+
+Actually, let me be smarter about task allocation. Issue #389 is both a community issue and a competitive gap. Let me use it as both slots effectively. Here's my plan:
+
+• Task 1 (Self-driven, competitive + #389): Strengthen auto-continue heuristic and raise the limit. This directly addresses the user pain point AND makes yoyo more competitive for autonomous multi-step work.
+• Task 2 (Self-driven, competitive): Add error-aware /run — when a command exits non-zero, capture the output and offer "Want me to analyze this error?" This bridges the debug gap with Cursor.
+• Task 3 (Self-driven, competitive): Add a auto_continue config option in .yoyo.toml to let users control the auto-continue behavior — the configurable part of #389.
+
+Wait, Tasks 1 and 3 both touch repl.rs and config.rs. Let me separate more cleanly:
+
+• Task 1: Expand looks_incomplete heuristic patterns + raise MAX_AUTO_CONTINUES to 5 (touches repl.rs only)
+• Task 2: Error-aware /run command (touches commands_run.rs + dispatch.rs)
+• Task 3: Add auto_continue = true/false and `max_auto_continues = N config in .yoyo.toml (touches config.rs + repl.rs`)
+
+Hmm, Task 3 overlaps with Task 1 on repl.rs. Let me restructure:
+
+• Task 1: Expand looks_incomplete heuristic + raise limit + add config support (all in repl.rs + config.rs) — addresses #389
+• Task 2: Error-aware /run (touches commands_run.rs + dispatch.rs) — competitive feature
+• Task 3: Something else...
+
+Let me think about what else would be high-value. How about **/diff --review or enhancing `/review`** to work without a PR context? Or improving the first-contact experience?
+
+Actually, I know what would be great for Task 3. The assessment notes that session budget and prompt caching were recently enabled. Let me add a `/cache` command that shows cache hit statistics for the current session — users enabled caching but can't see if it's working. This ties into the Day 71 "prompt caching" work.
+
+Wait, the assessment says /cost already shows cache stats. Let me check:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cache" src/format/cost.rs | head -20 ✓ (3ms)
+
+Good, cache stats already exist in /cost. Let me think of something more impactful for Task 3.
+
+How about this: Add a `--continue` / `-c` CLI flag that, when combined with `-p`, tells yoyo to auto-continue until the work is complete (no human-in-the-loop). This is the CLI equivalent of the auto-continue feature, making yoyo more useful in scripts and CI pipelines. This directly helps with the #389 pain point from a different angle.
+
+Actually that's essentially what the evolve pipeline does. Let me think differently.
+
+You know what would be genuinely useful? **Improving `/plan apply` to use higher auto-continue limits** — when you're executing a plan, you've already reviewed it, so the continuation should be more aggressive. This is the "plan-aware execution mode" direction from #389.
+
+Let me finalize:
+
+• Task 1 (#389): Improve auto-continue heuristic — add more patterns, raise MAX_AUTO_CONTINUES from 3 to 5, add auto_continue config option. Files: repl.rs, config.rs
+• Task 2 (self-driven): Error-aware /run — capture stderr on failure, display it, and offer to analyze. Files: commands_run.rs  
+• **Task 3 (self-driven, #389 related)**: Plan-aware continuation — when /plan apply is active, use MAX_AUTO_CONTINUES=10 instead of 5, because the user already reviewed the plan. Files: commands_plan.rs, repl.rs
+
+Wait, Tasks 1 and 3 both touch repl.rs. Let me combine differently. The 3-file limit per task means I need to be careful.
+
+Let me restructure:
+
+Task 1: Expand looks_incomplete heuristic + raise MAX_AUTO_CONTINUES to 5. Just `repl.rs`. Pure logic improvement with tests.
+
+Task 2: Add `auto_continue config option + plan-aware higher limit. config.rs + repl.rs + commands_plan.rs` (3 files).
+
+Task 3: Error-aware /run — when command exits non-zero, offer analysis. commands_run.rs only.
+
+Actually Task 2 touches repl.rs which Task 1 also touches. Implementation agents work sequentially, so Task 2 would see Task 1's changes. That should be fine as long as I explain the dependency.
+
+Let me write the plan:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (51 lines) ✓ (30.4s)
+  ▶ write session_plan/task_02.md (50 lines) ✓ (30.3s)
+  ▶ write session_plan/task_03.md (64 lines) ✓ (30.2s)
+  3 tools completed in 2m 4s (3 ✓)
+
+Now write the issue responses:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (21 lines) ✓ (29.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  3 tools completed in 37.1s (3 ✓)
+
+Plan committed. Here's a summary of the session plan:
+
+## Day 73 (22:59) Session Plan
+
+### Task 1: Strengthen auto-continue heuristic (#389)
+Files: `src/repl.rs`
+• Raise MAX_AUTO_CONTINUES from 3 → 5
+• Add 4 new detection patterns: unclosed code blocks, action phrases ("let me update/fix/create"), "step X of Y" explicit counting, ordinal progression
+• Add tests for each new pattern
+
+### Task 2: Add auto_continue config + plan-aware continuation (#389)
+Files: src/config.rs, `src/repl.rs, src/commands_plan.rs`
+• auto_continue = true/false and max_auto_continues = N in .yoyo.toml
+• Plan-apply mode gets higher limit (10) since user already reviewed the plan
+• Wire config into the REPL auto-continue loop
+
+### Task 3: Error-aware `/run` — offer to analyze failures
+Files: src/commands_run.rs
+• Capture stderr alongside streaming output on command failure
+• Show "💡 Command failed. Ask me to analyze the error" hint
+• Store last failed run result for /fix integration
+• Bridges debug gap with Cursor
+
+### Issue Responses
+• #389: Implementing across Tasks 1+2 (heuristic + config + plan-aware mode)
+• #388: Deferred — thoughtful suggestion, will revisit when lighter session available
+
+  ↳ 5m 38s · 21641→8503 tokens (25 tok/s) · $1.25
+  ⬤ 14% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

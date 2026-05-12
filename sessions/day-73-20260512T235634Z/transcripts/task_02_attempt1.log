@@ -1,0 +1,453 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the relevant files, then implement the changes step by step.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 19.9s (8 ✓)
+
+Let me read the relevant parts of the codebase:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'SETTABLE_KEYS' in src/config.rs ✓ (2ms)
+  ▶ read src/config.rs:460..540 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me check how config is loaded and used:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn load_config_file|fn parse_config_file' in src/config.rs ✓ (2ms)
+  ▶ search 'pub fn load_config|pub fn parse_config' in src/config.rs ✓ (2ms)
+  ▶ search 'fn load_config|fn parse_config' in src/config.rs ✓ (2ms)
+  ▶ $ grep -n 'fn .*config' src/config.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ read src/config.rs:700..780 ✓ (1ms)
+  5 tools completed in 13.5s (5 ✓)
+
+Now let me look at how auto_watch is parsed in config - since auto_continue will follow the same pattern:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_watch' in src/config.rs ✓ (2ms)
+  ▶ read src/config.rs:448..468 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me look at repl.rs to understand MAX_AUTO_CONTINUES and how it's used:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'MAX_AUTO_CONTINUES|auto_continue|looks_incomplete' in src/repl.rs ✓ (2ms)
+  ▶ search 'MAX_AUTO_CONTINUES' ✓ (6.9s)
+  ▶ read src/repl.rs:880..1000 ✓ (1ms)
+  3 tools completed in 14.6s (3 ✓)
+
+Good, now I see the structure. Let me also check commands_plan.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_plan_mode|plan_apply|AtomicBool' in src/commands_plan.rs ✓ (2ms)
+  ▶ $ head -50 src/commands_plan.rs ✓ (38ms)
+  ▶ read src/commands_plan.rs:50..80 ✓ (1ms)
+  3 tools completed in 9.6s (3 ✓)
+
+Now let me find where /plan apply is handled:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search 'apply' in src/commands_plan.rs ✓ (3ms)
+  ▶ read src/commands_plan.rs:105..155 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Let me see how the Apply result is handled in the REPL:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ search 'PlanResult::Apply|plan apply' in src/repl.rs ✓ (2ms)
+  ▶ search 'PlanResult::Apply' in src ✓ (5ms)
+  ▶ read src/dispatch.rs:950..970 ✓ (1ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now let me check what happens with SendToAgent in the REPL - to understand where I'd set/unset the plan_apply flag:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ search 'SendToAgent' in src/repl.rs ✓ (2ms)
+  ▶ read src/repl.rs:765..795 ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I need to see where config is loaded in repl to pass it through:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ search 'config|Config|load_config' in src/repl.rs ✓ (2ms)
+  ▶ $ grep -n 'config' src/repl.rs | head -30 ✓ (3ms)
+  ▶ $ grep -n 'ReplConfig' src/repl.rs | head -20 ✓ (3ms)
+  ▶ read src/repl.rs:15..35 ✓ (1ms)
+  4 tools completed in 9.8s (4 ✓)
+
+Now let me check how run_repl is called:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:655..685 ✓ (0ms)
+
+Now let me understand the structure fully. I need to see where run_repl uses the config. Let me check how config values are accessed:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ search 'load_config_file|parse_config_file' in src/main.rs ✓ (2ms)
+  ▶ search 'load_config_file' (*.rs) ✓ (19ms)
+  ▶ read src/cli.rs:735..775 ✓ (1ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Now I need to understand where config gets threaded through. The approach should be: I'll use global atomics (like `auto_watch and plan_mode` already do) rather than threading config values through the callstack. This is consistent with the existing codebase patterns.
+
+Let me now look at the existing tests for config validation:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:940..1040 ✓ (1ms)
+
+Good. I also need to look at the existing auto_watch tests to follow patterns:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:1045..1095 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now I have a clear picture. Let me implement this. The approach:
+
+1. config.rs: Add parse_auto_continue_from_config and `parse_max_auto_continues_from_config, add to SETTABLE_KEYS` and validate_config_value
+2. repl.rs: Add `get_max_auto_continues()` function that reads config + plan-apply state, wire it into the auto-continue loop
+3. commands_plan.rs: Add is_plan_apply_active() / set_plan_apply_active() using AtomicBool
+
+Let me start with the plan-apply flag since it's the simplest and self-contained:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_plan.rs:1..21 ✓ (0ms)
+  ▶ edit src/commands_plan.rs (3 → 21 lines)
+    static PLAN_MODE: AtomicBool = AtomicBool::new(false);
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Plan-apply mode — tracks whether `/plan apply` is currently executing.
+  + // When active, the auto-continue limit is raised so the agent can work
+  + // through the full plan without hitting the normal follow-up cap.
+  + // ---------------------------------------------------------------------------
+  + 
+  + static PLAN_APPLY_ACTIVE: AtomicBool = AtomicBool::new(false);
+  + 
+  + /// Set whether a `/plan apply` execution is currently in progress.
+  + pub fn set_plan_apply_active(active: bool) {
+  +     PLAN_APPLY_ACTIVE.store(active, Ordering::Relaxed);
+  + }
+  + 
+  + /// Check whether a `/plan apply` execution is currently in progress.
+  + pub fn is_plan_apply_active() -> bool {
+  +     PLAN_APPLY_ACTIVE.load(Ordering::Relaxed)
+  + }
+    
+  ... (1 more lines)
+ ✓ (9.8s)
+  3 tools completed in 20.3s (3 ✓)
+
+Expected - these are unused until I wire them up. Let me continue with config.rs next and wire everything together before running checks.
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now add config parsing in config.rs:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (9 → 17 lines)
+        ("max_tokens", "maximum response tokens"),
+        ("max_turns", "maximum agent turns per prompt"),
+        ("auto_watch", "auto-enable watch mode on start (true/false)"),
+  +     (
+  +         "auto_continue",
+  +         "auto-continue incomplete responses (true/false)",
+  +     ),
+  +     (
+  +         "max_auto_continues",
+  +         "max auto-continue follow-ups per turn (0-20)",
+  +     ),
+    ];
+ ✓ (9.8s)
+
+Now add validation for the new keys:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (10 → 27 lines)
+                    "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                    _ => Err(format!(
+                        "invalid auto_watch value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+  +         "auto_continue" => {
+  +             let lower = value.to_ascii_lowercase();
+  +             match lower.as_str() {
+  +                 "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+  +                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
+  +                 _ => Err(format!(
+  +                     "invalid auto_continue value '{value}' — use true or false"
+                    )),
+                }
+  +         }
+  +         "max_auto_continues" => match value.parse::<u32>() {
+  +             Ok(n) if n <= 20 => Ok(n.to_string()),
+  +             Ok(n) => Err(format!(
+  +                 "max_auto_continues {n} out of range (0-20)"
+  ... (3 more lines)
+ ✓ (9.9s)
+
+Now add the parsing functions for auto_continue and max_auto_continues. I'll add them near `parse_auto_watch_from_config`:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (6 → 33 lines)
+    pub fn parse_auto_watch_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+        match config.get("auto_watch").map(|v| v.as_str()) {
+  +         Some("false") | Some("0") | Some("no") | Some("off") => false,
+  +         _ => true, // default: enabled
+  +     }
+  + }
+  + 
+  + /// Check whether auto-continue is enabled in the config.
+  + ///
+  + /// Reads `auto_continue` from the given config map. Defaults to `true`
+  + /// when the key is absent — auto-continuation is on by default so
+  + /// incomplete responses are automatically followed up.
+  + pub fn parse_auto_continue_from_config(
+  +     config: &std::collections::HashMap<String, String>,
+  + ) -> bool {
+  +     match config.get("auto_continue").map(|v| v.as_str()) {
+            Some("false") | Some("0") | Some("no") | Some("off") => false,
+            _ => true, // default: enabled
+        }
+  + }
+  ... (13 more lines)
+ ✓ (9.9s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 17.4s (3 ✓)
+
+Now wire into repl.rs. I need to:
+1. Add a get_max_auto_continues function
+2. Use global atomics to store the parsed config values (following the pattern of auto_watch)
+3. Replace the hardcoded `MAX_AUTO_CONTINUES` with dynamic lookup
+
+Let me think about the approach. I see two patterns in the codebase:
+• auto_watch is parsed from config and returned as bool, but the caller uses it directly
+• Plan mode uses AtomicBool for global state
+
+For auto_continue config, I'll use global atomics since the REPL auto-continue loop needs to read these values at runtime, and threading config through would be invasive. Let me add the global state to repl.rs:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:980..995 ✓ (1ms)
+
+Now I'll replace MAX_AUTO_CONTINUES with a function and add the global config state. Let me first check the imports at the top of repl.rs:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1..17 ✓ (1ms)
+
+Now let me replace the MAX_AUTO_CONTINUES constant with the dynamic function and globals:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (2 → 28 lines)
+  - /// Maximum number of automatic follow-up prompts per user turn.
+  - const MAX_AUTO_CONTINUES: u32 = 5;
+  + /// Default maximum number of automatic follow-up prompts per user turn.
+  + const DEFAULT_MAX_AUTO_CONTINUES: u32 = 5;
+  + 
+  + /// Compute the effective auto-continue limit for the current turn.
+  + ///
+  + /// Takes into account:
+  + /// 1. If `auto_continue` is disabled in config → returns 0
+  + /// 2. If `max_auto_continues` is set in config → uses that value
+  + /// 3. If a `/plan apply` is active → uses `max(config_limit, 10)` so the
+  + ///    agent can work through a full plan without hitting the normal cap
+  + pub(crate) fn get_max_auto_continues(
+  +     config: &std::collections::HashMap<String, String>,
+  +     in_plan_apply: bool,
+  + ) -> u32 {
+  +     use crate::config::{parse_auto_continue_from_config, parse_max_auto_continues_from_config};
+  + 
+  +     if !parse_auto_continue_from_config(config) {
+  +         return 0;
+  ... (10 more lines)
+ ✓ (5.9s)
+
+Now I need to wire the usage in the auto-continue loop. I need to load config at the start of the REPL and pass the limit into the loop. Let me look at the flow more carefully:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:680..710 ✓ (0ms)
+
+I'll load the config for auto-continue right after the session variables are initialized. And in the auto-continue loop, I'll compute the limit dynamically on each iteration (since config could theoretically be changed mid-session via `/config set`):
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 4 lines)
+        let mut checkpoint_store = commands::CheckpointStore::new();
+  + 
+  +     // Load config for auto-continue settings (re-read each turn for live updates)
+  +     let repl_file_config = crate::config::load_config_file().0;
+ ✓ (5.9s)
+
+Now replace the auto-continue loop to use the dynamic limit:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:893..913 ✓ (1ms)
+  ▶ edit src/repl.rs (17 → 21 lines)
+            // ── Auto-continue: if the model stopped mid-work, send a follow-up ──
+            {
+  +             let max_continues = get_max_auto_continues(
+  +                 &repl_file_config,
+  +                 crate::commands::is_plan_apply_active(),
+  +             );
+                let mut auto_continue_count: u32 = 0;
+                let mut last_text = outcome.text.clone();
+                let mut had_error =
+                    outcome.last_tool_error.is_some() || outcome.last_api_error.is_some();
+    
+  -             while auto_continue_count < MAX_AUTO_CONTINUES
+  +             while auto_continue_count < max_continues
+                    && !had_error
+                    && looks_incomplete(&last_text)
+                    && !crate::prompt_budget::session_budget_exhausted(30)
+                {
+                    auto_continue_count += 1;
+                    eprintln!(
+  -                     "\n{DIM}  ⚡ auto-continuing ({auto_continue_count}/{MAX_AUTO_CONTINUES} \
+  ... (3 more lines)
+ ✓ (5.9s)
+  2 tools completed in 25.0s (2 ✓)
+
+I need to re-export is_plan_apply_active from the commands module or use it directly. Let me check how other plan functions are re-exported:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_plan_mode|plan_mode|commands_plan' in src/commands.rs ✓ (2ms)
+  ▶ search 'commands::is_plan_mode' ✓ (6.6s)
+  ▶ $ grep -n 'pub use\|pub mod\|mod commands_plan' src/commands.rs | head -20 ✓ (3ms)
+  3 tools completed in 14.1s (3 ✓)
+
+I see — is_plan_mode is re-exported from commands_plan via line 489. I need to add is_plan_apply_active and set_plan_apply_active to that re-export:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 4 lines)
+  - pub use crate::commands_plan::{handle_plan, is_plan_mode, PlanResult, PLAN_MODE_PROMPT};
+  + pub use crate::commands_plan::{
+  +     handle_plan, is_plan_apply_active, is_plan_mode, set_plan_apply_active, PlanResult,
+  +     PLAN_MODE_PROMPT,
+  + };
+ ✓ (9.9s)
+
+Good - set_plan_apply_active is not yet used because I haven't wired it into the dispatch. Let me set the flag when /plan apply sends the prompt. Let me look at where PlanResult::Apply is handled:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:955..970 ✓ (1ms)
+
+I need to set the plan-apply flag when Apply is returned:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 5 lines)
+                    commands::PlanResult::Apply(apply_prompt) => {
+                        *ctx.last_error = None;
+  +                     commands::set_plan_apply_active(true);
+                        CommandResult::SendToAgent(apply_prompt)
+                    }
+ ✓ (42.0s)
+
+Now I need to clear the flag after the prompt finishes. The auto-continue loop ends, and then we go back to the top of the REPL loop. Let me clear it after the auto-continue block:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:975..990 ✓ (0ms)
+  ▶ read src/repl.rs:958..973 ✓ (0ms)
+  2 tools completed in 5.1s (2 ✓)
+
+I'll clear the plan-apply flag after the auto-continue block (line 966):
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (3 → 8 lines)
+                }
+  +         }
+  + 
+  +         // Clear plan-apply flag after prompt + auto-continue finishes
+  +         if crate::commands::is_plan_apply_active() {
+  +             crate::commands::set_plan_apply_active(false);
+            }
+        }
+ ✗ (0ms)
+    │ old_text matches 9 locations in src/repl.rs. Include more surrounding context to make the match unique.
+
+I need more context:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:960..980 ✓ (1ms)
+  ▶ edit src/repl.rs (6 → 11 lines)
+                    .await;
+                }
+  +         }
+  + 
+  +         // Clear plan-apply flag after prompt + auto-continue finishes
+  +         if crate::commands::is_plan_apply_active() {
+  +             crate::commands::set_plan_apply_active(false);
+            }
+        }
+    
+ ✓ (41.6s)
+  2 tools completed in 47.5s (2 ✓)
+
+Now let me check if it compiles:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (119ms)
+
+It compiles. Now let me check clippy:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.9s)
+
+Clean! Now let me add tests:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+First, add tests for the config validation and parsing in config.rs. Let me find a good spot:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:1090..1100 ✓ (1ms)
+  ▶ read src/config.rs:1135..1150 ✓ (1ms)
+  2 tools completed in 6.0s (2 ✓)
+
+I'll add the tests right after the auto_watch tests:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (2 → 103 lines)
+            assert!(validate_config_value("auto_watch", "maybe").is_err());
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_continue_defaults_to_true() {
+  +         let config = std::collections::HashMap::new();
+  +         assert!(parse_auto_continue_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_continue_respects_false() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("auto_continue".to_string(), "false".to_string());
+  +         assert!(!parse_auto_continue_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_continue_respects_off() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("auto_continue".to_string(), "off".to_string());
+  ... (83 more lines)
+ ✓ (42.4s)
+
+Now add tests for get_max_auto_continues in repl.rs. Let me find the test module:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]|mod tests"' in src/repl.rs ✓ (2ms)
+  ▶ search '#\[test\]' in src/repl.rs ✓ (3ms)
+  ▶ read src/repl.rs:1248..1258 ✓ (0ms)
+  3 tools completed in 8.4s (3 ✓)
+
+Let me find the end of the test module to add my tests:
+  ╭─ Turn 80 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1862..1877 ✓ (1ms)
+  ▶ edit src/repl.rs (10 → 60 lines)
+            assert_eq!(step_x_of_y_incomplete("step 5 of 5"), Some(false));
+            assert_eq!(step_x_of_y_incomplete("step 7 of 5"), Some(false));
+            assert_eq!(step_x_of_y_incomplete("no steps here"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_get_max_auto_continues_default() {
+  +         let config = std::collections::HashMap::new();
+  +         assert_eq!(get_max_auto_continues(&config, false), 5);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_get_max_auto_continues_disabled() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("auto_continue".to_string(), "false".to_string());
+  +         assert_eq!(get_max_auto_continues(&config, false), 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_get_max_auto_continues_custom_value() {
+  ... (35 more lines)
+ ✓ (43.3s)
+  2 tools completed in 56.7s (2 ✓)
+
+  ↳ 10m 1s · 30240→12826 tokens (21 tok/s) · $2.39
+  ⬤ 15% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
