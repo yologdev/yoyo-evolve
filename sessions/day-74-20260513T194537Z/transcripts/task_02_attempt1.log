@@ -1,0 +1,327 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the colored diff preview for edit_file confirmations.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 10s)
+
+Now I have a clear picture. Let me look at the existing write_file diff handling to see how Day 73 implemented it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_file\|diff\|old_c… ✓ (6ms)
+  ▶ read src/tool_wrappers.rs:340..400 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:280..350 ✓ (1ms)
+  3 tools completed in 15.3s (3 ✓)
+
+Now let me see the format_edit_diff function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/diff.rs ✓ (2ms)
+
+Now let me check the existing tests and imports in `tool_wrappers.rs`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:1..31 ✓ (1ms)
+
+Now let me see the describe_file_operation function:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:223..283 ✓ (1ms)
+
+Now let me check the tests at the bottom:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:480..680 ✓ (2ms)
+  ▶ read src/tool_wrappers.rs:680..980 ✓ (2ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Good — I have a comprehensive understanding. Now let me plan and implement:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 11.1s (5 ✓)
+
+Let me start by understanding the approach. The key insight is:
+
+1. `confirm_file_operation` currently doesn't know what tool is calling it — it only gets a description string and path
+2. I need to show the diff before the interactive prompt, but **not** when auto-approved or permission-approved
+3. The cleanest approach: add a new function edit_file_diff_preview that generates the diff from params, then modify `ConfirmTool::execute to print it before calling confirm_file_operation`, but only when we're going to show an interactive prompt
+
+Let me re-examine the flow more carefully. The `confirm_file_operation` function decides whether to auto-approve, permission-approve, or prompt interactively. The diff should only show when we reach the interactive prompt. So I need to either:
+• Pass the diff string into confirm_file_operation and let it print at the right time, OR
+• Split the logic so execute can check if interactive confirmation is needed, show diff, then prompt
+
+The cleanest approach is to add an optional diff_preview parameter to confirm_file_operation. Let me check if anything else calls it:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'confirm_file_operation' in src ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "confirm_file_operation… ✓ (5ms)
+  2 tools completed in 14.5s (2 ✓)
+
+Only called from within tool_wrappers.rs — ConfirmTool::execute at line 367 and the tests. Good, I can add a parameter without worrying about external callers.
+
+Now let me implement. The approach:
+
+1. Add a format_edit_diff_preview(params) -> String function that extracts old_text/new_text and returns a formatted diff
+2. Modify confirm_file_operation to accept an optional diff_preview: Option<&str> — when present and we reach the interactive prompt, print it before the prompt
+3. Update ConfirmTool::execute to generate the preview for edit_file tools and pass it in
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add the format_edit_diff_preview helper function:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (3 → 42 lines)
+  + /// Maximum combined lines (old_text + new_text) before the diff preview is truncated.
+  + const EDIT_DIFF_MAX_LINES: usize = 40;
+  + 
+  + /// Generate a colored diff preview for an `edit_file` operation.
+  + ///
+  + /// Extracts `old_text` and `new_text` from the tool params and returns a
+  + /// formatted diff string using the LCS-based diff renderer. Returns an empty
+  + /// string when both texts are identical or when the params are missing.
+  + ///
+  + /// If the combined old+new text exceeds `EDIT_DIFF_MAX_LINES`, the diff is
+  + /// truncated with a `... (N more lines)` ellipsis.
+  + pub fn format_edit_diff_preview(params: &serde_json::Value) -> String {
+  +     let old_text = params
+  +         .get("old_text")
+  +         .and_then(|v| v.as_str())
+  +         .unwrap_or("");
+  +     let new_text = params
+  +         .get("new_text")
+  +         .and_then(|v| v.as_str())
+  +         .unwrap_or("");
+  ... (22 more lines)
+ ✓ (10.4s)
+
+Expected — the function isn't used yet. Now let me modify `confirm_file_operation` to accept an optional diff preview:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (52 → 73 lines)
+    pub fn confirm_file_operation(
+  +     description: &str,
+  +     path: &str,
+  +     always_approved: &Arc<AtomicBool>,
+  +     permissions: &cli::PermissionConfig,
+  + ) -> bool {
+  +     confirm_file_operation_with_diff(description, path, always_approved, permissions, None)
+  + }
+  + 
+  + /// Prompt the user to confirm a file operation, optionally showing a diff preview.
+  + ///
+  + /// When `diff_preview` is `Some(text)`, the colored diff is printed to stderr
+  + /// before the interactive confirmation prompt. The diff is NOT shown for
+  + /// auto-approved or permission-approved operations.
+  + pub fn confirm_file_operation_with_diff(
+        description: &str,
+        path: &str,
+        always_approved: &Arc<AtomicBool>,
+        permissions: &cli::PermissionConfig,
+  +     diff_preview: Option<&str>,
+  ... (16 more lines)
+ ✓ (10.3s)
+
+Now let me modify `ConfirmTool::execute` to use the new function:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (19 → 37 lines)
+                .unwrap_or("<unknown>");
+            let description = describe_file_operation(tool_name, &params);
+    
+  -         if !confirm_file_operation(&description, path, &self.always_approved, &self.permissions) {
+  +         // Generate a diff preview for edit_file operations
+  +         let diff_preview = if tool_name == "edit_file" {
+  +             let preview = format_edit_diff_preview(&params);
+  +             if preview.is_empty() {
+  +                 None
+  +             } else {
+  +                 Some(preview)
+  +             }
+  +         } else {
+  +             None
+  +         };
+  + 
+  +         if !confirm_file_operation_with_diff(
+  +             &description,
+  +             path,
+  +             &self.always_approved,
+  ... (6 more lines)
+ ✓ (10.3s)
+
+The confirm_file_operation wrapper is used in tests. Let me check if it's also used anywhere else in the project:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "confirm_file_operation… ✓ (6ms)
+
+The function is used at line 729 (a test). Let me check if the function has `pub` visibility and could be used from outside this module:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "confirm_file_operation… ✓ (6ms)
+
+Only used in tests within tool_wrappers.rs. The issue is that the non-test code now only uses confirm_file_operation_with_diff, so the short wrapper is only called by tests. Let me mark it with #[cfg(test)] or keep it as a convenience wrapper but use pub(crate) and use it in test. Actually, the simplest fix is to keep the convenience function but make sure it's used. Let me check the error more carefully — ah, the function IS used from tests, but since tests are behind #[cfg(test)], clippy in main code still reports it as unused. The fix is to annotate with #[cfg(test)] or, better, just make the tests use `confirm_file_operation_with_diff(..., None)` and remove the wrapper... 
+
+Actually, the cleanest approach: keep confirm_file_operation as the public API (it may be called from other modules in the future) and mark it appropriately. Since clippy complains, let me just switch the tests to use confirm_file_operation_with_diff with None and remove the wrapper:
+
+Wait, actually, confirm_file_operation is a perfectly good convenience wrapper. The issue is just that it's pub but only used in `#[cfg(test)]. Let me change it to pub(crate) and add an allow`:
+
+Actually the simplest approach — tests call confirm_file_operation which delegates to confirm_file_operation_with_diff. The issue is clippy sees confirm_file_operation as dead code since tests aren't counted. Let me just keep the wrapper but mark it with #[allow(dead_code)] ... no, the task says cargo clippy -- -D warnings must pass. Actually, hmm — let me think. The function IS used in tests. The cleaner fix is to just inline the None call in the test:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (15 → 6 lines)
+  - pub fn confirm_file_operation(
+  -     description: &str,
+  -     path: &str,
+  -     always_approved: &Arc<AtomicBool>,
+  -     permissions: &cli::PermissionConfig,
+  - ) -> bool {
+  -     confirm_file_operation_with_diff(description, path, always_approved, permissions, None)
+  - }
+  - 
+    /// Prompt the user to confirm a file operation, optionally showing a diff preview.
+    ///
+    /// When `diff_preview` is `Some(text)`, the colored diff is printed to stderr
+    /// before the interactive confirmation prompt. The diff is NOT shown for
+    /// auto-approved or permission-approved operations.
+  - pub fn confirm_file_operation_with_diff(
+  + pub fn confirm_file_operation(
+ ✓ (6.2s)
+
+Right — I need to update the call in execute and also update the tests. Let me fix the call site first:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -         if !confirm_file_operation_with_diff(
+  +         if !confirm_file_operation(
+ ✓ (6.4s)
+
+I need to add None to all the test calls. Let me find and fix them all:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "confirm_file_operation(… ✓ (3ms)
+
+Let me see the test calls and update them all:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:660..740 ✓ (1ms)
+
+Now let me update all the test calls to add None as the 5th argument:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -         let result = confirm_file_operation("write: test.rs (5 lines)", "test.rs", &flag, &perms);
+  +         let result = confirm_file_operation("write: test.rs (5 lines)", "test.rs", &flag, &perms, None);
+ ✓ (6.2s)
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -             confirm_file_operation("write: README.md (10 lines)", "README.md", &flag, &perms);
+  +             confirm_file_operation("write: README.md (10 lines)", "README.md", &flag, &perms, None);
+ ✓ (6.2s)
+  2 tools completed in 26.4s (2 ✓)
+
+Let me fix all remaining test calls at once:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'confirm_file_operation(… ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:693..698 ✓ (0ms)
+  ▶ edit src/tool_wrappers.rs (32 → 33 lines)
+            let result =
+  -             confirm_file_operation("write: secrets.key (1 line)", "secrets.key", &flag, &perms);
+  +             confirm_file_operation("write: secrets.key (1 line)", "secrets.key", &flag, &perms, None);
+            assert!(!result, "Should deny paths matching deny pattern");
+        }
+    
+  ···
+                deny: vec!["*.key".to_string()],
+            };
+            let result =
+  -             confirm_file_operation("write: secrets.key (1 line)", "secrets.key", &flag, &perms);
+  +             confirm_file_operation("write: secrets.key (1 line)", "secrets.key", &flag, &perms, None);
+            assert!(!result, "Deny should override allow");
+        }
+    
+  ···
+                "src/main.rs",
+                &flag,
+                &perms,
+  +             None,
+  ... (1 more lines)
+ ✓ (44.4s)
+  3 tools completed in 57.2s (3 ✓)
+
+Now let me check if there are more missing calls:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -20 ✓ (124ms)
+
+Build passes. Now let me mark the first two tasks done and write tests:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 11.7s (3 ✓)
+
+Now let me write tests for format_edit_diff_preview. Let me find the right place to add them:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "// === describe_file_op… ✓ (3ms)
+
+I'll add the tests after the describe_file_operation tests and before the confirm_file_operation tests:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:654..659 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:658..663 ✓ (1ms)
+  ▶ edit src/tool_wrappers.rs (2 → 112 lines)
+  + 
+  +     // === format_edit_diff_preview tests ===
+  + 
+  +     #[test]
+  +     fn test_edit_diff_preview_basic_change() {
+  +         let params = serde_json::json!({
+  +             "path": "src/main.rs",
+  +             "old_text": "let x = 1;",
+  +             "new_text": "let x = 2;"
+  +         });
+  +         let preview = format_edit_diff_preview(&params);
+  +         assert!(!preview.is_empty(), "Should produce a diff preview");
+  +         assert!(preview.contains("- let x = 1;"), "Should show removed line: {preview}");
+  +         assert!(preview.contains("+ let x = 2;"), "Should show added line: {preview}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_edit_diff_preview_multiline() {
+  +         let params = serde_json::json!({
+  +             "path": "src/lib.rs",
+  ... (92 more lines)
+ ✓ (43.7s)
+  3 tools completed in 1m 7s (3 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (34.2s)
+  2 tools completed in 51.0s (2 ✓)
+
+All 88 tests pass. Let me also specifically run the new tests to verify they work:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test edit_diff_preview 2>&… ✓ (130ms)
+
+All 8 new tests pass. Let me verify the full implementation looks clean:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:280..370 ✓ (1ms)
+
+I notice there's a duplicate doc comment on confirm_file_operation. Let me clean that up:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (9 → 6 lines)
+  - /// Prompt the user to confirm a file operation (write_file or edit_file).
+  - /// Returns true if the operation should proceed, false if denied.
+  - /// Shared with bash confirm via the same `always_approved` flag.
+    /// Prompt the user to confirm a file operation, optionally showing a diff preview.
+    ///
+    /// When `diff_preview` is `Some(text)`, the colored diff is printed to stderr
+ ✓ (44.5s)
+
+Now let me check the ConfirmTool::execute method looks correct:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:402..447 ✓ (0ms)
+
+Looks clean. Now let me do the final full verification:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (570ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (146ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (21.3s)
+  6 tools completed in 48.8s (6 ✓)
+
+  ↳ 10m 22s · 32632→11183 tokens (17 tok/s) · $1.92
+  ⬤ 16% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,365 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement an exit summary that shows what changed during a yoyo session. Let me start by understanding the existing code.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 30.0s (7 ✓)
+
+Let me read the relevant files to understand the existing infrastructure.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (55.0s)
+
+Wait — it seems there's already an format_exit_summary function? Let me check if this is actually real or if the sub-agent hallucinated.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'format_exit_summary' ✗ (6.4s)
+    │ Search error: grep: ./target/debug/yoyo: binary file matches
+
+Not found in source. The sub-agent hallucinated that. Let me look at the actual code myself.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'exit_summary|exit summary' (*.rs) ✓ (19ms)
+
+Good — doesn't exist yet. Let me read the actual exit path in repl.rs and the key structures.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "session_start\|session_total\|session_changes\|turn_count\|auto_save_on… ✓ (6ms)
+  ▶ read src/repl.rs:970..1000 ✓ (0ms)
+  2 tools completed in 7.5s (2 ✓)
+
+Wait — it's already there in the code! But the function doesn't exist yet, which means the code won't compile. Let me check:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | head -20 ✓ (123ms)
+
+It builds? That means format_exit_summary must exist somewhere. Let me search more carefully:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "format_exit_summary" src/ 2>/dev/null ✓ (6ms)
+
+Oh! It already exists! Let me read the existing implementation:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:55..135 ✓ (1ms)
+
+This already exists! And it's already wired into repl.rs. Let me check the test coverage:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:400..480 ✓ (1ms)
+
+Let me also check the full test section to see what exists:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_exit_summary" src/commands_retry.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (8ms)
+
+OK — so this feature actually already exists with most of the implementation! Let me carefully check what the task is actually asking for vs. what's already there, and identify any gaps.
+
+Let me re-read the task requirements:
+1. ✅ exit_summary function exists in `commands_retry.rs`
+2. ✅ Called in run_repl before `auto_save_on_exit`... wait, let me check the order:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:970..995 ✓ (1ms)
+
+3. ✅ session_start = Instant::now() is at line 685
+4. Format looks close but let me compare to what the task asks for
+
+The task asks for:
+```
+─── session summary ────────────────────
+Duration: 12m 34s · Tokens: 45.2K in / 12.1K out · Cost: ~$0.23
+Files changed: 3 (src/main.rs, src/lib.rs +new, tests/test.rs)
+```
+
+The current implementation has:
+```
+─── Session Summary ───
+Duration: 4m 32s
+Tokens:   12,450 in / 3,200 out
+Cost:     ~$0.05
+Files:    3 files changed (2 edited, 1 written)
+```
+
+Let me check what's missing from the task requirements:
+
+The task says:
+1. **2-3 lines max** — current is multi-line with each stat on its own line. The task wants a compact format.
+2. **Show file names** — The current shows counts but not actual file names. The task wants (src/main.rs, src/lib.rs +new, tests/test.rs).
+3. Use `DIM` color — Current already uses DIM for some parts.
+4. **Only print if at least 1 turn** — Let me check if this is enforced. Currently it checks `!has_files && !has_tokens`.
+5. **Tests for 0 files, 1 file, multiple files, with/without new files** — Some tests exist but may not cover all.
+
+Let me check if `turn_count` is used in the exit path:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "turn_count" src/repl.rs | head -10 ✓ (3ms)
+
+Turn count exists but it's not used in the exit summary guard. The task says "Only print it if the session had at least 1 turn." Currently, it checks for tokens/files. An empty session where the user immediately quits would have no tokens and no files, so format_exit_summary would return None — which effectively handles the "at least 1 turn" requirement already.
+
+So the main gaps between the task requirements and the existing implementation are:
+
+1. Compact format — Task wants 2-3 lines; current has 4-5 lines (one per stat)
+2. **File names in the summary** — Current only shows counts; task wants actual filenames
+3. Test coverage — Missing tests for 0 files, 1 file, new files specifically
+
+Let me now understand the exact gap and implement the improvements.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me read the full existing test section and the format_exit_summary function more carefully:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:340..480 ✓ (1ms)
+
+OK, so the implementation already exists with good test coverage. The feature is already implemented! Let me check if there are any differences from the task spec:
+
+Task spec format:
+```
+─── session summary ────────────────────
+Duration: 12m 34s · Tokens: 45.2K in / 12.1K out · Cost: ~$0.23
+Files changed: 3 (src/main.rs, src/lib.rs +new, tests/test.rs)
+```
+• 2-3 lines, compact, stats on one line with · separator
+• File names listed
+
+Current implementation format:
+```
+─── Session Summary ───
+Duration: 4m 32s
+Tokens:   12,450 in / 3,200 out
+Cost:     ~$0.05
+Files:    3 files changed (2 edited, 1 written)
+```
+• 4-5 lines, each stat on its own line
+• No file names, just counts
+
+The task asks for improvements: more compact format and showing file names. Let me implement those changes.
+
+First, let me write the improved tests, then update the implementation.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:46..61 ✓ (0ms)
+
+Now let me see the full function to understand what I need to change:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:46..136 ✓ (1ms)
+
+Good. Now I need to redesign this to be more compact (2-3 lines instead of 4-5) and include file names. Here's my plan:
+
+Line 1: ─── session summary ────────────────────
+Line 2: `Duration: 12m 34s · Tokens: 45.2K in / 12.1K out · Cost: ~$0.23`  
+**Line 3 (if files):** `Files changed: 3 (src/main.rs, src/cli.rs, tests/test.rs +new)`
+
+The task wants file names with `+new` markers for written (new) files. Let me also abbreviate paths for compactness — just show the basename if there are many files.
+
+Let me implement this. First, update the function:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (84 → 90 lines)
+  - /// Returns a compact multi-line session summary for display on REPL exit, or
+  + /// Returns a compact 2–3 line session summary for display on REPL exit, or
+    /// `None` if neither files were modified nor tokens were used (i.e., no real
+    /// interaction happened).
+    ///
+    /// Example output:
+    /// ```text
+  - ///   ─── Session Summary ───
+  - ///   Duration: 4m 32s
+  - ///   Tokens:   12,450 in / 3,200 out
+  - ///   Cost:     ~$0.05
+  - ///   Files:    3 changed (2 edited, 1 written)
+  + ///   ─── session summary ────────────────────
+  + ///   Duration: 4m 32s · Tokens: 12.5K in / 3.2K out · Cost: ~$0.05
+  + ///   Files changed: 3 (src/main.rs, src/lib.rs +new, tests/test.rs)
+    /// ```
+    pub fn format_exit_summary(
+        changes: &SessionChanges,
+  ···
+        }
+  ... (105 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_retry.rs.
+
+I missed a closing divider line. Let me read the exact text:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:48..138 ✓ (1ms)
+
+I see line 130 is missing from the output — probably a blank or something. Let me get the exact bytes:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '128,134p' src/commands_retry.rs | cat -A ✓ (3ms)
+
+There's a closing divider line with ────────────────────────. Let me get lines 128-133 exactly:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '128,133p' src/commands_retry.rs ✓ (3ms)
+
+Hmm, the error message showed a line with `────────────────────────` but the actual file doesn't have it? Let me check more carefully:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '129,131p' src/commands_retry.rs | xxd | head -20 ✓ (4ms)
+
+So line 130 does exist — it has `lines.push(format!("{DIM}  ────────────────────────{RESET}"));. The read_file` tool was just not showing it because of the Unicode rendering. Let me now do the edit properly:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '48,133p' src/commands_retry.rs ✓ (3ms)
+
+Wait, the sed output doesn't show the ──────────────────────── line either. Let me check:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_retry.rs && sed -n '128,132p' src/commands_retry.rs | cat -v ✓ (4ms)
+
+OK, there IS a closing divider line at line 130. The `sed without -v was hiding the UTF-8 characters. The read_file` tool also skipped that line. Let me write this differently — I'll use a wider extraction and be very explicit:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (5 lines) ✓ (19ms)
+
+Hmm, line 130 is missing from the Python output too, but we saw it in xxd. Let me check:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (8 lines) ✓ (18ms)
+
+Wait, there's no line 130? That's very weird. Let me check with awk:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ awk 'NR>=128 && NR<=133' src/commands_retry.rs | cat -n ✓ (4ms)
+  ▶ $ awk 'NR>=129 && NR<=131 {printf "%d: [%s]\n", NR, $0}' src/commands_retry.rs ✓ (3ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Line 130 doesn't exist in the awk numbering — it jumps from 129 to 131. This suggests line 130 contains a character that's confusing the line counter. Let me check more carefully:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '130p' src/commands_retry.rs | xxd ✓ (3ms)
+
+There it is — line 130 has `    lines.push(format!("{DIM}  ────────────────────────{RESET}"));. The e2 94 80 is the UTF-8 encoding for ─` (U+2500 BOX DRAWINGS LIGHT HORIZONTAL).
+
+OK, now I know the exact content. Let me use Python to do the replacement since the edit_file tool is having trouble with the Unicode:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (191 lines) ✓ (20ms)
+
+Good. Now let me verify the replacement looks right:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '48,130p' src/commands_retry.rs ✓ (4ms)
+
+I see the `lines.push(format!(` for the header got separated from its content. Let me check the exact state:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '65,68p' src/commands_retry.rs | cat -A ✓ (3ms)
+  ▶ $ python3 -c " (5 lines) ✓ (18ms)
+  ▶ $ python3 -c " (5 lines) ✓ (18ms)
+  3 tools completed in 19.4s (3 ✓)
+
+There's a problem — line 74 is missing. The Unicode format string got mangled. Let me check what's on line 73-75:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '73,75p' src/commands_retry.rs | xxd | head -30 ✓ (4ms)
+
+Good, the content is there — it's just that the tools are hiding lines with heavy Unicode. The format string contains `"{DIM}  ─── session summary ────────────────────────────────────────{RESET}"` which looks right.
+
+Let me try building to see if it compiles:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 ✓ (2.4s)
+
+Need to import FileChange. Let me check the existing imports:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:1..21 ✓ (0ms)
+
+I need to add FileChange to the import from session:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (1 → 1 lines)
+  - use crate::session::{format_changes, ChangeKind, SessionChanges};
+  + use crate::session::{format_changes, ChangeKind, FileChange, SessionChanges};
+ ✓ (42.6s)
+
+Let me check if FileChange is public:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "pub struct FileChange" src/session.rs ✓ (10ms)
+
+Good, it's public. Let me build:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 ✓ (129ms)
+
+Builds. Now let me update the tests. The old tests checked for the old format. I need to update them to match the new compact format:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:330..480 ✓ (1ms)
+
+Now I need to update the existing tests to match the new format and add new tests. The key changes:
+• "Session Summary" → `"session summary"` (lowercase)
+• No more separate "Duration:" line — it's combined with tokens on one line
+• "N file changed" → "Files changed: N"
+• "N written" → now filenames with +new
+• "N edited" → now just filenames
+
+Let me replace all the exit summary tests:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit ? (105 → 172 lines)
+            let usage = make_usage(1000, 200);
+            let summary =
+                format_exit_summary(&changes, &usage, "unknown-model", Instant::now()).unwrap();
+  -         assert!(summary.contains("1 file changed"));
+  -         assert!(summary.contains("1 written"));
+  -         assert!(summary.contains("Session Summary"));
+  -         assert!(summary.contains("Duration:"));
+  -         assert!(summary.contains("Tokens:"));
+  +         assert!(summary.contains("session summary"), "header missing");
+  +         assert!(summary.contains("Duration:"), "duration missing");
+  +         assert!(summary.contains("Tokens:"), "tokens missing");
+  +         // File name should appear with +new marker
+  +         assert!(summary.contains("Files changed: 1"), "file count missing");
+  +         assert!(summary.contains("src/main.rs +new"), "+new marker missing");
+        }
+    
+        #[test]
+  ···
+            let usage = make_usage(500, 100);
+            let summary =
+  ... (150 more lines)
+ ✗ (1ms)
+    │ Invalid arguments: missing 'path' parameter
+  ▶ edit src/commands_retry.rs (105 → 199 lines)
+            let usage = make_usage(1000, 200);
+            let summary =
+                format_exit_summary(&changes, &usage, "unknown-model", Instant::now()).unwrap();
+  -         assert!(summary.contains("1 file changed"));
+  -         assert!(summary.contains("1 written"));
+  -         assert!(summary.contains("Session Summary"));
+  -         assert!(summary.contains("Duration:"));
+  -         assert!(summary.contains("Tokens:"));
+  +         assert!(summary.contains("session summary"), "header missing");
+  +         assert!(summary.contains("Duration:"), "duration missing");
+  +         assert!(summary.contains("Tokens:"), "tokens missing");
+  +         // File name should appear with +new marker
+  +         assert!(summary.contains("Files changed: 1"), "file count missing");
+  +         assert!(summary.contains("src/main.rs +new"), "+new marker missing");
+        }
+    
+        #[test]
+  ···
+            let usage = make_usage(500, 100);
+            let summary =
+  ... (177 more lines)
+ ✓ (44.9s)
+  2 tools completed in 1m 31s (1 ✓, 1 ✗)
+
+Now I also need to export format_file_list for the tests (or keep it private and test it through format_exit_summary). Since the tests create FileChange vectors directly, format_file_list needs to be accessible from the test module. Since the tests are inside the same module (mod tests inside commands_retry.rs), it's already accessible. Good.
+
+Now let me also check that FileChange is available in the test module. The tests already use ChangeKind and SessionChanges. Let me verify the import at the top of the test module:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "mod tests" src/commands_retry.rs ✓ (8ms)
+  ▶ read src/commands_retry.rs:290..310 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Good, `use super::* will bring in FileChange` since we imported it at the module level.
+
+Let me run the build and tests:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 ✓ (120ms)
+  ▶ $ cargo test exit_summary 2>&1 ✓ (128ms)
+  2 tools completed in 5.4s (2 ✓)
+
+All 9 exit_summary tests pass. Let me also run the format_file_list tests:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test file_list 2>&1 ✓ (141ms)
+
+All pass. Now let me run the full check suite:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 7.9s (4 ✓)
+
+  ↳ 10m 1s · 26966→18068 tokens (30 tok/s) · $2.06
+  ⬤ 17% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
