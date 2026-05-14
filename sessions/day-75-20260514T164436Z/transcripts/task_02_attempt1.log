@@ -1,0 +1,94 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the commands_update.rs file to understand the functions I need to test.
+  ▶ read src/commands_update.rs ✓ (2ms)
+
+Wait — the file already has tests! Let me see the full test module:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_update.rs:100.. ✓ (2ms)
+
+Interesting — there are already 9 tests! But the task says "ZERO tests" and targets at least 15. Let me count what's there and figure out what's missing. The existing tests cover:
+
+1. platform_asset_name — 5 tests (linux, macos intel, macos arm, windows, unsupported)
+2. find_asset_url — 3 tests (found, not found, empty)
+3. `version_comparison` — 1 test
+4. is_cargo_dev_build — 1 test
+
+I need to add more tests to get to 15+. Let me add tests for:
+• extract_archive with temp dirs (error cases + actual extraction)
+• current_binary_path / current_exe
+• find_asset_url with malformed assets (missing fields)
+• platform_asset_name with more edge cases (empty strings)
+• is_cargo_dev_build path pattern testing
+• download_file error cases (bad URL)
+• extract_archive unsupported format
+
+Let me also check what current_binary_path looks like — I don't see a standalone function for it, the code uses std::env::current_exe() inline. Let me plan tests that are meaningful:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_update.rs (11 → 306 lines)
+            assert!(
+                result,
+                "tests run from target/debug, should detect as dev build"
+  +         );
+  +     }
+  + 
+  +     // --- Additional tests for broader coverage ---
+  + 
+  +     #[test]
+  +     fn update_platform_empty_strings() {
+  +         assert!(platform_asset_name("", "").is_none());
+  +         assert!(platform_asset_name("linux", "").is_none());
+  +         assert!(platform_asset_name("", "x86_64").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn update_platform_case_sensitivity() {
+  +         // platform_asset_name should be case-sensitive (OS constants are lowercase)
+  +         assert!(platform_asset_name("Linux", "x86_64").is_none());
+  +         assert!(platform_asset_name("MACOS", "aarch64").is_none());
+  ... (281 more lines)
+ ✓ (43.8s)
+
+Now let me run the formatting, clippy, build, and tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (563ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_update -- --… ✓ (11.1s)
+  4 tools completed in 40.7s (4 ✓)
+
+All 25 tests pass. Let me also run the full test suite to make sure nothing else is broken:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (21.8s)
+
+All 88 tests pass (1 ignored). Let me count the new tests I added:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '#\[test\]' src/commands… ✓ (3ms)
+
+25 tests total — 9 existing + 16 new. That exceeds the target of 15. Let me verify the fmt check too:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (567ms)
+
+Everything passes. Now let me commit:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (9 lines) ✓ (11ms)
+
+Done. Added 16 new tests to commands_update.rs (25 total, up from 9), covering:
+
+• `platform_asset_name`: empty strings, case sensitivity, exhaustive supported combos, .tar.gz vs .zip format validation
+• `find_asset_url`: missing name field, missing browser_download_url, correct resolution among all 4 platform assets
+• `extract_archive`: nonexistent archive file, unsupported format (.rar), empty tar with no binary, binary found at root level, binary found in subdirectory
+• **`version_is_newer`**: extended edge cases (minor bumps, major version jumps, equal versions)
+• `current_exe`: existence verification in test context
+• `download_file`: bad URL error path
+
+All 25 tests pass, clippy clean, fmt clean, full suite green (88 passed, 1 ignored).
+
+  ↳ 3m 6s · 14834→5446 tokens (29 tok/s) · $0.524
+  ⬤ 8% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

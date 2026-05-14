@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of build_tools() and the with_recovery_hints function, then wire everything together.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_recovery_hints\|To…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::tool_wrapper… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,30p' src/tools.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) fn with_reco… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 5.2s (4 ✓)
+
+Now let me look at the `with_recovery_hints signature and the build_tools` function:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '655,680p' src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub.*fn build_tools" sr… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '665,850p' src/tools.rs ✓ (4ms)
+  3 tools completed in 4.6s (3 ✓)
+
+Now I have a clear picture. Let me wire with_recovery_hints and ToolFailureTracker into build_tools(). First, update the imports, then create the tracker and wrap each tool.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (3 → 4 lines)
+    use crate::tool_wrappers::{
+  -     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_truncation,
+  +     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_recovery_hints,
+  +     with_truncation, ToolFailureTracker,
+    };
+ ✓ (10.3s)
+
+Good — imports added, now I need to use them. Let me wire the tracker into build_tools():
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (2 → 6 lines)
+  +     // Shared failure tracker for recovery hints — counts per-tool failures
+  +     // so hints escalate from diagnostic to alternative suggestions.
+  +     let failure_tracker = ToolFailureTracker::new();
+  + 
+        // Build hook registry — AuditHook when audit mode is on, plus user-configured shell hooks.
+        let hooks = {
+ ✓ (10.3s)
+
+Expected — now I need to wrap each tool. Let me apply the wrapping to each tool in the `tools vec. The key insight: with_recovery_hints` should be the outermost wrapper (outside `with_truncation), but **inside** maybe_hook` (since hooks are the very outermost).
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (33 → 60 lines)
+        let mut tools = vec![
+  -         maybe_hook(with_truncation(Box::new(bash), max_tool_output), &hooks),
+            maybe_hook(
+  -             with_truncation(
+  -                 maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
+  -                 max_tool_output,
+  +             with_recovery_hints(
+  +                 with_truncation(Box::new(bash), max_tool_output),
+  +                 &failure_tracker,
+                ),
+                &hooks,
+            ),
+            maybe_hook(
+  -             with_truncation(with_auto_check(write_tool), max_tool_output),
+  +             with_recovery_hints(
+  +                 with_truncation(
+  +                     maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
+  +                     max_tool_output,
+  +                 ),
+  +                 &failure_tracker,
+  ... (53 more lines)
+ ✓ (43.7s)
+
+Now let me also remove the #[allow(dead_code)] on with_recovery_hints since it's no longer dead:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '655,665p' src/tool_wrapp… ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (4 → 3 lines)
+    /// Wrap a tool with recovery hints on failure. The `tracker` is shared across
+    /// all tools so consecutive failures of the same tool escalate the advice.
+  - #[allow(dead_code)] // Public API — wired in a follow-up task
+    pub(crate) fn with_recovery_hints(
+ ✓ (43.9s)
+  2 tools completed in 49.9s (2 ✓)
+
+Also check if ToolFailureTracker::new() has a dead_code allow:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '560,580p' src/tool_wrapp… ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (2 → 2 lines)
+  - #[allow(dead_code)] // Public API — wired in a follow-up task
+  + #[allow(dead_code)] // record_failure / record_success called only via RecoveryHintTool
+    impl ToolFailureTracker {
+ ✓ (43.9s)
+  2 tools completed in 49.3s (2 ✓)
+
+Now let's run the full check suite:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.9s)
+
+Clean. Now tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (21.1s)
+
+All 2816 tests pass (2728 + 88), 0 failures. Let me also quickly verify the build:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (118ms)
+
+Everything passes. Let me verify the final state of my changes looks correct:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (7ms)
+
+The diff is exactly what I intended:
+
+1. `src/tools.rs`: Added with_recovery_hints and ToolFailureTracker imports, created a shared failure_tracker, and wrapped all 7 file/shell tools with with_recovery_hints as the outermost wrapper (inside maybe_hook, outside with_truncation).
+2. `src/tool_wrappers.rs`: Removed the #[allow(dead_code)] from with_recovery_hints (it's no longer dead), updated the comment on ToolFailureTracker's impl block.
+
+Note: ask_user, todo, and sub_agent are intentionally NOT wrapped — they're interactive/meta tools where recovery hints don't apply.
+
+Let me commit:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done. The RecoveryHintTool wrapper is now live in production. Here's what happened:
+
+What I did:
+• Added with_recovery_hints and `ToolFailureTracker to the imports in src/tools.rs`
+• Created a single shared ToolFailureTracker instance in `build_tools() — its Arc<Mutex<HashMap>>` interior means all tools share failure counts safely
+• Wrapped all 7 file/shell tools (bash, read_file, write_file, edit_file, list_files, search, `rename_symbol) with with_recovery_hints` as the outermost wrapper layer
+• Intentionally skipped ask_user, todo, and sub_agent — interactive/meta tools don't benefit from recovery hints
+• Removed stale #[allow(dead_code)] annotations since the code is no longer dead
+
+Wrapping order (inside out): guard → confirm → auto_check → truncation → recovery_hints → hook. Recovery hints see the final truncated error, which is what matters for generating useful advice.
+
+What this means in practice: When the LLM's tool call fails, the error message now includes escalating hints — first a diagnostic suggestion ("check the path exists"), then on repeated failures a concrete alternative ("try write_file instead of edit_file"). This helps the agent self-correct without human intervention, closing the gap on graceful degradation.
+
+  ↳ 4m 22s · 12199→3702 tokens (14 tok/s) · $0.590
+  ⬤ 7% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

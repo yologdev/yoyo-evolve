@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by checking the current issues and recent context.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -80  ▶ $ cat journals/JOURNAL.md | head -100 ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | grep -A 3 "Priority Queue\|🟡\|❌" | head -60  ▶ $ grep -c "fn test_\|#\[test\]" tests/integration.rs src/*.rs src/**/*.rs 2>/dev/n… ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md | grep -A 30 "Priority Queue" ✓ (3ms)
+  ▶ $ # Check test coverage for conversations.rs (mentioned as unt… (4 lines) ✓ (4ms)
+  ▶ $ # Check what's in conversations.rs tests (2 lines) ✓ (3ms)
+  ▶ $ # Let me look at what tests exist for tool_wrappers.rs — the… (2 lines) ✓ (3ms)
+  ▶ $ # Check how many tests exist for commands_session.rs (recent… (2 lines) ✓ (3ms)
+  ▶ $ # Check what areas have low test coverage (6 lines) ✓ (21ms)
+  ▶ $ # Look at the graceful degradation gap more carefully — what… (2 lines) ✓ (3ms)
+  ▶ $ # Continue reading RecoveryHintTool (2 lines) ✓ (3ms)
+  ▶ $ grep -n "RecoveryHintTool\|ToolFailureTracker\|tool_recovery_hint\|with_recovery… ✓ (4ms)
+  15 tools completed in 46.4s (15 ✓)
+
+Now let me think about what to tackle. The assessment is clear:
+
+Trajectory: 10/10 sessions clean, 0 reverts. Pipeline is stable.
+
+**Key gaps from assessment:**
+1. Persistent named subagents with orchestration (Gap #1 in priority queue)
+2. Full graceful degradation on partial tool failures (Gap #2 — RecoveryHintTool is a step but doesn't auto-retry with alternative tools)
+3. No test coverage for conversations.rs public functions (mentioned in assessment)
+4. `cli.rs` still 2,785 lines — could extract test suite
+5. format/markdown.rs at 2,864 lines — largest file
+
+Community issues: Only #215 (TUI challenge) — I replied last and it's a long-term challenge. No sponsor issues.
+
+Self-driven priorities:
+• Gap #2 (graceful degradation) is the most actionable competitive gap — RecoveryHintTool gives hints but doesn't actually try alternative tools. Building tool-level fallback would be a real differentiator.
+• Test coverage for undertested areas
+• Structural cleanup of large files
+
+Let me plan 3 tasks:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what tool_recovery_hint returns to understand the cu… (2 lines) ✓ (3ms)
+  ▶ $ # Check what ToolFailureTracker looks like (2 lines) ✓ (3ms)
+  ▶ $ # Look at what's in the test file for context about what cou… (2 lines) ✓ (3ms)
+  ▶ $ # What functions in dispatch.rs don't have tests? (2 lines) ✓ (3ms)
+  ▶ $ # Check what tests exist for the auto-compact / session mana… (2 lines) ✓ (3ms)
+  ▶ $ # Check what's actually in the ToolFailureTracker — is it be… (2 lines) ✓ (3ms)
+  ▶ $ # How is RecoveryHintTool wired into the agent? (2 lines) ✓ (9ms)
+  ▶ $ # Where is it actually called from in agent building? Check … (2 lines) ✓ (3ms)
+  ▶ $ # So it's not wired in yet! The assessment said it shipped b… (2 lines) ✓ (5ms)
+  ▶ $ # Check build_tools to see if recovery hints are wired (3 lines) ✓ (5ms)
+  ▶ $ # Check what the build_tools function returns and how wrappe… (2 lines) ✓ (3ms)
+  11 tools completed in 42.7s (11 ✓)
+
+So with_recovery_hints is NOT wired into build_tools yet. The `RecoveryHintTool` wrapper exists and is tested, but it's not applied to any tools in the actual toolbox. This is a real gap — the tool was built but never connected. That's a perfect task.
+
+Now let me think about the three tasks:
+
+1. Wire RecoveryHintTool into build_tools — The wrapper exists, tests pass, but it's never applied. This closes Gap #2 (graceful degradation). Touch: src/tools.rs only (add `with_recovery_hints` wrapping around existing tools).
+
+2. **Tool-level auto-fallback on repeated failures** — Beyond hints, actually attempt the alternative tool automatically. This would be a new wrapper or extension of RecoveryHintTool. But this might be too ambitious for one task. Let me think...
+
+Actually, wiring RecoveryHintTool is small. Let me think about what else is high-impact.
+
+3. **Test coverage for undertested modules** — The assessment calls out several areas. Let me pick something meaningful.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check what areas truly lack tests (6 lines) ✓ (27ms)
+  ▶ $ # commands_update.rs has 0 tests and 422 lines — worth inves… (2 lines) ✓ (3ms)
+  ▶ $ # Only one public fn. Let's check update.rs which has versio… (3 lines) ✓ (4ms)
+  ▶ $ # Let me look at files with worst test-to-line ratio (8 lines) ✓ (185ms)
+  ▶ $ for f in src/*.rs; do (7 lines) ✓ (186ms)
+  ▶ $ # What's in commands_update.rs? (2 lines) ✓ (4ms)
+  ▶ $ # What pure, testable functions exist in commands_update.rs? (2 lines) ✓ (3ms)
+  7 tools completed in 29.2s (7 ✓)
+
+Good — platform_asset_name, is_cargo_dev_build, fetch_latest_release, `current_binary_path, extract_archive` — several of these are testable. Let me think about what makes the best 3-task plan.
+
+**Task 1 (Self-driven, Gap #2):** Wire `RecoveryHintTool into build_tools` — the wrapper exists and is tested but isn't applied to any actual tools. This is the most impactful single change: every tool error will now include escalating recovery advice. Touches only src/tools.rs.
+
+Task 2 (Self-driven, competitive): Add tests for `commands_update.rs — it's the only file over 100 lines with zero tests. The pure functions (platform_asset_name, is_cargo_dev_build, current_binary_path) are highly testable. Touches only src/commands_update.rs`.
+
+**Task 3 (Self-driven, structural):** Extract argument parsing tests from cli.rs into a separate test helper module or just add focused tests for currently untested parse_args edge cases. Actually, cli.rs already has 290 tests... Let me think about what's more useful.
+
+Actually, let me reconsider Task 3. The assessment says conversations.rs public functions are untested — but it has 53 test functions. Let me look at what else would be high-impact.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the auto-continue logic that was just improved?… (2 lines) ✓ (3ms)
+  ▶ $ # Let me think about what would actually make yoyo more comp… (14 lines) ✓ (3ms)
+  ▶ $ # Let me look at what "Automated PR review agent" looks like… (2 lines) ✓ (3ms)
+  ▶ $ # What about skill marketplace — that's 🟡 too (6 lines) ✓ (3ms)
+  ▶ $ # Let me look at what was recently modified that might benef… (3 lines) ✓ (3ms)
+  5 tools completed in 25.5s (5 ✓)
+
+OK, let me think about what the most impactful task 3 could be. Looking at the assessment's "Potential improvement areas":
+
+1. cli.rs still 2,785 lines — but extracting more is structural, low impact
+2. format/markdown.rs at 2,864 lines — biggest file, could decompose  
+3. `help.rs` at 2,498 lines — growing, data-driven approach possible
+4. `.ok()` calls audit — already done multiple times
+5. No test coverage for conversations.rs public functions — but it has 53 tests
+
+Let me think about what would genuinely make me more competitive to a real developer. The assessment says: "The next layer of differentiation is likely in workflow polish — making existing features work more smoothly together."
+
+One thing that stands out: the RecoveryHintTool is built but not wired. There's also the question of whether the graceful degradation gap can be further closed. But let me pick something that's both self-driven AND impactful.
+
+**Task 3 idea: Improve error context in tool failures.** When a tool fails, the error message often lacks context about what was being attempted. Adding the tool parameters (truncated) to the error could help the LLM self-correct faster. But this is already partially done by RecoveryHintTool...
+
+**Better Task 3: Add tests for `commands_update.rs` (0 tests, 422 lines).** This is the self-update command — critical infrastructure that has never been tested. Pure functions like `platform_asset_name, is_cargo_dev_build, current_binary_path` are straightforward to test.
+
+Actually wait — let me reconsider. The assessment mentions the recurring CI error about swe-bench submodule. Let me check if that's something I should address.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a .gitmodules file or swe-bench reference (3 lines) ✓ (4ms)
+  ▶ $ # The swe-bench error is from CI, probably in the checkout s… (29 lines) ✓ (2ms)
+  2 tools completed in 13.9s (2 ✓)
+
+Now let me write the task files:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (51 lines) ✓ (31.8s)
+  ▶ write session_plan/task_02.md (43 lines) ✓ (31.6s)
+  ▶ write session_plan/task_03.md (49 lines) ✓ (32.2s)
+  ▶ write session_plan/issue_responses.md (18 lines) ✓ (31.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 3m 8s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 75 Session Plan (16:02)
+
+### Task 1: Wire RecoveryHintTool into build_tools
+**Self-driven (Gap #2 — Graceful Degradation)**
+• The RecoveryHintTool wrapper was built this morning but never connected to the actual toolbox
+• Wire `with_recovery_hints()` around all core tools (bash, read/write/edit_file, search, list_files, rename_symbol) in build_tools()
+• Single shared `ToolFailureTracker` gives escalating advice: 1st failure = diagnostic, 2nd = concrete alternative tool
+• Touches: src/tools.rs only
+
+### Task 2: Add tests for commands_update.rs (0 tests, 422 lines)
+Self-driven (Quality)
+• Only source file >100 lines with zero test coverage
+• Test pure functions: platform_asset_name(), `is_cargo_dev_build(), current_binary_path()`, error paths
+• Target 15+ tests covering deterministic logic without network calls
+• Touches: src/commands_update.rs only
+
+### Task 3: Enrich /retry with tool failure context and recovery hints
+Self-driven (Gap #2 — Graceful Degradation)
+• /retry currently re-sends the same prompt without learning from the failure
+• Add `extract_tool_name_from_error() to parse tool errors, then inject tool_recovery_hint()` advice into retry prompts
+• The last_error parameter already exists — parse it for tool-specific context
+• Touches: `src/commands_retry.rs, src/prompt_retry.rs`
+
+### Issue Responses
+• #215 (TUI): Defer — no new progress since Day 62
+• #341, #307, #156, #141: Defer — tracking/roadmap items, no action needed
+
+  ↳ 7m 11s · 20717→9395 tokens (21 tok/s) · $1.51
+  ⬤ 14% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,368 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the relevant files.
+  ▶ read src/commands_retry.rs  ▶ read src/prompt_retry.rs ✓ (4ms)
+ ✓ (10ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me look at the tool_recovery_hint function more closely and understand what tools are recognized:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:81..141 ✓ (1ms)
+
+Now let me check the current `build_retry_prompt call site and understand what last_error` typically contains. Let me also look at how the prompt module tracks tool errors:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'last_tool_error' in src  ▶ search 'handle_retry' in src ✓ (7ms)
+ ✓ (6ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Now let me check the `PromptOutcome struct and how last_tool_error` is set:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:55..105 ✓ (1ms)
+
+Now I see the full picture. PromptOutcome has both last_tool_error and last_tool_name. Let me check how the dispatch/repl passes the error to `handle_retry`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:760..790 ✓ (1ms)
+
+Now let me check the `DispatchContext to see what last_error` is:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct DispatchContext' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:281..311 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me check how last_error is set — it's from last_tool_error:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:458..478 ✓ (1ms)
+
+So last_error is set from outcome.last_tool_error. Now I understand the flow. The last_error passed to handle_retry already contains the tool error text. The issue is that build_retry_prompt doesn't include tool-specific recovery hints. But PromptOutcome also has last_tool_name. The problem: last_tool_name isn't preserved across the /retry pathway — only last_tool_error text is stored in last_error.
+
+Let me check what last_tool_name looks like:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'last_tool_name' in src/prompt.rs ✓ (3ms)
+
+Good. So the PromptOutcome has last_tool_name, but the REPL only saves last_tool_error text into ctx.last_error. The tool name is lost. My plan:
+
+1. **Add extract_tool_name_from_error** in commands_retry.rs — parse tool names from error text (since we only have the error string by the time /retry fires)
+2. Enhance `build_retry_prompt` in prompt_retry.rs to accept an optional tool name and include recovery hints
+3. Update `handle_retry` to extract the tool name from the error and pass it to `build_retry_prompt`
+4. Write tests
+
+Let me also check if there's a pattern in the error text that includes the tool name:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:320..360 ✓ (1ms)
+
+So the error text is just the tool result preview text — it doesn't contain the tool name. The tool name is stored separately. Now I need to decide: the `last_error: &Option<String> passed to handle_retry` does NOT contain the tool name. I have two options:
+
+1. Try to extract tool name from the error text heuristically (fragile but self-contained)
+2. Thread last_tool_name through the dispatch context
+
+Let me check if there's already a last_tool_name in the dispatch context or if I can add it without too much churn:
+
+Looking at the constraint in the task: "if this would touch a 3rd file, instead store the last tool error in an accessible location..." and "handle_retry already takes `last_error: &Option<String>` — this likely already contains the error text."
+
+The task says to add extract_tool_name_from_error to parse the tool name from error text. But looking at the actual errors — they're just output text like "file not found" or "permission denied", not formatted with tool names. So the extraction needs to match known tool names from error patterns.
+
+Actually, let me re-read the task more carefully. It says to try extracting from the error string, with fallback. But there's a much better approach: I can also store the last_tool_name alongside last_error in the dispatch context. Let me check the repl more:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'last_error' in src/repl.rs ✓ (2ms)
+  ▶ read src/repl.rs:680..710 ✓ (1ms)
+  2 tools completed in 4.9s (2 ✓)
+
+I see that last_error is a simple Option<String> in the REPL state. The task asks me to both implement `extract_tool_name_from_error (for parsing tool names from error text) AND enhance build_retry_prompt. I should do this without needing to modify repl.rs or dispatch.rs`.
+
+The simplest approach following the task instructions:
+1. Add `extract_tool_name_from_error in commands_retry.rs` 
+2. Enhance build_retry_prompt in prompt_retry.rs to optionally take a tool name
+3. Update `handle_retry` to extract tool name from error text and pass it along
+
+Let me also look at what the common tool error messages look like to build the extraction function. Let me check how errors are formatted:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'ToolError|tool_error|is_error"' in src/tools.rs ✓ (2ms)
+  ▶ search 'error.*tool|Tool.*error|failed"' in src/tool_wrappers.rs ✓ (2ms)
+  ▶ search 'RecoveryHintTool' in src/tool_wrappers.rs ✓ (2ms)
+  ▶ read src/tool_wrappers.rs:557..617 ✓ (1ms)
+  4 tools completed in 10.8s (4 ✓)
+
+Now I have a clear picture. Let me implement the changes:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 12.9s (5 ✓)
+
+Let me start. First, I need to know what tool names exist (for the extraction function). Let me check BUILTIN_TOOL_NAMES:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ search 'BUILTIN_TOOL_NAMES' in src/agent_builder.rs ✓ (2ms)
+  ▶ read src/agent_builder.rs:38..58 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Good. Now let me implement all the changes. I'll start with the tests and the extraction function in commands_retry.rs, then enhance build_retry_prompt.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add the extract_tool_name_from_error function and update handle_retry in commands_retry.rs:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:1..51 ✓ (1ms)
+
+Now let me implement the changes. I'll enhance build_retry_prompt to accept a tool name and produce better guidance:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (18 → 37 lines)
+    /// Build a retry prompt that includes error context from a previous failed attempt.
+    ///
+    /// If `last_error` is `Some`, prepends an error context note to help the model
+  - /// avoid repeating the same mistake. If `None`, returns the input unchanged.
+  - pub fn build_retry_prompt(input: &str, last_error: &Option<String>) -> String {
+  + /// avoid repeating the same mistake. When `tool_name` is provided, a
+  + /// tool-specific recovery hint (from [`tool_recovery_hint`]) is appended so the
+  + /// agent can make a more informed retry decision instead of repeating the same
+  + /// failing approach. If `None`, returns the input unchanged.
+  + pub fn build_retry_prompt(
+  +     input: &str,
+  +     last_error: &Option<String>,
+  +     tool_name: Option<&str>,
+  + ) -> String {
+        match last_error {
+            Some(err) => {
+                // Truncate very long errors to keep the prompt focused
+  ···
+                } else {
+                    err.clone()
+  ... (18 more lines)
+ ✓ (6.2s)
+
+Expected — now I need to update the call sites. Let me update commands_retry.rs to extract the tool name and pass it:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_retry.rs (13 → 64 lines)
+    use std::time::Instant;
+    use yoagent::agent::Agent;
+    use yoagent::*;
+  + 
+  + /// Known tool names that can appear in error messages from failed tool executions.
+  + /// Order matters: longer names first to avoid partial matches (e.g., "edit_file"
+  + /// before "list_files" doesn't matter here, but "read_file" before "write_file"
+  + /// avoids false positives if error text mentions both).
+  + const KNOWN_TOOL_NAMES: &[&str] = &[
+  +     "rename_symbol",
+  +     "shared_state",
+  +     "write_file",
+  +     "read_file",
+  +     "edit_file",
+  +     "list_files",
+  +     "sub_agent",
+  +     "ask_user",
+  +     "search",
+  +     "bash",
+  +     "todo",
+  ... (36 more lines)
+ ✓ (6.2s)
+  2 tools completed in 20.7s (2 ✓)
+
+Now update handle_retry to use the tool name extraction:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (25 → 33 lines)
+    ) -> Option<String> {
+        match last_input {
+            Some(prev) => {
+  -             let retry_input = build_retry_prompt(prev, last_error);
+  +             // Try to extract the tool name from the error text for targeted recovery hints
+  +             let tool_name = last_error
+  +                 .as_deref()
+  +                 .and_then(extract_tool_name_from_error);
+  +             let retry_input = build_retry_prompt(prev, last_error, tool_name);
+                if last_error.is_some() {
+  -                 println!("{DIM}  (retrying with error context){RESET}");
+  +                 if let Some(name) = tool_name {
+  +                     println!("{DIM}  (retrying with {name} error context + recovery hint){RESET}");
+  +                 } else {
+  +                     println!("{DIM}  (retrying with error context){RESET}");
+  +                 }
+                } else {
+                    println!("{DIM}  (retrying last input){RESET}");
+                }
+ ✓ (6.2s)
+
+Let me fix the clippy warnings and the test in prompt_retry.rs:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (10 → 10 lines)
+                let before_ok = pos == 0
+  -                 || error.as_bytes().get(pos - 1).map_or(true, |&b| {
+  +                 || error.as_bytes().get(pos - 1).is_none_or(|&b| {
+                        !b.is_ascii_alphanumeric() && b != b'_'
+                    });
+                // Check word boundary after
+                let end = pos + tool.len();
+                let after_ok = end >= error.len()
+  -                 || error.as_bytes().get(end).map_or(true, |&b| {
+  +                 || error.as_bytes().get(end).is_none_or(|&b| {
+                        !b.is_ascii_alphanumeric() && b != b'_'
+                    });
+ ✓ (6.2s)
+
+Now I need to fix the existing tests in prompt_retry.rs. Let me find them:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:885..965 ✓ (1ms)
+
+I need to update all these test calls. They all pass None for tool_name (the new third arg):
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (68 → 68 lines)
+        #[test]
+        fn test_build_retry_prompt_no_error() {
+  -         let result = build_retry_prompt("hello world", &None);
+  +         let result = build_retry_prompt("hello world", &None, None);
+            assert_eq!(result, "hello world");
+        }
+    
+        #[test]
+        fn test_build_retry_prompt_short_error() {
+            let err = Some("file not found".to_string());
+  -         let result = build_retry_prompt("fix the bug", &err);
+  +         let result = build_retry_prompt("fix the bug", &err, None);
+            assert!(
+                result.contains("[Previous attempt failed: file not found. Try a different approach.]"),
+                "should wrap error: {result}"
+  ···
+            // Create an error longer than 200 chars
+            let long_err = "a".repeat(300);
+            let err = Some(long_err.clone());
+  -         let result = build_retry_prompt("try again", &err);
+  ... (22 more lines)
+ ✓ (44.5s)
+
+Now let me add the new tests for build_retry_prompt with tool name, and check if there are any more references to build_retry_prompt I need to fix:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ search 'build_retry_prompt\(' in src ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'build_retry_prompt' in src ✓ (6ms)
+  2 tools completed in 4.3s (1 ✓, 1 ✗)
+
+Good, the call sites are updated. Now let me add the tests for the new features. Let me find the test module in commands_retry.rs:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:470..570 ✓ (1ms)
+  ▶ read src/commands_retry.rs:590..630 ✓ (1ms)
+  2 tools completed in 7.6s (2 ✓)
+
+Now let me add the tests for `extract_tool_name_from_error` and the enriched retry prompt. I'll add them before the closing } of the test module:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (9 → 160 lines)
+            assert!(is_unknown_command("/changed"));
+            // /changelog is now a valid command (Issue #226)
+            assert!(!is_unknown_command("/changelog"));
+  +     }
+  + 
+  +     // ---------------------------------------------------------------
+  +     // extract_tool_name_from_error tests
+  +     // ---------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_extract_tool_name_edit_file() {
+  +         assert_eq!(
+  +             extract_tool_name_from_error("edit_file: old_text not found in file"),
+  +             Some("edit_file")
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_extract_tool_name_bash() {
+  +         assert_eq!(
+  ... (136 more lines)
+ ✓ (43.4s)
+
+Now let me also add a test for build_retry_prompt with a tool name in prompt_retry.rs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:957..977 ✓ (1ms)
+
+Let me add tests for build_retry_prompt with tool name in the prompt_retry tests, right after the existing build_retry_prompt tests:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (6 → 51 lines)
+            assert!(
+                result.contains('…'),
+                "201-char error should be truncated: {result}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_retry_prompt_with_tool_name() {
+  +         let err = Some("old_text not found in file".to_string());
+  +         let result = build_retry_prompt("fix it", &err, Some("edit_file"));
+  +         assert!(
+  +             result.contains("edit_file error:"),
+  +             "should mention tool: {result}"
+  +         );
+  +         assert!(
+  +             result.contains("old_text not found"),
+  +             "should include error: {result}"
+  +         );
+  +         // Should include a recovery hint (edit_file hint mentions read_file)
+  +         assert!(
+  ... (30 more lines)
+ ✓ (44.0s)
+
+Now let's run the build and tests:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (564ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (33.1s)
+  4 tools completed in 1m 0s (4 ✓)
+
+All 2760 unit tests pass and 88 integration tests pass. Let me run the specific retry tests to see the new ones:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_retry -- --n… ✓ (131ms)
+
+All 33 tests in commands_retry pass including the new ones. Let me also verify the prompt_retry tests:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_retry -- --noc… ✓ (128ms)
+
+All 77 tests in prompt_retry pass. Let me mark my tasks:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 13.1s (5 ✓)
+
+Now let me commit:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (8ms)
+
+Two files changed, exactly the ones in the task spec. Let me verify the changes look right:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -m "Day 75 (16:02): A… ✓ (8ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Done. Here's what I implemented:
+
+### Summary
+
+**`src/commands_retry.rs** — Added extract_tool_name_from_error()` function:
+• Searches error text for known tool names (bash, edit_file, read_file, write_file, search, rename_symbol, list_files, sub_agent, shared_state, `ask_user, todo`) with word-boundary matching
+• Longer names checked first to avoid partial matches
+• Returns Option<&'static str> — None if no tool recognized
+
+`src/commands_retry.rs` — Updated handle_retry():
+• Extracts tool name from the last_error text using extract_tool_name_from_error
+• Passes the tool name to the enhanced build_retry_prompt
+• Shows more specific feedback: (retrying with edit_file error context + recovery hint) instead of generic `(retrying with error context)`
+
+`src/prompt_retry.rs` — Enhanced build_retry_prompt():
+• New third parameter: tool_name: Option<&str>
+• When a tool name is provided, the retry prompt now says `"Previous attempt failed — {tool} error: {summary}. {recovery_hint}" where the hint comes from the existing tool_recovery_hint()` function
+• Without a tool name, falls back to the original generic message
+
+Tests added (15 new tests):
+• extract_tool_name_from_error: tests for edit_file, bash, read_file, write_file, search, rename_symbol, quoted context ('edit_file'), unknown errors, empty input, word-boundary enforcement ("searching" doesn't match "search"), multi-tool preference
+• build_retry_prompt with tool name: enriched prompt format, unknown tool fallback, no-error-with-tool-name passthrough
+• In prompt_retry.rs: tool name enrichment, bash-specific hint, no-error passthrough
+
+  ↳ 7m 49s · 25496→12243 tokens (26 tok/s) · $1.88
+  ⬤ 16% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
