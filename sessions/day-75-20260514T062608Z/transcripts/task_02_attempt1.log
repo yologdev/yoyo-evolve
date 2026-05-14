@@ -1,0 +1,231 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code structure, then implement the task.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -50 src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_recovery_hint" src… ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,130p' src/prompt_retr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolError\|ToolResult\|… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_truncation\|with_a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -300 src/tool_wrappers.rs ✓ (3ms)
+ ✓ (5ms)
+  6 tools completed in 8.5s (6 ✓)
+
+Now let me look at the full structure of the file and the existing wrapper patterns:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,15p' src/tool_wrappers…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,210p' src/tool_wrapp… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me see the imports and also look at the with_auto_check function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,560p' src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use\|^pub.*use" src/to… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Now let me see the ToolError type to understand the error format:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub enum ToolError" ~/… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '375,400p' ~/.cargo/regis… ✓ (3ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Good. Now I have all the context I need. Let me also check that `tool_recovery_hint` is public:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '78,85p' src/prompt_retry… ✓ (3ms)
+
+Now let me see where the tests section begins and where `AutoCheckTool` ends:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^// ==\|^#\[cfg(test)\]… ✓ (4ms)
+
+Now I have a clear picture. I'll implement:
+
+1. `ToolFailureTracker` - shared failure counter
+2. RecoveryHintTool - wrapper that appends hints on failure
+3. with_recovery_hints - helper function
+4. Tests
+
+Let me write the code:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:551..566 ✓ (1ms)
+
+Now I'll insert the RecoveryHintTool between AutoCheckTool and the tests section:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (8 → 9 lines)
+    use crate::cli;
+    use crate::format::*;
+    
+  + use std::collections::HashMap;
+    use std::io::{self, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+  - use std::sync::Arc;
+  + use std::sync::{Arc, Mutex};
+    
+    use yoagent::types::AgentTool;
+ ✓ (10.4s)
+
+Expected — the imports are unused until I add the actual code. Let me now add the full implementation:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (7 → 116 lines)
+    pub(crate) fn with_auto_check(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+        Box::new(AutoCheckTool { inner: tool })
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // RecoveryHintTool — appends recovery hints to tool error messages
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Tracks consecutive failures per tool name so recovery hints can escalate.
+  + ///
+  + /// Shared across all tools in a session — when tool A fails 3 times,
+  + /// the hint it gets is more aggressive than on its first failure.
+  + /// When a tool succeeds, its counter resets.
+  + #[derive(Clone, Default)]
+  + pub(crate) struct ToolFailureTracker {
+  +     counts: Arc<Mutex<HashMap<String, u32>>>,
+  + }
+  + 
+  + impl ToolFailureTracker {
+  +     pub(crate) fn new() -> Self {
+  ... (94 more lines)
+ ✓ (10.3s)
+
+Clippy complains about dead code since nothing calls these yet. I need to add #[allow(dead_code)] since the task says don't wire it into `build_tools` yet. Let me fix that and also add the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (14 → 15 lines)
+        counts: Arc<Mutex<HashMap<String, u32>>>,
+    }
+    
+  + #[allow(dead_code)] // Public API — wired in a follow-up task
+    impl ToolFailureTracker {
+        pub(crate) fn new() -> Self {
+            Self::default()
+ ✓ (10.3s)
+  ▶ edit src/tool_wrappers.rs (6 → 7 lines)
+    /// On success the failure counter resets. On failure the counter increments
+    /// and a tool-specific recovery hint (from `prompt_retry::tool_recovery_hint`)
+    /// is appended to the error message.
+  + #[allow(dead_code)] // Public API — wired in a follow-up task
+    pub(crate) struct RecoveryHintTool {
+ ✓ (10.3s)
+  ▶ edit src/tool_wrappers.rs (3 → 4 lines)
+    /// Wrap a tool with recovery hints on failure. The `tracker` is shared across
+    /// all tools so consecutive failures of the same tool escalate the advice.
+  + #[allow(dead_code)] // Public API — wired in a follow-up task
+    pub(crate) fn with_recovery_hints(
+ ✓ (43.9s)
+  3 tools completed in 1m 15s (3 ✓)
+
+Now let me add the tests. I need to find the end of the test module:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/tool_wrappers.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.1s (2 ✓)
+
+I need to add tests before the closing } of the mod tests. Let me also look at the existing MockTool to understand if I can reuse it, and create a FailingMockTool:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1098,1130p' src/tool_wra… ✓ (3ms)
+
+Now I'll add the tests. I need a mock tool that can fail:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (5 → 210 lines)
+                !text.contains("test phase"),
+                "Should NOT run second phase: {text}"
+  +         );
+  +     }
+  + 
+  +     // === RecoveryHintTool tests ===
+  + 
+  +     /// A mock tool that can be configured to succeed or fail.
+  +     struct ConfigurableMockTool {
+  +         tool_name: &'static str,
+  +         /// When `Some(msg)`, execute returns `ToolError::Failed(msg)`.
+  +         /// When `None`, execute succeeds with "ok".
+  +         fail_msg: Option<String>,
+  +     }
+  + 
+  +     #[async_trait::async_trait]
+  +     impl AgentTool for ConfigurableMockTool {
+  +         fn name(&self) -> &str {
+  +             self.tool_name
+  +         }
+  ... (190 more lines)
+ ✓ (44.4s)
+
+Now let's run the full check:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (34.2s)
+  2 tools completed in 49.7s (2 ✓)
+
+All 2812 tests pass (2724 + 88), 0 failures. Let me also confirm my new tests specifically ran:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test recovery_hint_tool 2>… ✓ (132ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_failure_tracker … ✓ (131ms)
+  2 tools completed in 5.2s (2 ✓)
+
+All 4 tests pass. Now let me verify the build one more time:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (122ms)
+
+Now let me update CLAUDE.md to document the new types:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers.rs" CLAUD… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool) and helper wrappers
+  + - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker) and helper wrappers
+ ✓ (31.0s)
+  2 tools completed in 39.1s (2 ✓)
+
+Let me check if CHANGELOG.md should be updated and whether there are docs that mention tool wrappers:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "RecoveryHint\|recovery… ✓ (4ms)
+
+No docs reference these internal types. The CLAUDE.md update is sufficient. Now let me commit:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (10ms)
+
+Wait, src/commands_file.rs has changes? That's unexpected — let me check:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached -- src/command… ✓ (5ms)
+
+That looks like pre-existing uncommitted changes — not something I made. Let me check the git status more carefully:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (5ms)
+
+The commands_file.rs changes were already staged before me (from a previous task in this session). Let me unstage it — I should only commit my changes:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git reset HEAD src/commands_file… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached --stat ✓ (4ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Good — now it's just my changes. Let me commit:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (15 lines) ✓ (9ms)
+
+Done. Let me verify the commit looks right:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 ✓ (3ms)
+
+Clean commit. Here's what I implemented:
+
+ToolFailureTracker — A shared `Arc<Mutex<HashMap<String, u32>>>` that tracks consecutive failures per tool name. When a tool succeeds, its counter resets to 0. When it fails, the counter increments. Different tool names track independently.
+
+RecoveryHintTool — A thin wrapper around any AgentTool that:
+• On success: resets the failure counter, returns result unchanged
+• On `ToolError::Failed: increments the counter, appends 💡 Recovery hint: <hint> from prompt_retry::tool_recovery_hint()` to the error message
+• On other errors (NotFound, InvalidArgs, Cancelled): still counts as failure for escalation but passes through unchanged
+
+`with_recovery_hints()` — Helper function matching the existing pattern (`with_truncation, with_auto_check`). Takes a shared tracker so all tools in a session share the same failure counts.
+
+4 tests — All pass:
+1. `test_recovery_hint_tool_success_resets_counter` — counter goes to 0 after success
+2. test_recovery_hint_tool_appends_hint_on_failure — error includes original message + recovery hint
+3. test_recovery_hint_tool_escalates_on_repeated_failure — attempt 1 gets diagnostic hint, attempt 2 gets escalated alternative-tool hint
+4. `test_tool_failure_tracker_independent_per_tool` — bash and edit_file track separately; success on one doesn't affect the other
+
+  ↳ 6m 21s · 15607→8723 tokens (22 tok/s) · $1.06
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

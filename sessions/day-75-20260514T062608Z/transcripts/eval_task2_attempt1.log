@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll quickly verify the implementation matches the task requirements.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (11.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test recovery_hint 2>&1 ✓ (153ms)
+  2 tools completed in 23.1s (2 ✓)
+
+All 14 recovery-hint-related tests pass. Let me verify the checklist:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test integration 2>… ✓ (2.4s)
+
+Let me quickly check the key requirements against the diff:
+
+1. **ToolFailureTracker** — ✅ `Arc<Mutex<HashMap<String, u32>>>, with record_failure`, record_success, get methods
+2. RecoveryHintTool wrapper — ✅ Wraps AgentTool, resets on success, increments+appends hint on failure
+3. `with_recovery_hints` helper — ✅ Takes shared tracker, follows same pattern as with_truncation/`with_auto_check`
+4. Not wired into `build_tools` — ✅ No changes to tools.rs
+5. Tests:
+   • `test_recovery_hint_tool_success_resets_counter` — ✅
+   • test_recovery_hint_tool_appends_hint_on_failure — ✅
+   • `test_recovery_hint_tool_escalates_on_repeated_failure` — ✅
+   • `test_tool_failure_tracker_independent_per_tool` — ✅
+6. CLAUDE.md updated — ✅ `tool_wrappers.rs` description updated with new types
+7. **No changes to tools.rs or `prompt_retry.rs`** — ✅
+8. Poisoned mutex recovery — ✅ Uses `unwrap_or_else(|e| e.into_inner())`
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (31.2s)
+
+Verdict: PASS. The implementation cleanly delivers all four task requirements with proper tests, no scope creep, and follows existing wrapper patterns.
+
+  ↳ 1m 18s · 5865→834 tokens (10 tok/s) · $0.243
+  ⬤ 2% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

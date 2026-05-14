@@ -1,0 +1,210 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of cli.rs to identify exactly what needs to be moved.
+  ▶ read src/cli.rs (150 lines)  ▶ read src/main.rs (80 lines) ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/main.rs:80.. ✓ (7ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Now let me look at what uses crate::cli:: across the codebase to understand the import patterns:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::cli::' (*.rs) ✓ (19ms)
+  ▶ search 'use crate::cli::\{' (*.rs) ✗ (2ms)
+    │ Search error: grep: Unmatched \{
+  ▶ read src/commands_session.rs:10..15 ✓ (0ms)
+  ▶ read src/commands_session.rs:13..18 ✓ (1ms)
+  4 tools completed in 11.1s (3 ✓, 1 ✗)
+
+Good. Now let me understand the full scope of what to move. Let me check the exact line ranges more carefully:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1..131 ✓ (2ms)
+
+Now I have a clear picture. The items to move (lines 10-108) are:
+• Constants: VERSION, `DEFAULT_CONTEXT_TOKENS, AUTO_COMPACT_THRESHOLD, PROACTIVE_COMPACT_THRESHOLD`
+• Static + functions: EFFECTIVE_CONTEXT_TOKENS, `set_effective_context_tokens(), effective_context_tokens()`
+• Constants: DEFAULT_SESSION_PATH, `AUTO_SAVE_SESSION_PATH, SYSTEM_PROMPT`
+• Enums: ContextStrategy, `OutputFormat`
+• Struct: Config
+
+The re-exports (providers, config) and verbose state should stay in cli.rs since they're not part of the extraction scope.
+
+Let me create the new file:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/cli_config.rs (137 lines) ✓ (30.9s)
+
+Now update main.rs to add the module declaration:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (2 → 3 lines)
+    mod agent_builder;
+    mod cli;
+  + mod cli_config;
+ ✓ (10.6s)
+
+Expected — the items are duplicated. I need to remove them from `cli.rs` and add the re-export. Let me do that now:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (108 → 24 lines)
+    use std::io::IsTerminal;
+    use yoagent::skills::SkillSet;
+    use yoagent::ThinkingLevel;
+  - 
+  - pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+  - pub const DEFAULT_CONTEXT_TOKENS: u64 = 200_000;
+  - pub const AUTO_COMPACT_THRESHOLD: f64 = 0.80;
+  - pub const PROACTIVE_COMPACT_THRESHOLD: f64 = 0.70;
+  - 
+  - /// Effective context window (tokens) for the current session.
+  - /// Set once in configure_agent() based on model config + CLI override.
+  - /// Read by /tokens and /status commands to show accurate budget.
+  - static EFFECTIVE_CONTEXT_TOKENS: std::sync::atomic::AtomicU64 =
+  -     std::sync::atomic::AtomicU64::new(DEFAULT_CONTEXT_TOKENS);
+  - 
+  - /// Set the effective context window size. Called once during agent setup.
+  - pub fn set_effective_context_tokens(tokens: u64) {
+  -     EFFECTIVE_CONTEXT_TOKENS.store(tokens, std::sync::atomic::Ordering::SeqCst);
+  - }
+  - 
+  ... (85 more lines)
+ ✓ (43.7s)
+
+Now let me check if cli.rs still uses types it no longer defines directly (like SkillSet, ThinkingLevel which are needed for import but may now only be needed in `cli_config.rs`):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'SkillSet|ThinkingLevel' in src/cli.rs ✓ (2ms)
+
+Good — SkillSet and ThinkingLevel are no longer used directly in cli.rs (they come through cli_config.rs via the re-export). Let me check if those imports are still needed:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1..31 ✓ (1ms)
+
+I need to check if `SkillSet and ThinkingLevel are used further in cli.rs (for parse_args`, etc.):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "SkillSet\|ThinkingLevel" src/cli.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+
+Yes, both are still used in cli.rs for parse_args. The imports stay. Let me now run the build and tests to see if this works:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -40 ✓ (119ms)
+
+Build passes. Let me run clippy:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.4s)
+
+Now fmt and tests:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 && car… ✓ (21.8s)
+
+All 88 tests pass, fmt clean, clippy clean, build clean. Let me verify the line reduction:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/cli.rs src/cli_config.rs ✓ (7ms)
+
+Reduced cli.rs from 2869 → 2785 lines (84 lines moved out). The new file is 137 lines including tests. The net is slightly more lines due to the tests and module doc, which is healthy — the test coverage is new value.
+
+Let me verify all re-exports work correctly by checking that existing import paths still resolve:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test cli_config 2>&1 ✓ (129ms)
+
+All 4 new tests pass. Now let me update CLAUDE.md to reflect the new file in the architecture section:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search 'cli.rs.*CLI argument parsing' in CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `cli.rs` — CLI argument parsing, subcommands, configuration (delegates `--help` text to `help.rs`)
+  + - `cli_config.rs` — CLI constants (VERSION, thresholds, SYSTEM_PROMPT), Config struct, ContextStrategy/OutputFormat enums, effective context token state (extracted from `cli.rs`, re-exported by it)
+ ✓ (31.0s)
+  2 tools completed in 37.4s (2 ✓)
+
+Now update the Project Files section to include the new file:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search '^src/cli\.rs$' in CLAUDE.md ✓ (2ms)
+  ▶ search 'src/cli\.rs' in CLAUDE.md ✓ (2ms)
+  ▶ search 'src/cli.rs' in CLAUDE.md ✓ (2ms)
+  ▶ $ grep -n "src/cli" CLAUDE.md | head -10 ✓ (3ms)
+  ▶ $ grep -n "cli" CLAUDE.md | head -20 ✓ (4ms)
+  5 tools completed in 14.3s (5 ✓)
+
+The architecture section is updated. Now let me check the Repository Structure section — it has file listings with functions:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^src/cli.rs" CLAUDE.md ✓ (7ms)
+  ▶ $ grep -n "src/cli.rs" CLAUDE.md ✓ (7ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Hmm, let me check what format the Repository Structure section uses:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Repository Structure' in CLAUDE.md ✓ (2ms)
+  ▶ search 'src/cli' in CLAUDE.md ✓ (2ms)
+  2 tools completed in 6.8s (2 ✓)
+
+It seems the file listings are elsewhere. Let me check — the CLAUDE.md has "Project Files" and "Repository Structure" sections at the end, which are auto-generated:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Project Files\|Recently Changed" CLAUDE.md ✓ (7ms)
+
+Those sections must be in the system prompt section at the top of this task, not in the actual CLAUDE.md file. The architecture bullet in CLAUDE.md is updated. Let me also check if `cli_config.rs` needs to be in the Project Files list:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "^src/" CLAUDE.md ✓ (38ms)
+
+The file listing isn't in CLAUDE.md — it's generated dynamically for the system prompt. Good, nothing else to update there.
+
+Now let me commit:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (12ms)
+
+Wait — src/commands_file.rs has changes? That's not from my work. Let me check:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached -- src/command… ✓ (5ms)
+
+This is a pre-existing uncommitted change from before my session. Let me be careful to only commit my changes:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git reset HEAD src/commands_file… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached --stat ✓ (5ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now the diff looks right. Let me run the full check suite one more time before committing:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (32.7s)
+
+All green. Let me commit:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (12 lines) ✓ (6ms)
+
+Hmm, the commit didn't happen because the staged changes were already committed somehow? Let me check:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+
+The `git add -A from before already staged and the git reset only unstaged commands_file.rs`. But it seems the commit happened as docs(4 files): update code — no, that's a different commit. Let me check the staging area:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached --stat ✓ (3ms)
+
+The staged area is empty. Let me check if my files were already committed in that `docs(4 files)` commit:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD ✓ (6ms)
+
+Ah, the earlier git add -A plus the commit happened but with a wrong message (from a previous agent workflow). My changes are already committed. Let me amend the commit message to use the proper one:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git commit -… (12 lines) ✓ (9ms)
+
+Done. Let me verify the final state:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && echo "--… ✓ (135ms)
+
+Here's what I did:
+
+Created `src/cli_config.rs` — extracted from cli.rs:
+• Constants: VERSION, `DEFAULT_CONTEXT_TOKENS, AUTO_COMPACT_THRESHOLD, PROACTIVE_COMPACT_THRESHOLD, DEFAULT_SESSION_PATH, AUTO_SAVE_SESSION_PATH, SYSTEM_PROMPT`
+• Static + functions: `EFFECTIVE_CONTEXT_TOKENS, set_effective_context_tokens(), effective_context_tokens()`
+• Enums: ContextStrategy, OutputFormat
+• Struct: Config
+• 4 new tests: test_cli_config_constants, `test_effective_context_tokens_roundtrip, test_context_strategy_default, test_output_format_equality`
+
+Updated `cli.rs` — replaced the moved items with pub use crate::cli_config::*; so every existing use crate::cli:: import across the codebase continues working without changes. Net reduction: 84 lines.
+
+Updated `main.rs` — added `mod cli_config;` declaration.
+
+Updated `CLAUDE.md` — added cli_config.rs to the architecture section.
+
+All 88 tests pass, clippy clean, fmt clean. Zero downstream breakage — the re-export pattern means this is invisible to consumers.
+
+  ↳ 7m 3s · 16176→8510 tokens (20 tok/s) · $1.26
+  ⬤ 10% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

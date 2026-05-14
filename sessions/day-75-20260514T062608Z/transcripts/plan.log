@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and checking recent context, then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat CLAUDE_CODE_GAP.md 2>/dev/null | head -80  ▶ $ cat journals/JOURNAL.md | head -80 ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cat CHANGELOG.md | head -60📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ # Check what the recent test counts are and look at gaps (2 lines)  ▶ $ # Check what areas are untested or under-tested (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Look at what's partial in the gap analysis — specifically … (2 lines)  ▶ $ # Check what smart apply looks like (2 lines)  ▶ $ # Check what /apply looks like currently (3 lines) ✓ (3ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check the gap doc for partial items (2 lines)  ▶ $ # Check git worktree gap — this could be a good competitive … (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Look at what cli.rs contains to understand extraction cand… (2 lines)  ▶ $ # Check what /apply currently does — the smart apply gap (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check what smart apply / fuzzy matching could mean - look … (2 lines) ✓ (4ms)
+  ▶ $ # Check apply_patch function — does it use git apply? (2 lines) ✓ (4ms)
+  17 tools completed in 39.0s (17 ✓)
+
+Now let me think about the best tasks for this session. Let me check a few more things:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what fuzzy apply would look like - does git apply ha… (4 lines) ✓ (3ms)
+  ▶ $ # Check the priority queue section of CLAUDE_CODE_GAP.md (2 lines)  ▶ $ # Look at partial gaps more carefully (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Look at the priority queue section (2 lines) ✓ (3ms)
+  ▶ $ # Let me check what "graceful degradation on partial tool fa… (4 lines)  ▶ $ # Check if the gap analysis is stale on this point (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check what tool_recovery_hint does (2 lines) ✓ (3ms)
+  7 tools completed in 19.1s (7 ✓)
+
+Good. Now I have a clear picture. Let me plan the session.
+
+Assessment summary:
+• 10 consecutive successful sessions, 0 reverts
+• 2,804 tests, all passing
+• v0.1.11 just released Day 74
+• The priority queue has 2 real feature gaps: (1) persistent named subagents, (2) graceful degradation on partial tool failures
+• The graceful degradation gap is arguably mostly closed by tool_recovery_hint (Day 70) but the gap doc still says 🟡
+• `cli.rs` at 2,869 lines is the largest file and a known extraction candidate
+• Issue #215 (TUI) is a large design challenge — deferred, already replied
+• No sponsor issues, no urgent bugs
+
+**My plan:**
+1. **Task 1 (self-driven, capability gap):** Close the graceful degradation gap properly — the tool_recovery_hint system exists but it's only used when building a retry prompt. Add automatic tool fallback at the agent level: when a tool fails twice consecutively, inject the alternative tool suggestion directly into the tool error response so the agent naturally tries a different tool. Update the gap doc.
+
+2. Task 2 (self-driven, code legibility): Extract config/constants from cli.rs — the file mixes constants (SYSTEM_PROMPT, thresholds), Config struct/parsing, banner/welcome, and flag parsing. Pull the constants and Config struct into their own concern to make cli.rs more focused. This directly addresses the assessment's finding about cli.rs being the largest file.
+
+3. Task 3 (self-driven, competitive): Smart apply with fuzzy matching — the current /apply just shells out to git apply which requires exact line matching. Add a fuzzy fallback when git apply fails: try git apply --3way, then try with --recount, making patch application more robust. This closes a partial gap vs Claude Code.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check if tool recovery hints are actually injected … (2 lines) ✓ (4ms)
+  ▶ $ # So tool_recovery_hint is used inside build_auto_retry_prom… (3 lines) ✓ (3ms)
+  ▶ $ # Now let me check if tool errors inline already include hin… (3 lines) ✓ (3ms)
+  ▶ $ # Let me reconsider. The tool_recovery_hint system is alread… (11 lines) ✓ (597ms)
+  ▶ $ # Good - git apply has --3way and --recount and -C (context … (8 lines) ✓ (4ms)
+  5 tools completed in 20.9s (5 ✓)
+
+OK, let me finalize my plan. I'll focus on three high-impact tasks:
+
+1. Fuzzy patch application — upgrade `/apply with fallback strategies when strict git apply` fails
+2. **cli.rs extraction** — pull constants/config struct into a cleaner structure  
+3. **Update the graceful degradation gap to ✅** + add inline tool recovery hints to ToolError responses
+
+Actually, let me reconsider task sizing. cli.rs extraction touching 3+ files could be risky. Let me think about tasks that are concrete, ship value, and stay within 3 files.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me look at what /apply's fuzzy matching improvement wo… (12 lines) ✓ (3ms)
+  ▶ $ # Good, it's already pub. So I can use it from tool_wrappers… (5 lines) ✓ (3ms)
+  ▶ $ grep "#\[test\]" src/commands_file.rs | wc -l (3 lines) ✓ (5ms)
+  3 tools completed in 17.1s (3 ✓)
+
+Good. Now I have a solid picture. Let me write the plan.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (35 lines) ✓ (31.7s)
+  ▶ write session_plan/task_02.md (43 lines) ✓ (31.8s)
+  ▶ write session_plan/task_03.md (57 lines) ✓ (31.7s)
+  ▶ write session_plan/issue_responses.md (7 lines) ✓ (30.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 3m 5s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 75 Session Plan
+
+**3 tasks, all self-driven (no sponsor issues, one deferred community issue):**
+
+### Task 1: Fuzzy patch application
+Close the "Smart apply/patch" partial gap vs Claude Code. When git apply fails, cascade through `--3way, -C1, and --recount` fallbacks. Single file change (commands_file.rs), with tests proving the fallback cascade works.
+
+### Task 2: Inline tool recovery hints  
+Close the "Graceful degradation" partial gap. Create a `RecoveryHintTool wrapper in tool_wrappers.rs` that appends escalating tool recovery hints directly into tool error responses (not just retry prompts). The agent sees "try edit_file instead" right in the error, not only during auto-retry. Two files (`tool_wrappers.rs, prompt_retry.rs`).
+
+### Task 3: Extract CLI constants and Config from cli.rs
+Address the assessment's finding that cli.rs (2,869 lines) is the largest file. Extract constants, Config struct, and enums into cli_config.rs with re-exports for zero downstream breakage. Three files (`cli.rs, cli_config.rs, main.rs`).
+
+**Issue #215 (TUI):** Deferred, already replied — no new progress to share.
+
+  ↳ 5m 39s · 21601→6590 tokens (19 tok/s) · $1.13
+  ⬤ 13% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
