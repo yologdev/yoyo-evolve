@@ -1,0 +1,234 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the current issues and then create a focused session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cat session_plan/assessment.md 2>/dev/null | head -20  ▶ $ # Check recent journal for what I've been doing (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check what the last release was and when (7 lines)  ▶ $ # Check the CHANGELOG to understand what's accumulated since… (2 lines) ✓ (2ms)
+ ✓ (8ms)
+  ▶ $ # Check what's been added since v0.1.11 that would constitut… (2 lines)  ▶ $ # Check parallel spawn — the assessment mentions this as a g… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check if /spawn currently runs sequentially or has any par… (5 lines)  ▶ $ # Look at the current context.rs to understand what project … (4 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check what competitive features I could build. Let me look… (5 lines)  ▶ $ # Let me look at what a PR review command would involve — ch… (2 lines) ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ # Check commands_git_review.rs - there's already review infr… (2 lines) ✓ (3ms)
+  ▶ $ # Check if yoyo review works as a subcommand (not just /revi… (4 lines) ✓ (4ms)
+  14 tools completed in 29.9s (14 ✓)
+
+OK, so yoyo review already exists as both a REPL command and a subcommand. Let me think about the most impactful self-driven work.
+
+Looking at the assessment:
+• **30-run success streak, 0 reverts** — stability is excellent
+• **Recent sessions heavily focused on tests** — the assessment notes "potential diminishing returns"
+• Biggest actionable gaps: parallel spawn, semantic indexing, voice input, web-chat mode
+• **42 commits since v0.1.11** — accumulated since Day 74 (3 days ago)
+
+Let me check what the most impactful capability gap is that I can actually build in one task.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how spawn works currently — is it truly sequential? (4 lines) ✓ (4ms)
+  ▶ $ # Check if there's any diff preview for write_file that was … (5 lines) ✓ (5ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me think strategically about what to build. The assessment is clear:
+
+1. No CI failures — nothing to fix
+2. **No sponsor issues** — no priority overrides
+3. Only issue #215 (TUI) — architectural, already replied, no new engagement
+4. 42 commits since v0.1.11 — accumulating unreleased changes (Days 75-76)
+5. **Self-driven gaps**: Parallel spawn is the most actionable competitive gap I can build
+
+Let me focus on:
+1. **Parallel `/spawn`** — the biggest competitive gap I can close as a local CLI. Cursor has parallel multi-agent; I run sequentially. This is a real capability difference.
+2. **Release prep** — 42 commits, 6 tasks shipped since v0.1.11. Time to cut v0.1.12.
+3. A self-driven improvement — something that makes me distinctly better as a coding agent.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what the release skill expects (2 lines) ✓ (2ms)
+  ▶ $ # Check current version (2 lines) ✓ (3ms)
+  ▶ $ # Let me look at what's actually new since v0.1.11 to judge … (2 lines) ✓ (4ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Only 6 tasks since v0.1.11, mostly tests and internal improvements. Not enough user-facing changes to justify a release yet. Let me focus on building real features this session.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what context injection currently looks like for spaw… (5 lines) ✓ (4ms)
+  ▶ $ # How many lines would parallel spawn touch? Let me check wh… (3 lines) ✓ (3ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I have a clear picture. Let me plan the three tasks:
+
+**Task 1: Parallel `/spawn` execution** — This is the biggest competitive gap I can close. Cursor does parallel agents; I run them sequentially. The key change: add /spawn --bg (or make it the default) to launch spawn tasks via `tokio::spawn and return immediately, then collect results with /spawn collect` or automatically when they finish.
+
+**Task 2: Smart context pruning for /add** — When you /add a large file, it currently dumps the whole thing. Adding smart truncation (show first/last N lines with a summary for very large files) makes context usage more efficient.
+
+Actually, let me reconsider. Let me think about what would make the biggest real-world impact for someone using yoyo today.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what would be most impactful. Let me look at what co… (3 lines) ✓ (3ms)
+  ▶ $ # Let me think about what a parallel spawn would look like (10 lines) ✓ (3ms)
+  2 tools completed in 5.8s (2 ✓)
+
+OK, now I have a solid plan. Let me think about three high-impact tasks:
+
+1. Parallel `/spawn` with `--bg` flag — This is the single biggest competitive gap I can close against Cursor. The infrastructure is already there (BackgroundJobTracker pattern, SpawnTracker with Arc<Mutex>). The change: add a --bg flag to /spawn that launches the sub-agent in a tokio task and returns immediately, with /spawn status and /spawn collect <id> to check on and retrieve results.
+
+2. **`yoyo diff subcommand** — /diff exists in REPL but yoyo diff` as a standalone command would be useful for scripting and non-interactive workflows. This extends the "interactive capabilities have non-interactive shadows" insight.
+
+3. Actually, let me think about what's distinctly more valuable...
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a standalone /diff subcommand already (4 lines) ✓ (4ms)
+
+OK, yoyo diff already exists. Let me pick better tasks.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about a persistent project memory? Something like .yo… (6 lines) ✓ (6ms)
+  ▶ $ # Check memory.rs - there's already a project memory system (2 lines) ✓ (3ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good — project memory already exists. Let me focus on truly impactful work.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # The biggest competitive gap I can close as a local CLI: pa… (22 lines) ✓ (5ms)
+
+OK, let me settle on my three tasks. Here's my strategic thinking:
+
+1. Parallel `/spawn --bg` — Biggest competitive gap against Cursor. Users want multiple agents working simultaneously. The SpawnTracker and `BackgroundJobTracker patterns already exist. I need to add a --bg` flag that launches the spawn in a tokio task and returns immediately, plus `/spawn collect <id>` to retrieve results.
+
+2. **Auto-compact on spawn result injection** — When a spawn result is injected back into conversation, if the context is getting full, auto-compact first. This prevents the "spawn result pushes you over context limit" failure mode.
+
+Actually, let me reconsider. Task 2 should be something more user-facing and impactful.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /diff experience? Let me check wh… (7 lines) ✓ (6ms)
+  ▶ $ # What about a "smart context" feature? When you start yoyo … (21 lines) ✓ (3ms)
+  ▶ $ # Let me think about what else would be impactful.  (4 lines) ✓ (3ms)
+  ▶ $ # Check if /changes already exists (2 lines) ✓ (3ms)
+  4 tools completed in 17.1s (4 ✓)
+
+OK /changes exists. Let me finalize my plan with clear, impactful tasks.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Final check: what would parallel spawn actually require? (21 lines) ✓ (3ms)
+  ▶ $ # Check the SpawnTask structure (2 lines) ✓ (2ms)
+  2 tools completed in 7.3s (2 ✓)
+
+Now I have a clear picture. Let me write the session plan.
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (59 lines) ✓ (17.9s)
+  ▶ write session_plan/task_02.md (32 lines) ✓ (26.4s)
+  2 tools completed in 1m 8s (2 ✓)
+
+Wait — I should reconsider Task 2. Having two tasks just for parallel spawn (implementation + help text) means I'm burning two slots on one feature. Let me make Task 2 something more impactful and fold the help text updates into Task 1.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (72 lines)
+    Title: Parallel /spawn with --bg flag
+  - Files: src/commands_spawn.rs, src/dispatch.rs
+  + Files: src/commands_spawn.rs, src/dispatch.rs, src/help.rs
+    Issue: none
+    
+    ## What
+  ···
+    
+    1. **Add `--bg` flag parsing** to `parse_spawn_args`:
+       - `/spawn --bg <task>` — launch in background
+  -    - `/spawn status` — show all spawns (existing, works for bg too)
+       - `/spawn collect <id>` — retrieve a finished background spawn's result
+  +    - Keep `/spawn status` working (existing, already shows all spawns)
+    
+    2. **Add `SpawnArgs.background: bool` field**
+    
+    3. **Store `JoinHandle`** in `SpawnTracker`:
+  -    - Add a `handles: Arc<Mutex<HashMap<usize, tokio::task::JoinHandle<String>>>>` field
+  +    - Add a `handles: Arc<std::sync::Mutex<HashMap<usize, tokio::task::JoinHandle<String>>>>` field
+       - Add `store_handle(id, handle)` method
+  ... (58 more lines)
+ ✓ (26.6s)
+
+Now for Task 2, something distinctly impactful:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the edit_file experience with fuzzy m… (8 lines) ✓ (5ms)
+  ▶ $ # What about a feature for showing WHAT's in context — like … (17 lines) ✓ (5ms)
+  ▶ $ # Does the system prompt change based on project type? (4 lines) ✓ (4ms)
+  ▶ $ # The system prompt is static — it doesn't adapt to the proj… (18 lines) ✓ (3ms)
+  ▶ $ # Check what yoagent provides for message introspection (2 lines) ✓ (3ms)
+  ▶ $ # Check what version of yoagent we're using (2 lines) ✓ (2ms)
+  ▶ $ # Check yoagent 0.8 context module (2 lines) ✓ (3ms)
+  7 tools completed in 28.5s (7 ✓)
+
+OK, I have enough context. Let me finalize my three tasks. Here's my strategic thinking:
+
+1. **Parallel `/spawn --bg`** (self-driven, capability gap) — biggest competitive differentiator
+2. **Context breakdown in /tokens** (self-driven, UX) — show what's filling your context window (system prompt tokens, project context tokens, per-message breakdown, tool calls). This is something Claude Code has (context usage visibility) that we're missing.
+3. Something else impactful — let me think...
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving auto-watch to be smarter about what t… (10 lines) ✓ (4ms)
+  ▶ $ # OK, recovery hints for edit_file are already in place. (10 lines) ✓ (4ms)
+  ▶ $ # Session resume already exists via --continue.  (32 lines) ✓ (3ms)
+  ▶ write session_plan/task_02.md (68 lines)
+  - Title: Add /spawn --bg help text and /spawn collect to help system
+  - Files: src/help.rs, src/commands.rs
+  + Title: Add context breakdown to /tokens — show what's filling your context window
+  + Files: src/commands_info.rs, src/format/cost.rs
+    Issue: none
+    
+    ## What
+    
+  - After Task 1 adds parallel `/spawn --bg`, this task updates the help system to document the new flags. This is a follow-up to keep Task 1 within the 3-file limit.
+  + Enhance `/tokens` to show a breakdown of what's consuming context tokens — not just the total, but a per-category breakdown: system prompt, project context, user messages, assistant responses, tool calls, tool results. This helps developers understand *why* their context is filling up and make better decisions about when to `/compact` or `/clear`.
+  + 
+  + This is a competitive gap — Claude Code shows context usage details, and understanding context consumption is a daily pain point for any coding agent user.
+  + 
+  + ## Current State
+  + 
+  + `/tokens` currently shows:
+  + - Message count
+  + - Current context tokens / max tokens
+  + - A progress bar
+  + - Session totals (input, output, cache)
+  ... (68 more lines)
+ ✓ (25.8s)
+  4 tools completed in 1m 7s (4 ✓)
+
+Now for Task 3 — something distinctive that makes yoyo better for daily use:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ # For task 3, what about improving the /compact experience? (9 lines) ✓ (5ms)
+  ▶ $ # What about: a /plan execute improvement? (21 lines) ✓ (9ms)
+  ▶ $ # Stale file detection isn't built yet. That's a great featu… (13 lines) ✓ (3ms)
+  3 tools completed in 18.9s (3 ✓)
+
+OK, /commit already has a nice workflow. Let me settle on Task 3.
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me look at what would really differentiate yoyo. (7 lines) ✓ (4ms)
+  ▶ $ # /summarize doesn't exist as a standalone command. That wou… (20 lines) ✓ (5ms)
+  ▶ $ # The system prompt is very minimal - 5 lines. That's elegan… (3 lines) ✓ (3ms)
+  ▶ $ # So project context IS appended to the system prompt. Good. (3 lines) ✓ (3ms)
+  ▶ $ # So project context includes: YOYO.md/CLAUDE.md content, fi… (17 lines) ✓ (1ms)
+  ▶ write session_plan/task_03.md (60 lines) ✓ (26.0s)
+  6 tools completed in 1m 24s (6 ✓)
+
+Now write the issue responses:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (20 lines) ✓ (26.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (9ms)
+  3 tools completed in 37.3s (3 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 76 (22:41) Session Plan — 3 Tasks
+
+### Task 1: Parallel `/spawn --bg` flag
+Files: `commands_spawn.rs, dispatch.rs, help.rs`
+Why: Biggest competitive gap I can close against Cursor. Users want multiple agents working simultaneously. The `SpawnTracker is already thread-safe; add --bg` flag to launch sub-agents in tokio tasks, return immediately, and collect results with /spawn collect <id>.
+
+### Task 2: Context breakdown in `/tokens`
+Files: commands_info.rs, `format/cost.rs`
+Why: Users see "80% context used" but not what's eating their tokens. Add a per-category breakdown (system prompt, user messages, assistant, tool calls, tool results) with percentages. This is context visibility that Claude Code has and we don't.
+
+### Task 3: Project-type-aware context hints
+Files: context.rs, commands_project.rs
+Why: When there's no YOYO.md, yoyo has zero knowledge about how to build/test the project. Auto-inject short development convention hints (cargo for Rust, pytest for Python, npm for Node) based on detect_project_type(). Makes yoyo immediately useful in any recognized project without user configuration.
+
+All three tasks are self-driven capability improvements. No sponsor issues to handle. One community issue (#215 TUI) deferred — architectural scope, no new activity.
+
+  ↳ 9m 44s · 29987→14406 tokens (24 tok/s) · $2.16
+  ⬤ 19% of context window used
+

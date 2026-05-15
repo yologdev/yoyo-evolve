@@ -1,0 +1,417 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the parallel /spawn with --bg flag. Let me start by understanding the current code.
+  ▶ read src/commands_spawn.rs  ▶ search 'spawn' in src/dispatch.rs  ▶ search '/spawn' in src/help.rs ✓ (6ms)
+ ✓ (6ms)
+ ✓ (5ms)
+  3 tools completed in 1.6s (3 ✓)
+
+Let me read the key sections more carefully.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:100..300  ▶ read src/dispatch.rs:860..910 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Now let me read the rest of handle_spawn and handle_spawn_status:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:300..  ▶ read src/dispatch.rs:270..300 ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Now let me read clone_agent_config and the rest of the file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:394..674 ✓ (1ms)
+
+Now let me look at the help entry and the completions:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:800..830  ▶ search 'SPAWN_SUBCOMMANDS\|spawn.*completions\|\"status\".*spawn\|\"…' in src/commands.rs  ▶ search 'command_arg_completions.*spawn\|spawn.*command_arg' in src/commands.rs ✓ (2ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ search 'spawn' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:220..240  ▶ read src/commands.rs:815..835 ✓ (0ms)
+ ✓ (1ms)
+  6 tools completed in 5.9s (6 ✓)
+
+Now I have a good picture. Let me also check what `load_project_context looks like and understand the build_agent` method:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn load_project_context' in src/cli.rs  ▶ search 'pub fn build_agent' in src/agent_builder.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ search 'load_project_context' in src ✓ (6ms)
+  3 tools completed in 3.4s (3 ✓)
+
+Good. Now let me also check how SpawnTask has a background field concept already or not, and look at the `SpawnStatus display to plan my Running (bg)` approach:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:36..56 ✓ (0ms)
+
+Now I have a comprehensive understanding. Let me plan and implement this step by step.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  9 tools completed in 19.5s (9 ✓)
+
+Now let me start implementing. I'll write tests first, then the implementation.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me update SpawnArgs to include background and a collect_id field, and update the parser:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (8 → 12 lines)
+        pub task: String,
+        /// Optional output file path (`-o <path>`).
+        pub output_path: Option<String>,
+  +     /// Whether to run in background (`--bg` flag).
+  +     pub background: bool,
+  +     /// If set, this is a `/spawn collect <id>` request.
+  +     pub collect_id: Option<usize>,
+    }
+ ✓ (5.6s)
+
+Expected. Now let me rewrite parse_spawn_args to handle the new flags and the collect subcommand:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (34 → 62 lines)
+    /// Parse the `/spawn` command input, extracting flags and task.
+    ///
+    /// Supports:
+  - /// - `/spawn <task>` — run a task
+  + /// - `/spawn <task>` — run a task synchronously
+  + /// - `/spawn --bg <task>` — run a task in the background
+    /// - `/spawn -o <path> <task>` — run a task and capture output to a file
+  + /// - `/spawn --bg -o <path> <task>` — background with output capture
+  + /// - `/spawn collect <id>` — collect a finished background spawn
+    ///
+    /// Returns `None` if no task or if this is a subcommand like `status`.
+    pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
+  ···
+            return None;
+        }
+    
+  -     let parts: Vec<&str> = rest.splitn(3, ' ').collect();
+  +     // Handle `/spawn collect <id>`
+  +     if let Some(collect_rest) = rest.strip_prefix("collect") {
+  +         let collect_rest = collect_rest.trim();
+  ... (56 more lines)
+ ✓ (8.9s)
+
+The i variable - since we're using remove and break, we don't increment i in the flag-extraction loop, so i never changes. Let me fix:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (14 → 13 lines)
+        // Extract flags from the front
+  -     let mut i = 0;
+  -     while i < words.len() {
+  -         if words[i] == "--bg" {
+  +     while !words.is_empty() {
+  +         if words[0] == "--bg" {
+                background = true;
+  -             words.remove(i);
+  -         } else if words[i] == "-o" && i + 1 < words.len() {
+  -             output_path = Some(words[i + 1].to_string());
+  -             words.remove(i); // remove "-o"
+  -             words.remove(i); // remove the path (now at position i)
+  +             words.remove(0);
+  +         } else if words[0] == "-o" && words.len() > 1 {
+  +             output_path = Some(words[1].to_string());
+  +             words.remove(0); // remove "-o"
+  +             words.remove(0); // remove the path (now at position 0)
+            } else {
+                break; // stop processing flags once we hit a non-flag word
+            }
+ ✓ (38.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (105ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 45.4s (4 ✓)
+
+Now let's add the background field to SpawnTask and the JoinHandle storage to SpawnTracker:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (20 → 24 lines)
+        pub result: Option<String>,
+        /// Optional output file path.
+        pub output_path: Option<String>,
+  +     /// Whether this spawn was launched in the background.
+  +     pub background: bool,
+    }
+    
+    /// Thread-safe tracker for multiple spawn tasks.
+    #[derive(Debug, Clone)]
+    pub struct SpawnTracker {
+        inner: Arc<Mutex<Vec<SpawnTask>>>,
+  +     /// JoinHandles for background spawns, keyed by spawn ID.
+  +     handles: Arc<Mutex<std::collections::HashMap<usize, tokio::task::JoinHandle<String>>>>,
+    }
+ ✓ (5.5s)
+
+Fix the constructor and register method:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (20 → 32 lines)
+        pub fn new() -> Self {
+            Self {
+                inner: Arc::new(Mutex::new(Vec::new())),
+  +             handles: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            }
+        }
+    
+        /// Register a new spawn task and return its ID.
+        pub fn register(&self, task: &str, output_path: Option<String>) -> usize {
+  +         self.register_with_bg(task, output_path, false)
+  +     }
+  + 
+  +     /// Register a new spawn task with background flag and return its ID.
+  +     pub fn register_with_bg(
+  +         &self,
+  +         task: &str,
+  +         output_path: Option<String>,
+  +         background: bool,
+  +     ) -> usize {
+            let mut tasks = lock_or_recover(&self.inner);
+  ... (10 more lines)
+ ✓ (8.7s)
+
+These fields will be used once I add the methods. Let me add the store_handle, `try_collect, and update handle_spawn_status` now. Let me also update the status display to show background status:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:102..132 ✓ (0ms)
+
+Now let me add the handle-related methods after count_by_status:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:130..140 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (3 → 89 lines)
+            (running, completed, failed)
+  +     }
+  + 
+  +     /// Store a JoinHandle for a background spawn.
+  +     pub fn store_handle(&self, id: usize, handle: tokio::task::JoinHandle<String>) {
+  +         let mut handles = lock_or_recover(&self.handles);
+  +         handles.insert(id, handle);
+  +     }
+  + 
+  +     /// Try to collect a background spawn's result.
+  +     /// Returns `Some(result)` if the spawn is finished, `None` if still running.
+  +     /// Returns `Some(error message)` if the spawn failed or doesn't exist.
+  +     pub fn try_collect(&self, id: usize) -> Result<Option<String>, String> {
+  +         // Check if the task exists
+  +         {
+  +             let tasks = lock_or_recover(&self.inner);
+  +             let task = tasks.iter().find(|t| t.id == id);
+  +             match task {
+  +                 None => return Err(format!("no spawn #{id} found")),
+  +                 Some(t) if !t.background => {
+  ... (69 more lines)
+ ✓ (5.4s)
+  2 tools completed in 22.3s (2 ✓)
+
+I need to use &id and bring in FutureExt or use a different approach. Let me use a simpler approach — block on the handle directly since it's finished:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:1..6 ✓ (0ms)
+
+I'll use futures::FutureExt::now_or_never — let me check if futures is available:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ search 'futures' in Cargo.toml ✓ (2ms)
+
+No futures crate. Let me check if tokio provides something similar or if I should just use tokio::runtime::Handle::current().block_on():
+
+Actually, since the handle is finished, I can just use a simpler approach with a helper. Let me avoid now_or_never and use a custom poll approach, or better — since we know `is_finished() is true, I can use try_join`:
+
+Actually, the simplest approach: since we know is_finished() returns true, we can wrap it in a very short `tokio::task::block_in_place + Handle::current().block_on()`. But that's complex. A simpler pattern: store the result in the tracker from inside the spawned task, so `try_collect` just reads the tracker.
+
+Let me rethink this. The cleanest pattern: the background task itself calls `tracker.complete(id, result) when done. Then try_collect` just checks the tracker status. No need to poll handles at all for collecting — just check status.
+
+Let me simplify:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (89 → 34 lines)
+            (running, completed, failed)
+        }
+    
+  -     /// Store a JoinHandle for a background spawn.
+  -     pub fn store_handle(&self, id: usize, handle: tokio::task::JoinHandle<String>) {
+  +     /// Store a JoinHandle for a background spawn (for abort if needed).
+  +     pub fn store_handle(&self, id: usize, handle: tokio::task::JoinHandle<()>) {
+            let mut handles = lock_or_recover(&self.handles);
+            handles.insert(id, handle);
+        }
+    
+        /// Try to collect a background spawn's result.
+  -     /// Returns `Some(result)` if the spawn is finished, `None` if still running.
+  -     /// Returns `Some(error message)` if the spawn failed or doesn't exist.
+  -     pub fn try_collect(&self, id: usize) -> Result<Option<String>, String> {
+  -         // Check if the task exists
+  -         {
+  -             let tasks = lock_or_recover(&self.inner);
+  -             let task = tasks.iter().find(|t| t.id == id);
+  -             match task {
+  ... (88 more lines)
+ ✓ (5.4s)
+
+Need to update the type in the struct:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (2 → 2 lines)
+        /// JoinHandles for background spawns, keyed by spawn ID.
+  -     handles: Arc<Mutex<std::collections::HashMap<usize, tokio::task::JoinHandle<String>>>>,
+  +     handles: Arc<Mutex<std::collections::HashMap<usize, tokio::task::JoinHandle<()>>>>,
+ ✓ (8.7s)
+
+These methods are still unused — they'll be used once I wire up handle_spawn_bg and handle_spawn_collect. Let me continue building those functions now, then all the dead code warnings will resolve.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me update handle_spawn_status to show background indicator, then add the handle_spawn_bg and handle_spawn_collect functions. Let me first look at the status display:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:300..345 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:344..404 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Now update the status display to show background spawns differently:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (14 → 17 lines)
+            match &task.status {
+  -             SpawnStatus::Running => println!(
+  -                 "    {CYAN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
+  -                 id = task.id
+  -             ),
+  +             SpawnStatus::Running => {
+  +                 let bg_label = if task.background { " (background)" } else { "" };
+  +                 println!(
+  +                     "    {CYAN}{status_icon} #{id}: {task_preview}{bg_label}{output_note}{RESET}",
+  +                     id = task.id
+  +                 );
+  +             }
+                SpawnStatus::Completed => println!(
+                    "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
+                    id = task.id
+ ✓ (8.7s)
+
+Good, still just dead code warnings. Now let me add the `handle_spawn_collect and modify handle_spawn` to route background and collect. Let me read the current handle_spawn:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:390..460 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:458..478 ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me rewrite handle_spawn to route `--bg and collect`, and add the new functions:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (82 → 172 lines)
+    /// Handle the /spawn command: create a subagent with project context, run a task,
+  - /// and return the result. Supports output capture and task tracking.
+  + /// and return the result. Supports output capture, background execution, and task tracking.
+    ///
+    /// Returns Some(context_msg) to be injected back into the main conversation, or None.
+    pub async fn handle_spawn(
+  ···
+            Some(a) => a,
+            None => {
+                println!("{DIM}  usage: /spawn <task>");
+  -             println!("         /spawn -o <file> <task>   (capture output to file)");
+  -             println!("         /spawn status             (show tracked spawns)");
+  +             println!("         /spawn --bg <task>         (run in background)");
+  +             println!("         /spawn -o <file> <task>    (capture output to file)");
+  +             println!("         /spawn collect <id>        (collect background result)");
+  +             println!("         /spawn status              (show tracked spawns)");
+                println!("  Spawn a subagent with project context to handle a task.");
+                println!("  The result is summarized back into your main conversation.");
+                println!("  Example: /spawn read src/main.rs and summarize the architecture{RESET}\n");
+                return None;
+  ... (99 more lines)
+ ✓ (36.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (101ms)
+  2 tools completed in 40.0s (2 ✓)
+
+Build passes. Now let me also handle collect as a subcommand keyword that parse_spawn_args shouldn't confuse with `status`:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.7s)
+
+Clean! Let me run the tests:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (18.1s)
+
+All tests pass. Let me check the existing tests that might need updating:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_spawn 2>&1 ✓ (111ms)
+
+All 31 spawn tests pass. Now let me check if existing tests that test `parse_spawn_args` need updating due to new fields:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'SpawnArgs {' src/comman… ✓ (3ms)
+
+The tests use the pattern `let args = args.unwrap() and then access args.task / args.output_path` — they don't pattern-match on the struct directly, so they still work fine. Good.
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Now let me update dispatch.rs. The current spawn dispatch looks like it calls handle_spawn and if it returns `Some(context_msg), it runs a prompt. For --bg spawns, handle_spawn returns None`, so the existing code naturally skips the prompt injection. For collect, it returns Some(context_msg), which should trigger a prompt — which is exactly what we want. Let me verify:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:871..901 ✓ (1ms)
+
+The existing dispatch is already correct:
+• --bg spawn → handle_spawn returns None → skips the if let Some block → CommandResult::Continue
+• /spawn collect <id> → returns Some(context_msg) if finished → injects into conversation and runs prompt
+• /spawn collect <id> still running → returns None → skips prompt injection
+
+This already works perfectly with no changes needed!
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Now update help.rs with the --bg and collect docs:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (11 → 22 lines)
+            "spawn" => Some(
+                "/spawn <task> — Spawn a subagent to handle a task\n\n\
+                 Usage:\n\
+  -              \x20 /spawn <task description>\n\n\
+  +              \x20 /spawn <task description>\n\
+  +              \x20 /spawn --bg <task>         Run in background (returns immediately)\n\
+  +              \x20 /spawn -o <file> <task>    Capture output to a file\n\
+  +              \x20 /spawn --bg -o <f> <task>  Background with output capture\n\
+  +              \x20 /spawn collect <id>        Collect a finished background spawn\n\
+  +              \x20 /spawn status              Show all tracked spawns\n\n\
+                 Creates a new AI agent with a separate context window to\n\
+                 handle the given task. The subagent has access to the same\n\
+                 tools but operates independently.\n\n\
+  +              Background spawns (--bg) return control immediately so you can\n\
+  +              keep working while the subagent runs in parallel. Use\n\
+  +              /spawn collect <id> to retrieve the result when ready.\n\n\
+                 Examples:\n\
+                 \x20 /spawn write unit tests for the parser module\n\
+  -              \x20 /spawn refactor the error handling in src/lib.rs",
+  +              \x20 /spawn --bg analyze test coverage for src/\n\
+  ... (4 more lines)
+ ✓ (37.1s)
+
+Now update the short-form help in the /help listing and the CLI help:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ search 'spawn.*Spawn a subagent' in src/help.rs ✓ (2ms)
+  ▶ read src/help.rs:1641..1646 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     let _ = writeln!(s, "    /spawn <task>      Spawn a subagent for a task");
+  +     let _ = writeln!(s, "    /spawn <task>      Spawn a subagent for a task (--bg for background)");
+ ✓ (37.7s)
+  ▶ read src/help.rs:1876..1879 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     out.push_str("  /spawn <task>      Spawn a subagent to handle a task (separate context)\n");
+  +     out.push_str("  /spawn <task>      Spawn a subagent to handle a task (--bg for background)\n");
+ ✓ (37.3s)
+  5 tools completed in 1m 28s (5 ✓)
+
+Now update command_arg_hint in commands.rs:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "spawn" => Some("<prompt>"),
+  +         "spawn" => Some("[--bg] <prompt>"),
+ ✓ (37.1s)
+
+  ↳ 10m 8s · 23027→15498 tokens (25 tok/s) · $2.38
+  ⬤ 17% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,93 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate this task quickly. First, let me check the diff and current state of the files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD ✓ (8ms)
+ ✓ (7ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Let me see the full diff more clearly and run tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_sp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (6ms)
+ ✓ (10.6s)
+  2 tools completed in 12.5s (2 ✓)
+
+The diff is truncated. Let me read the full file to see the actual implementation and check for the required tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_sp… ✓ (5ms)
+
+The diff is being truncated by git. Let me read the actual file directly to see the full implementation and tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && diff <(git show HEAD:src/command…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_' src/commands_… ✓ (2ms)
+ ✓ (26ms)
+  2 tools completed in 1.6s (2 ✓)
+
+I notice the task specified 5 tests to add. Let me check if those tests exist:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'test_parse_spawn_args_b… ✓ (3ms)
+
+No required tests were added. Let me verify what tests exist vs what was required:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'fn test_' src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/commands_spawn… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Same number of tests — zero new tests were added. The task explicitly required 5 specific tests:
+• test_parse_spawn_args_bg_flag
+• `test_parse_spawn_args_bg_with_output`
+• test_parse_spawn_collect
+• test_spawn_tracker_store_handle
+• test_spawn_status_display_bg
+
+Let me also verify the actual implementation functions exist:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn handle_spawn_bg\|fn … ✓ (3ms)
+
+Good, the implementation functions exist. Let me verify the handle_spawn_bg actually spawns a tokio task and the handle_spawn dispatches to it:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,570p' src/commands_s… ✓ (4ms)
+
+Now let me check the try_collect and store_handle implementations:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '131,170p' src/commands_s… ✓ (3ms)
+
+Now let me check the parse_spawn_args for collect and --bg:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '210,260p' src/commands_s… ✓ (3ms)
+
+Good, the implementation is solid. Now let me verify the dispatch.rs integration:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/dispatch.rs ✓ (3ms)
+
+No changes to dispatch.rs. The task said: "The current code already checks `if let Some(context_msg) = ..., so bg spawns that return None` will naturally skip the prompt injection." Let me verify this is true:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A5 'handle_spawn' src/d… ✓ (3ms)
+
+Good — the existing dispatch already wraps handle_spawn in `if let Some(...), so returning None from --bg` naturally works.
+
+Let me verify help.rs changes look good:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/help.rs | c… ✓ (5ms)
+
+Now let me run tests one more time to confirm everything passes:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E '(test… ✓ (10.4s)
+
+All tests pass. Now let me write my verdict. The implementation is complete and correct — all the required functions exist (handle_spawn_bg, `handle_spawn_collect, store_handle, try_collect, register_with_bg, --bg flag parsing, collect` subcommand parsing). The help docs are updated. The dispatch integration works naturally. **However, the task explicitly required 5 specific tests** (`test_parse_spawn_args_bg_flag, test_parse_spawn_args_bg_with_output, test_parse_spawn_collect, test_spawn_tracker_store_handle, test_spawn_status_display_bg`) and none of them were added — the test count is identical before and after the change (31 tests).
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines)
+  + Verdict: FAIL
+  + Reason: The task explicitly required 5 new tests (test_parse_spawn_args_bg_flag, test_parse_spawn_args_bg_with_output, test_parse_spawn_collect, test_spawn_tracker_store_handle, test_spawn_status_display_bg) but zero tests were added — the test count is identical before and after the change (31 tests in commands_spawn.rs). The functional implementation is correct and complete, but the missing tests are a clear gap from the task specification.
+ ✓ (26.0s)
+
+Verdict: FAIL
+
+The implementation itself is solid — --bg flag parsing, handle_spawn_bg with tokio::spawn, handle_spawn_collect, store_handle/try_collect on SpawnTracker, help docs updated. But the task explicitly required 5 specific unit tests and none were added (31 tests before = 31 tests after).
+
+  ↳ 1m 48s · 11162→2468 tokens (22 tok/s) · $0.542
+  ⬤ 6% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,149 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code to see what's already been implemented.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_parse_spawn\|test_… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "background\|--bg\|bg\|c… ✓ (4ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Good - the implementation is already there. The evaluator says the only issue is the 5 missing tests. Let me see the existing test section:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '590,900p' src/commands_s… ✓ (5ms)
+
+Now let me see the SpawnArgs struct and relevant functions more carefully to understand the fields:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,265p' src/commands_s… ✓ (3ms)
+
+Now let me check the `SpawnTracker` struct and relevant methods:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '25,180p' src/commands_sp… ✓ (4ms)
+
+Now I have a clear picture. The implementation is complete but the 5 tests are missing. Let me add them:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/commands_spawn.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '893,898p' src/commands_s… ✓ (2ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me also check if handle_spawn_status shows the background label:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '345,390p' src/commands_s… ✓ (3ms)
+
+Now I have everything I need. Let me add the 5 required tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (5 → 91 lines)
+        #[test]
+        fn test_parse_spawn_args_status() {
+            assert!(parse_spawn_args("/spawn status").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_bg_flag() {
+  +         let args = parse_spawn_args("/spawn --bg analyze test coverage");
+  +         assert!(args.is_some());
+  +         let args = args.unwrap();
+  +         assert!(args.background);
+  +         assert_eq!(args.task, "analyze test coverage");
+  +         assert!(args.output_path.is_none());
+  +         assert!(args.collect_id.is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_bg_with_output() {
+  +         let args = parse_spawn_args("/spawn --bg -o out.txt summarize codebase");
+  +         assert!(args.is_some());
+  ... (71 more lines)
+ ✓ (8.6s)
+
+I need to fix the JoinHandle creation in the test:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (5 → 6 lines)
+            // Create a trivial JoinHandle by spawning a completed task
+            let handle = tokio::runtime::Builder::new_current_thread()
+  +             .enable_all()
+                .build()
+                .unwrap()
+  -             .block_on(async { tokio::spawn(async {}) });
+  +             .block_on(async { tokio::spawn(async {}).await.unwrap() ; tokio::spawn(async {}) });
+ ✓ (8.6s)
+
+The clippy lint is about an async block returning a JoinHandle (which is awaitable). Let me restructure this:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (6 → 9 lines)
+            // Create a trivial JoinHandle by spawning a completed task
+  -         let handle = tokio::runtime::Builder::new_current_thread()
+  +         let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+  -             .unwrap()
+  -             .block_on(async { tokio::spawn(async {}).await.unwrap() ; tokio::spawn(async {}) });
+  +             .unwrap();
+  +         let handle = rt.block_on(async {
+  +             let h = tokio::spawn(async {});
+  +             h
+  +         });
+ ✓ (8.6s)
+
+The clippy lint async_yields_async prevents returning a JoinHandle from an async block. Let me take a different approach — I don't need a real tokio runtime. I can just test that the `store_handle` method works by using a different strategy:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (20 → 18 lines)
+            let tracker = SpawnTracker::new();
+            let id = tracker.register_with_bg("bg task", None, true);
+    
+  -         // Create a trivial JoinHandle by spawning a completed task
+  +         // Create a trivial JoinHandle via a dedicated runtime
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+  -         let handle = rt.block_on(async {
+  -             let h = tokio::spawn(async {});
+  -             h
+  -         });
+  +         #[allow(clippy::async_yields_async)]
+  +         let handle: tokio::task::JoinHandle<()> = rt.block_on(async { tokio::spawn(async {}) });
+            tracker.store_handle(id, handle);
+    
+            // Verify the handle is stored (it's in the handles map)
+ ✓ (37.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (9.1s)
+  2 tools completed in 50.9s (2 ✓)
+
+Clippy passes. Now run the tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (28.8s)
+
+Let me verify the 5 new tests are all running:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test_… ✓ (10.8s)
+
+All 5 required tests pass:
+
+1. test_parse_spawn_args_bg_flag ✓
+2. test_parse_spawn_args_bg_with_output ✓
+3. test_parse_spawn_collect ✓
+4. test_spawn_tracker_store_handle ✓
+5. test_spawn_status_display_bg ✓
+
+Let me also run the full CI check to make sure everything is clean:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (26.6s)
+
+All checks pass. Here's what I added — the 5 tests the evaluator flagged as missing:
+
+1. `test_parse_spawn_args_bg_flag` — Verifies --bg flag is correctly parsed, sets background: true, extracts the task, and leaves other fields at defaults.
+
+2. `test_parse_spawn_args_bg_with_output` — Verifies --bg and -o flags work together: /spawn --bg -o out.txt summarize codebase correctly sets both background and output_path.
+
+3. `test_parse_spawn_collect` — Verifies /spawn collect 3 parses to collect_id: Some(3) with empty task and background: false. Also tests that `/spawn collect (no id) and /spawn collect abc (non-numeric) return None`.
+
+4. **test_spawn_tracker_store_handle** — Creates a tracker, registers a background task, creates a real JoinHandle via a tokio runtime, stores it, then verifies the handle exists in the internal map.
+
+5. **`test_spawn_status_display_bg** — Registers both foreground and background tasks, verifies the background` flag is set correctly on each, checks both start as Running, tests try_collect returns Ok(None) for a running bg task, then completes it and verifies try_collect returns the result.
+
+  ↳ 3m 34s · 10439→3988 tokens (18 tok/s) · $0.456
+  ⬤ 5% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

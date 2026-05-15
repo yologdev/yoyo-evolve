@@ -1,0 +1,286 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/commands_project.rs | he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_project_type" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ProjectType" src/comman… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '678,745p' src/commands_p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,470p' src/commands_p… ✓ (3ms)
+ ✓ (3ms)
+  5 tools completed in 5.9s (5 ✓)
+
+Now let me look at context.rs to understand `load_project_context()`:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context\|p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YOYO\|CLAUDE\|instructi… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '105,190p' src/context.rs ✓ (3ms)
+  3 tools completed in 5.1s (3 ✓)
+
+Now I have a clear picture. Let me look at the test section at the end of commands_project.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,810p' src/commands_p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_project.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/commands_project.rs ✓ (2ms)
+ ✓ (2ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Now let me also check how ProjectType derives PartialEq:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '675,680p' src/commands_p… ✓ (2ms)
+
+Good. Now let me check how context.rs imports from commands_project:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/context.rs ✓ (2ms)
+
+Now I have all the context I need. Let me implement this step by step.
+
+Step 1: Add project_type_hints() function in commands_project.rs (before the tests section).
+Step 2: Modify load_project_context() in context.rs to inject hints when no context file is present.
+Step 3: Add tests.
+
+Let me start:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '735,742p' src/commands_p… ✓ (3ms)
+
+Now let me add the project_type_hints() function right before the #[cfg(test)] section:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (5 → 54 lines)
+  + /// Return short development convention hints for a given project type.
+  + /// These are injected into project context when no explicit context file exists.
+  + /// Returns None for Unknown project types.
+  + pub fn project_type_hints(project_type: &ProjectType) -> Option<String> {
+  +     let hints = match project_type {
+  +         ProjectType::Rust => {
+  +             "Build: `cargo build`\n\
+  +              Test: `cargo test`\n\
+  +              Lint: `cargo clippy --all-targets -- -D warnings`\n\
+  +              Format: `cargo fmt`"
+  +         }
+  +         ProjectType::Node => {
+  +             "Install: `npm install`\n\
+  +              Test: `npm test`\n\
+  +              Scripts: check `package.json` \"scripts\" for available commands"
+  +         }
+  +         ProjectType::Python => {
+  +             "Test: `python -m pytest`\n\
+  +              Lint: `ruff check .` or `flake8`\n\
+  +              Install deps: `pip install -e .` or `poetry install`"
+  ... (32 more lines)
+ ✓ (8.8s)
+
+Expected — it's unused until I wire it into context.rs. Let me do that now:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (1 → 2 lines)
+  + use crate::commands_project::{detect_project_type, project_type_hints};
+    use crate::format::{is_quiet, DIM, RESET};
+ ✓ (8.6s)
+
+Now let me wire it into load_project_context(). I need to inject conventions when no explicit context file was found:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (32 → 50 lines)
+  +     // Append project-type conventions if no explicit context file was found
+  +     let mut conventions_injected = false;
+  +     if found.is_empty() {
+  +         let project_type = detect_project_type(std::path::Path::new("."));
+  +         if let Some(hints) = project_type_hints(&project_type) {
+  +             if !context.is_empty() {
+  +                 context.push_str("\n\n");
+  +             }
+  +             context.push_str("## Development Conventions\n\n");
+  +             context.push_str(&hints);
+  +             conventions_injected = true;
+  +         }
+  +     }
+  + 
+        // Append project memories if available
+        let memory = crate::memory::load_memories();
+        if let Some(memories_section) = crate::memory::format_memories_for_prompt(&memory) {
+  ···
+            if !is_quiet() {
+                for name in &found {
+  ... (8 more lines)
+ ✓ (37.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (120ms)
+  2 tools completed in 44.6s (2 ✓)
+
+Builds. Now let me add the tests. First in commands_project.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn detect_project_type_… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '857,870p' src/commands_p… ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+I'll add the hint tests after the existing project type detection tests. Let me find a good place:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    #\[test\]" src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '870,880p' src/commands_p… ✓ (3ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Let me add the hint tests right after the detection tests and before whatever comes after. Let me find where the detection tests end:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '880,900p' src/commands_p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,910p' src/commands_p… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '910,920p' src/commands_p… ✓ (3ms)
+  3 tools completed in 9.2s (3 ✓)
+
+I'll add the hints tests right after the detect_project_type_cmake_over_makefile test:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (6 → 52 lines)
+            assert_eq!(detect_project_type(dir.path()), ProjectType::Cpp);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_project_type_hints_rust() {
+  +         let hints = project_type_hints(&ProjectType::Rust).unwrap();
+  +         assert!(hints.contains("cargo"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_project_type_hints_python() {
+  +         let hints = project_type_hints(&ProjectType::Python).unwrap();
+  +         assert!(hints.contains("pytest"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_project_type_hints_node() {
+  +         let hints = project_type_hints(&ProjectType::Node).unwrap();
+  +         assert!(hints.contains("npm") || hints.contains("package.json"));
+  +     }
+  ... (30 more lines)
+ ✗ (0ms)
+    │ old_text not found in src/commands_project.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '910,918p' src/commands_p… ✓ (3ms)
+  2 tools completed in 7.2s (1 ✓, 1 ✗)
+
+There's a unicode separator comment. Let me read that line directly:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:911..916 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '913p' src/commands_proje… ✓ (3ms)
+  2 tools completed in 7.1s (2 ✓)
+
+It's a decorative comment with box-drawing characters. Let me use a different approach - target a specific line range:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:909..919 ✓ (0ms)
+
+Let me insert my tests using sed at line 912 (after the closing brace of the test):
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '911p' src/commands_proje… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '911a… (47 lines) ✓ (3ms)
+  2 tools completed in 9.3s (2 ✓)
+
+Now let me add tests in context.rs. Let me look at the existing test section:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/context.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/context.rs ✓ (2ms)
+  ▶ edit src/context.rs (18 → 87 lines)
+            assert_ne!(
+                PROJECT_CONTEXT_FILES[0], "CLAUDE.md",
+                "CLAUDE.md should not be the primary context file"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_project_context_includes_conventions() {
+  +         // When run in a directory with no YOYO.md but with a Cargo.toml,
+  +         // load_project_context should include development conventions.
+  +         // We run in a temp dir with a git repo and Cargo.toml but no YOYO.md.
+  +         use std::process::Command;
+  +         let dir = tempfile::TempDir::new().unwrap();
+  +         std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+  +         // Initialize a git repo so file listing works
+  +         Command::new("git")
+  +             .args(["init"])
+  +             .current_dir(dir.path())
+  +             .output()
+  +             .ok();
+  ... (55 more lines)
+ ✓ (38.3s)
+  4 tools completed in 1m 3s (4 ✓)
+
+Now let's run the full check:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (467ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (29.1s)
+  3 tools completed in 47.7s (3 ✓)
+
+All 88 tests pass. Let me also run the specific new tests to confirm they're included:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test project_type_hints 2>… ✓ (116ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test project_context_inclu… ✓ (129ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test project_context_skips… ✓ (125ms)
+  3 tools completed in 8.7s (3 ✓)
+
+All tests pass. Let me also run the full format check:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (465ms)
+
+Everything passes. Now let me check the CLAUDE.md architecture section to see if it mentions context.rs:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "context.rs" CLAUDE.md ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "commands_project.rs" CLAUD… ✓ (2ms)
+  2 tools completed in 4.9s (2 ✓)
+
+The context.rs description should mention project-type conventions. Let me update it:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `context.rs` — project context loading, file listing, git status, recently changed files
+  + - `context.rs` — project context loading, file listing, git status, recently changed files, project-type convention hints
+ ✓ (26.8s)
+
+Now let me check docs and README for anything that should reference this:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -l "project context\|YOYO.m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "project context\|YOYO.m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat docs/src/features/context.md ✓ (3ms)
+  3 tools completed in 8.7s (3 ✓)
+
+This page is about context window management, not project context loading. Let me check the architecture doc:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A2 "project context\|YO… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YOYO.md\|project contex… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '85,100p' docs/src/config… ✓ (2ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Perfect — I should add a bullet point about development conventions:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/configuration/system-prompts.md:85..97 ✓ (0ms)
+  ▶ edit docs/src/configuration/system-prompts.md (5 → 6 lines)
+    - **Project instructions** — from `YOYO.md` (primary), `CLAUDE.md` (compatibility alias), or `.yoyo/instructions.md`
+  + - **Development conventions** — auto-detected from project type (Rust, Python, Node, Go, etc.) when no instruction file is present; includes build/test/lint commands
+    - **Project file listing** — from `git ls-files` (up to 200 files)
+    - **Recently changed files** — from `git log` (up to 20 files)
+    - **Git status** — current branch, count of uncommitted and staged changes
+ ✓ (27.7s)
+  2 tools completed in 36.7s (2 ✓)
+
+Now let me do one final full verification:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (28.2s)
+
+All checks pass: format ✓, clippy ✓, build ✓, 88 tests pass ✓.
+
+Now let me commit:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (25ms)
+
+Done! Here's what I implemented:
+
+**`src/commands_project.rs** — Added pub fn project_type_hints(project_type: &ProjectType) -> Option<String>` that returns concise development conventions (3-5 lines) for each recognized project type. Returns None for Unknown.
+
+`src/context.rs` — Modified load_project_context() to:
+1. Import and call detect_project_type + project_type_hints
+2. When no explicit context file (YOYO.md, CLAUDE.md, .yoyo/instructions.md) is found, append a ## Development Conventions section with the hints
+3. Print `{DIM}  context: {project_type} conventions{RESET}` to stderr when hints are injected
+
+**Tests added (7 new):**
+• test_project_type_hints_rust — Rust hints mention cargo ✓
+• test_project_type_hints_python — Python hints mention pytest ✓
+• test_project_type_hints_node — Node hints mention npm/package.json ✓
+• test_project_type_hints_unknown — Unknown returns None ✓
+• test_project_type_hints_all_short — All hints under 500 chars ✓
+• test_project_context_includes_conventions — Conventions appear when no YOYO.md ✓
+• test_project_context_skips_conventions_with_context_file — Skipped when YOYO.md exists ✓
+
+  ↳ 7m 42s · 16938→9974 tokens (21 tok/s) · $1.46
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
