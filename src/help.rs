@@ -811,13 +811,24 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
         "spawn" => Some(
             "/spawn <task> — Spawn a subagent to handle a task\n\n\
              Usage:\n\
-             \x20 /spawn <task description>\n\n\
+             \x20 /spawn <task description>\n\
+             \x20 /spawn --bg <task>         Run in background (returns immediately)\n\
+             \x20 /spawn -o <file> <task>    Capture output to a file\n\
+             \x20 /spawn --bg -o <f> <task>  Background with output capture\n\
+             \x20 /spawn collect <id>        Collect a finished background spawn\n\
+             \x20 /spawn status              Show all tracked spawns\n\n\
              Creates a new AI agent with a separate context window to\n\
              handle the given task. The subagent has access to the same\n\
              tools but operates independently.\n\n\
+             Background spawns (--bg) return control immediately so you can\n\
+             keep working while the subagent runs in parallel. Use\n\
+             /spawn collect <id> to retrieve the result when ready.\n\n\
              Examples:\n\
              \x20 /spawn write unit tests for the parser module\n\
-             \x20 /spawn refactor the error handling in src/lib.rs",
+             \x20 /spawn --bg analyze test coverage for src/\n\
+             \x20 /spawn --bg -o report.md review the error handling\n\
+             \x20 /spawn collect 1\n\
+             \x20 /spawn status",
         ),
         "review" => Some(
             "/review [target] — AI code review\n\n\
@@ -1629,7 +1640,10 @@ pub fn cli_help_text() -> String {
         s,
         "    /architect [on|off] Architect mode — plan strong, implement cheap"
     );
-    let _ = writeln!(s, "    /spawn <task>      Spawn a subagent for a task");
+    let _ = writeln!(
+        s,
+        "    /spawn <task>      Spawn a subagent for a task (--bg for background)"
+    );
     let _ = writeln!(
         s,
         "    /extended <task>   Autonomous mode for long tasks (--turns N)"
@@ -1864,7 +1878,7 @@ pub fn help_text() -> String {
     out.push_str(
         "  /architect [on|off] Toggle architect mode — plan with strong model, implement cheap\n",
     );
-    out.push_str("  /spawn <task>      Spawn a subagent to handle a task (separate context)\n");
+    out.push_str("  /spawn <task>      Spawn a subagent to handle a task (--bg for background)\n");
     out.push_str(
         "                     The model can also delegate subtasks to sub-agents automatically.\n",
     );

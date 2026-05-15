@@ -378,6 +378,69 @@ pub fn format_turn_costs(costs: &[TurnCost]) -> String {
     lines.join("\n")
 }
 
+/// Format a context breakdown table with colors and percentages.
+///
+/// Each category is shown with its token count and percentage of total.
+/// The largest category is highlighted in bold. If tool results exceed 50%,
+/// a suggestion to `/compact` is appended.
+pub fn format_context_breakdown(breakdown: &crate::commands_info::ContextBreakdown) -> String {
+    use super::{BOLD, DIM, RESET, YELLOW};
+
+    let total = breakdown.total.max(1); // avoid division by zero
+    let categories: &[(&str, usize)] = &[
+        ("system prompt", breakdown.system_estimate),
+        ("user messages", breakdown.user_messages),
+        ("assistant", breakdown.assistant_messages),
+        ("tool calls", breakdown.tool_calls),
+        ("tool results", breakdown.tool_results),
+        ("thinking", breakdown.thinking),
+    ];
+
+    // Find the largest non-zero category
+    let max_val = categories.iter().map(|(_, v)| *v).max().unwrap_or(0);
+
+    let mut lines = Vec::new();
+    lines.push(format!("{DIM}  Context breakdown:"));
+
+    for &(label, value) in categories {
+        if value == 0 {
+            continue;
+        }
+        let pct = (value as f64 / total as f64) * 100.0;
+        let tok_str = format_token_count(value as u64);
+        let is_max = value == max_val && value > 0;
+        if is_max {
+            lines.push(format!(
+                "    {BOLD}{:<16} {:>7} tokens  ({:.0}%){RESET}{DIM}",
+                label, tok_str, pct
+            ));
+        } else {
+            lines.push(format!(
+                "    {:<16} {:>7} tokens  ({:.0}%)",
+                label, tok_str, pct
+            ));
+        }
+    }
+
+    lines.push(format!("    {}", "─".repeat(38)));
+    lines.push(format!(
+        "    {:<16} {:>7} tokens",
+        "total",
+        format_token_count(total as u64),
+    ));
+
+    // Advice if tool results dominate
+    let tool_pct = (breakdown.tool_results as f64 / total as f64) * 100.0;
+    if tool_pct > 50.0 {
+        lines.push(format!(
+            "    {YELLOW}💡 Tool results are {:.0}% of context — consider /compact.{RESET}{DIM}",
+            tool_pct
+        ));
+    }
+
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

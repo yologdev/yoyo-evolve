@@ -16,7 +16,7 @@ use crate::git::*;
 
 use std::sync::OnceLock;
 use yoagent::agent::Agent;
-use yoagent::context::total_tokens;
+use yoagent::context::{estimate_tokens, total_tokens};
 use yoagent::*;
 
 /// Session-level cache for self-written percentage so repeated calls
@@ -178,6 +178,114 @@ pub fn handle_status(
 
 // ── /tokens ──────────────────────────────────────────────────────────────
 
+/// Breakdown of what's consuming context tokens by category.
+pub struct ContextBreakdown {
+    /// Estimated tokens for system prompt + project context.
+    pub system_estimate: usize,
+    /// Tokens from user messages.
+    pub user_messages: usize,
+    /// Tokens from assistant text responses.
+    pub assistant_messages: usize,
+    /// Tokens from tool calls (inside assistant messages).
+    pub tool_calls: usize,
+    /// Tokens from tool result messages.
+    pub tool_results: usize,
+    /// Tokens from thinking blocks.
+    pub thinking: usize,
+    /// Total of all categories.
+    pub total: usize,
+}
+
+/// Analyze messages to produce a per-category token breakdown.
+///
+/// Walks each message and categorizes its content. For assistant messages,
+/// separates text/thinking tokens from tool-call tokens so users can see
+/// whether tool results or their own conversation is dominating context.
+pub fn context_breakdown(messages: &[AgentMessage]) -> ContextBreakdown {
+    let system_estimate = estimate_tokens(crate::cli::SYSTEM_PROMPT);
+
+    let mut user_messages: usize = 0;
+    let mut assistant_messages: usize = 0;
+    let mut tool_calls: usize = 0;
+    let mut tool_results: usize = 0;
+    let mut thinking: usize = 0;
+
+    for msg in messages {
+        match msg {
+            AgentMessage::Llm(m) => match m {
+                Message::User { content, .. } => {
+                    user_messages += content_block_tokens(content) + 4;
+                }
+                Message::Assistant { content, .. } => {
+                    // Separate assistant text, thinking, and tool calls
+                    for c in content {
+                        match c {
+                            Content::Text { text } => {
+                                assistant_messages += estimate_tokens(text);
+                            }
+                            Content::Thinking { thinking: t, .. } => {
+                                thinking += estimate_tokens(t);
+                            }
+                            Content::ToolCall {
+                                name, arguments, ..
+                            } => {
+                                tool_calls += estimate_tokens(name)
+                                    + estimate_tokens(&arguments.to_string())
+                                    + 8;
+                            }
+                            Content::Image { data, .. } => {
+                                let raw_bytes = data.len() * 3 / 4;
+                                assistant_messages += (raw_bytes / 750).clamp(85, 16_000);
+                            }
+                        }
+                    }
+                    assistant_messages += 4; // message overhead
+                }
+                Message::ToolResult {
+                    content, tool_name, ..
+                } => {
+                    tool_results += content_block_tokens(content) + estimate_tokens(tool_name) + 8;
+                }
+            },
+            AgentMessage::Extension(ext) => {
+                // Count extensions toward user messages as a catch-all
+                user_messages += estimate_tokens(&ext.data.to_string()) + 4;
+            }
+        }
+    }
+
+    let total =
+        system_estimate + user_messages + assistant_messages + tool_calls + tool_results + thinking;
+
+    ContextBreakdown {
+        system_estimate,
+        user_messages,
+        assistant_messages,
+        tool_calls,
+        tool_results,
+        thinking,
+        total,
+    }
+}
+
+/// Estimate tokens for a content block list (mirrors yoagent's content_tokens).
+fn content_block_tokens(content: &[Content]) -> usize {
+    content
+        .iter()
+        .map(|c| match c {
+            Content::Text { text } => estimate_tokens(text),
+            Content::Image { data, .. } => {
+                let raw_bytes = data.len() * 3 / 4;
+                (raw_bytes / 750).clamp(85, 16_000)
+            }
+            Content::Thinking { thinking, .. } => estimate_tokens(thinking),
+            Content::ToolCall {
+                name, arguments, ..
+            } => estimate_tokens(name) + estimate_tokens(&arguments.to_string()) + 8,
+        })
+        .sum()
+}
+
 pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
     let max_context = crate::cli::effective_context_tokens();
     let messages = agent.messages().to_vec();
@@ -192,6 +300,14 @@ pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
         format_token_count(max_context)
     );
     println!("    {bar}");
+
+    // Show per-category context breakdown
+    if !messages.is_empty() {
+        let breakdown = context_breakdown(&messages);
+        println!();
+        println!("{}", format_context_breakdown(&breakdown));
+    }
+
     if session_total.input > context_used + 1000 {
         println!("    {DIM}(earlier messages were compacted to save space — session totals below show full usage){RESET}");
     }
@@ -2011,5 +2127,194 @@ More text.
         assert!(pct < 100.0, "percentage should be less than 100%");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // --- Context breakdown tests ---
+
+    #[test]
+    fn test_context_breakdown_empty() {
+        let messages: Vec<AgentMessage> = vec![];
+        let bd = context_breakdown(&messages);
+        assert_eq!(bd.user_messages, 0);
+        assert_eq!(bd.assistant_messages, 0);
+        assert_eq!(bd.tool_calls, 0);
+        assert_eq!(bd.tool_results, 0);
+        assert_eq!(bd.thinking, 0);
+        // system_estimate should still be non-zero (from SYSTEM_PROMPT)
+        assert!(bd.system_estimate > 0, "system prompt should have tokens");
+        assert_eq!(bd.total, bd.system_estimate);
+    }
+
+    #[test]
+    fn test_context_breakdown_user_only() {
+        let messages: Vec<AgentMessage> = vec![AgentMessage::Llm(Message::User {
+            content: vec![Content::Text {
+                text: "Hello world, this is a test message".to_string(),
+            }],
+            timestamp: 0,
+        })];
+        let bd = context_breakdown(&messages);
+        assert!(bd.user_messages > 0, "user messages should have tokens");
+        assert_eq!(bd.assistant_messages, 0);
+        assert_eq!(bd.tool_calls, 0);
+        assert_eq!(bd.tool_results, 0);
+        assert_eq!(bd.thinking, 0);
+    }
+
+    #[test]
+    fn test_context_breakdown_mixed() {
+        let messages: Vec<AgentMessage> = vec![
+            AgentMessage::Llm(Message::User {
+                content: vec![Content::Text {
+                    text: "Please help me".to_string(),
+                }],
+                timestamp: 0,
+            }),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![
+                    Content::Text {
+                        text: "I'll help you with that.".to_string(),
+                    },
+                    Content::ToolCall {
+                        id: "tc1".to_string(),
+                        name: "bash".to_string(),
+                        arguments: serde_json::json!({"command": "ls"}),
+                        provider_metadata: None,
+                    },
+                ],
+                stop_reason: yoagent::StopReason::ToolUse,
+                model: "test".to_string(),
+                provider: "test".to_string(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "tc1".to_string(),
+                tool_name: "bash".to_string(),
+                content: vec![Content::Text {
+                    text: "file1.rs\nfile2.rs\nfile3.rs".to_string(),
+                }],
+                is_error: false,
+                timestamp: 0,
+            }),
+        ];
+
+        let bd = context_breakdown(&messages);
+        assert!(bd.user_messages > 0);
+        assert!(bd.assistant_messages > 0);
+        assert!(bd.tool_calls > 0);
+        assert!(bd.tool_results > 0);
+        assert_eq!(bd.thinking, 0);
+        // Total should be sum of all parts
+        assert_eq!(
+            bd.total,
+            bd.system_estimate
+                + bd.user_messages
+                + bd.assistant_messages
+                + bd.tool_calls
+                + bd.tool_results
+                + bd.thinking
+        );
+    }
+
+    #[test]
+    fn test_context_breakdown_with_thinking() {
+        let messages: Vec<AgentMessage> = vec![AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Thinking {
+                    thinking: "Let me think about this carefully for a while...".to_string(),
+                    signature: None,
+                },
+                Content::Text {
+                    text: "Here's my answer.".to_string(),
+                },
+            ],
+            stop_reason: yoagent::StopReason::Stop,
+            model: "test".to_string(),
+            provider: "test".to_string(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        })];
+
+        let bd = context_breakdown(&messages);
+        assert!(bd.thinking > 0, "thinking tokens should be counted");
+        assert!(bd.assistant_messages > 0, "text response should be counted");
+    }
+
+    #[test]
+    fn test_context_breakdown_percentages() {
+        // Create a scenario where tool results dominate
+        let big_result = "x".repeat(4000); // ~1000 tokens
+        let messages: Vec<AgentMessage> = vec![
+            AgentMessage::Llm(Message::User {
+                content: vec![Content::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "tc1".to_string(),
+                tool_name: "bash".to_string(),
+                content: vec![Content::Text { text: big_result }],
+                is_error: false,
+                timestamp: 0,
+            }),
+        ];
+
+        let bd = context_breakdown(&messages);
+        // tool_results should be the largest message-level category
+        assert!(
+            bd.tool_results > bd.user_messages,
+            "tool results ({}) should exceed user messages ({})",
+            bd.tool_results,
+            bd.user_messages
+        );
+    }
+
+    #[test]
+    fn test_format_context_breakdown_output() {
+        let bd = ContextBreakdown {
+            system_estimate: 100,
+            user_messages: 200,
+            assistant_messages: 300,
+            tool_calls: 50,
+            tool_results: 150,
+            thinking: 0,
+            total: 800,
+        };
+        let output = format_context_breakdown(&bd);
+        assert!(output.contains("Context breakdown:"));
+        assert!(output.contains("system prompt"));
+        assert!(output.contains("user messages"));
+        assert!(output.contains("assistant"));
+        assert!(output.contains("tool calls"));
+        assert!(output.contains("tool results"));
+        // thinking is 0, should be skipped
+        assert!(!output.contains("thinking"));
+        // Should contain percentages
+        assert!(output.contains('%'));
+        // Total line
+        assert!(output.contains("total"));
+    }
+
+    #[test]
+    fn test_format_context_breakdown_tool_heavy() {
+        let bd = ContextBreakdown {
+            system_estimate: 100,
+            user_messages: 50,
+            assistant_messages: 50,
+            tool_calls: 20,
+            tool_results: 800,
+            thinking: 0,
+            total: 1020,
+        };
+        let output = format_context_breakdown(&bd);
+        // tool_results > 50% should trigger compact suggestion
+        assert!(
+            output.contains("compact"),
+            "should suggest /compact when tool results dominate: {output}"
+        );
     }
 }

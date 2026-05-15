@@ -115,7 +115,7 @@ See [Session Persistence](../features/sessions.md) for details.
 | Command | Description |
 |---------|-------------|
 | `/status` | Show current model, git branch, working directory, and session token totals |
-| `/tokens` | Show detailed token usage: context window fill level, session totals, and estimated cost |
+| `/tokens` | Show detailed token usage: context window fill level, per-category breakdown, session totals, and estimated cost |
 | `/cost` | Show estimated session cost |
 | `/changelog [N]` | Show recent git commit history (default: 15, max: 100) |
 | `/config` | Show all current settings |
@@ -125,14 +125,24 @@ See [Session Persistence](../features/sessions.md) for details.
 | `/permissions` | Show active security and permission configuration |
 | `/version` | Show yoyo version |
 
-The `/tokens` command shows a visual progress bar of your active context:
+The `/tokens` command shows a visual progress bar of your active context plus a per-category breakdown of what's consuming tokens:
 
 ```
   Active context:
     messages:    12
     current:     45.2k / 200.0k tokens
-    █████████░░░░░░░░░░░ 23%
+
+  Context breakdown:
+    system prompt       ~1.0k tokens  (2%)
+    user messages        8.1k tokens  (18%)
+    assistant           12.3k tokens  (27%)
+    tool calls           2.4k tokens  (5%)
+    tool results        21.4k tokens  (47%)
+    ──────────────────────────────────────
+    total               45.2k tokens
 ```
+
+The largest category is highlighted in bold. If tool results exceed 50% of context, yoyo suggests using `/compact`.
 
 ## Documentation
 

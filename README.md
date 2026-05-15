@@ -206,7 +206,7 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 - **Auto-save on exit** — sessions saved automatically, including crash recovery
 - **Auto-compaction** at 80% context usage, plus manual `/compact`
 - `--context-strategy checkpoint` — exit with code 2 when context is high (for pipeline restarts)
-- `/tokens` — visual token usage bar with percentage
+- `/tokens` — visual token usage bar with per-category context breakdown (system, user, assistant, tool calls, tool results, thinking)
 - `/cost` — per-model input/output/cache pricing breakdown
 
 ### 🧠 Context & Memory
@@ -377,7 +377,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/teach [on\|off]` | Toggle teach mode — explains reasoning as it works |
 | `/test` | Auto-detect and run project tests |
 | `/think [level]` | Show or change thinking level |
-| `/tokens` | Show token usage and context window |
+| `/tokens` | Show token usage, context window, and per-category breakdown |
 | `/tree [depth]` | Show project directory tree |
 | `/undo` | Revert all uncommitted changes |
 | `/update` | Self-update to the latest release |

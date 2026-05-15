@@ -734,6 +734,55 @@ pub fn detect_project_type(dir: &std::path::Path) -> ProjectType {
 
 // ── /plan ────────────────────────────────────────────────────────────────
 
+/// Return short development convention hints for a given project type.
+/// These are injected into project context when no explicit context file exists.
+/// Returns None for Unknown project types.
+pub fn project_type_hints(project_type: &ProjectType) -> Option<String> {
+    let hints = match project_type {
+        ProjectType::Rust => {
+            "Build: `cargo build`\n\
+             Test: `cargo test`\n\
+             Lint: `cargo clippy --all-targets -- -D warnings`\n\
+             Format: `cargo fmt`"
+        }
+        ProjectType::Node => {
+            "Install: `npm install`\n\
+             Test: `npm test`\n\
+             Scripts: check `package.json` \"scripts\" for available commands"
+        }
+        ProjectType::Python => {
+            "Test: `python -m pytest`\n\
+             Lint: `ruff check .` or `flake8`\n\
+             Install deps: `pip install -e .` or `poetry install`"
+        }
+        ProjectType::Go => {
+            "Build: `go build ./...`\n\
+             Test: `go test ./...`\n\
+             Vet: `go vet ./...`"
+        }
+        ProjectType::Java => {
+            "Build: `mvn compile` or `gradle build`\n\
+             Test: `mvn test` or `gradle test`"
+        }
+        ProjectType::Ruby => {
+            "Test: `bundle exec rake test` or `bundle exec rspec`\n\
+             Lint: `bundle exec rubocop`\n\
+             Install: `bundle install`"
+        }
+        ProjectType::Cpp => {
+            "Configure: `cmake -B build`\n\
+             Build: `cmake --build build`\n\
+             Test: `ctest --test-dir build`"
+        }
+        ProjectType::Make => {
+            "Build: `make`\n\
+             Test: `make test`"
+        }
+        ProjectType::Unknown => return None,
+    };
+    Some(hints.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,6 +908,52 @@ mod tests {
         fs::write(dir.path().join("CMakeLists.txt"), "project(test)").unwrap();
         fs::write(dir.path().join("Makefile"), "all:").unwrap();
         assert_eq!(detect_project_type(dir.path()), ProjectType::Cpp);
+    }
+
+    #[test]
+    fn test_project_type_hints_rust() {
+        let hints = project_type_hints(&ProjectType::Rust).unwrap();
+        assert!(hints.contains("cargo"));
+    }
+
+    #[test]
+    fn test_project_type_hints_python() {
+        let hints = project_type_hints(&ProjectType::Python).unwrap();
+        assert!(hints.contains("pytest"));
+    }
+
+    #[test]
+    fn test_project_type_hints_node() {
+        let hints = project_type_hints(&ProjectType::Node).unwrap();
+        assert!(hints.contains("npm") || hints.contains("package.json"));
+    }
+
+    #[test]
+    fn test_project_type_hints_unknown() {
+        assert!(project_type_hints(&ProjectType::Unknown).is_none());
+    }
+
+    #[test]
+    fn test_project_type_hints_all_short() {
+        let all_types = [
+            ProjectType::Rust,
+            ProjectType::Node,
+            ProjectType::Python,
+            ProjectType::Go,
+            ProjectType::Java,
+            ProjectType::Ruby,
+            ProjectType::Cpp,
+            ProjectType::Make,
+        ];
+        for pt in &all_types {
+            let hints = project_type_hints(pt).unwrap();
+            assert!(
+                hints.len() < 500,
+                "{:?} hints too long: {} chars",
+                pt,
+                hints.len()
+            );
+        }
     }
 
     // ── ProjectType Display ──────────────────────────────────────────

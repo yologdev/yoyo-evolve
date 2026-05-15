@@ -87,6 +87,7 @@ This shows each markdown section (headers like `# ...` and `## ...`), their line
 In addition to the system prompt, yoyo automatically injects project context when available:
 
 - **Project instructions** — from `YOYO.md` (primary), `CLAUDE.md` (compatibility alias), or `.yoyo/instructions.md`
+- **Development conventions** — auto-detected from project type (Rust, Python, Node, Go, etc.) when no instruction file is present; includes build/test/lint commands
 - **Project file listing** — from `git ls-files` (up to 200 files)
 - **Recently changed files** — from `git log` (up to 20 files)
 - **Git status** — current branch, count of uncommitted and staged changes

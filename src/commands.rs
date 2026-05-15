@@ -231,7 +231,7 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "provider" => Some("<provider-name>"),
         "context" => Some("show | files | clear"),
         "skill" => Some("list | show | path"),
-        "spawn" => Some("<prompt>"),
+        "spawn" => Some("[--bg] <prompt>"),
         "grep" => Some("<pattern> [path] [-i] [-n]"),
         "find" => Some("<filename-pattern>"),
         "blame" => Some("<file> [line-range]"),

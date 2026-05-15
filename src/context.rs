@@ -2,6 +2,7 @@
 //!
 //! Extracted from `cli.rs` to keep context assembly separate from CLI argument parsing.
 
+use crate::commands_project::{detect_project_type, project_type_hints};
 use crate::format::{is_quiet, DIM, RESET};
 
 /// Project instruction files, checked in order. All found files are concatenated.
@@ -152,6 +153,20 @@ pub fn load_project_context() -> Option<String> {
         None
     };
 
+    // Append project-type conventions if no explicit context file was found
+    let mut conventions_injected = false;
+    if found.is_empty() {
+        let project_type = detect_project_type(std::path::Path::new("."));
+        if let Some(hints) = project_type_hints(&project_type) {
+            if !context.is_empty() {
+                context.push_str("\n\n");
+            }
+            context.push_str("## Development Conventions\n\n");
+            context.push_str(&hints);
+            conventions_injected = true;
+        }
+    }
+
     // Append project memories if available
     let memory = crate::memory::load_memories();
     if let Some(memories_section) = crate::memory::format_memories_for_prompt(&memory) {
@@ -167,6 +182,10 @@ pub fn load_project_context() -> Option<String> {
         if !is_quiet() {
             for name in &found {
                 eprintln!("{DIM}  context: {name}{RESET}");
+            }
+            if conventions_injected {
+                let project_type = detect_project_type(std::path::Path::new("."));
+                eprintln!("{DIM}  context: {project_type} conventions{RESET}");
             }
             if context.contains("## Recently Changed Files") {
                 eprintln!("{DIM}  context: recently changed files{RESET}");
@@ -390,6 +409,81 @@ mod tests {
         assert_ne!(
             PROJECT_CONTEXT_FILES[0], "CLAUDE.md",
             "CLAUDE.md should not be the primary context file"
+        );
+    }
+
+    #[test]
+    fn test_project_context_includes_conventions() {
+        // When run in a directory with no YOYO.md but with a Cargo.toml,
+        // load_project_context should include development conventions.
+        // We run in a temp dir with a git repo and Cargo.toml but no YOYO.md.
+        use std::process::Command;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        // Initialize a git repo so file listing works
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+
+        // Change to temp dir, call load_project_context, change back
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let ctx = load_project_context();
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        let ctx = ctx.unwrap();
+        assert!(
+            ctx.contains("## Development Conventions"),
+            "Should include conventions section"
+        );
+        assert!(
+            ctx.contains("cargo"),
+            "Rust conventions should mention cargo"
+        );
+    }
+
+    #[test]
+    fn test_project_context_skips_conventions_with_context_file() {
+        // When YOYO.md exists, conventions should NOT be injected
+        use std::process::Command;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        std::fs::write(
+            dir.path().join("YOYO.md"),
+            "# My Project\nCustom instructions",
+        )
+        .unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let ctx = load_project_context();
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        let ctx = ctx.unwrap();
+        assert!(
+            !ctx.contains("## Development Conventions"),
+            "Should NOT include conventions when YOYO.md exists"
+        );
+        assert!(
+            ctx.contains("Custom instructions"),
+            "Should include YOYO.md content"
         );
     }
 }

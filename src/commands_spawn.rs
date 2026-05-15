@@ -45,12 +45,16 @@ pub struct SpawnTask {
     pub result: Option<String>,
     /// Optional output file path.
     pub output_path: Option<String>,
+    /// Whether this spawn was launched in the background.
+    pub background: bool,
 }
 
 /// Thread-safe tracker for multiple spawn tasks.
 #[derive(Debug, Clone)]
 pub struct SpawnTracker {
     inner: Arc<Mutex<Vec<SpawnTask>>>,
+    /// JoinHandles for background spawns, keyed by spawn ID.
+    handles: Arc<Mutex<std::collections::HashMap<usize, tokio::task::JoinHandle<()>>>>,
 }
 
 impl SpawnTracker {
@@ -58,11 +62,22 @@ impl SpawnTracker {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(Vec::new())),
+            handles: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 
     /// Register a new spawn task and return its ID.
     pub fn register(&self, task: &str, output_path: Option<String>) -> usize {
+        self.register_with_bg(task, output_path, false)
+    }
+
+    /// Register a new spawn task with background flag and return its ID.
+    pub fn register_with_bg(
+        &self,
+        task: &str,
+        output_path: Option<String>,
+        background: bool,
+    ) -> usize {
         let mut tasks = lock_or_recover(&self.inner);
         let id = tasks.len() + 1;
         tasks.push(SpawnTask {
@@ -71,6 +86,7 @@ impl SpawnTracker {
             status: SpawnStatus::Running,
             result: None,
             output_path,
+            background,
         });
         id
     }
@@ -115,6 +131,37 @@ impl SpawnTracker {
             .count();
         (running, completed, failed)
     }
+
+    /// Store a JoinHandle for a background spawn (for abort if needed).
+    pub fn store_handle(&self, id: usize, handle: tokio::task::JoinHandle<()>) {
+        let mut handles = lock_or_recover(&self.handles);
+        handles.insert(id, handle);
+    }
+
+    /// Try to collect a background spawn's result.
+    /// Returns `Ok(Some(result))` if finished, `Ok(None)` if still running.
+    /// Returns `Err` if the spawn doesn't exist or wasn't a background spawn.
+    pub fn try_collect(&self, id: usize) -> Result<Option<(String, String)>, String> {
+        let tasks = lock_or_recover(&self.inner);
+        let task = tasks.iter().find(|t| t.id == id);
+        match task {
+            None => Err(format!("no spawn #{id} found")),
+            Some(t) if !t.background => {
+                if t.status == SpawnStatus::Completed {
+                    Ok(t.result.clone().map(|r| (t.task.clone(), r)))
+                } else {
+                    Err(format!("spawn #{id} was not a background spawn"))
+                }
+            }
+            Some(t) if t.status == SpawnStatus::Completed => {
+                Ok(t.result.clone().map(|r| (t.task.clone(), r)))
+            }
+            Some(t) if matches!(t.status, SpawnStatus::Failed(_)) => {
+                Err(format!("spawn #{id} {}", t.status))
+            }
+            _ => Ok(None), // Still running
+        }
+    }
 }
 
 #[cfg(test)]
@@ -143,13 +190,20 @@ pub struct SpawnArgs {
     pub task: String,
     /// Optional output file path (`-o <path>`).
     pub output_path: Option<String>,
+    /// Whether to run in background (`--bg` flag).
+    pub background: bool,
+    /// If set, this is a `/spawn collect <id>` request.
+    pub collect_id: Option<usize>,
 }
 
 /// Parse the `/spawn` command input, extracting flags and task.
 ///
 /// Supports:
-/// - `/spawn <task>` — run a task
+/// - `/spawn <task>` — run a task synchronously
+/// - `/spawn --bg <task>` — run a task in the background
 /// - `/spawn -o <path> <task>` — run a task and capture output to a file
+/// - `/spawn --bg -o <path> <task>` — background with output capture
+/// - `/spawn collect <id>` — collect a finished background spawn
 ///
 /// Returns `None` if no task or if this is a subcommand like `status`.
 pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
@@ -158,25 +212,49 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
         return None;
     }
 
-    let parts: Vec<&str> = rest.splitn(3, ' ').collect();
-
-    // Check for -o flag
-    if parts.len() >= 3 && parts[0] == "-o" {
-        let output_path = parts[1].to_string();
-        let task = parts[2].to_string();
-        if task.is_empty() {
-            return None;
+    // Handle `/spawn collect <id>`
+    if let Some(collect_rest) = rest.strip_prefix("collect") {
+        let collect_rest = collect_rest.trim();
+        if let Ok(id) = collect_rest.parse::<usize>() {
+            return Some(SpawnArgs {
+                task: String::new(),
+                output_path: None,
+                background: false,
+                collect_id: Some(id),
+            });
         }
-        return Some(SpawnArgs {
-            task,
-            output_path: Some(output_path),
-        });
+        // "collect" without valid id — fall through to show usage
+        return None;
     }
 
-    // No flags, entire rest is the task
+    let mut words: Vec<&str> = rest.split_whitespace().collect();
+    let mut background = false;
+    let mut output_path = None;
+
+    // Extract flags from the front
+    while !words.is_empty() {
+        if words[0] == "--bg" {
+            background = true;
+            words.remove(0);
+        } else if words[0] == "-o" && words.len() > 1 {
+            output_path = Some(words[1].to_string());
+            words.remove(0); // remove "-o"
+            words.remove(0); // remove the path (now at position 0)
+        } else {
+            break; // stop processing flags once we hit a non-flag word
+        }
+    }
+
+    let task = words.join(" ");
+    if task.is_empty() {
+        return None;
+    }
+
     Some(SpawnArgs {
-        task: rest.to_string(),
-        output_path: None,
+        task,
+        output_path,
+        background,
+        collect_id: None,
     })
 }
 
@@ -291,10 +369,13 @@ pub fn handle_spawn_status(tracker: &SpawnTracker) {
             .map(|p| format!(" → {p}"))
             .unwrap_or_default();
         match &task.status {
-            SpawnStatus::Running => println!(
-                "    {CYAN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
-                id = task.id
-            ),
+            SpawnStatus::Running => {
+                let bg_label = if task.background { " (background)" } else { "" };
+                println!(
+                    "    {CYAN}{status_icon} #{id}: {task_preview}{bg_label}{output_note}{RESET}",
+                    id = task.id
+                );
+            }
             SpawnStatus::Completed => println!(
                 "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
                 id = task.id
@@ -309,7 +390,7 @@ pub fn handle_spawn_status(tracker: &SpawnTracker) {
 }
 
 /// Handle the /spawn command: create a subagent with project context, run a task,
-/// and return the result. Supports output capture and task tracking.
+/// and return the result. Supports output capture, background execution, and task tracking.
 ///
 /// Returns Some(context_msg) to be injected back into the main conversation, or None.
 pub async fn handle_spawn(
@@ -332,8 +413,10 @@ pub async fn handle_spawn(
         Some(a) => a,
         None => {
             println!("{DIM}  usage: /spawn <task>");
-            println!("         /spawn -o <file> <task>   (capture output to file)");
-            println!("         /spawn status             (show tracked spawns)");
+            println!("         /spawn --bg <task>         (run in background)");
+            println!("         /spawn -o <file> <task>    (capture output to file)");
+            println!("         /spawn collect <id>        (collect background result)");
+            println!("         /spawn status              (show tracked spawns)");
             println!("  Spawn a subagent with project context to handle a task.");
             println!("  The result is summarized back into your main conversation.");
             println!("  Example: /spawn read src/main.rs and summarize the architecture{RESET}\n");
@@ -341,6 +424,17 @@ pub async fn handle_spawn(
         }
     };
 
+    // Handle /spawn collect <id>
+    if let Some(id) = args.collect_id {
+        return handle_spawn_collect(tracker, id);
+    }
+
+    // Handle --bg: launch in background
+    if args.background {
+        return handle_spawn_bg(&args, agent_config, model, main_messages, tracker);
+    }
+
+    // Synchronous spawn (existing behavior)
     // Register task in tracker
     let spawn_id = tracker.register(&args.task, args.output_path.clone());
 
@@ -389,6 +483,83 @@ pub async fn handle_spawn(
 
     let context_msg = format_spawn_result(&args.task, &response, spawn_id);
     Some(context_msg)
+}
+
+/// Launch a spawn in the background using tokio::spawn.
+/// Returns None immediately — the result is collected later with `/spawn collect <id>`.
+fn handle_spawn_bg(
+    args: &SpawnArgs,
+    agent_config: &crate::AgentConfig,
+    model: &str,
+    main_messages: &[AgentMessage],
+    tracker: &SpawnTracker,
+) -> Option<String> {
+    // Register task in tracker with background flag
+    let spawn_id = tracker.register_with_bg(&args.task, args.output_path.clone(), true);
+
+    println!("{CYAN}  🐙 spawning subagent #{spawn_id} in background...{RESET}");
+    println!(
+        "{DIM}  task: {}{RESET}",
+        crate::format::truncate_with_ellipsis(&args.task, 100)
+    );
+    println!("{DIM}  use /spawn status to check progress, /spawn collect {spawn_id} to get results{RESET}\n");
+
+    // Prepare everything the background task needs (clone before moving)
+    let project_context = crate::cli::load_project_context();
+    let context_prompt = spawn_context_prompt(main_messages, project_context.as_deref());
+    let sub_config = crate::AgentConfig {
+        system_prompt: context_prompt,
+        ..clone_agent_config(agent_config)
+    };
+    let task_text = args.task.clone();
+    let output_path = args.output_path.clone();
+    let model = model.to_string();
+    let tracker_clone = tracker.clone();
+
+    let handle = tokio::spawn(async move {
+        let mut sub_agent = sub_config.build_agent();
+        let mut bg_usage = Usage::default();
+
+        let response = run_prompt(&mut sub_agent, &task_text, &mut bg_usage, &model)
+            .await
+            .text;
+
+        // Write output to file if -o was specified
+        if let Some(ref out_path) = output_path {
+            if let Err(e) = std::fs::write(out_path, &response) {
+                eprintln!("{RED}  ✗ bg spawn #{spawn_id}: error writing to {out_path}: {e}{RESET}");
+                tracker_clone.fail(spawn_id, format!("write error: {e}"));
+                return;
+            }
+        }
+
+        // Mark completed in tracker
+        tracker_clone.complete(spawn_id, response);
+    });
+
+    tracker.store_handle(spawn_id, handle);
+    None
+}
+
+/// Collect a finished background spawn's result.
+/// Returns Some(context_msg) if the spawn is done, None otherwise.
+fn handle_spawn_collect(tracker: &SpawnTracker, id: usize) -> Option<String> {
+    match tracker.try_collect(id) {
+        Ok(Some((task, result))) => {
+            println!("{GREEN}  ✓ subagent #{id} completed{RESET}");
+            println!("{DIM}  injecting result into main conversation...{RESET}\n");
+            Some(format_spawn_result(&task, &result, id))
+        }
+        Ok(None) => {
+            println!("{CYAN}  ⏳ subagent #{id} is still running...{RESET}");
+            println!("{DIM}  try again later or use /spawn status to check progress{RESET}\n");
+            None
+        }
+        Err(e) => {
+            println!("{RED}  ✗ {e}{RESET}\n");
+            None
+        }
+    }
 }
 
 /// Clone an AgentConfig for building subagents.
@@ -723,5 +894,93 @@ mod tests {
     #[test]
     fn test_parse_spawn_args_status() {
         assert!(parse_spawn_args("/spawn status").is_none());
+    }
+
+    #[test]
+    fn test_parse_spawn_args_bg_flag() {
+        let args = parse_spawn_args("/spawn --bg analyze test coverage");
+        assert!(args.is_some());
+        let args = args.unwrap();
+        assert!(args.background);
+        assert_eq!(args.task, "analyze test coverage");
+        assert!(args.output_path.is_none());
+        assert!(args.collect_id.is_none());
+    }
+
+    #[test]
+    fn test_parse_spawn_args_bg_with_output() {
+        let args = parse_spawn_args("/spawn --bg -o out.txt summarize codebase");
+        assert!(args.is_some());
+        let args = args.unwrap();
+        assert!(args.background);
+        assert_eq!(args.output_path, Some("out.txt".to_string()));
+        assert_eq!(args.task, "summarize codebase");
+        assert!(args.collect_id.is_none());
+    }
+
+    #[test]
+    fn test_parse_spawn_collect() {
+        let args = parse_spawn_args("/spawn collect 3");
+        assert!(args.is_some());
+        let args = args.unwrap();
+        assert_eq!(args.collect_id, Some(3));
+        assert!(args.task.is_empty());
+        assert!(!args.background);
+
+        // collect without valid id returns None
+        assert!(parse_spawn_args("/spawn collect").is_none());
+        assert!(parse_spawn_args("/spawn collect abc").is_none());
+    }
+
+    #[test]
+    fn test_spawn_tracker_store_handle() {
+        let tracker = SpawnTracker::new();
+        let id = tracker.register_with_bg("bg task", None, true);
+
+        // Create a trivial JoinHandle via a dedicated runtime
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        #[allow(clippy::async_yields_async)]
+        let handle: tokio::task::JoinHandle<()> = rt.block_on(async { tokio::spawn(async {}) });
+        tracker.store_handle(id, handle);
+
+        // Verify the handle is stored (it's in the handles map)
+        let handles = crate::sync_util::lock_or_recover(&tracker.handles);
+        assert!(handles.contains_key(&id));
+    }
+
+    #[test]
+    fn test_spawn_status_display_bg() {
+        let tracker = SpawnTracker::new();
+
+        // Register a foreground task
+        let fg_id = tracker.register("fg task", None);
+        // Register a background task
+        let bg_id = tracker.register_with_bg("bg task", None, true);
+
+        let fg = tracker.get(fg_id).unwrap();
+        let bg = tracker.get(bg_id).unwrap();
+
+        // Foreground task should not be marked as background
+        assert!(!fg.background);
+        // Background task should be marked as background
+        assert!(bg.background);
+
+        // Both should be running
+        assert_eq!(fg.status, SpawnStatus::Running);
+        assert_eq!(bg.status, SpawnStatus::Running);
+
+        // try_collect on a running bg task should return Ok(None)
+        assert_eq!(tracker.try_collect(bg_id).unwrap(), None);
+
+        // Complete the bg task and verify try_collect returns the result
+        tracker.complete(bg_id, "bg result".to_string());
+        let collected = tracker.try_collect(bg_id).unwrap();
+        assert!(collected.is_some());
+        let (task, result) = collected.unwrap();
+        assert_eq!(task, "bg task");
+        assert_eq!(result, "bg result");
     }
 }
