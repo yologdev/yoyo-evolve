@@ -104,7 +104,10 @@ pub fn default_editor_model(current_model: &str) -> String {
         return "deepseek-chat".into();
     }
 
-    // xAI: grok-3 → grok-3-mini
+    // xAI: grok-4 → grok-4-mini, grok-3 → grok-3-mini
+    if m == "grok-4" {
+        return "grok-4-mini".into();
+    }
     if m == "grok-3" {
         return "grok-3-mini".into();
     }

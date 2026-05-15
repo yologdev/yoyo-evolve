@@ -361,6 +361,10 @@ pub fn model_context_window(model: &str) -> Option<u64> {
         // Haiku and older Claude models: 200k
         return Some(200_000);
     }
+    // OpenAI codex-mini — 192k
+    if model.contains("codex-mini") {
+        return Some(192_000);
+    }
     // OpenAI GPT-4.1 family — 1M
     if model.contains("gpt-4.1") {
         return Some(1_048_576);

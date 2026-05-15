@@ -2207,7 +2207,7 @@ system_prompt = "You are a Go expert"
         let args: Vec<String> = vec!["yoyo".into(), "--fallback".into(), "openai".into()];
         let config = parse_args(&args).expect("should parse");
         assert_eq!(config.fallback_provider, Some("openai".to_string()));
-        assert_eq!(config.fallback_model, Some("gpt-4o".to_string()));
+        assert_eq!(config.fallback_model, Some("gpt-5".to_string()));
     }
 
     #[test]

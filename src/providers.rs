@@ -44,6 +44,7 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
         "anthropic" => &[
             "claude-opus-4-7",
             "claude-opus-4-6",
+            "claude-sonnet-4-7",
             "claude-sonnet-4-6",
             "claude-sonnet-4-5",
             "claude-sonnet-4-20250514",
@@ -60,23 +61,29 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "gpt-4.1",
             "gpt-4.1-mini",
             "gpt-4.1-nano",
+            "codex-mini",
             "o3",
             "o3-mini",
             "o4-mini",
+            "o4-mini-high",
         ],
         "google" => &[
+            "gemini-3.0-pro",
+            "gemini-3.0-flash",
             "gemini-2.5-pro",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
             "gemini-2.0-flash",
         ],
         "groq" => &[
+            "llama-4-maverick-17b",
+            "llama-4-scout-17b",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
             "mixtral-8x7b-32768",
         ],
-        "xai" => &["grok-4", "grok-3", "grok-3-mini", "grok-2"],
-        "deepseek" => &["deepseek-chat", "deepseek-reasoner"],
+        "xai" => &["grok-4", "grok-4-mini", "grok-3", "grok-3-mini", "grok-2"],
+        "deepseek" => &["deepseek-chat", "deepseek-reasoner", "deepseek-r2"],
         "mistral" => &[
             "mistral-large-latest",
             "mistral-small-latest",
@@ -94,6 +101,7 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
         ],
         "bedrock" => &[
             "anthropic.claude-opus-4-7",
+            "anthropic.claude-sonnet-4-7",
             "anthropic.claude-sonnet-4-6",
             "anthropic.claude-sonnet-4-5-20250929-v1:0",
             "anthropic.claude-sonnet-4-20250514-v1:0",
@@ -109,11 +117,11 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
 /// Get the default model for a given provider.
 pub fn default_model_for_provider(provider: &str) -> String {
     match provider {
-        "openai" => "gpt-4o".into(),
-        "google" => "gemini-2.0-flash".into(),
+        "openai" => "gpt-5".into(),
+        "google" => "gemini-2.5-flash".into(),
         "openrouter" => "anthropic/claude-sonnet-4-6".into(),
         "ollama" => "llama3.2".into(),
-        "xai" => "grok-3".into(),
+        "xai" => "grok-4".into(),
         "groq" => "llama-3.3-70b-versatile".into(),
         "deepseek" => "deepseek-chat".into(),
         "mistral" => "mistral-large-latest".into(),

@@ -143,6 +143,7 @@ pub const KNOWN_MODELS: &[&str] = &[
     "list",
     "claude-opus-4-7",
     "claude-opus-4-6",
+    "claude-sonnet-4-7",
     "claude-sonnet-4-6",
     "claude-sonnet-4-5",
     "claude-sonnet-4-20250514",
@@ -155,15 +156,21 @@ pub const KNOWN_MODELS: &[&str] = &[
     "gpt-4o-mini",
     "gpt-4.1",
     "gpt-4.1-mini",
+    "codex-mini",
     "o3",
     "o3-mini",
     "o4-mini",
+    "o4-mini-high",
+    "gemini-3.0-pro",
+    "gemini-3.0-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     "grok-4",
+    "grok-4-mini",
     "deepseek-chat",
     "deepseek-reasoner",
+    "deepseek-r2",
 ];
 
 /// Thinking level names for `/think <Tab>` completion.
@@ -904,7 +911,7 @@ mod tests {
         let mut agent = config.build_agent();
         handle_provider_switch("openai", &mut config, &mut agent);
         assert_eq!(config.provider, "openai");
-        assert_eq!(config.model, "gpt-4o");
+        assert_eq!(config.model, "gpt-5");
     }
 
     #[test]
@@ -970,7 +977,7 @@ mod tests {
         // Switch to google → should use gemini default
         handle_provider_switch("google", &mut config, &mut agent);
         assert_eq!(config.provider, "google");
-        assert_eq!(config.model, "gemini-2.0-flash");
+        assert_eq!(config.model, "gemini-2.5-flash");
     }
 
     #[test]
