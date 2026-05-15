@@ -381,6 +381,10 @@ pub fn model_context_window(model: &str) -> Option<u64> {
     if model.starts_with("o3") || model.starts_with("o4") {
         return Some(200_000);
     }
+    // Google Gemini 3.x — 1M (estimated, Google's trajectory)
+    if model.contains("gemini-3") {
+        return Some(1_048_576);
+    }
     // Google Gemini 2.5 — 1M
     if model.contains("gemini-2.5") {
         return Some(1_048_576);
@@ -392,6 +396,10 @@ pub fn model_context_window(model: &str) -> Option<u64> {
     // xAI Grok — 131k
     if model.contains("grok") {
         return Some(131_072);
+    }
+    // Groq Llama 4 — 128k (practical API limit)
+    if model.contains("llama-4") {
+        return Some(128_000);
     }
     // DeepSeek — 128k
     if model.contains("deepseek") {
@@ -1761,6 +1769,33 @@ More text.
         // Mistral
         assert_eq!(model_context_window("mistral-large"), Some(128_000));
         assert_eq!(model_context_window("codestral"), Some(128_000));
+    }
+
+    // Day 76: tests for new model context windows
+    #[test]
+    fn test_model_context_window_new_models() {
+        // Gemini 3.x — 1M
+        assert_eq!(model_context_window("gemini-3.0-pro"), Some(1_048_576));
+        assert_eq!(model_context_window("gemini-3.0-flash"), Some(1_048_576));
+
+        // Llama 4 variants — 128k
+        assert_eq!(model_context_window("llama-4-maverick-17b"), Some(128_000));
+        assert_eq!(model_context_window("llama-4-scout-17b"), Some(128_000));
+
+        // claude-sonnet-4-7 — already covered by sonnet-4 branch
+        assert_eq!(model_context_window("claude-sonnet-4-7"), Some(1_000_000));
+
+        // codex-mini — already covered
+        assert_eq!(model_context_window("codex-mini"), Some(192_000));
+
+        // grok-4-mini — covered by grok catch-all
+        assert_eq!(model_context_window("grok-4-mini"), Some(131_072));
+
+        // deepseek-r2 — covered by deepseek catch-all
+        assert_eq!(model_context_window("deepseek-r2"), Some(128_000));
+
+        // o4-mini-high — covered by o4 prefix
+        assert_eq!(model_context_window("o4-mini-high"), Some(200_000));
     }
 
     #[test]

@@ -59,6 +59,10 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
             return Some((2.50, 0.0, 0.0, 10.00)); // gpt-4o
         }
     }
+    // OpenAI Codex-mini (estimated, code-focused model similar to gpt-4.1-mini)
+    if model.contains("codex-mini") {
+        return Some((0.40, 0.0, 0.0, 1.60));
+    }
     if model.starts_with("o4-mini") {
         return Some((1.10, 0.0, 0.0, 4.40));
     }
@@ -88,6 +92,14 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── Google Gemini ─────────────────────────────────────────────────
     // https://ai.google.dev/pricing
+    // Gemini 3.x (estimated, based on 2.5 pricing tiers)
+    if model.contains("gemini-3") {
+        if model.contains("pro") {
+            return Some((1.25, 0.0, 0.0, 10.00)); // gemini-3.0-pro (estimated)
+        }
+        // flash variants
+        return Some((0.15, 0.0, 0.0, 0.60)); // gemini-3.0-flash (estimated)
+    }
     if model.contains("gemini-2.5-pro") {
         return Some((1.25, 0.0, 0.0, 10.00));
     }
@@ -103,7 +115,10 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     if model.contains("deepseek-chat") || model.contains("deepseek-v3") {
         return Some((0.27, 0.0, 0.0, 1.10));
     }
-    if model.contains("deepseek-reasoner") || model.contains("deepseek-r1") {
+    if model.contains("deepseek-reasoner")
+        || model.contains("deepseek-r1")
+        || model.contains("deepseek-r2")
+    {
         return Some((0.55, 0.0, 0.0, 2.19));
     }
 
@@ -122,6 +137,9 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // ── xAI (Grok) ───────────────────────────────────────────────────
     // https://docs.x.ai/docs/models#models-and-pricing
     if model.contains("grok-4") {
+        if model.contains("mini") {
+            return Some((0.60, 0.0, 0.0, 3.00)); // grok-4-mini (estimated, between grok-3-mini and grok-4)
+        }
         return Some((3.00, 0.0, 0.0, 15.00)); // grok-4 (estimated)
     }
     if model.contains("grok-3") {
@@ -155,6 +173,10 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── Groq (hosted models) ─────────────────────────────────────────
     // https://groq.com/pricing/
+    // Llama 4 on Groq (estimated, similar to llama-3.3-70b pricing tier)
+    if model.contains("llama-4") {
+        return Some((0.59, 0.0, 0.0, 0.79));
+    }
     if model.contains("llama-3.3-70b") || model.contains("llama3-70b") {
         return Some((0.59, 0.0, 0.0, 0.79));
     }
@@ -1265,5 +1287,89 @@ mod tests {
         assert!(result.contains("72%"), "got: {result}");
         assert!(result.contains("80.0k read"));
         assert!(result.contains("10.0k written"));
+    }
+
+    // === Day 76: Tests for new model pricing entries ===
+
+    #[test]
+    fn test_pricing_gemini_30_pro() {
+        assert!(model_pricing("gemini-3.0-pro").is_some());
+        let (inp, _, _, out) = model_pricing("gemini-3.0-pro").unwrap();
+        assert!((inp - 1.25).abs() < 0.001);
+        assert!((out - 10.00).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_gemini_30_flash() {
+        assert!(model_pricing("gemini-3.0-flash").is_some());
+        let (inp, _, _, out) = model_pricing("gemini-3.0-flash").unwrap();
+        assert!((inp - 0.15).abs() < 0.001);
+        assert!((out - 0.60).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_codex_mini() {
+        assert!(model_pricing("codex-mini").is_some());
+        let (inp, _, _, out) = model_pricing("codex-mini").unwrap();
+        assert!((inp - 0.40).abs() < 0.001);
+        assert!((out - 1.60).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_grok4_mini() {
+        assert!(model_pricing("grok-4-mini").is_some());
+        let (inp, _, _, out) = model_pricing("grok-4-mini").unwrap();
+        assert!((inp - 0.60).abs() < 0.001);
+        assert!((out - 3.00).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_grok4_still_works() {
+        // Ensure grok-4 (non-mini) still gets full pricing
+        let (inp, _, _, out) = model_pricing("grok-4").unwrap();
+        assert!((inp - 3.00).abs() < 0.001);
+        assert!((out - 15.00).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_deepseek_r2() {
+        assert!(model_pricing("deepseek-r2").is_some());
+        let (inp, _, _, out) = model_pricing("deepseek-r2").unwrap();
+        assert!((inp - 0.55).abs() < 0.001);
+        assert!((out - 2.19).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_llama4_maverick() {
+        assert!(model_pricing("llama-4-maverick-17b").is_some());
+        let (inp, _, _, out) = model_pricing("llama-4-maverick-17b").unwrap();
+        assert!((inp - 0.59).abs() < 0.001);
+        assert!((out - 0.79).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_llama4_scout() {
+        assert!(model_pricing("llama-4-scout-17b").is_some());
+        let (inp, _, _, out) = model_pricing("llama-4-scout-17b").unwrap();
+        assert!((inp - 0.59).abs() < 0.001);
+        assert!((out - 0.79).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_claude_sonnet_47() {
+        // claude-sonnet-4-7 should hit the existing sonnet branch
+        assert!(model_pricing("claude-sonnet-4-7").is_some());
+        let (inp, _, _, out) = model_pricing("claude-sonnet-4-7").unwrap();
+        assert!((inp - 3.00).abs() < 0.001);
+        assert!((out - 15.00).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_pricing_o4_mini_high() {
+        // o4-mini-high should hit the existing o4-mini branch
+        assert!(model_pricing("o4-mini-high").is_some());
+        let (inp, _, _, out) = model_pricing("o4-mini-high").unwrap();
+        assert!((inp - 1.10).abs() < 0.001);
+        assert!((out - 4.40).abs() < 0.001);
     }
 }

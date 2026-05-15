@@ -2508,4 +2508,356 @@ mod tests {
             );
         }
     }
+
+    // ── cli_help_text() tests ──────────────────────────────────────────
+
+    #[test]
+    fn cli_help_text_is_non_empty() {
+        let text = cli_help_text();
+        assert!(!text.is_empty(), "cli_help_text() should not be empty");
+        assert!(
+            text.len() > 500,
+            "cli_help_text() should be substantial (got {} bytes)",
+            text.len()
+        );
+    }
+
+    #[test]
+    fn cli_help_text_contains_usage_section() {
+        let text = cli_help_text();
+        assert!(text.contains("Usage:"), "should contain Usage section");
+        assert!(
+            text.contains("yoyo [OPTIONS] [PROMPT]"),
+            "should show usage synopsis"
+        );
+    }
+
+    #[test]
+    fn cli_help_text_contains_all_important_flags() {
+        let text = cli_help_text();
+        let flags = [
+            "--model",
+            "--provider",
+            "--print",
+            "--thinking",
+            "--system",
+            "--system-file",
+            "--skills",
+            "--disallowed-tools",
+            "--max-tokens",
+            "--max-turns",
+            "--temperature",
+            "--base-url",
+            "--mcp",
+            "--openapi",
+            "--no-color",
+            "--no-bell",
+            "--no-notify",
+            "--no-rtk",
+            "--no-update-check",
+            "--json",
+            "--output-format",
+            "--audit",
+            "--verbose",
+            "--quiet",
+            "--yes",
+            "--auto-commit",
+            "--allow",
+            "--deny",
+            "--allow-dir",
+            "--deny-dir",
+            "--context-strategy",
+            "--context-window",
+            "--continue",
+            "--fallback",
+            "--print-system-prompt",
+            "--help",
+            "--version",
+        ];
+        for flag in &flags {
+            assert!(
+                text.contains(flag),
+                "cli_help_text() must document flag {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_help_text_contains_subcommands_section() {
+        let text = cli_help_text();
+        assert!(
+            text.contains("Subcommands"),
+            "should have Subcommands section"
+        );
+        let subcommands = [
+            "setup",
+            "init",
+            "doctor",
+            "health",
+            "lint",
+            "test",
+            "tree",
+            "map",
+            "run",
+            "diff",
+            "commit",
+            "review",
+            "blame",
+            "grep",
+            "find",
+            "index",
+            "outline",
+            "update",
+            "docs",
+            "skill",
+            "watch",
+            "status",
+            "undo",
+            "changelog",
+            "config",
+            "permissions",
+            "todo",
+            "goal",
+            "memories",
+        ];
+        for sub in &subcommands {
+            assert!(
+                text.contains(sub),
+                "cli_help_text() subcommands section must mention '{sub}'"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_help_text_contains_environment_section() {
+        let text = cli_help_text();
+        assert!(
+            text.contains("Environment:"),
+            "should have Environment section"
+        );
+        assert!(
+            text.contains("ANTHROPIC_API_KEY"),
+            "should mention ANTHROPIC_API_KEY"
+        );
+        assert!(text.contains("Config files"), "should mention config files");
+    }
+
+    #[test]
+    fn cli_help_text_contains_repl_commands_section() {
+        let text = cli_help_text();
+        assert!(
+            text.contains("Commands (in REPL):"),
+            "should have REPL commands section"
+        );
+        // Check a few representative REPL commands are listed
+        for cmd in &["/help", "/quit", "/model", "/spawn", "/diff"] {
+            assert!(
+                text.contains(cmd),
+                "cli_help_text() REPL section must mention {cmd}"
+            );
+        }
+    }
+
+    // ── help_text() tests ──────────────────────────────────────────────
+
+    #[test]
+    fn help_text_is_non_empty() {
+        let text = help_text();
+        assert!(!text.is_empty(), "help_text() should not be empty");
+    }
+
+    #[test]
+    fn help_text_contains_recently_added_commands() {
+        let text = help_text();
+        // Commands added in recent evolution days
+        let recent = [
+            "/spawn", "/retry", "/bg", "/review", "/map", "/grep", "/blame", "/outline", "/fork",
+            "/watch", "/apply", "/open", "/goal", "/skill", "/doctor",
+        ];
+        for cmd in &recent {
+            assert!(
+                text.contains(cmd),
+                "help_text() should list recently added command {cmd}"
+            );
+        }
+    }
+
+    // ── command_help() content tests ───────────────────────────────────
+
+    #[test]
+    fn command_help_grep_mentions_pattern_args() {
+        let help = command_help("grep").expect("grep should have help");
+        assert!(help.contains("pattern"), "grep help should mention pattern");
+        assert!(
+            help.contains("--include"),
+            "grep help should mention --include"
+        );
+        assert!(
+            help.contains("--exclude"),
+            "grep help should mention --exclude"
+        );
+        assert!(help.contains("-C"), "grep help should mention -C context");
+        assert!(help.contains("-c"), "grep help should mention -c count");
+    }
+
+    #[test]
+    fn command_help_spawn_describes_subagent() {
+        let help = command_help("spawn").expect("spawn should have help");
+        assert!(
+            help.contains("subagent") || help.contains("sub-agent") || help.contains("agent"),
+            "spawn help should describe task delegation via agent"
+        );
+        assert!(
+            help.contains("task"),
+            "spawn help should mention task delegation"
+        );
+    }
+
+    #[test]
+    fn command_help_map_mentions_repo_map() {
+        let help = command_help("map").expect("map should have help");
+        assert!(
+            help.contains("map") || help.contains("symbol"),
+            "map help should describe the repo map"
+        );
+        assert!(
+            help.contains("--all") || help.contains("private"),
+            "map help should mention --all or private symbols"
+        );
+    }
+
+    #[test]
+    fn command_help_review_describes_code_review() {
+        let help = command_help("review").expect("review should have help");
+        assert!(
+            help.contains("review"),
+            "review help should mention code review"
+        );
+        assert!(
+            help.contains("--pr") || help.contains("PR"),
+            "review help should mention PR review"
+        );
+        assert!(
+            help.contains("diff") || help.contains("changes"),
+            "review help should mention diff or changes"
+        );
+    }
+
+    #[test]
+    fn command_help_diff_mentions_stat_flag() {
+        let help = command_help("diff").expect("diff should have help");
+        assert!(
+            help.contains("--stat"),
+            "diff help should mention --stat flag"
+        );
+    }
+
+    #[test]
+    fn command_help_returns_none_for_empty_and_garbage() {
+        assert!(command_help("").is_none(), "empty string → None");
+        assert!(
+            command_help("zzz_not_a_command_xyz").is_none(),
+            "garbage → None"
+        );
+        assert!(command_help("   ").is_none(), "whitespace-only → None");
+    }
+
+    // ── command_short_description() tests ──────────────────────────────
+
+    #[test]
+    fn command_short_description_known_commands_non_empty() {
+        let cmds = [
+            "add", "diff", "commit", "grep", "spawn", "map", "review", "model",
+        ];
+        for cmd in &cmds {
+            let desc = command_short_description(cmd)
+                .unwrap_or_else(|| panic!("'{cmd}' should have a short description"));
+            assert!(
+                !desc.is_empty(),
+                "short description for '{cmd}' should not be empty"
+            );
+            assert!(
+                desc.len() < 120,
+                "short description for '{cmd}' should be concise (got {} chars)",
+                desc.len()
+            );
+        }
+    }
+
+    #[test]
+    fn command_short_description_unknown_returns_none_varied() {
+        assert!(command_short_description("xyzzy").is_none());
+        assert!(command_short_description("123").is_none());
+        assert!(command_short_description("help nonexistent").is_none());
+    }
+
+    // ── help_command_completions() tests ───────────────────────────────
+
+    #[test]
+    fn help_command_completions_mostly_unique() {
+        let completions = help_command_completions("");
+        let mut seen = std::collections::HashSet::new();
+        let mut dups = Vec::new();
+        for c in &completions {
+            if !seen.insert(c.as_str()) {
+                dups.push(c.clone());
+            }
+        }
+        // Allow at most 1 known duplicate (/quick appears twice in KNOWN_COMMANDS).
+        assert!(dups.len() <= 1, "too many duplicate completions: {dups:?}");
+    }
+
+    #[test]
+    fn help_command_completions_filters_by_prefix() {
+        let completions = help_command_completions("sp");
+        assert!(
+            completions.contains(&"spawn".to_string()),
+            "prefix 'sp' should match 'spawn'"
+        );
+        assert!(
+            !completions.contains(&"diff".to_string()),
+            "prefix 'sp' should not match 'diff'"
+        );
+    }
+
+    #[test]
+    fn help_command_completions_empty_prefix_returns_all() {
+        let all = help_command_completions("");
+        // Should have a substantial number of commands
+        assert!(
+            all.len() >= 30,
+            "empty prefix should return many commands, got {}",
+            all.len()
+        );
+    }
+
+    // ── handle_help_command() edge case tests ──────────────────────────
+
+    #[test]
+    fn handle_help_command_empty_returns_false() {
+        // Empty arg means "show general help", returns false
+        assert!(!handle_help_command("/help"));
+        assert!(!handle_help_command("/help   "));
+    }
+
+    #[test]
+    fn handle_help_command_known_command_returns_true() {
+        // Known command should print help and return true
+        assert!(handle_help_command("/help add"));
+        assert!(handle_help_command("/help diff"));
+    }
+
+    #[test]
+    fn handle_help_command_strips_slash_prefix() {
+        // Should work whether user types "/help diff" or "/help /diff"
+        assert!(handle_help_command("/help /diff"));
+        assert!(handle_help_command("/help /add"));
+    }
+
+    #[test]
+    fn handle_help_command_unknown_still_returns_true() {
+        // Unknown command should print "Unknown command" and still return true
+        // (it handled the input, even if command wasn't found)
+        assert!(handle_help_command("/help zzz_nonexistent"));
+    }
 }
