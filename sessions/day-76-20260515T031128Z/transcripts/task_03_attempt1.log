@@ -1,0 +1,286 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the `--disallowed-tools` flag. Let me start by understanding the current codebase structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS" src/cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools\|disal… ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '152,220p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "collect_repeatable_flag…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct Config" src/cli_… ✓ (5ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '63,170p' src/cli_config.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,410p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+  7 tools completed in 21.6s (7 ✓)
+
+Now let me see the Config struct fields and how `build_tools is called in main.rs`:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '63,96p' src/cli_config.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_tools\|disallowed… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_tools" src/main.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_tools\|build_agen…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_tools\|tools.*=" … ✓ (4ms)
+ ✓ (5ms)
+  5 tools completed in 9.6s (5 ✓)
+
+Let me look at the AgentConfig struct and how it uses build_tools:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '386,470p' src/agent_buil… ✓ (4ms)
+
+Now I see the pattern. The AgentConfig has the tools built inside `configure_agent. I need to add disallowed_tools to Config, propagate it to AgentConfig, and filter tools after build_tools(). Let me check what fields AgentConfig` has:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '388,410p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '388,408p' src/agent_buil… ✓ (3ms)
+  2 tools completed in 7.0s (2 ✓)
+
+The output is being truncated. Let me try a different approach:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:388..413 ✓ (1ms)
+
+Now let me see the Config struct:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:63..98 ✓ (0ms)
+  ▶ read src/cli_config.rs:97..102 ✓ (0ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Now let me find where the Config is constructed in parse_args:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Config {" src/cli.rs | … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Ok(Config" src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Config {" src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:860..915 ✓ (1ms)
+  4 tools completed in 18.8s (4 ✓)
+
+Now let me look at how AgentConfig is created from Config:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentConfig {" src/main… ✓ (4ms)
+  ▶ read src/main.rs:610..650 ✓ (1ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Now let me check the help text in help.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed\|--allow\|--… ✓ (4ms)
+  ▶ read src/help.rs:1255..1295 ✓ (1ms)
+  2 tools completed in 10.7s (2 ✓)
+
+Now I have a clear picture. Let me also check the configure_agent method more closely to understand where tool filtering should happen:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:411..481 ✓ (1ms)
+
+Good. Now I have a complete picture. The cleanest approach is:
+
+1. Add disallowed_tools: Vec<String> to Config in `cli_config.rs`
+2. Add disallowed_tools: Vec<String> to AgentConfig in agent_builder.rs
+3. Parse the flag in cli.rs
+4. Propagate from Config to AgentConfig in main.rs
+5. Filter tools in `configure_agent after build_tools()` call
+6. Add help text
+7. Add tests
+
+Let me start:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 39.2s (8 ✓)
+
+Let's start implementing. First, add the field to Config:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli_config.rs (3 → 4 lines)
+        pub print_mode: bool,
+        pub auto_watch: bool,
+  +     pub disallowed_tools: Vec<String>,
+    }
+ ✓ (6.9s)
+  2 tools completed in 13.8s (2 ✓)
+
+Good, expected. Let me continue with the other changes:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/agent_builder.rs (4 → 5 lines)
+        pub fallback_provider: Option<String>,
+        pub fallback_model: Option<String>,
+        pub auto_watch: bool,
+  +     pub disallowed_tools: Vec<String>,
+    }
+ ✓ (6.9s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 19.1s (4 ✓)
+
+Now let me fix all the places that construct AgentConfig and Config. Let me find them all:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentConfig {" src/*.rs… ✓ (7ms)
+
+That's a lot of places. Let me fix them all. I'll handle them file by file. Let me see the context around each:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 52s)
+
+That sub_agent didn't work well. Let me do it myself systematically:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B2 -A2 "auto_watch" src… ✓ (5ms)
+
+Now I'll add disallowed_tools after every auto_watch line in struct literals:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_watch:" src/main.r… ✓ (3ms)
+  ▶ read src/main.rs:632..636 ✓ (0ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Wait — looks like main.rs:633 already has it from a prior attempt? No, the line after is the new one I added. Let me check:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/m… ✓ (3ms)
+
+Some of these were already fixed by the sub_agent! Let me check which files still need fixes:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep "missing… ✓ (2.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (2.4s)
+  2 tools completed in 9.1s (2 ✓)
+
+The sub_agent added disallowed_tools after `..test_agent_config(...) and ..clone_agent_config(...)` — that's a Rust struct update syntax issue. The `..expr` must be the last thing in the struct literal. Let me fix these:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1442..1452 ✓ (0ms)
+
+The ..test_agent_config(...) spread syntax already includes disallowed_tools from the test helper. I need to remove the extra field:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (3 → 2 lines)
+                ..test_agent_config("anthropic", "claude-opus-4-6")
+  -             disallowed_tools: vec![],
+            };
+ ✗ (0ms)
+    │ old_text matches 11 locations in src/agent_builder.rs. Include more surrounding context to make the match unique.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools: vec!\… ✓ (3ms)
+  2 tools completed in 7.2s (1 ✓, 1 ✗)
+
+The sub_agent added it everywhere, including after .. spread expressions. Let me check which ones are problematic:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B1 "disallowed_tools: v… ✓ (4ms)
+
+11 problematic locations. And in commands_spawn.rs:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B1 "disallowed_tools: v… ✓ (3ms)
+
+The line 361 one is after ..clone_agent_config. Need to remove that one. The line 419 one is fine.
+
+Let me use sed to remove these problematic lines. The pattern is: a `..something line followed by disallowed_tools: vec![],`:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (20 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -20 ✓ (5.9s)
+  2 tools completed in 11.4s (2 ✓)
+
+Good, it builds! Now let me handle the remaining tasks. Let me also check if cli.rs has the disallowed_tools in the Config literal:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/c… ✓ (3ms)
+
+Good, but I need to parse the actual flag value. Let me now do the parsing:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+First, add to KNOWN_FLAGS:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (4 → 5 lines)
+        "--print",
+        "--quiet",
+        "-q",
+  +     "--disallowed-tools",
+        "--help",
+ ✓ (7.0s)
+
+Now I also need to add --disallowed-tools to `flags_needing_values` so positional arg collection skips its value. Let me check that:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "flags_needing_values\|F… ✓ (4ms)
+  ▶ read src/cli.rs:671..701 ✓ (1ms)
+  ▶ edit src/cli.rs (4 → 5 lines)
+            "--context-strategy",
+            "--context-window",
+            "--fallback",
+  +         "--disallowed-tools",
+        ];
+ ✓ (6.9s)
+  3 tools completed in 15.4s (3 ✓)
+
+Now parse the actual flag values. Let me find where similar flags are parsed and add the disallowed-tools parsing near the auto_watch parsing at the end of parse_args:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:895..910 ✓ (1ms)
+
+Now I need to replace disallowed_tools: vec![] with actual parsing. The flag is --disallowed-tools and values are comma-separated. I'll use `collect_repeatable_flag` and then split on commas:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 8 lines)
+            auto_watch: crate::config::parse_auto_watch_from_config(&file_config),
+  -         disallowed_tools: vec![],
+  +         disallowed_tools: collect_repeatable_flag(args, "--disallowed-tools")
+  +             .iter()
+  +             .flat_map(|v| v.split(','))
+  +             .map(|s| s.trim().to_string())
+  +             .filter(|s| !s.is_empty())
+  +             .collect(),
+        })
+ ✓ (6.9s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 11.6s (2 ✓)
+
+Now fix the test Config in main.rs:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1285..1315 ✓ (1ms)
+  ▶ read src/main.rs:1314..1329 ✓ (0ms)
+  ▶ edit src/main.rs (3 → 4 lines)
+                print_mode: false,
+                auto_watch: true,
+  +             disallowed_tools: vec![],
+            }
+ ✓ (10.9s)
+  3 tools completed in 23.4s (3 ✓)
+
+Good — now the only error is that disallowed_tools is never read on AgentConfig. Let me implement the filtering:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Now I need to filter tools in configure_agent. The best place is right after `build_tools() and before with_tools()`:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:426..456 ✓ (1ms)
+
+I need to break out the build_tools call to filter it before passing to with_tools:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (19 → 30 lines)
+  + 
+  +         let mut tools = build_tools(
+  +             self.auto_approve,
+  +             &self.permissions,
+  +             &self.dir_restrictions,
+  +             if std::io::stdin().is_terminal() {
+  +                 TOOL_OUTPUT_MAX_CHARS
+  +             } else {
+  +                 TOOL_OUTPUT_MAX_CHARS_PIPED
+  +             },
+  +             is_audit_enabled(),
+  +             self.shell_hooks.clone(),
+  +         );
+  + 
+  +         // Filter out disallowed tools (--disallowed-tools flag)
+  +         if !self.disallowed_tools.is_empty() {
+  +             tools.retain(|t| !self.disallowed_tools.contains(&t.name().to_string()));
+  +             eprintln!(
+  +                 "{DIM}  🔒 Disabled tools: {}{RESET}",
+  +                 self.disallowed_tools.join(", ")
+  ... (22 more lines)
+ ✓ (1m 47s)
+
+Now I need to make sure the DIM and RESET constants are available in this file:
+  ╭─ Turn 68 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use.*DIM\|use.*RESET\|u… ✓ (4ms)
+
+  ↳ 10m 1s · 21775→9103 tokens (15 tok/s) · $1.81
+  ⬤ 12% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

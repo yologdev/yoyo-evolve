@@ -1,0 +1,384 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code, then implement the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_json_output" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "to_json_summary\|Change… ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/session.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,170p' src/main.rs ✓ (5ms)
+ ✓ (4ms)
+  4 tools completed in 6.4s (4 ✓)
+
+Now let me see the full ChangeKind enum and understand the task's requirement. The task mentions Created, Modified, Deleted variants, but the actual code has Write and Edit. Let me check more carefully.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ChangeKind" src/session…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,100p' src/session.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Good. The existing ChangeKind has Write and Edit (not Created, Modified, Deleted as the task description assumed). I'll adapt — map Write to "created" and Edit to "modified" wouldn't be right either since Write could be either create or overwrite. Let me use the actual variant names as lowercase strings.
+
+Now let me look at the call sites and existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '250,340p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,460p' src/main.rs ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me see where session_changes is defined in the calling context:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_changes" src/ma… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '220,230p' src/main.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '410,420p' src/main.rs ✓ (4ms)
+ ✓ (3ms)
+  3 tools completed in 5.2s (3 ✓)
+
+Now I need to see the full run_single_prompt function signature to understand where session_changes comes from:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '148,230p' src/main.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '375,460p' src/main.rs ✓ (4ms)
+  2 tools completed in 11.1s (2 ✓)
+
+Let me see the full piped mode function signature:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "async fn run_piped\|fn …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '350,380p' src/main.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now I have the full picture. Let me look at the existing tests to understand the pattern:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '880,950p' src/main.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '990,1140p' src/main.rs ✓ (5ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I have a clear picture. Let me plan the implementation:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 17.8s (6 ✓)
+
+Let me start with tests first, then implement.
+
+### Step 1: Add `to_json_summary()` to `SessionChanges` and tests
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,10p' src/session.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+I need to check if serde_json is already used in this file:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "serde_json" src/session.rs ✓ (3ms)
+
+Not yet. Let me check Cargo.toml for serde_json dependency:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "serde_json" Cargo.toml ✓ (3ms)
+
+Good, it's a dependency. Now let me look at the end of session.rs to see where tests are, and find the right place to add the method:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,90p' src/session.rs ✓ (3ms)
+
+I'll add to_json_summary() right before the closing } of the main impl SessionChanges block (before the #[cfg(test)] impl):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/session.rs (5 → 31 lines)
+        /// Clear all tracked changes.
+        pub fn clear(&self) {
+            lock_or_recover(&self.inner).clear();
+  +     }
+  + 
+  +     /// Return a JSON summary of file changes for `--json` output.
+  +     ///
+  +     /// Format:
+  +     /// ```json
+  +     /// { "files_changed": 2, "changes": [
+  +     ///     { "path": "src/main.rs", "kind": "write" },
+  +     ///     { "path": "src/cli.rs", "kind": "edit" }
+  +     /// ]}
+  +     /// ```
+  +     pub fn to_json_summary(&self) -> serde_json::Value {
+  +         let changes = lock_or_recover(&self.inner);
+  +         let entries: Vec<serde_json::Value> = changes
+  +             .iter()
+  +             .map(|c| {
+  +                 serde_json::json!({
+  ... (11 more lines)
+ ✓ (10.9s)
+
+Expected — the method isn't used yet. Let me continue with the other changes first, then it'll compile. Let me now update build_json_output():
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.1s (2 ✓)
+
+### Step 2: Update build_json_output() signature and body
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (19 → 21 lines)
+        model: &str,
+        usage: &Usage,
+        is_error: bool,
+  +     session_changes: &SessionChanges,
+    ) -> String {
+        let cost_usd = estimate_cost(usage, model);
+        let json_obj = serde_json::json!({
+  ···
+            },
+            "cost_usd": cost_usd,
+            "is_error": is_error,
+  +         "session": session_changes.to_json_summary(),
+        });
+        serde_json::to_string(&json_obj).unwrap_or_else(|_| "{}".to_string())
+    }
+ ✓ (6.8s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 11.8s (2 ✓)
+
+### Step 3: Update all call sites
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me see each call site carefully:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_json_output(" src… ✓ (3ms)
+
+Let me see the context around each non-test call site:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '263,280p' src/main.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '265,278p' src/main.rs ✓ (3ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Let me get better context. I need lines around each build_json_output call:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '265,276p' src/main.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=265 && NR<=280' src/mai… ✓ (4ms)
+  2 tools completed in 5.4s (2 ✓)
+
+The read_file tool will work better:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:260..285 ✓ (1ms)
+  ▶ read src/main.rs:305..325 ✓ (1ms)
+  ▶ read src/main.rs:332..342 ✓ (1ms)
+  ▶ read src/main.rs:438..458 ✓ (1ms)
+  4 tools completed in 11.3s (4 ✓)
+
+Now I know there are 4 non-test call sites. All are in `run_single_prompt and run_piped_mode, both of which have session_changes` available. Let me update them all:
+
+Call site 1 (line 269): Image prompt error path in run_single_prompt
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (6 → 7 lines)
+                                    &final_response,
+                                    &agent_config.model,
+                                    &session_total,
+  -                                 true
+  +                                 true,
+  +                                 &session_changes,
+                                )
+ ✓ (6.8s)
+
+Good, continuing with the other call sites:
+
+Call site 2 (line 314): Text-only prompt error path
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (1 → 1 lines)
+  -                     build_json_output(&final_response, &agent_config.model, &session_total, true)
+  +                     build_json_output(&final_response, &agent_config.model, &session_total, true, &session_changes)
+ ✓ (6.8s)
+
+**Call site 3 (line 339)**: Success path in run_single_prompt
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (1 → 1 lines)
+  -             build_json_output(&response, &agent_config.model, &session_total, false)
+  +             build_json_output(&response, &agent_config.model, &session_total, false, &session_changes)
+ ✓ (6.8s)
+
+**Call site 4 (line 447)**: run_piped_mode
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (6 → 7 lines)
+                    &response,
+                    &agent_config.model,
+                    &session_total,
+  -                 should_exit_error
+  +                 should_exit_error,
+  +                 &session_changes,
+                )
+ ✓ (6.8s)
+
+Good, now just the test call sites remain. Let me update them all at once:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+### Step 4: Update existing tests
+
+Let me see all test calls and update them. I'll use a sub-agent to handle the mechanical test updates:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_json_output(" src… ✓ (4ms)
+
+There are 7 test call sites (lines 905, 937, 1017, 1041, 1067, 1107, 1130). Each needs &SessionChanges::new() as the last argument. Let me do them all:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let result = build_jso… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let result = build_jso… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let result = build_jso… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let result = build_jso… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/let result = build_jso… ✓ (4ms)
+  5 tools completed in 14.8s (5 ✓)
+
+Now let me also check the test that checks key count — it was asserting exactly 5 top-level keys, but now we have 6:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1067..1092 ✓ (1ms)
+  ▶ edit src/main.rs (12 → 13 lines)
+  -         // Exactly 5 top-level keys
+  +         // Exactly 6 top-level keys
+            assert_eq!(
+                obj.len(),
+  -             5,
+  -             "expected 5 top-level keys, got {:?}",
+  +             6,
+  +             "expected 6 top-level keys, got {:?}",
+                obj.keys().collect::<Vec<_>>()
+            );
+            assert!(obj.contains_key("response"));
+  ···
+            assert!(obj.contains_key("usage"));
+            assert!(obj.contains_key("cost_usd"));
+            assert!(obj.contains_key("is_error"));
+  +         assert!(obj.contains_key("session"));
+ ✓ (45.8s)
+  2 tools completed in 53.0s (2 ✓)
+
+Now let me try building to see if the test module has SessionChanges imported:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use.*session\|use.*Sess… ✓ (4ms)
+
+Good, `SessionChanges` is already imported at the top level. Let me also check if it's in scope for the test module:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (3ms)
+  ▶ read src/main.rs:711..736 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+`use super::*; brings in SessionChanges` — good. Let me try building:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (133ms)
+
+Build passes. Let me run the tests:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (12.2s)
+
+All tests pass. Now let me add the new tests.
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+### Step 5: Add new tests
+
+First, let me find the right place in session.rs tests:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/session.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+I'll add the new tests at the end of the test module, and also add a test in main.rs for build_json_output with session changes. Let me add them:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/session.rs (17 → 72 lines)
+    
+            hist.clear();
+            assert!(hist.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_to_json_summary_empty() {
+  +         let changes = SessionChanges::new();
+  +         let summary = changes.to_json_summary();
+  +         assert_eq!(summary["files_changed"], 0);
+  +         assert!(summary["changes"].as_array().unwrap().is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_to_json_summary_mixed_changes() {
+  +         let changes = SessionChanges::new();
+  +         changes.record("src/main.rs", ChangeKind::Write);
+  +         changes.record("src/cli.rs", ChangeKind::Edit);
+  +         changes.record("src/new.rs", ChangeKind::Write);
+  + 
+  ... (40 more lines)
+ ✓ (46.5s)
+
+Now add a test in main.rs for build_json_output with session changes:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1130..1150 ✓ (1ms)
+  ▶ edit src/main.rs (4 → 64 lines)
+            assert_eq!(parsed["model"], "unknown-model-xyz");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_json_output_includes_session_changes() {
+  +         let response = PromptOutcome {
+  +             text: "done".to_string(),
+  +             last_tool_error: None,
+  +             last_tool_name: None,
+  +             was_overflow: false,
+  +             last_api_error: None,
+  +         };
+  +         let usage = Usage {
+  +             input: 100,
+  +             output: 50,
+  +             cache_read: 0,
+  +             cache_write: 0,
+  +             total_tokens: 150,
+  +         };
+  +         let changes = SessionChanges::new();
+  ... (44 more lines)
+ ✓ (46.3s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 0s (3 ✓)
+
+### Step 6: Run all checks
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (579ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (34.7s)
+  5 tools completed in 1m 4s (5 ✓)
+
+Wait — 88 tests? I expected more since I added new tests. Let me check if my new tests are being compiled:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "json_… ✓ (12.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (172ms)
+  2 tools completed in 19.2s (2 ✓)
+
+They're all there. Let me verify the count is actually higher now:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (12.1s)
+
+All 2770 + 88 tests pass. Let me also run the format check:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (589ms)
+
+All checks pass. Let me commit:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (8ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Hmm, there are changes in cli.rs, cli_config.rs, and help.rs too — those must be pre-existing uncommitted changes. Let me check:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD -- src/main… ✓ (5ms)
+
+Let me verify these are from a prior task:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/cli.rs | he… ✓ (6ms)
+
+Yes, these are from a previous task (Task 1). I should only commit my changes to `src/main.rs and src/session.rs. But actually, the instruction says git add -A` — I should commit everything as it's all part of this session's work.
+
+Let me check if the other changes are also clean:
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (33.7s)
+
+  ↳ 10m 6s · 21334→11486 tokens (18 tok/s) · $2.19
+  ⬤ 13% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/c… ✓ (7ms)
+
+Good, the basic implementation exists. Now let me check what's missing:
+
+1. Tests for the flag
+2. `--help text in help.rs`
+
+Let me also check if --disallowed-tools is in KNOWN_FLAGS:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed" src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed" src/help.rs ✓ (3ms)
+  2 tools completed in 4.3s (2 ✓)
+
+No mention in help.rs. Let me look at the help text to find where to add it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cli_help_text" src/help… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1132,1250p' src/help.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1250,1290p' src/help.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1330p' src/help.rs ✓ (4ms)
+  4 tools completed in 9.2s (4 ✓)
+
+Good, now I know the structure. I need to:
+1. Add --disallowed-tools to the help text in help.rs
+2. Add tests in cli.rs
+
+Let me find a good place to insert the --disallowed-tools line in help.rs, near the safety/filtering flags:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deny-dir\|allow-dir\|de… ✓ (4ms)
+
+I'll add --disallowed-tools right after --deny-dir, since it's in the same category of access restriction flags:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (7 → 11 lines)
+        let _ = writeln!(
+            s,
+            "  --deny-dir <d>    Block file access to this directory (repeatable)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --disallowed-tools <names>  Comma-separated tool names to disable (e.g., bash,write_file)"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (46.1s)
+
+Now let me also add it to the REPL help text (the one around line 506):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '500,520p' src/help.rs ✓ (4ms)
+  ▶ edit src/help.rs (2 → 3 lines)
+  -              \x20 --deny-dir <path>     Block file access to these directories\n\n\
+  +              \x20 --deny-dir <path>     Block file access to these directories\n\
+  +              \x20 --disallowed-tools <names>  Comma-separated tool names to disable\n\n\
+                 Or in .yoyo.toml:\n\
+ ✓ (1m 44s)
+  2 tools completed in 1m 49s (2 ✓)
+
+Now let me check the existing tests in cli.rs to understand the pattern, then add the required tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/cli… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '951,1000p' src/cli.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -100 src/cli.rs ✓ (4ms)
+  4 tools completed in 9.5s (4 ✓)
+
+Now let me see how collect_repeatable_flag works and how the current parsing handles disallowed_tools:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "collect_repeatable_flag… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '378,400p' src/cli.rs ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+I see - collect_repeatable_flag returns values as-is, but the task says comma-separated values should be split. Let me check how the disallowed_tools are currently stored and whether the comma-splitting happens:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,910p' src/cli.rs ✓ (3ms)
+
+The comma splitting is already handled. Now let me add the four required tests. I'll add them at the end of the test module in cli.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (16 → 66 lines)
+            assert!(
+                config.prompt_arg.is_none(),
+                "--print without -p should have no prompt"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_disallowed_tools_single() {
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         let args = vec![
+  +             "yoyo".to_string(),
+  +             "--disallowed-tools".to_string(),
+  +             "bash".to_string(),
+  +         ];
+  +         let config = parse_args(&args).expect("should parse");
+  +         assert_eq!(config.disallowed_tools, vec!["bash".to_string()]);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_disallowed_tools_comma_separated() {
+  ... (36 more lines)
+ ✓ (47.4s)
+
+Now I also need to check the test in help.rs that validates `cli_help_text` contains key flags — it might need updating:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2413,2450p' src/help.rs ✓ (4ms)
+
+Good, this test doesn't need updating — it checks for key flags and --disallowed-tools is an addition, not one of the key flags tested. Now let's also check `cli.rs::help_text() references cli_help_text() from help.rs` to make sure the help text update propagates:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn help_text\|pub fn he… ✓ (4ms)
+
+Good, help_text() in cli.rs delegates to cli_help_text() in help.rs. Now let's run the checks:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (170ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (29.0s)
+  3 tools completed in 47.7s (3 ✓)
+
+All 88 tests pass. Let me verify the new tests specifically ran:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test disallowed 2>&1 ✓ (727ms)
+
+All 4 new tests pass. Let me verify the help text includes the new flag:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run -- --help 2>&1 | grep … ✓ (136ms)
+
+Everything is in place. Let me do a final complete verification:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (50.1s)
+
+All checks pass. Here's a summary of what I fixed:
+
+### Changes made:
+
+1. **src/help.rs — Added --disallowed-tools to cli_help_text()**:
+   • Added the flag description line after --deny-dir in the CLI help output: --disallowed-tools <names>  Comma-separated tool names to disable (e.g., bash,write_file)
+   • Also added it to the `/permissions` REPL help text for consistency
+
+2. **src/cli.rs — Added 4 unit tests**:
+   • test_disallowed_tools_single — verifies parsing with a single tool name (`--disallowed-tools bash`)
+   • test_disallowed_tools_comma_separated — verifies comma-separated parsing (`--disallowed-tools bash,write_file,edit_file` → 3 separate entries)
+   • test_disallowed_tools_in_known_flags — verifies --disallowed-tools is in KNOWN_FLAGS
+   • test_disallowed_tools_empty_when_not_provided — verifies the field is empty when the flag is not used
+
+  ↳ 6m 32s · 7767→4476 tokens (11 tok/s) · $0.555
+  ⬤ 4% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

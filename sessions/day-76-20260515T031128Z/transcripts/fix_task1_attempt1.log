@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the implementation to see what's already done and what tests need to be added.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "print_mode\|--print" sr… ✓ (6ms)
+
+Good, the feature is implemented. Now let me look at existing tests to understand the test patterns used.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '943,1020p' src/cli.rs ✓ (4ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me look at the KNOWN_FLAGS test and patterns for flag parsing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS\|known_flag… ✓ (4ms)
+
+Let me look at how existing similar flag tests are structured:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1225,1260p' src/cli.rs ✓ (4ms)
+
+Now let me look at how parse_args tests look - tests that check Config fields:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_args\|fn test.*co… ✓ (4ms)
+
+Let me look at how parse_args is called in tests - specifically, is there a test that checks config fields from parse_args?
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1190,1225p' src/cli.rs ✓ (3ms)
+
+Now let me look at how parse_args works - it returns Option<Config> so I need to see if I can call it in tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '646,720p' src/cli.rs ✓ (4ms)
+
+`parse_args calls try_dispatch_subcommand and load_config_file` and has various side effects. Let me look at the simpler internal `parse_flags_only` or similar, or see how the struct is built internally:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '490,570p' src/cli.rs ✓ (4ms)
+
+Now I understand the structure. The parse_output_flags function is internal and testable. Let me also check how the --print without -p warning works in main.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '675,690p' src/main.rs ✓ (3ms)
+
+Now let me find where the existing tests end so I can add the new tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/cli.rs ✓ (3ms)
+
+Now I have a clear picture. I need to add three tests right before the closing } of the test module. Let me add them:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (8 → 51 lines)
+            let args = vec!["yoyo".to_string()];
+            let config = parse_args(&args).expect("should parse");
+            assert_eq!(config.output_format, OutputFormat::Text);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_print_flag_recognized_as_known_flag() {
+  +         assert!(
+  +             KNOWN_FLAGS.contains(&"--print"),
+  +             "--print should be in KNOWN_FLAGS"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_print_flag_sets_print_mode() {
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         let args = vec!["yoyo".to_string(), "--print".to_string()];
+  +         let config = parse_args(&args).expect("should parse");
+  +         assert!(config.print_mode, "--print should set print_mode to true");
+  +     }
+  ... (28 more lines)
+ ✓ (7.1s)
+
+Let me check the Config struct to find the correct field name for prompt:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub.*prompt" src/cli_co… ✓ (3ms)
+
+It's prompt_arg, not prompt:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (6 → 6 lines)
+            assert!(config.print_mode);
+  -         // prompt should be None since -p was not provided
+  +         // prompt_arg should be None since -p was not provided
+            assert!(
+  -             config.prompt.is_none(),
+  +             config.prompt_arg.is_none(),
+                "--print without -p should have no prompt"
+            );
+ ✓ (46.9s)
+
+Now run the full check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (35.0s)
+  3 tools completed in 1m 0s (3 ✓)
+
+All 88 tests pass. Let me verify the new tests specifically ran:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test print 2>&1 ✓ (1.5s)
+
+All print-related tests pass. Let me verify what tests I added are in the filtered set:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test print 2>&1 | grep "te… ✓ (1.5s)
+
+All four new tests are running and passing:
+• `test_print_flag_recognized_as_known_flag — verifies --print` is in KNOWN_FLAGS
+• test_print_flag_sets_print_mode — verifies --print sets print_mode to true in Config
+• test_print_flag_implies_auto_approve — verifies --print implies `--yes`
+• test_print_flag_without_prompt_warns — verifies --print without `-p has print_mode=true` but no prompt_arg
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (88 tests, 0 failures).
+
+  ↳ 3m 14s · 7341→3086 tokens (15 tok/s) · $0.408
+  ⬤ 3% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
