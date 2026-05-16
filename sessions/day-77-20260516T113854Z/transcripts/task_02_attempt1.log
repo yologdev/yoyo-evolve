@@ -1,0 +1,348 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --no-tools convenience flag. Let me start by understanding the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no_tools\|disallowed_to…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS" src/cli.rs… ✓ (7ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '85,110p' src/cli_config.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '152,210p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '895,920p' src/cli.rs ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 4.9s (6 ✓)
+
+Now let me see the Config struct and where no_tools should go:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,100p' src/cli_config.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no_tools\|--no-tools" s… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Let me see the full Config struct and understand the help.rs structure:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '61,99p' src/cli_config.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed-tools\|--no-… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '510,530p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1285,1300p' src/help.rs ✓ (4ms)
+ ✓ (3ms)
+  4 tools completed in 4.5s (4 ✓)
+
+Now let me see the cli_help_text function for where to add --no-tools:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1210,1240p' src/help.rs ✓ (4ms)
+
+Now let me see the parse_args function more thoroughly around the boolean flags and the --no-* handling:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--no-bell"\|"--no-colo… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'no_bell\|no_color\|no_r… ✓ (4ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me understand the full flow. Let me look at where no_update_check is handled (as a template for no_tools):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '490,570p' src/cli.rs ✓ (4ms)
+
+Now let me see the full parse_args function around where disallowed_tools is set:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '830,915p' src/cli.rs ✓ (5ms)
+
+Now I have a clear picture. Let me also check the existing test section:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2845,2900p' src/cli.rs ✓ (4ms)
+
+Now I have everything I need. Let me also check the BUILTIN_TOOL_NAMES for the canonical list:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 15 'BUILTIN_TOOL_NAMES' … ✓ (4ms)
+
+Good — I see ask_user is in BUILTIN_TOOL_NAMES but not in the task description's list. I should use the comprehensive list but note that ask_user is internal (the user wouldn't want to disallow it, but --no-tools should disable all tools). Let me use the list from the task description plus `ask_user to be comprehensive. Actually, looking at it, the task says to use ["bash", "read_file", "write_file", "edit_file", "list_files", "search", "rename_symbol", "sub_agent", "todo", "shared_state"]. I'll also include ask_user` since it's a builtin tool. Actually, let me reference BUILTIN_TOOL_NAMES directly to stay DRY and in sync.
+
+Let me check if BUILTIN_TOOL_NAMES is pub(crate):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "pub.*BUILTIN_TOOL_NAMES" s… ✓ (3ms)
+
+It's `pub(crate), so I can reference it from cli.rs`. Let me define a constant for the no-tools list in cli.rs or just use `BUILTIN_TOOL_NAMES. Actually, using BUILTIN_TOOL_NAMES` is the cleanest approach — it stays in sync automatically.
+
+Now let me implement all the changes:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 13.9s (6 ✓)
+
+### Step 1: Add no_tools: bool to Config struct
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli_config.rs (2 → 3 lines)
+        pub disallowed_tools: Vec<String>,
+  +     pub no_tools: bool,
+    }
+ ✓ (7.2s)
+  2 tools completed in 12.1s (2 ✓)
+
+Expected — I need to fix the usage sites. Let me continue with all edits.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+### Step 2: Add --no-tools to KNOWN_FLAGS
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli.rs (2 → 3 lines)
+        "--disallowed-tools",
+  +     "--no-tools",
+        "--help",
+ ✓ (7.4s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.2s (3 ✓)
+
+### Step 3: Handle --no-tools in parse_args
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now I need to modify the parse_args function. The --no-tools flag should:
+1. Set no_tools: true
+2. Populate `disallowed_tools` with all builtin tool names
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (7 → 21 lines)
+            auto_watch: crate::config::parse_auto_watch_from_config(&file_config),
+  -         disallowed_tools: collect_repeatable_flag(args, "--disallowed-tools")
+  -             .iter()
+  -             .flat_map(|v| v.split(','))
+  -             .map(|s| s.trim().to_string())
+  -             .filter(|s| !s.is_empty())
+  -             .collect(),
+  +         disallowed_tools: {
+  +             let no_tools = args.iter().any(|a| a == "--no-tools");
+  +             let mut tools: Vec<String> = collect_repeatable_flag(args, "--disallowed-tools")
+  +                 .iter()
+  +                 .flat_map(|v| v.split(','))
+  +                 .map(|s| s.trim().to_string())
+  +                 .filter(|s| !s.is_empty())
+  +                 .collect();
+  +             if no_tools {
+  +                 // Add all builtin tool names
+  +                 for name in crate::agent_builder::BUILTIN_TOOL_NAMES {
+  +                     let s = (*name).to_string();
+  +                     if !tools.contains(&s) {
+  ... (7 more lines)
+ ✓ (7.1s)
+
+Need to fix the Config construction in main.rs too. Let me check that:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1340p' src/main.rs ✓ (4ms)
+  ▶ edit src/main.rs (2 → 3 lines)
+                auto_watch: true,
+                disallowed_tools: vec![],
+  +             no_tools: false,
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/main.rs. Include more surrounding context to make the match unique.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_watch: true," src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '898,910p' src/main.rs ✓ (3ms)
+  4 tools completed in 12.1s (3 ✓, 1 ✗)
+
+There are two Config construction sites in main.rs. Let me fix both:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (7 → 8 lines)
+                auto_watch: true,
+                disallowed_tools: vec![],
+  +             no_tools: false,
+            }
+        }
+    
+ ✓ (7.5s)
+
+I see — one of the locations is an AgentConfig, not a Config. Let me fix it:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '895,910p' src/main.rs ✓ (4ms)
+
+That's AgentConfig. Let me check:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '870,906p' src/main.rs ✓ (4ms)
+
+That's AgentConfig — it doesn't have no_tools. Let me remove that and fix the other one:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (8 → 4 lines)
+                auto_watch: true,
+                disallowed_tools: vec![],
+  -             no_tools: false,
+            }
+        }
+  - 
+  -     #[test]
+  -     fn test_build_json_output_valid_json_with_expected_keys() {
+ ✓ (190ms)
+
+I accidentally lost a line. Let me check:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '898,912p' src/main.rs ✓ (3ms)
+
+I see — I lost fn test_build_json_output_valid_json_with_expected_keys test header. Let me fix:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (4 → 7 lines)
+                disallowed_tools: vec![],
+            }
+        }
+  + 
+  +     #[test]
+  +     fn test_build_json_output_valid_json_with_expected_keys() {
+            let response = PromptOutcome {
+ ✓ (7.4s)
+
+Now fix the other Config initialization (test_config for cli_config::Config):
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1340p' src/main.rs ✓ (4ms)
+  ▶ edit src/main.rs (7 → 8 lines)
+                auto_watch: true,
+                disallowed_tools: vec![],
+  +             no_tools: false,
+            }
+        }
+    
+ ✓ (11.7s)
+  2 tools completed in 16.9s (2 ✓)
+
+The no_tools field is never read outside of tests yet. The no_tools field is purely informational (it's "syntactic sugar" — the real work happens in `disallowed_tools`). But tests will read it. The issue is clippy complains because the field isn't read anywhere yet in the binary (tests don't count for dead_code). Let me check if any test reads it... The tests I'm about to add will assert on config.no_tools. But dead_code checks the non-test binary. 
+
+Actually, let me check if disallowed_tools is read somewhere:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "disallowed_tools\|no_t… ✓ (8ms)
+
+So disallowed_tools is passed to AgentConfig in main.rs:638. no_tools is only used structurally — it's syntactic sugar. Since the field is never read outside tests, I should either:
+1. Remove the field and just have it be an ephemeral parsing detail (simpler)
+2. Or add `#[allow(dead_code)]` 
+
+Actually, re-reading the task description, it says "Add pub no_tools: bool field to the Config struct (default false)." — the tests want to assert on it. Let me think about this... The no_tools field is useful for tests and for potential future use (e.g., displaying in /status or /config show). Let me check if there's a pattern for handling status display:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no_tools\|config\.no_" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools\|no_up… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config\.\(no_\|disallow… ✓ (4ms)
+  3 tools completed in 11.0s (3 ✓)
+
+OK, no_tools won't be read outside of cli.rs tests. The simplest approach: use the field in a meaningful way. Let me print a message when --no-tools is active, similar to how other flags are used. Or I can just make the tests read it via the test module's access.
+
+Actually, the simplest clean fix is to just read config.no_tools somewhere meaningful. Let me check main.rs where config flags are applied:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "apply_config_flags\|dis… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '595,650p' src/main.rs ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+I see that `config.no_tools` is never used after parse_args. The simplest way to make clippy happy is to have no_tools actually be read somewhere useful. Let me add a verbose-mode message when --no-tools is active:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '598,605p' src/main.rs ✓ (3ms)
+
+I'll add a small message when verbose mode and no_tools is on, and also when it's used in REPL mode (to inform the user). Actually, the cleanest approach: just print a small note to stderr so users know tools are disabled:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (5 → 13 lines)
+        if !apply_config_flags(&config) {
+            return;
+  +     }
+  + 
+  +     if config.no_tools {
+  +         eprintln!(
+  +             "{YELLOW}note:{RESET} All tools disabled (--no-tools). Running in chat-only mode.",
+  +             YELLOW = crate::format::Color::YELLOW,
+  +             RESET = crate::format::Color::RESET,
+  +         );
+        }
+    
+        let continue_session = config.continue_session;
+ ✓ (7.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const YELLOW\|pub c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "YELLOW\|RESET" src/form… ✓ (4ms)
+  3 tools completed in 14.6s (3 ✓)
+
+They're statics, not associated items:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (7 → 7 lines)
+        if config.no_tools {
+            eprintln!(
+  -             "{YELLOW}note:{RESET} All tools disabled (--no-tools). Running in chat-only mode.",
+  -             YELLOW = crate::format::Color::YELLOW,
+  -             RESET = crate::format::Color::RESET,
+  +             "{}note:{} All tools disabled (--no-tools). Running in chat-only mode.",
+  +             crate::format::YELLOW,
+  +             crate::format::RESET,
+            );
+        }
+ ✓ (48.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (131ms)
+  ▶ todo ✓ (2ms)
+  3 tools completed in 55.1s (3 ✓)
+
+### Step 4: Add --no-tools to help text
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me add it in both help locations — the cli_help_text function and the permissions help:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (2 → 6 lines)
+            "  --disallowed-tools <names>  Comma-separated tool names to disable (e.g., bash,write_file)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --no-tools        Disable all tools (chat-only mode, no file access or commands)"
+        );
+ ✓ (48.3s)
+
+Now let me also add it to the permissions help section:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 2 lines)
+  -              \x20 --disallowed-tools <names>  Comma-separated tool names to disable\n\n\
+  +              \x20 --disallowed-tools <names>  Comma-separated tool names to disable\n\
+  +              \x20 --no-tools                  Disable all tools (chat-only mode)\n\n\
+ ✓ (49.2s)
+
+Now add --no-tools to the help completions (the list of flags for tab completion in help):
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--disallowed-tools"' s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2565,2585p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (1 → 2 lines)
+                "--disallowed-tools",
+  +             "--no-tools",
+ ✓ (48.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (132ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 1m 2s (5 ✓)
+
+### Step 5: Write tests
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/cli.rs ✓ (3ms)
+  ▶ edit src/cli.rs (5 → 68 lines)
+                config.disallowed_tools.is_empty(),
+                "disallowed_tools should be empty when flag is not provided"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_no_tools_flag() {
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         let args = vec![
+  +             "yoyo".to_string(),
+  +             "--no-tools".to_string(),
+  +             "-p".to_string(),
+  +             "hello".to_string(),
+  +         ];
+  +         let config = parse_args(&args).expect("should parse");
+  +         assert!(config.no_tools);
+  +         assert!(!config.disallowed_tools.is_empty());
+  +         // Should contain all builtin tool names
+  +         assert!(config.disallowed_tools.contains(&"bash".to_string()));
+  +         assert!(config.disallowed_tools.contains(&"read_file".to_string()));
+  ... (48 more lines)
+ ✓ (49.1s)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 1m 11s (5 ✓)
+
+### Step 6: Run all checks
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (591ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (36.8s)
+  5 tools completed in 1m 8s (5 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

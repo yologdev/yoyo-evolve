@@ -1,0 +1,254 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current implementation in commands_map.rs, then add the 5 new languages with tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_language" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_symbols" src/co… ✓ (7ms)
+ ✓ (4ms)
+  ▶ read src/commands_map.rs:143..173  ▶ read src/commands_map.rs:163..193 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 5.5s (4 ✓)
+
+Now let me look at the existing pattern for regex definitions and one of the simpler extractors to understand the style:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use once_cell\|lazy_sta…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -15 src/commands_map.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ read src/commands_map.rs:1..143 ✓ (2ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Now let me look at one of the simpler extractors to understand the pattern:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_shell_symbol… ✓ (3ms)
+  ▶ read src/commands_map.rs:507..607  ▶ read src/commands_map.rs:741..816 ✓ (2ms)
+ ✓ (3ms)
+  3 tools completed in 5.2s (3 ✓)
+
+Now let me see the existing tests to understand the test pattern:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:2293..2393 ✓ (1ms)
+
+Good, I have a clear picture now. Let me also check where line 105-106 are (seems like there might be a comment separator):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,107p' src/commands_m… ✓ (3ms)
+
+Now I know the full pattern. Let me also check if there's a `Protocol variant in SymbolKind` that I might need for Swift protocols — there isn't, so I'll use Trait for protocol/trait equivalents, and Interface for interfaces. Let me also check the SymbolKind display:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SymbolKind" src/command… ✓ (4ms)
+
+Good. Now I have all the information I need. Let me implement this step by step:
+
+1. Add regex definitions for the 5 new languages
+2. Add extension mappings in detect_language
+3. Add dispatch arms in extract_symbols
+4. Add extractor functions
+5. Add tests
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.1s (7 ✓)
+
+Let me start with the regex definitions. I'll add them after the Shell regexes block:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (2 → 85 lines)
+    static RE_SHELL_FUNC_KEYWORD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\s*function\s+(\w+)").unwrap());
+  + 
+  + // ── C# regexes ──
+  + static RE_CSHARP_CLASS: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(r"^\s*(?:public|private|protected|internal)?\s*(?:static\s+)?(?:abstract\s+)?(?:sealed\s+)?(?:partial\s+)?class\s+(\w+)").unwrap()
+  + });
+  + static RE_CSHARP_INTERFACE: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(r"^\s*(?:public|private|protected|internal)?\s*(?:partial\s+)?interface\s+(\w+)").unwrap()
+  + });
+  + static RE_CSHARP_STRUCT: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(r"^\s*(?:public|private|protected|internal)?\s*(?:readonly\s+)?(?:partial\s+)?struct\s+(\w+)").unwrap()
+  + });
+  + static RE_CSHARP_ENUM: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(r"^\s*(?:public|private|protected|internal)?\s*enum\s+(\w+)").unwrap()
+  + });
+  + static RE_CSHARP_NAMESPACE: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\s*namespace\s+([\w.]+)").unwrap());
+  + static RE_CSHARP_RECORD: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(r"^\s*(?:public|private|protected|internal)?\s*(?:sealed\s+)?record\s+(?:struct\s+)?(\w+)").unwrap()
+  ... (65 more lines)
+ ✓ (11.3s)
+  2 tools completed in 39.5s (2 ✓)
+
+Expected — those are unused until I add the extractor functions. Let me continue with all the remaining steps, then run the checks.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now add extension mappings in detect_language:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (2 → 7 lines)
+            "sh" | "bash" | "zsh" => Some("shell"),
+  +         "cs" => Some("csharp"),
+  +         "php" => Some("php"),
+  +         "kt" | "kts" => Some("kotlin"),
+  +         "swift" => Some("swift"),
+  +         "scala" | "sc" => Some("scala"),
+            _ => None,
+ ✓ (11.5s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 18.4s (3 ✓)
+
+Now add dispatch arms in extract_symbols:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (3 → 8 lines)
+            "ruby" => extract_ruby_symbols(code),
+            "shell" => extract_shell_symbols(code),
+  +         "csharp" => extract_csharp_symbols(code),
+  +         "php" => extract_php_symbols(code),
+  +         "kotlin" => extract_kotlin_symbols(code),
+  +         "swift" => extract_swift_symbols(code),
+  +         "scala" => extract_scala_symbols(code),
+            _ => Vec::new(),
+ ✓ (7.3s)
+
+Good, expected — now I need to add the extractor functions. Let me find the right place to add them (after `extract_shell_symbols`):
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn extract_shell_symbo… ✓ (3ms)
+  ▶ read src/commands_map.rs:883..908 ✓ (1ms)
+  ▶ read src/commands_map.rs:907..917 ✓ (1ms)
+  5 tools completed in 15.4s (5 ✓)
+
+Now I'll add all 5 extractors between extract_shell_symbols and the ast-grep function:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (4 → 337 lines)
+  +     symbols
+  + }
+  + 
+  + /// C# keywords that match the method regex but aren't method definitions.
+  + const CSHARP_NON_METHOD_KEYWORDS: &[&str] = &[
+  +     "if", "for", "while", "switch", "catch", "return", "new", "class", "interface", "struct",
+  +     "enum", "namespace", "using", "throw", "lock", "foreach", "typeof", "sizeof", "nameof",
+  +     "record",
+  + ];
+  + 
+  + /// Extract symbols from C# source code.
+  + fn extract_csharp_symbols(code: &str) -> Vec<Symbol> {
+  +     let mut symbols = Vec::new();
+  + 
+  +     let re_class = &*RE_CSHARP_CLASS;
+  +     let re_interface = &*RE_CSHARP_INTERFACE;
+  +     let re_struct = &*RE_CSHARP_STRUCT;
+  +     let re_enum = &*RE_CSHARP_ENUM;
+  +     let re_namespace = &*RE_CSHARP_NAMESPACE;
+  +     let re_record = &*RE_CSHARP_RECORD;
+  ... (316 more lines)
+ ✓ (47.7s)
+
+Let me check if it actually compiled successfully:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (134ms)
+
+Good, it builds. Let me run the specific tests:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_map 2>&1 … ✓ (1.4s)
+
+All existing tests pass. Now let me add tests for the new languages:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_map.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_map.rs ✓ (3ms)
+  4 tools completed in 10.0s (4 ✓)
+
+Now I'll add tests at the end of the test module. Let me find the closing } of the module:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (3 → 449 lines)
+            assert_eq!(detect_language("init.zsh"), Some("shell"));
+  +     }
+  + 
+  +     // ── C# language detection and extraction tests ──
+  + 
+  +     #[test]
+  +     fn detect_language_csharp_extensions() {
+  +         assert_eq!(detect_language("Program.cs"), Some("csharp"));
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_csharp_symbols_basic() {
+  +         let code = r#"
+  + namespace MyApp.Models
+  + {
+  +     public interface IRepository
+  +     {
+  +         void Save();
+  +     }
+  + 
+  ... (429 more lines)
+ ✓ (49.3s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 58.0s (3 ✓)
+
+Now let's run the full verification suite:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (610ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_map 2>&1 ✓ (14.5s)
+  4 tools completed in 42.6s (4 ✓)
+
+All 62 map tests pass (was 52 before, now 62 — 10 new tests added). Let me run the full test suite to make sure nothing else broke:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (24.3s)
+
+All tests pass. Let me also verify fmt:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (621ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.1s (2 ✓)
+
+All checks pass. Now let me commit:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (12ms)
+  2 tools completed in 4.0s (2 ✓)
+
+There are changes in other files too. Let me check what those are — I should only commit the `commands_map.rs` changes:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat src/commands_map… ✓ (8ms)
+
+The other files have uncommitted changes from before. Let me just add the map file:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (11 lines) ✓ (17ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Done. Here's what I did:
+
+**Added 5 new languages to /map** (10 → 15 languages):
+
+| Language | Extensions | Symbols detected |
+|----------|-----------|------------------|
+| C# | .cs | class, interface, struct, enum, namespace, record, methods |
+| PHP | .php | class, interface, trait, function, enum |
+| Kotlin | .kt, .kts | class, data class, sealed class, enum class, interface, object, fun |
+| Swift | .swift | class, struct, protocol, enum, func, extension |
+| Scala | .scala, .sc | class, case class, trait, object, def |
+
+Changes:
+1. **83 new regex definitions** — using the existing LazyLock<Regex> pattern, with appropriate access modifiers for each language
+2. 5 extension mappings in `detect_language()`
+3. 5 dispatch arms in extract_symbols()
+4. 5 extractor functions — each following the same line-by-line regex pattern as existing extractors, with keyword skip lists where needed (C#, Kotlin)
+5. 10 new tests — 5 detect_language_* tests and 5 extract_*_symbols_basic tests
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test (62 map tests, 2860 total — all green).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

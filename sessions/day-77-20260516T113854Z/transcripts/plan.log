@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd src && grep -n "auto.watch\|auto_watch\|Auto-watch" main.rs | head -30  ▶ $ cd src && grep -n "print_mode" main.rs | head -30 ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd src && sed -n '210,230p' main.rs  ▶ $ cd src && sed -n '415,430p' main.rs ✓ (4ms)
+ ✓ (3ms)
+  6 tools completed in 9.2s (6 ✓)
+
+Now let me check what --no-tools would look like and how tools are currently disabled:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "disallowed.tools\|no.tools\|no_tools" cli.rs cli_config.rs | …  ▶ $ cd src && grep -n "disallowed_tools" cli.rs cli_config.rs agent_builder.rs tools… ✓ (5ms)
+ ✓ (6ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me check the test coverage for tools.rs since the assessment mentions it's the worst ratio:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -c "#\[test\]" tools.rs  ▶ $ cd src && grep -c "#\[test\]" dispatch.rs prompt.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd src && wc -l tools.rs dispatch.rs prompt.rs ✓ (3ms)
+  3 tools completed in 4.4s (3 ✓)
+
+Let me look at what the --print mode flag controls and what the `run_single_prompt` function signature looks like:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && sed -n '155,170p' main.rs  ▶ $ cd src && sed -n '195,225p' main.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now I have a clear picture. Let me also check the function signature for run_piped_mode:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && sed -n '375,430p' main.rs ✓ (4ms)
+
+Good. Now I have enough context. Let me plan the three tasks:
+
+1. **Bug fix**: Auto-watch message leaks in --print mode (self-discovered bug from assessment)
+2. `--no-tools` convenience flag (self-driven competitive gap — dev experience)
+3. **Tests for dispatch.rs** (test coverage improvement, self-driven quality)
+
+Actually, let me reconsider. The assessment shows --no-tools as a competitive gap, auto-watch in --print mode is a bug, and the test ratio for dispatch.rs (54 lines/test) is poor. But looking at higher-impact work:
+
+• Bug fix (auto-watch in --print mode) — quick, important for correctness
+• --no-tools alias — small UX win, directly from self-assessment  
+• Something more impactful for competitive gap...
+
+Let me think about what would most move the needle. The assessment notes "language breadth in /map" as a feasible high-impact gap. Let me check what languages /map currently supports:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "detect_language\|Language::" commands_map.rs | head -30 ✓ (4ms)
+  ▶ $ cd src && sed -n '143,200p' commands_map.rs ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+OK — 10 languages currently. Adding more languages would be good but it's a bigger task. Let me focus on higher-impact, quick wins.
+
+Given the assessment, my three tasks will be:
+
+1. Fix auto-watch message leak in `--print` mode (bug fix, self-discovered)
+2. Add `--no-tools` convenience flag (DX improvement, closes a competitive gap — every user who tries --no-tools today gets a confusing warning)
+3. Expand `/map` language support — add C#, PHP, Kotlin, Swift, Scala (5 more languages, going from 10→15) — this is a competitive gap vs Aider's 100+ languages
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (45 lines) ✓ (35.0s)
+  ▶ write session_plan/task_02.md (51 lines) ✓ (35.3s)
+  ▶ write session_plan/task_03.md (48 lines) ✓ (35.0s)
+  ▶ write session_plan/issue_responses.md (6 lines) ✓ (35.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+  6 tools completed in 3m 5s (6 ✓)
+
+Done. Session plan committed with 3 tasks:
+
+1. **Fix auto-watch message leak in --print mode** — Bug fix. Two locations in main.rs where the auto-watch announcement prints to stderr without checking print_mode. Quick, important for correctness.
+
+2. Add `--no-tools` convenience flag — DX improvement across cli.rs, cli_config.rs, `help.rs. Syntactic sugar that fills disallowed_tools` with all tool names. Every other agent has this; our users get a confusing warning today.
+
+3. Expand `/map` language support (C#, PHP, Kotlin, Swift, Scala) — Competitive gap closure in commands_map.rs. Goes from 10→15 supported languages, chipping away at the gap vs Aider's tree-sitter (100+). Each language gets regex-based symbol extraction following the existing pattern.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
