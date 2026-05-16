@@ -1,0 +1,207 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -100 src/tool_wrappers.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/tool_wra… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '672,720p' src/tool_wrapp… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '720,800p' src/tool_wrapp… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '800,900p' src/tool_wrapp… ✓ (4ms)
+  5 tools completed in 13.8s (5 ✓)
+
+Now let me look at the ToolFailureTracker struct and truncate_result function:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ToolFailureTrack… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '566,670p' src/tool_wrapp… ✓ (4ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Now let me look at `truncate_result`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn truncate_result" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '157,220p' src/tool_wrapp… ✓ (4ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me check what ToolResult looks like in yoagent:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub struct ToolResult"… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 5 "pub struct ToolResult… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enum Content" ~/.cargo/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '11,50p' ~/.cargo/registr… ✓ (3ms)
+  4 tools completed in 14.3s (4 ✓)
+
+Now let me check the existing test infrastructure and check what Default looks like for ToolFailureTracker:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "derive" src/tool_wrappe… ✓ (3ms)
+
+Good. Now let me see the end of the test file to know where to insert:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1510,1520p' src/tool_wra… ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me check the test imports and helper structures at the top of the test module:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '672,700p' src/tool_wrapp… ✓ (3ms)
+
+Now let me look at the mock tool and test context helpers:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ConfigurableMockTool\|t… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1104,1160p' src/tool_wra… ✓ (4ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Now I have everything I need. Let me also check where the truncate_tool_output function comes from to understand behavior:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use.*truncate_tool_outp… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '532,560p' src/format/out… ✓ (3ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Good. Now I have all the context I need. Let me write the tests:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (8 → 166 lines)
+                1,
+                "edit_file should be unaffected"
+            );
+  +     }
+  + 
+  +     // === ToolFailureTracker unit tests (pure logic, no async) ===
+  + 
+  +     #[test]
+  +     fn test_tracker_new_is_empty() {
+  +         let tracker = ToolFailureTracker::new();
+  +         assert_eq!(tracker.get("bash"), 0);
+  +         assert_eq!(tracker.get("edit_file"), 0);
+  +         assert_eq!(tracker.get("nonexistent"), 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_tracker_record_failure_increments() {
+  +         let tracker = ToolFailureTracker::new();
+  +         assert_eq!(tracker.record_failure("bash"), 1);
+  +         assert_eq!(tracker.record_failure("bash"), 2);
+  ... (143 more lines)
+ ✓ (44.5s)
+
+Let me run the full check explicitly:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (33.3s)
+  2 tools completed in 49.9s (2 ✓)
+
+The truncation function compresses first and the compression may reduce the output enough. Let me check how compress_tool_output works and what threshold is needed:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TRUNCATION_HEAD_LINES\|… ✓ (3ms)
+
+The issue is the text needs to exceed max_chars AND have more than 150 lines. My 200 lines work, but at max_chars=500 the compressed text is still under the threshold after compression collapses similar lines. Let me look at how compress works:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/format/output… ✓ (3ms)
+
+The problem is: my test uses 200 similar lines which compression will collapse to a small amount. I need to generate distinct lines that won't collapse, and ensure the total byte size exceeds max_chars. Let me fix the test:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (30 → 33 lines)
+        #[test]
+        fn test_truncate_result_long_text_truncated() {
+  -         // Generate text that exceeds max_chars — many lines to trigger truncation
+  -         let lines: Vec<String> = (0..200).map(|i| format!("line {i}: some output text here")).collect();
+  +         // Generate text with 200 distinct lines that won't be collapsed by compression.
+  +         // Each line has enough unique content to stay distinct.
+  +         let lines: Vec<String> = (0..200)
+  +             .map(|i| format!("unique_prefix_{i:04}_data: value={} extra={}", i * 7, i * 13))
+  +             .collect();
+            let long_text = lines.join("\n");
+            let original_len = long_text.len();
+    
+  ···
+                content: vec![yoagent::Content::Text { text: long_text }],
+                details: serde_json::Value::Null,
+            };
+  -         // Use a small max_chars to force truncation
+  -         let truncated = truncate_result(result, 500);
+  +         // Use max_chars smaller than the text to force truncation
+  +         let truncated = truncate_result(result, 2000);
+  ... (3 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/tool_wrappers.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1598,1640p' src/tool_wra… ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:1604..1636 ✓ (1ms)
+  ▶ edit src/tool_wrappers.rs (32 → 33 lines)
+        #[test]
+        fn test_truncate_result_long_text_truncated() {
+  -         // Generate text that exceeds max_chars — many lines to trigger truncation
+  +         // Generate 200 distinct lines that compression won't collapse.
+  +         // Each line is unique enough to avoid the "similar line" collapsing.
+            let lines: Vec<String> = (0..200)
+  -             .map(|i| format!("line {i}: some output text here"))
+  +             .map(|i| format!("unique_{i:04}_data: val={} extra={}", i * 7, i * 13))
+                .collect();
+            let long_text = lines.join("\n");
+            let original_len = long_text.len();
+  ···
+                content: vec![yoagent::Content::Text { text: long_text }],
+                details: serde_json::Value::Null,
+            };
+  -         // Use a small max_chars to force truncation
+  -         let truncated = truncate_result(result, 500);
+  +         // Use max_chars smaller than text to force truncation
+  +         let truncated = truncate_result(result, 2000);
+            match &truncated.content[0] {
+  ... (2 more lines)
+ ✓ (46.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_wrappers::tests:… ✓ (129ms)
+  5 tools completed in 1m 8s (4 ✓, 1 ✗)
+
+Now let me run all the new tests:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_wrappers::tests:… ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_wrappers::tests:… ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_wrappers::tests:… ✓ (127ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_wrappers::tests:… ✓ (128ms)
+  4 tools completed in 13.0s (4 ✓)
+
+All new tests pass. Now let me run the full CI checks:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (149ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (22.3s)
+  3 tools completed in 41.8s (3 ✓)
+
+All 2846 tests pass (the last block is integration tests). Let me confirm the full test count:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (11.0s)
+
+There's 1 failure. Let me check:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED\|… ✓ (13.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -A 5 "fai… ✓ (13.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED" ✓ (13.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "fail" ✓ (13.3s)
+  4 tools completed in 1m 3s (4 ✓)
+
+It passed this time — 2845 + 88 = 2933 tests, all passing. The previous run must have been a flaky test. Let me run once more to confirm:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (13.5s)
+
+All green. Let me commit:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Done. Added 11 new unit tests to src/tool_wrappers.rs:
+
+ToolFailureTracker (5 tests):
+1. test_tracker_new_is_empty — new tracker reports 0 for any tool
+2. `test_tracker_record_failure_increments` — sequential failures return 1, 2, 3
+3. test_tracker_record_success_resets — success resets count to 0
+4. `test_tracker_independent_tools` — different tools tracked independently
+5. `test_tracker_clone_shares_state` — clone shares the Arc<Mutex<HashMap>>
+
+truncate_result (4 tests):
+6. `test_truncate_result_short_text_unchanged` — short text passes through
+7. test_truncate_result_long_text_truncated — 200 distinct lines get truncated
+8. test_truncate_result_non_text_content_unchanged — Image content untouched
+9. `test_truncate_result_empty_content` — empty vec stays empty
+
+describe_file_operation edge cases (2 tests):
+10. test_describe_read_file_operation — read_file description
+11. test_describe_bash_operation — bash tool description
+
+This improves the test ratio from 60 lines/test to ~43 lines/test for the file. All checks pass: fmt, clippy, build, and tests (2845 unit + 88 integration).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

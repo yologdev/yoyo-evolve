@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cat SPONSORS.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (16ms)
+ ✓ (39ms)
+  4 tools completed in 6.8s (4 ✓)
+
+Now let me check a few things to inform my planning:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what selective context summarization would involve —… (2 lines)  ▶ $ # Check the --print flag behavior for the bug mentioned in a… (2 lines)  ▶ $ # Check test coverage ratios for tools.rs and tool_wrappers.… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Check how print_mode is handled in prompt.rs to understand… (2 lines)  ▶ $ # Check lines/test ratio for files that could use more cover… (5 lines)  ▶ $ # Check what .ok() calls look like in non-test code — find c… (2 lines) ✓ (6ms)
+ ✓ (8ms)
+ ✓ (10ms)
+  ▶ $ # Check what a selective summarization / context rewind woul… (3 lines)  ▶ $ # Check current /compact implementation (2 lines) ✓ (3ms)
+ ✓ (51ms)
+  ▶ $ # Check yoagent's ContextConfig and CompactionStrategy (2 lines)  ▶ $ # Check what the current /compact does (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check yoagent's ContextConfig fields to understand what se… (2 lines) ✓ (4ms)
+  ▶ $ # Check compact_messages implementation to understand levels (2 lines) ✓ (3ms)
+  12 tools completed in 30.3s (12 ✓)
+
+Now I have a clear picture. Let me plan the tasks:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a /compact with selective preservation — … (2 lines)  ▶ $ # Check last release tag to assess release readiness (4 lines) ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ # Check what the latest release version is (5 lines) ✓ (6ms)
+  ▶ $ # Check release tags (2 lines) ✓ (3ms)
+  ▶ $ # Look at what selective context summarization would need — … (2 lines)  ▶ $ # Check what print_usage does and if it respects quiet mode (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check print_usage to see if it already suppresses in quiet… (2 lines) ✓ (3ms)
+  ▶ $ # Check if print_usage checks is_quiet (5 lines) ✓ (4ms)
+  ▶ $ # Check the full run_prompt function to understand the flow (2 lines)  ▶ $ # Check if print_mode is propagated (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  10 tools completed in 30.0s (10 ✓)
+
+Good. I now have enough information to plan. Let me think about the three tasks:
+
+**Assessment summary:**
+1. 10 consecutive 3/3 sessions, 0 reverts — trajectory is clean
+2. No CI failures, no sponsor issues, only 1 community issue (#215 TUI — aspirational, not actionable in a task)
+3. Biggest actionable competitive gap: selective context summarization (Claude Code's "summarize up to here")
+4. Self-discovered bug: --print mode still shows cost/context lines
+5. Test coverage gap: `tools.rs at 68 lines/test, tool_wrappers.rs` at 60 lines/test
+
+Task plan:
+1. Selective context summarization — /compact N to summarize everything before the Nth most recent turns, giving users Claude Code-like "rewind" control. This is the #1 actionable competitive gap.
+2. Fix `--print` mode leaking chrome — print_usage and print_context_usage should be suppressed in quiet/print mode.
+3. Add unit tests for `tool_wrappers.rs` — lowest coverage ratio of important files at 60 lines/test.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (36 lines) ✓ (33.5s)
+  ▶ $ # Verify exactly how print_usage and print_context_usage are… (2 lines)  ▶ $ # Check if quiet mode is already checked before print_contex… (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Check the full accumulate_and_report section (2 lines) ✓ (3ms)
+  ▶ $ # Check if format_usage_line already handles quiet (2 lines) ✓ (3ms)
+  5 tools completed in 55.1s (5 ✓)
+
+Now I see: print_usage and print_context_usage don't check is_quiet(). The --print flag sets quiet mode, but these functions don't respect it.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check print_context_usage (2 lines) ✓ (3ms)
+  ▶ write session_plan/task_02.md (36 lines) ✓ (32.6s)
+  ▶ $ # Check what's in tool_wrappers.rs that could use more tests (2 lines)  ▶ $ # Check what's already tested in tool_wrappers.rs (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what's NOT tested — truncate_result, ToolFailureTrac… (2 lines)  ▶ $ # Get the ToolFailureTracker implementation (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ sed -n '555,675p' src/tool_wrappers.rs ✓ (4ms)
+  ▶ $ # Check truncate_result (2 lines) ✓ (3ms)
+  8 tools completed in 1m 8s (8 ✓)
+
+Now I have everything I need. Let me write the third task:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_03.md (35 lines) ✓ (33.2s)
+  ▶ write session_plan/issue_responses.md (5 lines) ✓ (33.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  4 tools completed in 1m 30s (4 ✓)
+
+Done. Here's the Day 77 session plan summary:
+
+## Day 77 — Session Plan (3 tasks)
+
+### Task 1: Selective context summarization — `/compact N` (self-driven, competitive gap)
+The #1 actionable competitive gap from the assessment. Claude Code has "summarize up to here" — we don't. Adding /compact N lets users control how many recent turns stay at full fidelity while aggressively summarizing everything before them. Touches commands_session.rs, `help.rs, dispatch.rs`.
+
+### Task 2: Fix `--print` mode leaking chrome (self-discovered bug)
+print_usage() and print_context_usage() don't check is_quiet(), so --print mode still shows cost/context lines that break programmatic usage. Two one-line guards in format/mod.rs.
+
+### Task 3: Add unit tests for `tool_wrappers.rs` (test coverage)
+Worst coverage ratio of important files at 60 lines/test. Adding ~11 tests for ToolFailureTracker, truncate_result, and describe_file_operation edge cases — all currently at 0 test coverage.
+
+Issue disposition: #215 (TUI) deferred — aspirational scope, not actionable as a task.
+
+  ↳ 5m 43s · 18499→6581 tokens (19 tok/s) · $1.07
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

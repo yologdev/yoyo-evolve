@@ -1,0 +1,298 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current implementation, then make the changes.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (43.9s)
+
+Good, I have a clear picture. Now let me look at the actual file content more precisely and check how yoagent's compact_messages and `ContextConfig` work.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_compact\|compact… ✓ (6ms)
+  ▶ read src/commands_session.rs:1..71 ✓ (1ms)
+  ▶ read src/commands_session.rs:124..154 ✓ (0ms)
+  3 tools completed in 11.3s (3 ✓)
+
+Now let me check how ContextConfig works in yoagent:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo/registry/src -path… ✓ (46ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ContextConfig\|p… ✓ (4ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.0/src/context.rs:144..234 ✓ (1ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.0/src/context.rs:233..283 ✓ (1ms)
+  4 tools completed in 15.8s (4 ✓)
+
+Now I understand the key insight: compact_messages only compacts when total_tokens > budget. For user-triggered selective compaction, I need to set max_context_tokens very low to force compaction, while using the user's `keep_recent` value. Let me check the dispatch routing:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Compact" src/dispatch.r… ✓ (3ms)
+  ▶ read src/dispatch.rs:674..684 ✓ (1ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Now let me check how other commands receive args to follow the pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ctx\.input\|ctx\.args" … ✓ (3ms)
+
+Good — many commands receive ctx.input directly. Now let me check the route_command function to see how it parses command names:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:130..160 ✓ (1ms)
+
+I see — /compact is matched exactly. But I need it to also match `/compact 5` etc. Let me check how the routing handles commands with args:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "starts_with\|strip_pref… ✓ (3ms)
+
+I see the pattern now. Let me check how /compact can be changed to accept args. Some routes use starts_with:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:168..218 ✓ (1ms)
+
+I see — there's a two-tier routing: exact matches first, then prefix-based matches (line 195). The /compact exact match on line 151 will match first, but /compact 5 won't match it. I need to move /compact to the prefix-based section. Let me look at where it falls:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:217..277 ✓ (1ms)
+
+Now I have the complete picture. Here's my plan:
+
+1. Remove /compact from the exact-match block (line 151)
+2. Add `"compact"` to the prefix-match block (around line 217)
+3. Update `handle_compact to accept an input: &str` arg and parse the keep_recent value
+4. Add a `compact_agent_with_keep` function
+5. Update dispatch to pass ctx.input
+6. Update help text
+7. Write tests
+
+Let me now implement this systematically:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 26.8s (7 ✓)
+
+Let me start implementing. First, let me look at the existing tests section of commands_session.rs to know where to add tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (4ms)
+  ▶ read src/commands_session.rs:619..639 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now let me implement the changes. First, the parsing function and compact_agent_with_keep:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_session.rs (28 → 81 lines)
+  + /// Result of parsing a `/compact` argument.
+  + #[derive(Debug, PartialEq)]
+  + pub enum CompactArg {
+  +     /// No argument — use default keep_recent (10).
+  +     Default,
+  +     /// Explicit number of recent messages to keep.
+  +     KeepRecent(usize),
+  +     /// Invalid input — contains the original string for error reporting.
+  +     Invalid(String),
+  + }
+  + 
+  + /// Parse the argument to `/compact`.
+  + ///
+  + /// - `""` → `Default`
+  + /// - `"5"` → `KeepRecent(5)`
+  + /// - `"all"` → `KeepRecent(2)` (minimum safe value)
+  + /// - `"0"` or `"1"` → clamped to `KeepRecent(2)`
+  + /// - anything else → `Invalid`
+  + pub fn parse_compact_arg(arg: &str) -> CompactArg {
+  +     let arg = arg.trim();
+  ... (44 more lines)
+ ✓ (10.7s)
+  2 tools completed in 33.4s (2 ✓)
+
+Good — the functions exist but aren't used yet. Let me now update handle_compact and the dispatch to use them. That will resolve the dead-code warnings.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Now update handle_compact to accept and parse input:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (21 → 42 lines)
+  - pub fn handle_compact(agent: &mut Agent) {
+  + pub fn handle_compact(agent: &mut Agent, input: &str) {
+  +     let arg_str = input
+  +         .strip_prefix("/compact")
+  +         .unwrap_or("")
+  +         .trim();
+  +     let parsed = parse_compact_arg(arg_str);
+  + 
+  +     let keep_recent = match parsed {
+  +         CompactArg::Default => None,
+  +         CompactArg::KeepRecent(n) => Some(n),
+  +         CompactArg::Invalid(s) => {
+  +             println!(
+  +                 "{DIM}  invalid argument: \"{s}\" — use a number or \"all\"\n  usage: /compact [N|all]{RESET}\n"
+  +             );
+  +             return;
+  +         }
+  +     };
+  + 
+        let messages = agent.messages();
+  ... (16 more lines)
+ ✓ (6.6s)
+
+Expected — now update the dispatch:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.3s (2 ✓)
+
+First, move /compact from exact match to prefix match:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (6 → 5 lines)
+            "/config" => CommandRoute::Config,
+            "/hooks" => CommandRoute::Hooks,
+            "/permissions" => CommandRoute::Permissions,
+  -         "/compact" => CommandRoute::Compact,
+            "/init" => CommandRoute::Init,
+ ✓ (6.4s)
+
+Now add "compact" to the prefix-match block and update the dispatch call:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (2 → 3 lines)
+                "mcp" => CommandRoute::Mcp,
+  +             "compact" => CommandRoute::Compact,
+                "ast" => CommandRoute::Ast,
+ ✓ (6.4s)
+
+Now fix the dispatch call to pass ctx.input:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 4 lines)
+            CommandRoute::Compact => {
+  -             commands::handle_compact(ctx.agent);
+  +             commands::handle_compact(ctx.agent, ctx.input);
+                CommandResult::Continue
+            }
+ ✓ (46.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (121ms)
+  2 tools completed in 53.7s (2 ✓)
+
+Build passes. Let me check the routing test:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Compact" src/dispatch.r… ✓ (3ms)
+
+Good — the test at line 1219 should still pass since /compact goes through the prefix route. Let me verify:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_route_command 2>… ✓ (128ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_route" src/dispatc… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_route 2>&1 | tai… ✓ (128ms)
+  3 tools completed in 11.6s (3 ✓)
+
+All routing tests pass. Now let me add tests for the parse function and the /compact N routing:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me add tests. First, find where to add them in commands_session.rs:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:619..639 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/co… ✓ (3ms)
+  ▶ read src/commands_session.rs:693..713 ✓ (0ms)
+  3 tools completed in 16.4s (3 ✓)
+
+Now add tests for parse_compact_arg right after the existing compact tests:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:745..775 ✓ (1ms)
+
+Good. I'll add tests right after the test_is_compact_thrashing_boundary test:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (5 → 46 lines)
+        }
+    
+        #[test]
+  -     fn test_auto_save_session_path_constant() {
+  +     fn test_parse_compact_arg_default() {
+  +         assert_eq!(parse_compact_arg(""), CompactArg::Default);
+  +         assert_eq!(parse_compact_arg("  "), CompactArg::Default);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_compact_arg_number() {
+  +         assert_eq!(parse_compact_arg("5"), CompactArg::KeepRecent(5));
+  +         assert_eq!(parse_compact_arg("  10  "), CompactArg::KeepRecent(10));
+  +         assert_eq!(parse_compact_arg("2"), CompactArg::KeepRecent(2));
+  +         assert_eq!(parse_compact_arg("100"), CompactArg::KeepRecent(100));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_compact_arg_clamps_low_values() {
+  +         // 0 and 1 are clamped to 2 (minimum safe)
+  ... (26 more lines)
+ ✓ (476ms)
+
+Indentation issue — let me check:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:800..810 ✓ (1ms)
+
+I see — the old test function marker was eaten. Let me fix:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (3 → 6 lines)
+        }
+  + 
+  +     #[test]
+  +     fn test_auto_save_session_path_constant() {
+            assert_eq!(AUTO_SAVE_SESSION_PATH, ".yoyo/last-session.json");
+        }
+ ✓ (46.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_parse_compact 2>… ✓ (128ms)
+  2 tools completed in 54.3s (2 ✓)
+
+All 5 parse tests pass. Now let me also add a test for /compact N routing in dispatch.rs:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1218..1228 ✓ (1ms)
+  ▶ edit src/dispatch.rs (1 → 3 lines)
+            assert_eq!(route_command("/compact"), CommandRoute::Compact);
+  +         assert_eq!(route_command("/compact 5"), CommandRoute::Compact);
+  +         assert_eq!(route_command("/compact all"), CommandRoute::Compact);
+ ✓ (46.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_route 2>&1 | tai… ✓ (144ms)
+  3 tools completed in 59.0s (3 ✓)
+
+Now let me update the help text:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compact" src/help.rs | … ✓ (3ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Let me update the detailed help first:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:126..136 ✓ (1ms)
+  ▶ edit src/help.rs (6 → 11 lines)
+            "compact" => Some(
+  -             "/compact — Compact conversation to save context space\n\n\
+  -              Asks the AI to summarize the conversation so far into a shorter\n\
+  -              representation, freeing up context window space. Useful when\n\
+  -              approaching token limits on long sessions.",
+  +             "/compact [N|all] — Compact conversation to save context space\n\n\
+  +              Summarizes older turns to free context window space.\n\n\
+  +              Usage:\n\
+  +              \x20 /compact              Default — keep last 10 messages at full fidelity\n\
+  +              \x20 /compact 4            Keep last 4 messages, summarize everything before\n\
+  +              \x20 /compact all          Summarize everything except the last 2 messages\n\n\
+  +              The number controls how many recent messages survive compaction at\n\
+  +              full detail. Lower numbers free more space but lose more context.\n\
+  +              Minimum value is 2 (always keeps at least the last exchange).",
+            ),
+ ✓ (47.2s)
+  2 tools completed in 57.6s (2 ✓)
+
+Now update the short description in the command list:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1438..1441 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "    /compact           Compact conversation to save context"
+  +         "    /compact [N|all]   Compact conversation to save context"
+ ✓ (47.9s)
+  2 tools completed in 52.0s (2 ✓)
+
+  ↳ 10m 9s · 21199→9311 tokens (15 tok/s) · $1.72
+  ⬤ 11% of context window used
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
