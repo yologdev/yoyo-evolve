@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_architect_mode\|is_… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '997,1010p' src/commands_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use serial_test\|#\[ser… ✓ (3ms)
+  3 tools completed in 11.5s (3 ✓)
+
+No serial_test usage yet in this file. Let me find all test functions that touch the global state:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]" src/commands… ✓ (3ms)
+
+Now let me look at the tests that touch global state. I already know about the teach mode and architect mode ones. Let me look at each test around those lines:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1124,1200p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1460,1492p' src/commands… ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me check if there are any other global statics in the file:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "static\|AtomicBool\|Ato… ✓ (4ms)
+
+So the global state is TEACH_MODE, ARCHITECT_MODE, and ARCHITECT_MODEL. Now let me identify which test functions touch these:
+
+1. test_teach_mode_default_off — calls set_teach_mode, is_teach_mode
+2. test_teach_mode_toggle — calls `set_teach_mode, is_teach_mode`
+3. test_architect_toggle_on_off — calls set_architect_mode, is_architect_mode
+4. test_architect_parse_sets_model — calls `set_architect_mode, handle_architect, is_architect_mode, architect_model`
+
+Let me also check if `handle_architect` is used in other tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_architect\|handl… ✓ (4ms)
+
+Good. Now let me check if serial_test is already in Cargo.toml:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "serial_test" Cargo.toml ✓ (3ms)
+
+Great, it's already a dependency. Now let me look at the imports in the test module:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '997,1005p' src/commands_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '997,1002p' src/commands_… ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me see the raw bytes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_config.rs:997..1005 ✓ (1ms)
+
+Now I'll add the serial_test import and add `#[serial]` to the four tests that touch global state:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (6 → 7 lines)
+    mod tests {
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  +     use serial_test::serial;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+ ✓ (10.9s)
+
+I need to add the `#[serial]` attributes first. Let me do it all at once:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_config.rs:1125..1141 ✓ (1ms)
+  ▶ edit src/commands_config.rs (16 → 18 lines)
+        #[test]
+  +     #[serial]
+        fn test_teach_mode_default_off() {
+            // Reset to known state (tests may run in any order)
+            set_teach_mode(false);
+  ···
+        }
+    
+        #[test]
+  +     #[serial]
+        fn test_teach_mode_toggle() {
+            set_teach_mode(false);
+            assert!(!is_teach_mode());
+ ✓ (49.1s)
+  2 tools completed in 56.5s (2 ✓)
+
+Now the architect mode tests:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_config.rs:1463..1496 ✓ (1ms)
+  ▶ edit src/commands_config.rs (33 → 35 lines)
+    
+        #[test]
+  +     #[serial]
+        fn test_architect_toggle_on_off() {
+            // Start from a known state
+            set_architect_mode(false, None);
+  ···
+        }
+    
+        #[test]
+  +     #[serial]
+        fn test_architect_parse_sets_model() {
+            // Reset state
+            set_architect_mode(false, None);
+ ✓ (52.9s)
+  2 tools completed in 1m 4s (2 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (172ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (24.5s)
+  3 tools completed in 45.2s (3 ✓)
+
+All passing. Now let me run the parallel test multiple times to confirm no flakiness:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in $(seq 1 5); do cargo te… ✓ (566ms)
+
+Right, it's a binary. Let me use the correct incantation:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in $(seq 1 5); do cargo te… ✓ (731ms)
+
+42 tests passing on each run (the second result in each pair is from the integration test which has nothing matching). All 5 runs pass. Let me also confirm the full test suite one more time:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (13.6s)
+
+All green. Let me commit:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Done. The fix adds #[serial] from the serial_test crate to the four tests in src/commands_config.rs that read/write global AtomicBool state (`TEACH_MODE and ARCHITECT_MODE`):
+
+1. test_teach_mode_default_off
+2. test_teach_mode_toggle
+3. `test_architect_toggle_on_off`
+4. test_architect_parse_sets_model
+
+This ensures these tests run sequentially rather than in parallel, eliminating the race condition where one test's set_architect_mode(true) could bleed into another test's assertion. No doc changes needed — this is a purely internal test infrastructure fix.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,328 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -200 src/commands_map.rs ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_symbols" src… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '254,500p' src/commands_m… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_go_symbols\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '539,600p' src/commands_m… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '837,920p' src/commands_m… ✓ (4ms)
+  6 tools completed in 17.4s (6 ✓)
+
+Now let me look at the existing tests and the Symbol struct:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,260p' src/commands_m… ✓ (4ms)
+
+Now let me look at the Go-specific tests to understand what I need to preserve:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2022,2100p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2648,2830p' src/commands… ✓ (6ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now I have a clear picture. Let me look at the Go visibility logic more carefully — Go uses capitalization for public/private. Ruby treats things starting with _ as private. Shell treats everything as public. Let me understand the nuance of each:
+
+• Go: `is_public = name.starts_with(|c: char| c.is_uppercase())`
+• Ruby: Classes/modules/consts always is_public: true; functions: `!name.starts_with('_')`
+• Shell: Always is_public: true
+
+I need to design the `PatternRule` struct to accommodate a "visibility strategy." Let me plan this carefully:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 25.2s (8 ✓)
+
+Now let me look at the exact location where I should insert the new structs — right after the `SymbolKind enum and Symbol/FileSymbols` structs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '195,232p' src/commands_m… ✓ (4ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me insert the data-driven structs and the extraction helper. I'll place them between FileSymbols and detect_language:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (2 → 147 lines)
+  + // ── Table-driven symbol extraction ──────────────────────────────────────────
+  + 
+  + /// How to determine visibility (is_public) for a matched symbol.
+  + #[derive(Debug, Clone, Copy, PartialEq)]
+  + enum VisibilityRule {
+  +     /// Always public (e.g., shell functions).
+  +     AlwaysPublic,
+  +     /// Public if the name starts with an uppercase letter (Go convention).
+  +     UppercaseIsPublic,
+  +     /// Public unless the name starts with `_` (Ruby/Python convention).
+  +     UnderscoreIsPrivate,
+  + }
+  + 
+  + /// A single pattern rule mapping a regex to a symbol kind.
+  + struct PatternRule {
+  +     regex: &'static LazyLock<Regex>,
+  +     kind: SymbolKind,
+  +     /// Which capture group holds the symbol name (1-indexed).
+  +     name_group: usize,
+  +     visibility: VisibilityRule,
+  ... (127 more lines)
+ ✓ (7.1s)
+
+I see — the LazyLock::new closure creates a temporary array that the &'static reference can't borrow. I need to use const slices instead. Let me restructure — I'll use const arrays defined at module level and reference them:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (144 → 148 lines)
+    
+    // ── Pattern tables for Go, Ruby, Shell ──────────────────────────────────────
+    
+  - static GO_PATTERNS: LazyLock<LanguagePatterns> = LazyLock::new(|| LanguagePatterns {
+  -     rules: &[
+  -         PatternRule {
+  -             regex: &RE_GO_METHOD,
+  -             kind: SymbolKind::Function,
+  -             name_group: 1,
+  -             visibility: VisibilityRule::UppercaseIsPublic,
+  -         },
+  -         PatternRule {
+  -             regex: &RE_GO_FUNC,
+  -             kind: SymbolKind::Function,
+  -             name_group: 1,
+  -             visibility: VisibilityRule::UppercaseIsPublic,
+  -         },
+  -         PatternRule {
+  -             regex: &RE_GO_STRUCT,
+  -             kind: SymbolKind::Struct,
+  ... (147 more lines)
+ ✓ (12.6s)
+
+Good — these are just "unused" errors because I haven't wired them up yet. Let me now wire the extract_symbols match to use the table-driven approach for Go, Ruby, and Shell:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now I need to find the exact extract_symbols function and replace the Go/Ruby/Shell arms:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"go\" => extract_go_sy… ✓ (4ms)
+  ▶ edit src/commands_map.rs (1 → 1 lines)
+  -         "go" => extract_go_symbols(code),
+  +         "go" => extract_symbols_from_patterns(code, &GO_PATTERNS),
+ ✓ (12.7s)
+  ▶ edit src/commands_map.rs (2 → 2 lines)
+  -         "ruby" => extract_ruby_symbols(code),
+  -         "shell" => extract_shell_symbols(code),
+  +         "ruby" => extract_symbols_from_patterns(code, &RUBY_PATTERNS),
+  +         "shell" => extract_symbols_from_patterns(code, &SHELL_PATTERNS),
+ ✓ (12.0s)
+  3 tools completed in 34.8s (3 ✓)
+
+The wiring works. Now I need to remove the old functions. But first let me check that the Go extraction works correctly with trimmed vs the full line — looking back at the original extract_go_symbols, it calls let trimmed = line.trim_start() and matches against trimmed. My `extract_symbols_from_patterns matches against the full line`. Let me check this difference:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '688,745p' src/commands_m… ✓ (5ms)
+
+Important — Go uses trimmed (trim_start), so indented lines are matched. But the Go regex patterns start with ^func, `^type, ^(?:const|var)` — so they already anchor at the start. If there's leading whitespace, ^func won't match unless we trim. Let me check the regex patterns:
+
+The RE_GO_FUNC regex is r"^func\s+(\w+)\s*\(" — it starts with ^. So for indented Go code, we need to either:
+1. Add \s* at the start of Go regexes, OR
+2. Make extract_symbols_from_patterns trim lines before matching
+
+Looking at Go source code in practice, top-level declarations aren't indented. But the original code does trim_start(), so to be safe I should support it. Let me add a trim_input flag to LanguagePatterns:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (4 → 6 lines)
+    /// A set of pattern rules for a language that uses simple line-by-line extraction.
+    struct LanguagePatterns {
+        rules: &'static [PatternRule],
+  +     /// Whether to trim leading whitespace before matching (e.g., Go trims, Ruby/Shell don't).
+  +     trim_leading: bool,
+    }
+ ✓ (7.7s)
+  ▶ edit src/commands_map.rs (9 → 12 lines)
+    static GO_PATTERNS: LanguagePatterns = LanguagePatterns {
+        rules: GO_PATTERN_RULES,
+  +     trim_leading: true,
+    };
+    static RUBY_PATTERNS: LanguagePatterns = LanguagePatterns {
+        rules: RUBY_PATTERN_RULES,
+  +     trim_leading: false,
+    };
+    static SHELL_PATTERNS: LanguagePatterns = LanguagePatterns {
+        rules: SHELL_PATTERN_RULES,
+  +     trim_leading: false,
+    };
+ ✓ (12.6s)
+  2 tools completed in 27.4s (2 ✓)
+
+I need to use trim_leading in the extract_symbols_from_patterns function:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (32 → 37 lines)
+        let mut symbols = Vec::new();
+    
+        for (line_num, line) in code.lines().enumerate() {
+  +         let target = if patterns.trim_leading {
+  +             line.trim_start()
+  +         } else {
+  +             line
+  +         };
+            for rule in patterns.rules {
+  -             if let Some(caps) = rule.regex.captures(line) {
+  +             if let Some(caps) = rule.regex.captures(target) {
+                    let name = caps
+                        .get(rule.name_group)
+                        .map_or("", |m| m.as_str())
+ ✓ (12.4s)
+
+Good — only the old functions are now unused. Let me remove them:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '695,760p' src/commands_m… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '755,770p' src/commands_m… ✓ (3ms)
+  4 tools completed in 10.4s (4 ✓)
+
+So extract_go_symbols is from line 698 to line 759 (the `} after symbols`). Let me find the exact bounds:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^\/\/\/ Extract symbols fr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '697,759p' src/commands_m… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '697p' src/commands_map.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '759,761p' src/commands_m… ✓ (3ms)
+  4 tools completed in 11.5s (4 ✓)
+
+Good. Now let me find ruby and shell:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn extract_ruby_symbol… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '994,1080p' src/commands_… ✓ (4ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now I'll remove all three old functions. Let me do it precisely:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (65 → 2 lines)
+  - /// Extract symbols from Go source code.
+  - fn extract_go_symbols(code: &str) -> Vec<Symbol> {
+  -     let mut symbols = Vec::new();
+  - 
+  -     let re_func = &*RE_GO_FUNC;
+  -     let re_method = &*RE_GO_METHOD;
+  -     let re_type_struct = &*RE_GO_STRUCT;
+  -     let re_type_interface = &*RE_GO_INTERFACE;
+  -     let re_const = &*RE_GO_CONST;
+  - 
+  -     for (line_num, line) in code.lines().enumerate() {
+  -         let trimmed = line.trim_start();
+  - 
+  -         if let Some(caps) = re_method.captures(trimmed) {
+  -             let name = caps.get(1).map_or("", |m| m.as_str()).to_string();
+  -             let is_public = name.starts_with(|c: char| c.is_uppercase());
+  -             symbols.push(Symbol {
+  -                 name,
+  -                 kind: SymbolKind::Function,
+  -                 is_public,
+  ... (45 more lines)
+ ✓ (12.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '930,1020p' src/commands_… ✓ (5ms)
+  ▶ edit src/commands_map.rs (91 → 12 lines)
+  - }
+  - 
+  - /// Extract symbols from Ruby source code.
+  - fn extract_ruby_symbols(code: &str) -> Vec<Symbol> {
+  -     let mut symbols = Vec::new();
+  - 
+  -     let re_def = &*RE_RUBY_DEF;
+  -     let re_class = &*RE_RUBY_CLASS;
+  -     let re_module = &*RE_RUBY_MODULE;
+  -     let re_const = &*RE_RUBY_CONST;
+  - 
+  -     for (line_num, line) in code.lines().enumerate() {
+  -         if let Some(caps) = re_class.captures(line) {
+  -             let name = caps.get(1).map_or("", |m| m.as_str()).to_string();
+  -             symbols.push(Symbol {
+  -                 name,
+  -                 kind: SymbolKind::Class,
+  -                 is_public: true,
+  -                 line: line_num + 1,
+  -             });
+  ... (62 more lines)
+ ✓ (52.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -20 ✓ (127ms)
+  4 tools completed in 1m 23s (4 ✓)
+
+Build passes. Now let me run the tests:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_map 2>… ✓ (108ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_map 2>&1 | t… ✓ (1.5s)
+  2 tools completed in 6.9s (2 ✓)
+
+All 62 commands_map tests pass. Now let me run clippy:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.2s)
+
+Clean. Let me also run fmt:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (617ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (602ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (13.6s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 30.4s (6 ✓)
+
+Now let me add explicit tests that verify the table-driven approach produces correct results:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_shell_symbol… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2815,2835p' src/commands… ✓ (4ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Good — existing tests cover the behavior. Let me add a few more tests specifically verifying the table-driven approach produces correct results with edge cases. I'll insert them after the existing shell tests:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2832,2838p' src/commands… ✓ (3ms)
+  ▶ edit src/commands_map.rs (7 → 78 lines)
+  +     // ── Table-driven extraction verification tests ──
+  + 
+  +     #[test]
+  +     fn table_driven_go_visibility() {
+  +         let code = "func main() {}\nfunc Serve() {}\ntype handler struct{}\ntype Handler struct{}\n";
+  +         let symbols = extract_symbols(code, "go");
+  +         let main_sym = symbols.iter().find(|s| s.name == "main").unwrap();
+  +         assert!(!main_sym.is_public, "lowercase Go func should be private");
+  +         let serve_sym = symbols.iter().find(|s| s.name == "Serve").unwrap();
+  +         assert!(serve_sym.is_public, "uppercase Go func should be public");
+  +         let handler_lower = symbols.iter().find(|s| s.name == "handler").unwrap();
+  +         assert!(
+  +             !handler_lower.is_public,
+  +             "lowercase Go struct should be private"
+  +         );
+  +         let handler_upper = symbols.iter().find(|s| s.name == "Handler").unwrap();
+  +         assert!(
+  +             handler_upper.is_public,
+  +             "uppercase Go struct should be public"
+  +         );
+  ... (54 more lines)
+ ✓ (52.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_map 2>&1 | t… ✓ (1.5s)
+  3 tools completed in 1m 15s (3 ✓)
+
+All 67 tests pass (was 62 before, added 5 new ones). Let me run the full suite:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (13.8s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (625ms)
+  5 tools completed in 41.2s (5 ✓)
+
+All checks pass. Let me also verify that the file line count went down (was 3291):
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_map.rs ✓ (3ms)
+
+It grew slightly overall (added 148 lines of framework + 71 lines of tests, removed 79+63 = 142 lines of old code) — net +77 lines. That's expected for Phase 1: the framework costs some boilerplate but subsequent language conversions (Phase 2+) will only subtract code. Let me review what the final structure looks like:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '227,382p' src/commands_m… ✓ (5ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Let me run the full verification suite one more time:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (45.4s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

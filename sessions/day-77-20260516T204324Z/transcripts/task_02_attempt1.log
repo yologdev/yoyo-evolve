@@ -1,0 +1,222 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/too… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '905,1987p' src/tools.rs ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/tools.rs ✓ (3ms)
+  4 tools completed in 20.2s (4 ✓)
+
+Now let me look at the tool structures and their implementations to understand what to test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,100p' src/tools.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,250p' src/tools.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,600p' src/tools.rs ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,905p' src/tools.rs ✓ (10ms)
+  4 tools completed in 15.2s (4 ✓)
+
+Now let me look at what tests already exist to avoid duplication:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/tools.rs … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/tools.rs … ✓ (4ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Good — there are already 29 tests. Let me see exactly what's covered and what gaps remain:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1454,1990p' src/tools.rs ✓ (8ms)
+
+Now let me see what's between lines 1560-1870 to understand existing TodoTool tests and other tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1560,1870p' src/tools.rs ✓ (6ms)
+
+Now I have a good understanding of existing coverage. Let me identify the gaps and write new tests. Here's what's already covered:
+• StreamingBashTool: deny patterns, confirm, basic execution, exit code, timeout, output truncation, updates, missing command, stderr, progress
+• RenameSymbolTool: name, label, schema, missing old_name, missing new_name, required fields
+• AskUserTool: schema, not in non-terminal
+• TodoTool: schema, list empty, add+list, done, invalid action, missing description, wip missing id, remove missing id, clear, wip marks
+• build_tools: count, tool names unique, descriptions, dir restrictions, audit, piped limit
+
+Gaps I can fill:
+1. StreamingBashTool — working_dir construction, deny_patterns field content, default field values, with_confirm method, description text content
+2. RenameSymbolTool — description text content, optional path parameter parsing
+3. AskUserTool — description text content
+4. build_tools — expected tool names match a canonical list, disallowed_tools filtering
+5. build_sub_agent_tool — description content, system prompt content, model/api_key inheritance
+
+Let me check if there's a disallowed_tools parameter:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/t… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a… ✓ (4ms)
+  2 tools completed in 10.0s (2 ✓)
+
+The disallowed_tools is in AgentConfig and used in build_agent, not in build_tools. Let me look at how build_tools uses it:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed" src/tools.r… ✓ (5ms)
+
+Only in the test helper. The build_tools function signature takes a Vec<String> for shell_hooks, not disallowed_tools. Let me look more carefully at the signature:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A3 "pub fn build_tools" sr… ✓ (4ms)
+
+Good. Now let me check for the RenameSymbolTool struct and confirm what we have:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,420p' src/tools.rs ✓ (4ms)
+
+Now let me look at how existing tests use test_tool_context:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1103,1140p' src/tools.rs ✓ (4ms)
+
+Now I have a thorough understanding of the existing tests. Let me write new tests that fill the gaps. I'll focus on:
+
+1. StreamingBashTool — default field values, `cwd setting, with_confirm` stores function, description content
+2. RenameSymbolTool — description mentions key behavior, path param is optional in schema
+3. AskUserTool — description mentions user/question semantics
+4. TodoTool — done on non-existent id, remove on non-existent id, action missing entirely
+5. build_tools — all 8 expected tool names match canonical list, tool ordering stability
+6. build_sub_agent_tool — shared state operations, sub-agent tool description content
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1985,1987p' src/tools.rs ✓ (3ms)
+
+Now I'll add the new tests at the end of the test module:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (22 → 430 lines)
+            assert!(
+                names.contains(&"todo"),
+                "Should still have todo after audit wrap"
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // StreamingBashTool — default values and construction
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_streaming_bash_default_cwd_is_none() {
+  +         let tool = StreamingBashTool::default();
+  +         assert!(tool.cwd.is_none(), "Default cwd should be None");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_streaming_bash_default_timeout_is_120s() {
+  +         let tool = StreamingBashTool::default();
+  +         assert_eq!(tool.timeout, Duration::from_secs(120));
+  ... (394 more lines)
+ ✓ (9.1s)
+
+The SharedState methods are async and take String values. Let me fix these tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn set\|fn get" ~/.carg… ✓ (4ms)
+
+They're async methods. I need to make those tests async:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (32 → 32 lines)
+  -     #[test]
+  -     fn test_build_sub_agent_tool_shared_state_is_independent() {
+  +     #[tokio::test]
+  +     async fn test_build_sub_agent_tool_shared_state_is_independent() {
+            let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+            let (_, state1) = build_sub_agent_tool(&config);
+            let (_, state2) = build_sub_agent_tool(&config);
+    
+            // Set a value in state1, it should NOT appear in state2
+  -         state1.set("test_key", "test_value");
+  -         assert_eq!(state1.get("test_key"), Some("test_value".to_string()));
+  +         state1.set("test_key", "test_value".to_string()).await.unwrap();
+  +         assert_eq!(state1.get("test_key").await, Some("test_value".to_string()));
+            assert_eq!(
+  -             state2.get("test_key"),
+  +             state2.get("test_key").await,
+                None,
+                "Each build_sub_agent_tool call should produce independent shared state"
+            );
+        }
+  ... (24 more lines)
+ ✓ (11.1s)
+
+Clippy wants me to use struct initialization syntax instead of field reassignment. Let me fix those:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (17 → 21 lines)
+        #[test]
+        fn test_streaming_bash_cwd_can_be_set() {
+  -         let mut tool = StreamingBashTool::default();
+  -         tool.cwd = Some("/tmp".to_string());
+  +         let tool = StreamingBashTool {
+  +             cwd: Some("/tmp".to_string()),
+  +             ..Default::default()
+  +         };
+            assert_eq!(tool.cwd.as_deref(), Some("/tmp"));
+        }
+    
+        #[tokio::test]
+        async fn test_streaming_bash_cwd_is_applied() {
+            let tmp = std::env::temp_dir();
+  -         let mut tool = StreamingBashTool::default();
+  -         tool.cwd = Some(tmp.to_string_lossy().to_string());
+  +         let tool = StreamingBashTool {
+  +             cwd: Some(tmp.to_string_lossy().to_string()),
+  +             ..Default::default()
+  +         };
+  ... (3 more lines)
+ ✓ (49.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.4s)
+  2 tools completed in 1m 7s (2 ✓)
+
+Clippy passes. Now let's run the tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib tools 2>&1 | ta… ✓ (166ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tools 2>&1 | tail -80 ✓ (1.8s)
+  2 tools completed in 8.5s (2 ✓)
+
+All 150 tool-related tests pass. Let me check how many are new:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]\|#\[tokio::te… ✓ (4ms)
+
+Wait, that's counting both #[test] and #[tokio::test] but some tests have both annotations. Let me count test functions:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "fn test_" src/tools.rs ✓ (3ms)
+
+Wait that includes test_agent_config, test_tool_context, and `test_tool_context_with_progress which are helpers, not tests. Let me count actual test function declarations (those with #[test] or #[tokio::test]` attribute):
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E "^\s*(async )?fn test_" … ✓ (8ms)
+
+Wait, that seems high. Let me double check what was there before. The task said 29 tests. Let me check carefully:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (6ms)
+
+The existing test count was 29 according to the earlier `grep -c "#\[test\]" — but wait, that was counting the #[test] attribute, not #[tokio::test]`. The actual tests include both sync and async. Let me check what changed:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/tools.rs | … ✓ (7ms)
+
+30 new test functions added. Now let's run the full test suite:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (23.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (622ms)
+  2 tools completed in 32.3s (2 ✓)
+
+Need to run cargo fmt:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (608ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (57.3s)
+  2 tools completed in 1m 6s (2 ✓)
+
+All checks pass. Let me also specifically verify the tools tests:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tools 2>&1 | tail -10 ✓ (1.8s)
+
+All 150 tool tests pass. Let me count the new tests one more time:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/tools.rs | … ✓ (7ms)
+
+30 new tests added. Now let's commit:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (17ms)
+
+Done. Added 30 new unit tests to src/tools.rs covering:
+
+• StreamingBashTool (14 tests): default field values (cwd, timeout, max_output_bytes, deny_patterns, confirm_fn, update_interval, lines_per_update, progress_requires_tty), `with_confirm` stores function, cwd can be set and is applied during execution, name/description/schema validation
+• **RenameSymbolTool** (3 tests): description mentions key behaviors (word-boundary, git-tracked), path parameter is optional, all property types are string
+• AskUserTool (2 tests): description mentions user/question/clarification, question parameter is string type
+• TodoTool (4 tests): missing action entirely returns error, done/remove on non-existent ID fails, multiple tasks can be added and listed
+• **build_tools** (2 tests): canonical 8 tool names match expected set, ask_user excluded in non-terminal
+• build_sub_agent_tool (5 tests): description mentions subtask/sub-agent, shared state is independent per call, shared state set/get/overwrite works, schema has task description, OpenAI-compatible provider fallback works
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
