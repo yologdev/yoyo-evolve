@@ -1,0 +1,229 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task step by step. Let me start by understanding the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "restore_session\|resume…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_resume_summary\… ✓ (6ms)
+ ✓ (4ms)
+  ▶ read src/main.rs:570..620 ✓ (0ms)
+  3 tools completed in 5.2s (3 ✓)
+
+Now let me look at the Agent message types to understand how to extract content:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentMessage\|MessageC…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo doc --document-private-ite… ✓ (4ms)
+ ✓ (1m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub enum AgentMessage\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,250p' ~/.cargo/registr… ✓ (5ms)
+  4 tools completed in 1m 14s (4 ✓)
+
+Now let me look at how summarize_message and message_text work in prompt_utils.rs — these are the patterns I should follow:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:42..102 ✓ (1ms)
+
+Now let me look at `safe_truncate` from format/mod.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn safe_truncate\|p… ✓ (3ms)
+  ▶ read src/format/mod.rs:225..250 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me see the imports at the top of commands_session.rs and find a good place to add the new function:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:1..31 ✓ (1ms)
+
+Now let me look at where the tests are in commands_session.rs to know where to add mine:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (4ms)
+  ▶ read src/commands_session.rs:690..740 ✓ (1ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now I have enough context. Let me look at how Message and Content types are constructed for tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StopReason\|fn assistan… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A15 "fn test_summarize… ✓ (4ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Let me see how Assistant messages are constructed in existing tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A20 "Message::Assistan… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Message::Assistant" src… ✓ (6ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me look at a test that constructs an Assistant message:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:970..1000 ✓ (0ms)
+
+Now I have everything I need. Let me plan my implementation:
+
+1. Add `session_resume_summary() function to commands_session.rs`
+2. Write tests for it first
+3. Modify `restore_session() in main.rs` to call it
+4. Run all checks
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 11.8s (5 ✓)
+
+Let me write the tests first, then the function. First, let me see the end of the tests module:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:1220..1300 ✓ (1ms)
+
+Now let me see if there are helper functions already used, like count_tool_calls, extract_user_text, format_tool_summary:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn count_tool_calls\|fn… ✓ (3ms)
+  ▶ read src/commands_session.rs:328..378 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+There are already useful helper functions. Now let me implement the session_resume_summary function and its tests. Let me write tests first, then the implementation.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me find the right place to add the function — after the existing helpers and before the tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:680..710 ✓ (1ms)
+
+Now I'll add the session_resume_summary function right before the #[cfg(test)] block, and the tests at the end of the tests module.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (3 → 78 lines)
+  + }
+  + 
+  + /// Build a short summary of a restored session for display after `--continue`.
+  + ///
+  + /// Returns a multi-line string showing message/tool counts and snippets of
+  + /// the last user prompt and assistant reply.
+  + pub fn session_resume_summary(messages: &[AgentMessage]) -> String {
+  +     if messages.is_empty() {
+  +         return "  📋 resumed session (empty)\n".to_string();
+  +     }
+  + 
+  +     let msg_count = messages.len();
+  + 
+  +     // Count tool calls across all assistant messages
+  +     let mut total_tool_calls: usize = 0;
+  +     for msg in messages {
+  +         if let AgentMessage::Llm(Message::Assistant { content, .. }) = msg {
+  +             total_tool_calls += content
+  +                 .iter()
+  +                 .filter(|c| matches!(c, Content::ToolCall { .. }))
+  ... (58 more lines)
+ ✓ (11.8s)
+
+Expected — let me also update main.rs to call it, and then write the tests. Let me do both now:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (7 → 6 lines)
+            Ok(json) => match agent.restore_messages(&json) {
+                Ok(_) => {
+  -                 eprintln!(
+  -                     "{DIM}  resumed session: {} messages from {session_path}{RESET}",
+  -                     agent.messages().len()
+  -                 );
+  +                 let summary =
+  +                     commands_session::session_resume_summary(agent.messages());
+  +                 eprint!("{DIM}{summary}{RESET}");
+                }
+ ✓ (50.3s)
+
+Now add the tests at the end of the test module in commands_session.rs:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:1350..1365 ✓ (1ms)
+  ▶ read src/commands_session.rs:1363..1368 ✓ (1ms)
+  ▶ edit src/commands_session.rs (3 → 116 lines)
+            handle_history_detail(&agent);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_session_resume_summary_empty() {
+  +         let messages: Vec<AgentMessage> = vec![];
+  +         let summary = session_resume_summary(&messages);
+  +         assert!(summary.contains("empty"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_session_resume_summary_mixed_messages() {
+  +         let messages = vec![
+  +             AgentMessage::Llm(Message::user("Can you fix the test failures?")),
+  +             AgentMessage::Llm(Message::Assistant {
+  +                 content: vec![
+  +                     Content::Text {
+  +                         text: "I found 3 failing tests.".to_string(),
+  +                     },
+  +                     Content::ToolCall {
+  ... (96 more lines)
+ ✓ (50.9s)
+  3 tools completed in 1m 13s (3 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (615ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (40.1s)
+  3 tools completed in 1m 0s (3 ✓)
+
+All 2929 unit tests + 88 integration tests pass. Let me also verify the build explicitly:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (128ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 10.7s (5 ✓)
+
+Now let me check if docs need updating. The task description says to update docs if behavior changed. This is a user-facing change to `--continue behavior. Let me check what docs mention --continue`:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "continue\|--continue\|… ✓ (5ms)
+  ▶ read docs/src/features/sessions.md:1..71 ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+I need to update the sessions doc to reflect the new summary output:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/features/sessions.md (6 → 8 lines)
+    ```bash
+    $ yoyo -c
+  -   resumed session: 8 messages from .yoyo/last-session.json
+  +   📋 resumed session (8 messages, 5 tool calls)
+  +   last prompt: "Can you fix the test failures in commands_map.rs?"
+  +   last reply:  "I found 3 failing tests. The issue was..."
+    
+    main > what were we working on?
+    ```
+ ✓ (37.2s)
+
+Now let me verify my changes are correct by reviewing them:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/main.rs ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Let me verify the function itself looks correct:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:690..770 ✓ (1ms)
+
+Clean implementation. Now let me also check if CLAUDE.md architecture section needs updating for `session_resume_summary`:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "commands_session.rs" CLAUD… ✓ (3ms)
+
+The commands_session.rs description is in the repository structure section which is auto-generated, so I don't need to manually update it. The function name will appear there automatically. Let me now commit:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (15 lines) ✓ (15ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 11.8s (3 ✓)
+
+Done. Here's what I implemented:
+
+`src/commands_session.rs` — Added session_resume_summary(messages: &[AgentMessage]) -> String:
+• Scans messages in reverse to find the last user prompt and last assistant text reply
+• Counts total tool calls across all assistant messages
+• Returns a formatted multi-line summary with message/tool counts and truncated snippets
+• Uses existing extract_user_text() and `truncate_with_ellipsis()` helpers
+• 4 unit tests covering: empty messages, mixed conversations, long message truncation, tool-call-only messages
+
+`src/main.rs` — Updated restore_session() to call session_resume_summary() instead of the old terse one-liner.
+
+`docs/src/features/sessions.md` — Updated the example output to show the new summary format.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

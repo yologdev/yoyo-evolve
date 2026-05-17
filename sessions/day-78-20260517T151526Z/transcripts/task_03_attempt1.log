@@ -1,0 +1,241 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current test module in help.rs to understand the existing test structure, then add comprehensive tests.
+  ▶ $ grep -n "mod tests" src/help.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ wc -l src/help.rs ✓ (7ms)
+ ✓ (13ms)
+  ▶ read src/help.rs:2066.. ✓ (5ms)
+  3 tools completed in 3.8s (3 ✓)
+
+Now let me read the key functions I need to test:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn command_short_description\|pub fn handle_help_command\|pub fn he… ✓ (9ms)
+  ▶ $ grep -n "^pub fn\|^fn\|^    pub fn" src/help.rs | head -30 ✓ (3ms)
+  ▶ read src/help.rs:1..51 ✓ (1ms)
+  ▶ read src/help.rs:1939..2039 ✓ (1ms)
+  ▶ read src/help.rs:2038..2088 ✓ (1ms)
+  5 tools completed in 15.4s (5 ✓)
+
+Now let me look at the full existing test section and KNOWN_COMMANDS:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:2130..2230 ✓ (1ms)
+  ▶ read src/help.rs:2229..2429 ✓ (2ms)
+  ▶ read src/help.rs:2428..2628 ✓ (2ms)
+  ▶ read src/help.rs:2627..2927 ✓ (2ms)
+  4 tools completed in 10.0s (4 ✓)
+
+Now let me check what KNOWN_COMMANDS contains:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 80 "const KNOWN_COMMANDS" src/commands.rs | head -85 ✓ (4ms)
+  ▶ $ grep -A 90 "const KNOWN_COMMANDS" src/commands.rs | tail -15 ✓ (3ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good — now I have a complete picture of the existing tests (48 tests) and what's available. Let me also check the command_help match block to see which commands have detailed help entries:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '^\s*"[a-z]' src/help.rs | head -80 ✓ (5ms)
+  ▶ $ grep -n '^\s*"[a-z]' src/help.rs | tail -20 ✓ (5ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Now I have a complete picture. Let me also peek at the remaining command_help entries to see the tail of the match:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1090..1150 ✓ (1ms)
+
+Now I have a thorough understanding of the existing tests and what's untested. Let me write the new tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:2884..2889 ✓ (1ms)
+  ▶ edit src/help.rs (5 → 488 lines)
+            // Unknown command should print "Unknown command" and still return true
+            // (it handled the input, even if command wasn't found)
+            assert!(handle_help_command("/help zzz_nonexistent"));
+  +     }
+  + 
+  +     // ── command_short_description: exhaustive non-empty checks ──
+  + 
+  +     #[test]
+  +     fn command_short_description_every_known_command_non_empty() {
+  +         // Every KNOWN_COMMAND must have a non-empty short description
+  +         for &cmd in KNOWN_COMMANDS {
+  +             let name = cmd.strip_prefix('/').unwrap_or(cmd);
+  +             if let Some(desc) = command_short_description(name) {
+  +                 assert!(
+  +                     !desc.trim().is_empty(),
+  +                     "short description for '{name}' must not be blank"
+  +                 );
+  +             } else {
+  +                 panic!("command_short_description(\"{name}\") returned None");
+  +             }
+  ... (468 more lines)
+ ✓ (49.4s)
+  2 tools completed in 1m 47s (2 ✓)
+
+Let me check if the build and tests actually pass:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (37.4s)
+  2 tools completed in 57.6s (2 ✓)
+
+Two test failures — let me fix them:
+
+1. bg uses "Subcommands:" instead of "Usage:" — add it to exceptions
+2. config has an odd ** — let me check
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '\*\*' src/help.rs | head -20 ✓ (3ms)
+  ▶ $ grep -c '\*\*' <<< "$(grep 'masked as \*\*\*' src/help.rs)" ✓ (5ms)
+  2 tools completed in 13.1s (2 ✓)
+
+The config help has *** (line 633) which matches("**") counts as 1 match (substring). And watch has **separate phases** which is 2 matches. So `***` in config produces 1 match (odd). Let me check which commands have this issue:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test command_help_no_unclo… ✓ (138ms)
+
+Only config fails. The *** masking pattern is intentional — it's not a formatting error. I need to adjust the bold marker test to account for *** (asterisk runs used for masking, not bold formatting):
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (15 → 18 lines)
+        #[test]
+        fn command_help_no_unclosed_bold_markers() {
+  -         // Check that help entries don't have broken formatting
+  -         // (odd number of ** would indicate unclosed bold)
+  +         // Check that help entries don't have broken formatting.
+  +         // Count only isolated ** pairs (bold markers), skipping *** runs
+  +         // used for masking (e.g., "masked as ***").
+            for &cmd in KNOWN_COMMANDS {
+                let name = cmd.strip_prefix('/').unwrap_or(cmd);
+                if let Some(text) = command_help(name) {
+  -                 let bold_count = text.matches("**").count();
+  +                 // Replace *** masking patterns before counting **
+  +                 let cleaned = text.replace("***", "");
+  +                 let bold_count = cleaned.matches("**").count();
+                    assert!(
+                        bold_count % 2 == 0,
+                        "command_help(\"{name}\") has {bold_count} '**' markers (should be even)"
+ ✓ (49.1s)
+
+Now fix the Usage section test — add "bg" and check which other commands use "Subcommands:" instead:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test command_help_entries_… ✓ (134ms)
+
+Only bg. Let me check its help text to see if it uses "Subcommands:" which would be fine:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 15 '"bg" => Some' src/help.rs | head -16 ✓ (4ms)
+
+bg uses "Subcommands:" — I'll update the test to accept both "Usage" and "Subcommands":
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (20 → 24 lines)
+        #[test]
+        fn command_help_entries_contain_usage_section() {
+  -         // Most help entries should contain "Usage:" for consistency
+  -         let exceptions = ["help", "quit", "exit", "clear!", "status", "cost",
+  -                           "tokens", "version", "marks", "changes", "profile",
+  -                           "retry", "fix", "changelog"];
+  +         // Most help entries should contain "Usage:" or "Subcommands:" for consistency
+  +         let exceptions = [
+  +             "help", "quit", "exit", "clear!", "status", "cost", "tokens", "version", "marks",
+  +             "changes", "profile", "retry", "fix", "changelog",
+  +         ];
+            for &cmd in KNOWN_COMMANDS {
+                let name = cmd.strip_prefix('/').unwrap_or(cmd);
+                if exceptions.contains(&name) {
+  ···
+                }
+                if let Some(text) = command_help(name) {
+                    assert!(
+  -                     text.contains("Usage") || text.contains("usage"),
+  -                     "command_help(\"{name}\") should contain a Usage section, got: {}",
+  ... (8 more lines)
+ ✗ (2ms)
+    │ old_text not found in src/help.rs.
+  ▶ $ grep -n "fn command_help_entries_contain_usage_section" src/help.rs ✓ (8ms)
+  ▶ read src/help.rs:3274..3304 ✓ (1ms)
+  ▶ read src/help.rs:3303..3313 ✓ (1ms)
+  ▶ edit src/help.rs (2 → 5 lines)
+  -                     text.contains("Usage") || text.contains("usage"),
+  -                     "command_help(\"{name}\") should contain a Usage section, got: {}",
+  +                     text.contains("Usage")
+  +                         || text.contains("usage")
+  +                         || text.contains("Subcommands")
+  +                         || text.contains("subcommands"),
+  +                     "command_help(\"{name}\") should contain a Usage or Subcommands section, got: {}",
+ ✓ (49.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (23.0s)
+  7 tools completed in 1m 49s (6 ✓, 1 ✗)
+
+`clear` doesn't have Usage/Subcommands. Let me add it to exceptions:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (16 → 17 lines)
+                "help",
+                "quit",
+                "exit",
+  +             "clear",
+                "clear!",
+                "status",
+                "cost",
+ ✓ (49.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (12.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test command_help_entries_… ✓ (160ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test command_help_entries_… ✓ (132ms)
+  4 tools completed in 1m 17s (4 ✓)
+
+Let me take a different approach — instead of adding exceptions one-by-one, let me check which commands DON'T have "Usage" or "Subcommands":
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (32 lines) ✓ (43ms)
+
+Good — quite a few commands use descriptive text without a formal Usage section. Let me update the test to use a more comprehensive exception list, or better yet, flip the approach: test that commands with subcommands/flags document them properly:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (37 → 22 lines)
+        #[test]
+  -     fn command_help_entries_contain_usage_section() {
+  -         // Most help entries should contain "Usage:" or "Subcommands:" for consistency
+  -         let exceptions = [
+  -             "help",
+  -             "quit",
+  -             "exit",
+  -             "clear",
+  -             "clear!",
+  -             "status",
+  -             "cost",
+  -             "tokens",
+  -             "version",
+  -             "marks",
+  -             "changes",
+  -             "profile",
+  -             "retry",
+  -             "fix",
+  -             "changelog",
+  -         ];
+  ... (27 more lines)
+ ✗ (2ms)
+    │ old_text not found in src/help.rs.
+  ▶ $ grep -n "fn command_help_entries_contain_usage_section" src/help.rs ✓ (8ms)
+  ▶ read src/help.rs:3274..3309 ✓ (1ms)
+  ▶ read src/help.rs:3308..3314 ✓ (1ms)
+  ▶ edit src/help.rs (37 → 22 lines)
+        #[test]
+  -     fn command_help_entries_contain_usage_section() {
+  -         // Most help entries should contain "Usage:" for consistency
+  -         let exceptions = [
+  -             "help",
+  -             "quit",
+  -             "exit",
+  -             "clear",
+  -             "clear!",
+  -             "status",
+  -             "cost",
+  -             "tokens",
+  -             "version",
+  -             "marks",
+  -             "changes",
+  -             "profile",
+  -             "retry",
+  -             "fix",
+  -             "changelog",
+  -         ];
+  ... (27 more lines)
+ ✓ (51.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.5s)
+  6 tools completed in 1m 23s (5 ✓, 1 ✗)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
