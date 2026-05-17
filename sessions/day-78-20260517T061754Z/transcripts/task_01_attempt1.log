@@ -1,0 +1,169 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/commands_map.rs ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn generate_repo_map_fo… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1755,1810p' src/commands… ✓ (4ms)
+  3 tools completed in 10.0s (3 ✓)
+
+Now let me look at the FileSymbols struct and the build_repo_map function:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct FileSymbols\|str… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '196,240p' src/commands_m… ✓ (4ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me look at existing tests to understand the test structure:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2100,2200p' src/commands… ✓ (4ms)
+
+Now I have a good understanding of the code. Let me implement the changes:
+
+1. Add `recently_modified_files` helper
+2. Add relevance scoring and sorting in generate_repo_map_for_prompt_with_limit
+3. Add tests
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1590,1600p' src/commands… ✓ (3ms)
+
+Now, let me find a good place to insert the recently_modified_files helper — right before `generate_repo_map_for_prompt_with_limit`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1750,1755p' src/commands… ✓ (3ms)
+
+Let me see what's at line 1750 for context:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1745,1753p' src/commands… ✓ (3ms)
+
+Good. I'll insert the helper function right before the generate_repo_map_for_prompt_with_limit function. Let me also check the imports at the top:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,7p' src/commands_map.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3,7p' src/commands_map.r… ✓ (3ms)
+  ▶ read src/commands_map.rs:3..8 ✓ (1ms)
+  3 tools completed in 9.6s (3 ✓)
+
+Now let me check if std::process::Command is used anywhere in this file:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "std::process::Command\|… ✓ (3ms)
+
+Good, std::process::Command is already used in the file (just with the full path). Now let me implement the solution. First, I'll add the recently_modified_files helper and modify generate_repo_map_for_prompt_with_limit:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (43 → 105 lines)
+  + /// Get the list of recently modified files from git history (deduplicated, ordered by recency).
+  + ///
+  + /// Returns up to `n` unique file paths from the last `n` commits' changed files.
+  + /// Returns an empty vec if not in a git repository or git fails.
+  + pub fn recently_modified_files(n: usize) -> Vec<String> {
+  +     let output = std::process::Command::new("git")
+  +         .args(["log", "--name-only", "--format=", "-n"])
+  +         .arg(n.to_string())
+  +         .output();
+  +     let output = match output {
+  +         Ok(o) if o.status.success() => o,
+  +         _ => return Vec::new(),
+  +     };
+  +     let stdout = String::from_utf8_lossy(&output.stdout);
+  +     let mut seen = std::collections::HashSet::new();
+  +     let mut result = Vec::new();
+  +     for line in stdout.lines() {
+  +         let path = line.trim();
+  +         if !path.is_empty() && seen.insert(path.to_string()) {
+  +             result.push(path.to_string());
+  ... (58 more lines)
+ ✓ (11.5s)
+
+Clippy wants checked division. Let me fix that:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (6 → 5 lines)
+        // Density: symbols per 100 lines, capped at 50
+  -     let density_score = if entry.lines > 0 {
+  -         (entry.symbols.len() * 100 / entry.lines).min(50)
+  -     } else {
+  -         0
+  -     };
+  +     let density_score = (entry.symbols.len() * 100)
+  +         .checked_div(entry.lines)
+  +         .unwrap_or(0)
+  +         .min(50);
+ ✓ (40.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (159ms)
+  2 tools completed in 47.6s (2 ✓)
+
+Good, clippy passes. Now let me add the tests. Let me find the test module:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1914,1920p' src/commands… ✓ (3ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Now let me find the end of the test module to add tests there:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_map.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3435,3443p' src/commands… ✓ (3ms)
+  2 tools completed in 7.2s (2 ✓)
+
+The test module ends at line 3443. Let me add the new tests before the closing }:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (8 → 201 lines)
+                    .iter()
+                    .any(|s| s.name == "Base" && s.kind == SymbolKind::Class),
+                "should find abstract class"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_recently_modified_files_returns_deduped_paths() {
+  +         // This test runs in the actual git repo, so git log should work
+  +         let files = recently_modified_files(10);
+  +         // Should return some files (we're in a git repo with commits)
+  +         // The list should be deduplicated
+  +         let unique: std::collections::HashSet<&String> = files.iter().collect();
+  +         assert_eq!(
+  +             files.len(),
+  +             unique.len(),
+  +             "recently_modified_files should return deduplicated paths"
+  +         );
+  +         // Every entry should be non-empty
+  +         for f in &files {
+  ... (179 more lines)
+ ✓ (39.1s)
+
+Now let's run the full check suite:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (759ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (161ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (13.8s)
+  3 tools completed in 27.4s (3 ✓)
+
+All 88 tests pass. Let me run just the new tests to confirm they're specifically passing:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_recently_modifie… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --test-threads=1 t… ✓ (172ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- test_relevance 2>&… ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- test_generate_repo… ✓ (500ms)
+  4 tools completed in 16.0s (4 ✓)
+
+All new tests pass. Let me do one final verification of the complete pipeline:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (14.8s)
+
+All checks pass. Now let me commit:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (18 lines) ✓ (15ms)
+
+Done. Let me verify the final state is clean:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (5ms)
+
+The implementation is complete. Here's what was done:
+
+1. `recently_modified_files(n: usize) -> Vec<String>` — A single `git log --name-only --format= -n {n}` invocation that returns deduplicated paths ordered by recency. Falls back to empty vec if git isn't available.
+
+2. `relevance_score(entry, recent_files) -> usize` — Composite score combining:
+   • recency_score: position in the recent files list (most recent = highest)
+   • density_score: symbols * 100 / lines, capped at 50
+   • size_score: lines / 50, capped at 20
+
+3. **Modified generate_repo_map_for_prompt_with_limit** — When the full map exceeds max_chars, entries are now sorted by relevance score descending before the truncation loop. The full (non-truncated) path still returns the map as-is.
+
+4. `/map` stays alphabetical — Only the prompt injection version gets relevance ranking; the user-facing command is untouched.
+
+5. Three new tests verifying deduplication, scoring preferences, and truncation behavior.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

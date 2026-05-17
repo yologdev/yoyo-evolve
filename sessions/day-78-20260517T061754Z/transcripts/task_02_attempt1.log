@@ -1,0 +1,474 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LanguagePatterns" src/c… ✓ (6ms)
+  ▶ read src/commands_map.rs:245..385 ✓ (2ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me look at the PatternRule struct and the regex static declarations:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:225..255 ✓ (1ms)
+
+Now let me find the C#, PHP, and Kotlin extraction functions:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_csharp_symbo… ✓ (4ms)
+  ▶ read src/commands_map.rs:956..1116 ✓ (2ms)
+  ▶ read src/commands_map.rs:1115..1195 ✓ (1ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now I see the challenge. The C#, PHP, and Kotlin functions have custom visibility logic that doesn't fit cleanly into the existing VisibilityRule enum. Let me look more closely:
+
+1. **C#**: is_pub = trimmed.starts_with("public") — needs a "StartsWithPublic" rule
+2. PHP: Classes/interfaces/traits/enums are always public; functions use `is_pub = starts_with("public") || (!starts_with("private") && !starts_with("protected"))` — basically "not private/protected" 
+3. Kotlin: `is_pub = !starts_with("private") && !starts_with("protected")` — same as PHP functions
+4. C# method: Has keyword filter (CSHARP_NON_METHOD_KEYWORDS)
+5. Kotlin fun: Has keyword filter (`KOTLIN_NON_FUN_KEYWORDS`)
+6. Kotlin class: Special enum detection (starts_with("enum") || contains("enum class"))
+
+The keyword filter and the enum detection for Kotlin are special cases. Let me look at what the VisibilityRule currently supports and think about how to extend it:
+
+The table-driven approach needs:
+1. A new visibility rule for "public if line starts with 'public'" (C#)  
+2. A new visibility rule for "public unless private/protected" (Kotlin, PHP functions)
+3. A keyword exclusion list mechanism
+4. Kotlin's enum class detection
+
+Let me check if there's a filter mechanism or if I need to add one:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CSHARP_NON_METHOD_KEYWO… ✓ (3ms)
+  ▶ read src/commands_map.rs:932..957 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me look at how the existing languages are routed in `extract_symbols`:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"csharp\"\|\"php\"\|\"… ✓ (4ms)
+
+Now let me look at the regex declarations for C#, PHP, and Kotlin:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RE_CSHARP\|RE_PHP\|RE_K… ✓ (4ms)
+  ▶ read src/commands_map.rs:107..162 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now let me look at the tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:3006..3106 ✓ (1ms)
+  ▶ read src/commands_map.rs:3105..3205 ✓ (2ms)
+  ▶ read src/commands_map.rs:3204..3264 ✓ (1ms)
+  3 tools completed in 11.7s (3 ✓)
+
+Now I understand the full picture. The key special behaviors that don't fit cleanly into `LanguagePatterns` are:
+
+1. C#: Visibility = trimmed.starts_with("public"). The method rule has a keyword exclusion list.
+2. PHP: Classes/interfaces/traits/enums are always public. Functions have a complex visibility rule (`public || (!private && !protected)`). But looking at it more carefully, the PHP function regex already matches (?:public|private|protected)? in the pattern — so the visibility determination is done on the raw line.
+3. Kotlin: Visibility = !starts_with("private") && !starts_with("protected"). The class rule needs enum detection. The fun rule has a keyword exclusion list.
+
+I need to extend `VisibilityRule and PatternRule` to support:
+• `StartsWithPublic` — C# style
+• `NotPrivateOrProtected` — Kotlin/PHP function style  
+• Keyword exclusion lists
+• Kind override based on line content (Kotlin enum class → Enum instead of Class)
+
+Let me extend the approach. I'll add new visibility rules and an optional exclude_keywords field and kind_override mechanism to PatternRule.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:228..288 ✓ (1ms)
+
+Now I have a complete picture. Let me plan the implementation:
+
+1. Add new VisibilityRule variants: StartsWithPublic (C#), NotPrivateOrProtected (Kotlin/PHP)
+2. Add exclude_names field to PatternRule (keyword filter)
+3. Add `kind_override_fn` or equivalent for Kotlin's enum class detection — but this is tricky with static. Let me think...
+
+For Kotlin's enum class, the class regex already matches enum class (the regex has (?:enum\s+)*class\s+(\w+)). The original code checks `trimmed.starts_with("enum") || trimmed.contains("enum class") to override the kind to Enum`. I can handle this by adding a separate regex for enum class that matches BEFORE the generic class regex, mapping to SymbolKind::Enum. That's cleaner and fits the table-driven model.
+
+Let me create a Kotlin-specific enum class regex. Let me check the existing Kotlin class regex:
+
+The regex is: `r"^\s*(?:(?:public|private|protected|internal|open|abstract|sealed|data|inner|enum)\s+)*class\s+(\w+)"`
+
+This matches `enum class Foo. I need a separate regex that ONLY matches enum class` and place it before the class rule.
+
+Now let me implement this:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 17.2s (6 ✓)
+
+Let me start. First, add new visibility rules and the exclude_names field:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (10 → 14 lines)
+        UppercaseIsPublic,
+        /// Public unless the name starts with `_` (Ruby/Python convention).
+        UnderscoreIsPrivate,
+  +     /// Public if the (trimmed) line starts with "public" (C# convention).
+  +     StartsWithPublic,
+  +     /// Public unless the (trimmed) line starts with "private" or "protected" (Kotlin/PHP).
+  +     NotPrivateOrProtected,
+    }
+ ✓ (7.0s)
+  2 tools completed in 13.9s (2 ✓)
+
+Expected — I need to update the match. Now let me also add `exclude_names to PatternRule` and update the extractor:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (8 → 10 lines)
+        /// Which capture group holds the symbol name (1-indexed).
+        name_group: usize,
+        visibility: VisibilityRule,
+  +     /// If non-empty, skip matches whose name is in this list (keyword filter).
+  +     exclude_names: &'static [&'static str],
+    }
+ ✓ (7.0s)
+  3 tools completed in 16.7s (3 ✓)
+
+I need to add exclude_names: &[] to all existing PatternRule instances. Let me update `extract_symbols_from_patterns` first to handle the new visibility rules and exclude_names, then fix the existing pattern rules.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (37 → 49 lines)
+            } else {
+                line
+            };
+  +         let trimmed = line.trim_start();
+            for rule in patterns.rules {
+                if let Some(caps) = rule.regex.captures(target) {
+                    let name = caps
+                        .get(rule.name_group)
+                        .map_or("", |m| m.as_str())
+                        .to_string();
+  +                 // Skip excluded names (keyword filter)
+  +                 if !rule.exclude_names.is_empty()
+  +                     && rule.exclude_names.contains(&name.as_str())
+  +                 {
+  +                     break;
+  +                 }
+                    let is_public = match rule.visibility {
+                        VisibilityRule::AlwaysPublic => true,
+                        VisibilityRule::UppercaseIsPublic => {
+                            name.starts_with(|c: char| c.is_uppercase())
+  ... (10 more lines)
+ ✓ (6.9s)
+
+Now I need to add exclude_names: &[] to all existing PatternRule instances. Let me see them:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:313..383 ✓ (1ms)
+  ▶ edit src/commands_map.rs (68 → 78 lines)
+            kind: SymbolKind::Function,
+            name_group: 1,
+            visibility: VisibilityRule::UppercaseIsPublic,
+  +         exclude_names: &[],
+        },
+        PatternRule {
+            regex: &RE_GO_FUNC,
+            kind: SymbolKind::Function,
+            name_group: 1,
+            visibility: VisibilityRule::UppercaseIsPublic,
+  +         exclude_names: &[],
+        },
+        PatternRule {
+            regex: &RE_GO_STRUCT,
+            kind: SymbolKind::Struct,
+            name_group: 1,
+            visibility: VisibilityRule::UppercaseIsPublic,
+  +         exclude_names: &[],
+        },
+        PatternRule {
+  ... (51 more lines)
+ ✓ (7.1s)
+  2 tools completed in 22.8s (2 ✓)
+
+One more — the last shell pattern rule:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:389..399 ✓ (1ms)
+  ▶ edit src/commands_map.rs (6 → 7 lines)
+            kind: SymbolKind::Function,
+            name_group: 1,
+            visibility: VisibilityRule::AlwaysPublic,
+  +         exclude_names: &[],
+        },
+ ✓ (11.0s)
+  2 tools completed in 16.6s (2 ✓)
+
+Good — now it compiles except for dead code. That's expected since I haven't created the new pattern tables yet. Let me now add the Kotlin enum class regex and create the pattern tables:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me add the Kotlin enum class regex. I'll add it after the existing Kotlin regexes:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:155..165 ✓ (1ms)
+  ▶ edit src/commands_map.rs (5 → 8 lines)
+    static RE_KOTLIN_FUN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^\s*(?:(?:public|private|protected|internal|open|override|suspend|inline)\s+)*fun\s+(?:<[^>]*>\s*)?(\w+)").unwrap()
+  + });
+  + static RE_KOTLIN_ENUM_CLASS: LazyLock<Regex> = LazyLock::new(|| {
+  +     Regex::new(r"^\s*(?:(?:public|private|protected|internal)\s+)*enum\s+class\s+(\w+)").unwrap()
+    });
+    
+    // ── Swift regexes ──
+ ✓ (11.1s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 23.1s (4 ✓)
+
+Now let me create the pattern tables. I'll add them after the existing Shell patterns. Let me see where those end:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:397..412 ✓ (1ms)
+  ▶ read src/commands_map.rs:411..416 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me add the C#, PHP, and Kotlin pattern rules and pattern statics. I'll insert after line 415:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:415..420 ✓ (1ms)
+  ▶ edit src/commands_map.rs (2 → 155 lines)
+  + };
+  + 
+  + // ── C# pattern rules ──
+  + static CSHARP_PATTERN_RULES: &[PatternRule] = &[
+  +     PatternRule {
+  +         regex: &RE_CSHARP_NAMESPACE,
+  +         kind: SymbolKind::Namespace,
+  +         name_group: 1,
+  +         visibility: VisibilityRule::AlwaysPublic,
+  +         exclude_names: &[],
+  +     },
+  +     PatternRule {
+  +         regex: &RE_CSHARP_RECORD,
+  +         kind: SymbolKind::Struct,
+  +         name_group: 1,
+  +         visibility: VisibilityRule::StartsWithPublic,
+  +         exclude_names: &[],
+  +     },
+  +     PatternRule {
+  +         regex: &RE_CSHARP_CLASS,
+  ... (135 more lines)
+ ✗ (0ms)
+    │ old_text matches 16 locations in src/commands_map.rs. Include more surrounding context to make the match unique.
+  ▶ read src/commands_map.rs:412..420 ✓ (1ms)
+  ▶ edit src/commands_map.rs (6 → 159 lines)
+    static SHELL_PATTERNS: LanguagePatterns = LanguagePatterns {
+        rules: SHELL_PATTERN_RULES,
+  +     trim_leading: false,
+  + };
+  + 
+  + // ── C# pattern rules ──
+  + static CSHARP_PATTERN_RULES: &[PatternRule] = &[
+  +     PatternRule {
+  +         regex: &RE_CSHARP_NAMESPACE,
+  +         kind: SymbolKind::Namespace,
+  +         name_group: 1,
+  +         visibility: VisibilityRule::AlwaysPublic,
+  +         exclude_names: &[],
+  +     },
+  +     PatternRule {
+  +         regex: &RE_CSHARP_RECORD,
+  +         kind: SymbolKind::Struct,
+  +         name_group: 1,
+  +         visibility: VisibilityRule::StartsWithPublic,
+  +         exclude_names: &[],
+  ... (138 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_map.rs.
+  ▶ read src/commands_map.rs:412..422 ✓ (1ms)
+  5 tools completed in 38.7s (3 ✓, 2 ✗)
+
+There's something on line 417 (probably a comment with unicode box-drawing characters). Let me check:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '415,419p' src/commands_m… ✓ (4ms)
+
+It's a line of Unicode box-drawing characters. Let me use a different approach with the exact content:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '417p' src/commands_map.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '417p' src/commands_map.r… ✓ (32ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Let me use a sed-based approach to insert the content:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '415,419p' src/commands_m… ✓ (3ms)
+
+I see — the read_file showed the separating comment on line 417 but sed is printing it blank. Let me try a different approach. Let me use the lines around it:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=415 && NR<=419' src/com… ✓ (4ms)
+
+Wait, awk also shows just blank lines. Let me look at the character count for line 417:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR==417 {print length($0)}'… ✓ (4ms)
+
+It's an 80-char long comment line. Let me use a python approach to get the exact content:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 << '… (5 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c "f=open('src/commands… ✓ (20ms)
+  ▶ $ python3 -c "f=open('/home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_map.r… ✓ (21ms)
+  ▶ $ python3 -c "import sys; f=open('/home/runner/work/yoyo-evolve/yoyo-evolve/src/co… ✓ (20ms)
+  6 tools completed in 18.4s (6 ✓)
+
+Something odd with output. Let me just use sed to replace the section. I'll use a different strategy — insert after line 415 using sed:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_map.rs ✓ (3ms)
+
+Let me use a different approach. I'll create the new content as a file and use sed to insert it:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/insert_patterns.txt (153 lines) ✓ (11.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '415r /tmp/insert_pattern… ✓ (4ms)
+  2 tools completed in 16.9s (2 ✓)
+
+Now let me route the languages through the table-driven extractor. Let me find the match statement:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"csharp\" => extract_c… ✓ (3ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (3 → 3 lines)
+  -         "csharp" => extract_csharp_symbols(code),
+  -         "php" => extract_php_symbols(code),
+  -         "kotlin" => extract_kotlin_symbols(code),
+  +         "csharp" => extract_symbols_from_patterns(code, &CSHARP_PATTERNS),
+  +         "php" => extract_symbols_from_patterns(code, &PHP_PATTERNS),
+  +         "kotlin" => extract_symbols_from_patterns(code, &KOTLIN_PATTERNS),
+ ✓ (11.0s)
+  4 tools completed in 28.2s (4 ✓)
+
+The routing works. Now I need to delete the old functions and the keyword constants. Let me find the exact ranges:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1115..1120 ✓ (1ms)
+  ▶ read src/commands_map.rs:1345..1350 ✓ (1ms)
+  ▶ read src/commands_map.rs:1349..1359 ✓ (1ms)
+  3 tools completed in 8.2s (3 ✓)
+
+So lines 1115-1353 (from CSHARP_NON_METHOD_KEYWORDS through end of extract_kotlin_symbols) need to be deleted. Let me verify:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1115,1116p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1352,1355p' src/commands… ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Good. I need to delete lines 1115-1353 (keeping line 1354 which starts Swift). Let me also check the blank line before 1115:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1113,1117p' src/commands… ✓ (3ms)
+
+Those lines 1113 and 1114 are from the previous function (extract_java_symbols likely). Let me keep 1114 (the blank line after a function) and delete from 1115 onwards. Actually I should delete starting at 1116 to keep the blank line. Wait, let me look at what's at 1112-1115:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1109,1116p' src/commands… ✓ (3ms)
+
+So lines 1109-1114 end the previous function. Line 1115 is blank. Line 1116 starts the C# stuff. I want to delete lines 1116 through 1353 (the closing } of extract_kotlin_symbols). Let me verify line 1353:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1350,1355p' src/commands… ✓ (3ms)
+
+Lines 1350 is     symbols, 1351 is }, 1352 is blank, 1353 is `/// Extract symbols from Swift source code.`. So the functions end at line 1351. I need to delete lines 1116-1352 (keeping the blank line before Swift):
+
+Wait — actually line 1115 is already blank (between previous function and the C# comment). After deletion, I'd want `\n\n/// Extract symbols from Swift`. Let me delete lines 1116-1351:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1116,1351d' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1113,1119p' src/commands… ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+There's a stray } on line 1116. Let me check:
+  ╭─ Turn 74 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1114,1118p' src/commands… ✓ (3ms)
+
+Hmm. Line 1114 is } (end of a function), line 1115 is blank, line 1116 is } (stray). Let me delete line 1116:
+  ╭─ Turn 75 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1116d' src/commands_map.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1112,1118p' src/commands… ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me try to build:
+  ╭─ Turn 77 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (5.8s)
+
+It builds. Now let me run clippy:
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.2s)
+
+Clippy passes. Now let me run the tests:
+  ╭─ Turn 79 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (26.4s)
+
+All 88 tests pass. Let me specifically run the C#, PHP, and Kotlin tests to be sure:
+  ╭─ Turn 80 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- csharp 2>&1 ✓ (194ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- php 2>&1 ✓ (150ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- kotlin 2>&1 ✓ (154ms)
+  3 tools completed in 11.9s (3 ✓)
+
+All tests pass. Let me also verify with cargo fmt:
+  ╭─ Turn 83 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (1.2s)
+
+Let me check the line count reduction:
+  ╭─ Turn 84 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_map.rs ✓ (3ms)
+
+Started at 3636, now at 3605. That's only 31 lines net reduction, but the original functions were ~236 lines total (3 functions × ~80 lines each) and the new patterns are ~140 lines. The net reduction is smaller than expected because the new pattern tables are verbose. However, I added the LanguagePatterns infrastructure (new `VisibilityRule variants and exclude_names`) which benefits future language additions.
+
+Wait — let me double-check the line counts more carefully. Originally it was 3636 lines. But I added code too (the visibility variants, the exclude_names field, the new regex, the pattern tables). The key thing is the pattern tables ARE more maintainable — each is a declaration vs procedural code.
+
+Let me also check that the PHP visibility test is correct. The original PHP logic was:
+```rust
+let is_pub = line.trim_start().starts_with("public")
+    || !line.trim_start().starts_with("private")
+        && !line.trim_start().starts_with("protected");
+```
+
+This is equivalent to: `starts_with("public") || (!starts_with("private") && !starts_with("protected")) which due to operator precedence is: starts_with("public") || ((!starts_with("private")) && (!starts_with("protected")))`.
+
+For a function with no visibility modifier (like `function helper_function($x)), this evaluates to: false || (true && true) = true`. So it's public.
+For `private function validate($data): false || (false && true) = false`. So it's private.
+For `public function index(): true || ... = true`. So it's public.
+
+My `NotPrivateOrProtected rule computes: !starts_with("private") && !starts_with("protected")` which for:
+• No modifier: true && true = true ✓
+• private ...: false && true = false ✓ 
+• public ...: true && true = true ✓
+
+The PHP test validates `validate` is a function that IS found (the test checks s.name == "validate" doesn't appear among the assertions but let me check):
+  ╭─ Turn 85 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 "validate" src/commands… ✓ (4ms)
+
+The test doesn't explicitly check for validate — it just checks positive cases. The visibility differs slightly — in the original, validate would be private (`is_pub = false). With my new rule, validate` would also not be public since the line starts with private. So it still appears in the results but with is_public: false. The test only checks for existence and kind, not visibility, so this is fine.
+
+Wait, let me look at the PHP test more carefully — does it check `is_public` on any function?
+  ╭─ Turn 86 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_public" src/commands… ✓ (4ms)
+
+No is_public checks in the PHP test. Good — the tests check symbol names and kinds only, so the exact visibility behavior doesn't matter for test passing.
+
+But wait — I should also check that the PHP visibility is actually correct in a subtle case. The original code applied is_pub only to functions (classes/interfaces/traits/enums were always true). My PHP_PATTERNS also has AlwaysPublic for classes/interfaces/traits/enums and NotPrivateOrProtected only for functions. This is correct.
+
+Now let me also verify the C# visibility test — the original had trimmed.starts_with("public") which makes a namespace always have is_pub = false since it starts with namespace, not public. But in my pattern, namespace has `AlwaysPublic`. Let me check the original:
+
+In the original extract_csharp_symbols:
+```rust
+let is_pub = trimmed.starts_with("public");
+if let Some(caps) = re_namespace.captures(line) {
+    symbols.push(Symbol { ... is_public: true, ... });  // namespace is hardcoded true!
+}
+```
+
+Wait, the original code for C# uses `is_public: true for namespace and is_public: is_pub` for everything else. Let me re-read:
+  ╭─ Turn 87 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/commands_map.r… ✓ (5ms)
+
+Confirmed: namespace uses is_public: true, everything else uses is_pub (which is `trimmed.starts_with("public")). My pattern table has namespace as AlwaysPublic` — correct. All others use StartsWithPublic — correct.
+
+Now let me also look at an important edge case: the C# original code checks re_namespace.captures(line) — note it uses `line not trimmed. In my pattern table, trim_leading: false` means the regex gets the full line which is what we want since the C# regexes all start with `^\s*` to handle leading whitespace themselves.
+
+Also for the PHP function visibility, let me look at an important detail. In the original:
+```rust
+let is_pub = line.trim_start().starts_with("public")
+    || !line.trim_start().starts_with("private")
+        && !line.trim_start().starts_with("protected");
+```
+
+Due to Rust's operator precedence (`&& binds tighter than ||), this is: starts_with("public") || (!starts_with("private") && !starts_with("protected")). But !starts_with("private") && !starts_with("protected") is actually true` for everything that doesn't start with private or protected — including things with no visibility modifier. So this entire expression simplifies to just !starts_with("private") && !starts_with("protected") (because if it starts with "public", then it doesn't start with "private" or "protected" either).
+
+So `NotPrivateOrProtected` is semantically identical. ✓
+
+Now let me run the full verification:
+  ╭─ Turn 88 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (44.5s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

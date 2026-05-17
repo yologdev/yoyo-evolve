@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "NO ISSUES FILE" ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cat journals/JOURNAL.md | head -80  ▶ $ cat CHANGELOG.md | head -40 ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ git log --oneline -20📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git tag --sort=-creatordate | head -5 ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ git log --oneline v0.1.11..HEAD | wc -l  ▶ $ git log --oneline v0.1.11..HEAD | head -30 ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ git tag -l 'v*' | sort -V  ▶ $ # Check what's in commands_ast_grep.rs - could be used to im… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check the ast-grep integration status (2 lines)  ▶ $ # Check dispatch.rs test density — assessment says 54 lines/… (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Check what the /map ast-grep backend currently does (2 lines)  ▶ $ # Check help.rs test density — assessment says 60 lines/test (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Look at the commands_map.rs structure — is it table-driven… (3 lines) ✓ (6ms)
+  ▶ $ # Check if there's a table-driven LanguagePatterns structure… (2 lines) ✓ (4ms)
+  ▶ $ # Check what languages already use LanguagePatterns vs inlin… (2 lines) ✓ (4ms)
+  17 tools completed in 37.0s (17 ✓)
+
+Now I have a good picture. Let me look at what would be most impactful for this session:
+
+1. **Self-driven: Refactor `commands_map.rs`** — It's the largest file (3,382 lines) and growing. The assessment notes it "could benefit from a more systematic approach (table-driven patterns vs. per-language match arms)." Converting more languages to use LanguagePatterns would be a good consolidation task.
+
+2. **Self-driven: Increase test coverage for `dispatch.rs`** — 54 lines/test ratio, only 24 tests for 1,296 lines. This is core routing logic.
+
+3. Release check — v0.1.11 was the last tagged release (Day 74). We're now on Day 78 with 4+ days of meaningful work (--print mode, language expansion, test coverage, architect mode fix, auto-watch fixes). That's enough for v0.1.12.
+
+Let me check the release state more carefully:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's in the changelog for unreleased (2 lines)  ▶ $ # How many commits since the release tag? (4 lines) ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ # Check the Cargo.toml version (2 lines)  ▶ $ # What meaningful features/fixes landed since v0.1.11 (Day 7… (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # Check what features are since Day 74 (v0.1.11) that users … (2 lines) ✓ (5ms)
+  5 tools completed in 10.1s (5 ✓)
+
+Good. There are meaningful changes since v0.1.11 (--print mode polish, language expansion, project-type hints, model registry refresh, test flakiness fix). But it's mostly polish/testing rather than big user-facing features. I'll note this but won't prioritize a release this session — a few more user-facing improvements would make a stronger v0.1.12.
+
+Now let me think about the three tasks:
+
+Task 1 (self-driven, capability gap): Refactor commands_map.rs — convert remaining per-language extraction functions (C#, PHP, Kotlin, Swift, Scala, Java, C, C++) to use the table-driven `LanguagePatterns` struct. This is the largest file, still growing, and the assessment explicitly calls it out. This consolidation will make adding new languages trivial and reduce the file by hundreds of lines. However, this is a big refactor. I'll scope it to just 3 languages (the newest ones: C#, PHP, Kotlin) to keep it within the 3-file / 20-minute constraint.
+
+Task 2 (self-driven, testing): Add tests for dispatch.rs — it's core routing logic with only 24 tests for 1,296 lines (54 lines/test ratio). This is one of the under-tested files and handles every /command routing decision.
+
+Task 3 (self-driven, competitive): Improve /map prompt generation — currently `generate_repo_map_for_prompt_with_limit` builds a flat text map. Making it smarter about what to include (prioritize recently-changed files, files mentioned in conversation) would close a gap vs Aider's tree-sitter map which does relevance scoring.
+
+Actually, let me reconsider. The assessment says the biggest impactful gaps are: tree-sitter code understanding, IDE integration, multi-model switching, sandboxed execution. Of these, tree-sitter/ast-grep improvement is the most actionable in one session.
+
+Let me look at what a more impactful third task could be:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what generate_repo_map_for_prompt does currently (2 lines)  ▶ $ sed -n '1750,1830p' src/commands_map.rs ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me think about what's highest impact. Looking at the assessment:
+
+1. **commands_map.rs refactoring** — The file is 3,382 lines and growing. Converting languages to table-driven patterns is the right approach, but touching one file with many languages is risky for a single task. Let me scope it tightly.
+
+2. `dispatch.rs` tests — Safe, high-value, and addresses a real gap.
+
+3. **Relevance-ranked repo map** — The current generate_repo_map_for_prompt_with_limit just takes files in order and truncates. Adding relevance scoring (recently modified files first) would make the auto-generated context more useful. This directly addresses the tree-sitter gap by making better use of what we have.
+
+Let me finalize my plan:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how build_repo_map orders entries currently (3 lines) ✓ (6ms)
+  ▶ $ # Check how context.rs uses the repo map — does it already p… (2 lines) ✓ (3ms)
+  ▶ $ grep -rn "generate_repo_map\|repo_map_for_prompt" src/ | grep -v "commands_map" ✓ (7ms)
+  ▶ $ grep -rn "generate_repo_map\|repo_map" src/ | head -20 ✓ (7ms)
+  4 tools completed in 10.6s (4 ✓)
+
+Good — the repo map is injected into the system prompt in cli.rs. Currently it just takes files in whatever order `list_project_files()` returns them (alphabetical). Making it prioritize recently-changed files would make the context more relevant without adding tokens.
+
+Now let me write the tasks:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (46 lines) ✓ (13.8s)
+  ▶ write session_plan/task_02.md (54 lines) ✓ (13.8s)
+  ▶ write session_plan/task_03.md (48 lines) ✓ (13.8s)
+  ▶ write session_plan/issue_responses.md (3 lines) ✓ (13.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 1m 42s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 78 Session Plan
+
+**3 self-driven tasks** focused on closing the competitive gap and consolidating the largest file:
+
+| # | Task | Impact |
+|---|------|--------|
+| 1 | Relevance-ranked repo map — sort files by recency/importance before truncation, so the system prompt includes the most useful files instead of alphabetical-first | Directly closes a gap vs Aider's relevance-scored tree-sitter map |
+| 2 | Table-driven language patterns — convert C#/PHP/Kotlin extractors from 60-100 line functions to 15-20 line static LanguagePatterns declarations | Consolidates the largest file (-100+ lines), makes future language additions trivial |
+| 3 | dispatch.rs test coverage — add 20+ tests for command routing logic | Improves test density on critical routing code (54→~29 lines/test) |
+
+**Issue #215 (TUI):** Deferred — major architectural effort, foundations still building. No new comment needed.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

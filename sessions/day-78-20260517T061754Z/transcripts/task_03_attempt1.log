@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of dispatch.rs, focusing on route_command and the existing tests.
+  ▶ read src/dispatch.rs ✓ (9ms)
+
+Let me see the full `route_command` function and the existing tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:100..300  ▶ read src/dispatch.rs:1150..1300 ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me see the full test section to know where the existing tests start:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1060..1160 ✓ (1ms)
+
+Let me see where the tests module starts:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/dispatch.rs ✓ (3ms)
+  ▶ search 'mod tests' in src/dispatch.rs ✓ (3ms)
+  ▶ read src/dispatch.rs:1018..1068 ✓ (1ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Good. Now I have a clear picture. There are 24 existing tests covering basic routing. I need to add 20+ new tests for:
+1. Edge cases (whitespace, case sensitivity, command prefixes)
+2. Missing command coverage (some commands not individually tested)
+3. Bang prefix edge cases
+4. Slash-only input
+5. Config subcommand ordering/priority
+6. Lint fix exact match vs prefix routing
+
+Let me write the new tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (21 → 396 lines)
+            assert_eq!(route_command("/docs search"), CommandRoute::Docs);
+            assert_eq!(route_command("/review"), CommandRoute::Review);
+            assert_eq!(route_command("/review main"), CommandRoute::Review);
+  +     }
+  + 
+  +     // --- New tests: edge cases and expanded coverage ---
+  + 
+  +     #[test]
+  +     fn test_route_case_sensitive() {
+  +         // Commands are case-sensitive — uppercase variants should not match
+  +         assert_eq!(route_command("/HELP"), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/Help"), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/QUIT"), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/Quit"), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/VERSION"), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/Model"), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/DIFF"), CommandRoute::UnknownSlash);
+  +     }
+  + 
+  +     #[test]
+  ... (360 more lines)
+ ✓ (36.6s)
+
+Let me check if it actually passed — the truncation might just be from the auto-check output limit:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib dispatch::tests… ✓ (141ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test dispatch::tests 2>&1 ✓ (138ms)
+  2 tools completed in 7.3s (2 ✓)
+
+Two failures. Let me fix them:
+
+1. /quit  (with trailing space) — exact match fails because of the trailing space, and route_command_prefix strips / then splits on whitespace to get "quit", but "quit" isn't in the prefix match table. Let me check:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:193..213 ✓ (1ms)
+
+Right — "quit", "exit", "version", "status", "cost", etc. are NOT in the prefix match table. They only exist as exact matches. So /quit  (with trailing space) is UnknownSlash. And /config unknown — "config" IS in the prefix table? Let me check:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search '"config" =>' in src/dispatch.rs ✓ (2ms)
+
+No — config is NOT in the prefix match table either. It's only an exact match for /config. So /config unknown won't match in the prefix router either. Let me fix both tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (8 → 12 lines)
+        #[test]
+        fn test_route_trailing_whitespace_exact_match() {
+  -         // Exact matches require exact strings — trailing space means no exact match,
+  -         // falls through to prefix routing which splits on whitespace
+  -         assert_eq!(route_command("/quit "), CommandRoute::Quit);
+  -         assert_eq!(route_command("/version "), CommandRoute::Version);
+  -         assert_eq!(route_command("/cost "), CommandRoute::Cost);
+  +         // Exact matches require exact strings — trailing space means no exact match.
+  +         // Commands only in the exact-match arm (not in prefix table) become UnknownSlash.
+  +         assert_eq!(route_command("/quit "), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/version "), CommandRoute::UnknownSlash);
+  +         assert_eq!(route_command("/cost "), CommandRoute::UnknownSlash);
+  +         // But commands that ARE in the prefix table still route correctly with trailing space
+  +         assert_eq!(route_command("/diff "), CommandRoute::Diff);
+  +         assert_eq!(route_command("/model "), CommandRoute::Model);
+  +         assert_eq!(route_command("/grep "), CommandRoute::Grep);
+        }
+ ✓ (36.6s)
+  ▶ edit src/dispatch.rs (17 → 18 lines)
+            assert_eq!(route_command("/config edit global"), CommandRoute::ConfigEdit);
+            assert_eq!(route_command("/config get"), CommandRoute::ConfigGet);
+            assert_eq!(route_command("/config get key"), CommandRoute::ConfigGet);
+  -         // /config alone (no subcommand) falls to prefix cmd match -> Config
+  +         // /config alone (no subcommand) is an exact match -> Config
+            assert_eq!(route_command("/config"), CommandRoute::Config);
+  -         // /config unknown-sub falls to prefix -> Config (first word is "config")
+  -         assert_eq!(route_command("/config unknown"), CommandRoute::Config);
+  +         // /config with unknown subcommand: "config" is not in prefix table,
+  +         // so it falls through to UnknownSlash
+  +         assert_eq!(route_command("/config unknown"), CommandRoute::UnknownSlash);
+        }
+ ✓ (39.3s)
+  2 tools completed in 1m 26s (2 ✓)
+
+Now let me run the dispatch tests again:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test dispatch::tests 2>&1 ✓ (171ms)
+
+All 46 tests pass. That's 22 new tests (from 24 to 46). Now let me run the full CI checks:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (610ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (600ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.0s)
+  5 tools completed in 57.4s (5 ✓)
+
+All checks pass. Let me count the new tests to confirm:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '#\[test\]' src/dispatch… ✓ (3ms)
+
+46 tests total (was 24, added 22). The ratio drops from 54 lines/test to about 1671/46 ≈ 36 lines/test. Now let me commit:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (17 lines) ✓ (16ms)
+
+Done. 22 new tests added to dispatch.rs, bringing the total from 24 to 46. All CI checks pass (fmt, clippy, build, test).
+
+Here's what the new tests cover:
+
+| Test | What it verifies |
+|------|-----------------|
+| test_route_case_sensitive | Uppercase command variants → UnknownSlash |
+| test_route_empty_and_whitespace_inputs | Empty string, whitespace, bare / |
+| test_route_trailing_whitespace_exact_match | Trailing space behavior — exact-only vs prefix commands |
+| test_route_leading_whitespace_not_command |  /help → NotACommand |
+| test_route_map_vs_mark_vs_marks_no_collision | Similar-named commands route distinctly |
+| test_route_find_vs_fix_vs_fork_no_collision | Another set of similar-prefix commands |
+| test_route_bang_prefix_variations | !cmd, bare !, !! |
+| test_route_lint_fix_exact_vs_prefix | /lint fix exact vs /lint fixme prefix |
+| test_route_config_subcommand_priority | Config subcommand ordering + unknown sub |
+| test_route_unknown_slash_various | Various unknown / commands |
+| test_route_not_a_command_various | Regular text, numbers, symbols |
+| test_route_revisit_and_skill | Revisit and skill routing |
+| test_route_goal_and_plan | Goal and plan routing |
+| test_route_spawn_and_bg | Spawn and bg routing |
+| test_route_slash_only | Bare / |
+| test_route_exact_match_trumps_prefix_for_single_word | All 24 exact-match commands |
+| test_route_all_prefix_commands_with_args | 61 prefix commands with args |
+| test_route_commands_with_multiple_spaces | Extra spaces between command and args |
+| test_route_help_with_various_args | /help with various arguments |
+| test_route_debug_format | CommandRoute Debug output |
+| test_command_result_debug_format | CommandResult Debug output |
+| test_route_exhaustive_exact_matches | All 30 exact-match branches |
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
