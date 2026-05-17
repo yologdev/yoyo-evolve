@@ -576,10 +576,8 @@ fn restore_session(agent: &mut Agent) {
     match std::fs::read_to_string(session_path) {
         Ok(json) => match agent.restore_messages(&json) {
             Ok(_) => {
-                eprintln!(
-                    "{DIM}  resumed session: {} messages from {session_path}{RESET}",
-                    agent.messages().len()
-                );
+                let summary = commands_session::session_resume_summary(agent.messages());
+                eprint!("{DIM}{summary}{RESET}");
             }
             Err(e) => eprintln!("{YELLOW}warning:{RESET} Failed to restore session: {e}"),
         },

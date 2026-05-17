@@ -687,6 +687,80 @@ pub fn handle_export(agent: &Agent, input: &str) {
         Err(e) => eprintln!("{RED}  error writing to {path}: {e}{RESET}\n"),
     }
 }
+
+/// Build a short summary of a restored session for display after `--continue`.
+///
+/// Returns a multi-line string showing message/tool counts and snippets of
+/// the last user prompt and assistant reply.
+pub fn session_resume_summary(messages: &[AgentMessage]) -> String {
+    if messages.is_empty() {
+        return "  📋 resumed session (empty)\n".to_string();
+    }
+
+    let msg_count = messages.len();
+
+    // Count tool calls across all assistant messages
+    let mut total_tool_calls: usize = 0;
+    for msg in messages {
+        if let AgentMessage::Llm(Message::Assistant { content, .. }) = msg {
+            total_tool_calls += content
+                .iter()
+                .filter(|c| matches!(c, Content::ToolCall { .. }))
+                .count();
+        }
+    }
+
+    // Find last user message text (scan in reverse)
+    let last_user_text: Option<String> = messages.iter().rev().find_map(|msg| {
+        if let AgentMessage::Llm(Message::User { content, .. }) = msg {
+            let text = extract_user_text(content);
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        } else {
+            None
+        }
+    });
+
+    // Find last assistant text (scan in reverse)
+    let last_assistant_text: Option<String> = messages.iter().rev().find_map(|msg| {
+        if let AgentMessage::Llm(Message::Assistant { content, .. }) = msg {
+            let text: String = content
+                .iter()
+                .filter_map(|c| match c {
+                    Content::Text { text } if !text.is_empty() => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        } else {
+            None
+        }
+    });
+
+    let mut out =
+        format!("  📋 resumed session ({msg_count} messages, {total_tool_calls} tool calls)\n");
+
+    if let Some(user_text) = last_user_text {
+        let truncated = truncate_with_ellipsis(&user_text, 80);
+        out.push_str(&format!("  last prompt: \"{truncated}\"\n"));
+    }
+
+    if let Some(asst_text) = last_assistant_text {
+        let truncated = truncate_with_ellipsis(&asst_text, 120);
+        out.push_str(&format!("  last reply:  \"{truncated}\"\n"));
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1288,5 +1362,118 @@ mod tests {
             .with_api_key("test-key");
         // Should not panic with no messages
         handle_history_detail(&agent);
+    }
+
+    #[test]
+    fn test_session_resume_summary_empty() {
+        let messages: Vec<AgentMessage> = vec![];
+        let summary = session_resume_summary(&messages);
+        assert!(summary.contains("empty"));
+    }
+
+    #[test]
+    fn test_session_resume_summary_mixed_messages() {
+        let messages = vec![
+            AgentMessage::Llm(Message::user("Can you fix the test failures?")),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![
+                    Content::Text {
+                        text: "I found 3 failing tests.".to_string(),
+                    },
+                    Content::ToolCall {
+                        id: "tc_1".to_string(),
+                        name: "bash".to_string(),
+                        arguments: serde_json::json!({"command": "cargo test"}),
+                        provider_metadata: None,
+                    },
+                    Content::ToolCall {
+                        id: "tc_2".to_string(),
+                        name: "edit_file".to_string(),
+                        arguments: serde_json::json!({}),
+                        provider_metadata: None,
+                    },
+                ],
+                stop_reason: yoagent::types::StopReason::ToolUse,
+                model: "test".to_string(),
+                provider: "test".to_string(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "bash".to_string(),
+                content: vec![Content::Text {
+                    text: "ok".to_string(),
+                }],
+                is_error: false,
+                timestamp: 0,
+            }),
+        ];
+        let summary = session_resume_summary(&messages);
+        assert!(summary.contains("3 messages"));
+        assert!(summary.contains("2 tool calls"));
+        assert!(summary.contains("Can you fix the test failures?"));
+        assert!(summary.contains("I found 3 failing tests."));
+    }
+
+    #[test]
+    fn test_session_resume_summary_truncates_long_messages() {
+        let long_prompt = "x".repeat(200);
+        let long_reply = "y".repeat(300);
+        let messages = vec![
+            AgentMessage::Llm(Message::user(long_prompt.as_str())),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![Content::Text {
+                    text: long_reply.clone(),
+                }],
+                stop_reason: yoagent::types::StopReason::Stop,
+                model: "test".to_string(),
+                provider: "test".to_string(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+            }),
+        ];
+        let summary = session_resume_summary(&messages);
+        // The prompt should be truncated (80 chars + ellipsis)
+        assert!(summary.contains("last prompt:"));
+        // Should not contain the full 200-char string
+        assert!(!summary.contains(&long_prompt));
+        // The reply should be truncated (120 chars + ellipsis)
+        assert!(summary.contains("last reply:"));
+        assert!(!summary.contains(&long_reply));
+    }
+
+    #[test]
+    fn test_session_resume_summary_only_tool_calls_no_text() {
+        let messages = vec![AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::ToolCall {
+                    id: "tc_1".to_string(),
+                    name: "bash".to_string(),
+                    arguments: serde_json::json!({}),
+                    provider_metadata: None,
+                },
+                Content::ToolCall {
+                    id: "tc_2".to_string(),
+                    name: "bash".to_string(),
+                    arguments: serde_json::json!({}),
+                    provider_metadata: None,
+                },
+            ],
+            stop_reason: yoagent::types::StopReason::ToolUse,
+            model: "test".to_string(),
+            provider: "test".to_string(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        })];
+        let summary = session_resume_summary(&messages);
+        assert!(summary.contains("1 messages"));
+        assert!(summary.contains("2 tool calls"));
+        // No user prompt or assistant text lines
+        assert!(!summary.contains("last prompt:"));
+        assert!(!summary.contains("last reply:"));
     }
 }

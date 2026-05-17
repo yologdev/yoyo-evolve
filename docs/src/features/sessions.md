@@ -27,7 +27,9 @@ When `--continue` is used:
 
 ```bash
 $ yoyo -c
-  resumed session: 8 messages from .yoyo/last-session.json
+  📋 resumed session (8 messages, 5 tool calls)
+  last prompt: "Can you fix the test failures in commands_map.rs?"
+  last reply:  "I found 3 failing tests. The issue was..."
 
 main > what were we working on?
 ```
