@@ -2885,4 +2885,481 @@ mod tests {
         // (it handled the input, even if command wasn't found)
         assert!(handle_help_command("/help zzz_nonexistent"));
     }
+
+    // ── command_short_description: exhaustive non-empty checks ──
+
+    #[test]
+    fn command_short_description_every_known_command_non_empty() {
+        // Every KNOWN_COMMAND must have a non-empty short description
+        for &cmd in KNOWN_COMMANDS {
+            let name = cmd.strip_prefix('/').unwrap_or(cmd);
+            if let Some(desc) = command_short_description(name) {
+                assert!(
+                    !desc.trim().is_empty(),
+                    "short description for '{name}' must not be blank"
+                );
+            } else {
+                panic!("command_short_description(\"{name}\") returned None");
+            }
+        }
+    }
+
+    #[test]
+    fn command_short_description_specific_values() {
+        // Spot-check that key commands return the expected description text
+        assert_eq!(
+            command_short_description("add"),
+            Some("Add file or URL contents to conversation")
+        );
+        assert_eq!(command_short_description("quit"), Some("Exit yoyo"));
+        assert_eq!(
+            command_short_description("help"),
+            Some("Show help for commands")
+        );
+        assert_eq!(command_short_description("diff"), Some("Show git changes"));
+        assert_eq!(
+            command_short_description("spawn"),
+            Some("Run a task in a sub-agent")
+        );
+    }
+
+    #[test]
+    fn command_short_description_exit_alias() {
+        // /exit is an alias for /quit — both should have descriptions
+        assert!(command_short_description("exit").is_some());
+        assert!(command_short_description("quit").is_some());
+    }
+
+    #[test]
+    fn command_short_description_clear_bang() {
+        // /clear! is a variant — should have a description
+        let desc = command_short_description("clear!").expect("clear! should have a description");
+        assert!(
+            desc.contains("clear") || desc.contains("Clear") || desc.contains("force"),
+            "clear! description should relate to clearing: got '{desc}'"
+        );
+    }
+
+    // ── handle_help_command: per-command help lookups ──
+
+    #[test]
+    fn handle_help_command_compact_returns_true() {
+        assert!(handle_help_command("/help compact"));
+    }
+
+    #[test]
+    fn handle_help_command_model_returns_true() {
+        assert!(handle_help_command("/help model"));
+    }
+
+    #[test]
+    fn handle_help_command_spawn_returns_true() {
+        assert!(handle_help_command("/help spawn"));
+    }
+
+    #[test]
+    fn handle_help_command_config_returns_true() {
+        assert!(handle_help_command("/help config"));
+    }
+
+    #[test]
+    fn handle_help_command_commit_returns_true() {
+        assert!(handle_help_command("/help commit"));
+    }
+
+    #[test]
+    fn handle_help_command_watch_returns_true() {
+        assert!(handle_help_command("/help watch"));
+    }
+
+    #[test]
+    fn handle_help_command_todo_returns_true() {
+        assert!(handle_help_command("/help todo"));
+    }
+
+    #[test]
+    fn handle_help_command_stash_returns_true() {
+        assert!(handle_help_command("/help stash"));
+    }
+
+    #[test]
+    fn handle_help_command_every_known_command() {
+        // Every non-alias command in KNOWN_COMMANDS should be handled (return true)
+        let aliases = ["/exit"];
+        for &cmd in KNOWN_COMMANDS {
+            if aliases.contains(&cmd) {
+                continue;
+            }
+            let name = cmd.strip_prefix('/').unwrap_or(cmd);
+            let input = format!("/help {name}");
+            assert!(
+                handle_help_command(&input),
+                "handle_help_command(\"{input}\") should return true"
+            );
+        }
+    }
+
+    #[test]
+    fn handle_help_command_with_extra_whitespace() {
+        // Extra whitespace between /help and command name should be handled
+        assert!(handle_help_command("/help   add"));
+        assert!(handle_help_command("/help  diff"));
+        // Trailing whitespace after command name
+        assert!(handle_help_command("/help add  "));
+    }
+
+    #[test]
+    fn handle_help_command_recursive_help_help() {
+        // /help help should work (shows help for the help command)
+        assert!(handle_help_command("/help help"));
+    }
+
+    // ── command_help: content quality checks ──
+
+    #[test]
+    fn command_help_compact_mentions_context() {
+        let help = command_help("compact").expect("compact should have help");
+        assert!(
+            help.contains("context") || help.contains("compact") || help.contains("conversation"),
+            "compact help should mention context/compaction"
+        );
+    }
+
+    #[test]
+    fn command_help_config_mentions_settings() {
+        let help = command_help("config").expect("config should have help");
+        assert!(
+            help.contains("config") || help.contains("setting"),
+            "config help should mention configuration"
+        );
+    }
+
+    #[test]
+    fn command_help_commit_mentions_message() {
+        let help = command_help("commit").expect("commit should have help");
+        assert!(
+            help.contains("commit") || help.contains("message"),
+            "commit help should mention commit or message"
+        );
+    }
+
+    #[test]
+    fn command_help_model_mentions_switch() {
+        let help = command_help("model").expect("model should have help");
+        assert!(
+            help.contains("switch") || help.contains("list") || help.contains("model"),
+            "model help should mention switching or listing models"
+        );
+    }
+
+    #[test]
+    fn command_help_watch_mentions_auto() {
+        let help = command_help("watch").expect("watch should have help");
+        assert!(
+            help.contains("watch") || help.contains("auto") || help.contains("lint"),
+            "watch help should describe auto-run behavior"
+        );
+    }
+
+    #[test]
+    fn command_help_todo_mentions_tasks() {
+        let help = command_help("todo").expect("todo should have help");
+        assert!(
+            help.contains("task") || help.contains("todo"),
+            "todo help should mention tasks"
+        );
+        assert!(
+            help.contains("add") && help.contains("done"),
+            "todo help should mention add and done subcommands"
+        );
+    }
+
+    #[test]
+    fn command_help_stash_mentions_push_pop() {
+        let help = command_help("stash").expect("stash should have help");
+        assert!(help.contains("push"), "stash help should mention push");
+        assert!(help.contains("pop"), "stash help should mention pop");
+    }
+
+    #[test]
+    fn command_help_fork_mentions_branch() {
+        let help = command_help("fork").expect("fork should have help");
+        assert!(
+            help.contains("fork") || help.contains("branch") || help.contains("conversation"),
+            "fork help should mention forking conversations"
+        );
+    }
+
+    #[test]
+    fn command_help_extended_mentions_autonomous() {
+        let help = command_help("extended").expect("extended should have help");
+        assert!(
+            help.contains("autonomous") || help.contains("long") || help.contains("extended"),
+            "extended help should describe autonomous/long-running mode"
+        );
+    }
+
+    #[test]
+    fn command_help_goal_mentions_set() {
+        let help = command_help("goal").expect("goal should have help");
+        assert!(
+            help.contains("set") || help.contains("goal"),
+            "goal help should mention setting a goal"
+        );
+    }
+
+    #[test]
+    fn command_help_skill_mentions_list() {
+        let help = command_help("skill").expect("skill should have help");
+        assert!(
+            help.contains("list") || help.contains("skill"),
+            "skill help should mention listing skills"
+        );
+    }
+
+    // ── help_command_completions: prefix filtering ──
+
+    #[test]
+    fn help_command_completions_prefix_co_matches_expected() {
+        let completions = help_command_completions("co");
+        let expected = ["compact", "commit", "config", "context", "copy", "cost"];
+        for cmd in &expected {
+            assert!(
+                completions.contains(&cmd.to_string()),
+                "prefix 'co' should match '{cmd}', got: {completions:?}"
+            );
+        }
+        // Should NOT match commands that don't start with "co"
+        assert!(!completions.contains(&"diff".to_string()));
+        assert!(!completions.contains(&"add".to_string()));
+    }
+
+    #[test]
+    fn help_command_completions_prefix_di_matches_diff() {
+        let completions = help_command_completions("di");
+        assert!(completions.contains(&"diff".to_string()));
+        assert!(!completions.contains(&"add".to_string()));
+    }
+
+    #[test]
+    fn help_command_completions_prefix_m_matches_multiple() {
+        let completions = help_command_completions("m");
+        let expected = ["model", "map", "mark", "marks", "memories", "move", "mcp"];
+        for cmd in &expected {
+            assert!(
+                completions.contains(&cmd.to_string()),
+                "prefix 'm' should match '{cmd}'"
+            );
+        }
+    }
+
+    #[test]
+    fn help_command_completions_nonexistent_prefix_returns_empty() {
+        let completions = help_command_completions("zzz");
+        assert!(
+            completions.is_empty(),
+            "nonexistent prefix should return empty, got: {completions:?}"
+        );
+    }
+
+    #[test]
+    fn help_command_completions_full_command_name_returns_exact() {
+        let completions = help_command_completions("diff");
+        assert!(
+            completions.contains(&"diff".to_string()),
+            "exact name should match itself"
+        );
+        // Should be small — only commands starting with "diff"
+        assert!(
+            completions.len() <= 2,
+            "exact prefix should return few results, got {}",
+            completions.len()
+        );
+    }
+
+    #[test]
+    fn help_command_completions_excludes_exit() {
+        let all = help_command_completions("");
+        assert!(
+            !all.contains(&"exit".to_string()),
+            "exit should be excluded from completions (it's an alias)"
+        );
+        let e_completions = help_command_completions("ex");
+        assert!(
+            !e_completions.contains(&"exit".to_string()),
+            "exit should be excluded even with prefix 'ex'"
+        );
+    }
+
+    // ── cli_help_text: additional content checks ──
+
+    #[test]
+    fn cli_help_text_does_not_panic() {
+        // Primarily a smoke test — should never panic
+        let text = cli_help_text();
+        assert!(text.len() > 100);
+    }
+
+    #[test]
+    fn cli_help_text_contains_prompt_flag() {
+        let text = cli_help_text();
+        assert!(
+            text.contains("--prompt"),
+            "cli help should document --prompt for single-prompt mode"
+        );
+    }
+
+    #[test]
+    fn cli_help_text_contains_no_tools_flag() {
+        let text = cli_help_text();
+        assert!(
+            text.contains("--no-tools"),
+            "cli help should document --no-tools"
+        );
+    }
+
+    #[test]
+    fn cli_help_text_contains_thinking_flag() {
+        let text = cli_help_text();
+        assert!(
+            text.contains("--thinking"),
+            "cli help should document --thinking"
+        );
+    }
+
+    // ── help_text (REPL /help): additional content checks ──
+
+    #[test]
+    fn help_text_does_not_panic() {
+        // Smoke test
+        let text = help_text();
+        assert!(text.len() > 100);
+    }
+
+    #[test]
+    fn help_text_contains_slash_commands_format() {
+        // All commands in help_text should be formatted with a leading /
+        let text = help_text();
+        // Spot-check a few — they should appear as "/command"
+        for cmd in &["/add", "/diff", "/commit", "/model", "/spawn"] {
+            assert!(
+                text.contains(cmd),
+                "help_text() should show {cmd} with leading slash"
+            );
+        }
+    }
+
+    // ── command_help: formatting quality ──
+
+    #[test]
+    fn command_help_entries_start_with_slash_command() {
+        // Every detailed help entry should start with /command —
+        // this ensures consistent formatting
+        for &cmd in KNOWN_COMMANDS {
+            let name = cmd.strip_prefix('/').unwrap_or(cmd);
+            if name == "exit" || name == "clear!" {
+                continue;
+            }
+            if let Some(text) = command_help(name) {
+                let starts_with_slash =
+                    text.starts_with('/') || text.starts_with(&format!("/{name}"));
+                assert!(
+                    starts_with_slash,
+                    "command_help(\"{name}\") should start with /{name}, got: {}",
+                    &text[..text.len().min(60)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn command_help_entries_contain_structured_content() {
+        // Every help entry should have some structured content — either
+        // a "Usage:" section, a "Subcommands:" section, or at minimum
+        // be longer than a single line (meaningful description).
+        for &cmd in KNOWN_COMMANDS {
+            let name = cmd.strip_prefix('/').unwrap_or(cmd);
+            if name == "exit" {
+                continue;
+            }
+            if let Some(text) = command_help(name) {
+                let has_structure = text.contains("Usage")
+                    || text.contains("Subcommands")
+                    || text.contains("Example")
+                    || text.contains('\n');
+                assert!(
+                    has_structure,
+                    "command_help(\"{name}\") should have structured content (Usage/Subcommands/Examples or multi-line)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn command_help_no_unclosed_bold_markers() {
+        // Check that help entries don't have broken formatting.
+        // Count only isolated ** pairs (bold markers), skipping *** runs
+        // used for masking (e.g., "masked as ***").
+        for &cmd in KNOWN_COMMANDS {
+            let name = cmd.strip_prefix('/').unwrap_or(cmd);
+            if let Some(text) = command_help(name) {
+                // Replace *** masking patterns before counting **
+                let cleaned = text.replace("***", "");
+                let bold_count = cleaned.matches("**").count();
+                assert!(
+                    bold_count % 2 == 0,
+                    "command_help(\"{name}\") has {bold_count} '**' markers (should be even)"
+                );
+            }
+        }
+    }
+
+    // ── Cross-consistency checks ──
+
+    #[test]
+    fn command_help_and_short_description_agree_on_coverage() {
+        // Every command that has a detailed help should also have a short description
+        // and vice versa (except known aliases)
+        let aliases = ["exit", "clear!"];
+        for &cmd in KNOWN_COMMANDS {
+            let name = cmd.strip_prefix('/').unwrap_or(cmd);
+            if aliases.contains(&name) {
+                continue;
+            }
+            let has_help = command_help(name).is_some();
+            let has_desc = command_short_description(name).is_some();
+            assert_eq!(
+                has_help, has_desc,
+                "command '{name}': help={has_help}, short_desc={has_desc} — both should match"
+            );
+        }
+    }
+
+    #[test]
+    fn help_text_and_cli_help_text_both_mention_key_commands() {
+        let repl = help_text();
+        let cli = cli_help_text();
+        let key_commands = ["add", "diff", "commit", "model", "spawn", "grep"];
+        for cmd in &key_commands {
+            assert!(repl.contains(cmd), "help_text() should mention '{cmd}'");
+            assert!(cli.contains(cmd), "cli_help_text() should mention '{cmd}'");
+        }
+    }
+
+    #[test]
+    fn help_completions_and_known_commands_in_sync() {
+        // Every non-alias KNOWN_COMMAND should appear in completions
+        let completions = help_command_completions("");
+        let skip = ["exit"]; // explicitly filtered
+        for &cmd in KNOWN_COMMANDS {
+            let name = cmd.strip_prefix('/').unwrap_or(cmd);
+            if skip.contains(&name) {
+                continue;
+            }
+            assert!(
+                completions.contains(&name.to_string()),
+                "help_command_completions(\"\") missing '{name}' from KNOWN_COMMANDS"
+            );
+        }
+    }
 }
