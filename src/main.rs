@@ -644,6 +644,7 @@ async fn main() {
         fallback_model: config.fallback_model,
         auto_watch: config.auto_watch,
         disallowed_tools: config.disallowed_tools,
+        no_tools: config.no_tools,
     };
 
     if !run_setup_wizard_if_needed(is_interactive, &mut agent_config) {
@@ -654,16 +655,22 @@ async fn main() {
 
     let mut agent = agent_config.build_agent();
 
-    // Connect to external servers (MCP + OpenAPI)
-    let (updated_agent, mcp_count, openapi_count) = connect_external_servers(
-        &agent_config,
-        agent,
-        &mcp_servers,
-        &mcp_server_configs,
-        &openapi_specs,
-    )
-    .await;
-    agent = updated_agent;
+    // Connect to external servers (MCP + OpenAPI) — skip when --no-tools is active
+    // since external servers only add more tools which won't be used.
+    let (mcp_count, openapi_count) = if config.no_tools {
+        (0, 0)
+    } else {
+        let (updated_agent, mc, oa) = connect_external_servers(
+            &agent_config,
+            agent,
+            &mcp_servers,
+            &mcp_server_configs,
+            &openapi_specs,
+        )
+        .await;
+        agent = updated_agent;
+        (mc, oa)
+    };
 
     if continue_session {
         restore_session(&mut agent);
@@ -909,6 +916,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         }
     }
 

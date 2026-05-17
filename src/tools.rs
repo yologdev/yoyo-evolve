@@ -933,6 +933,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         }
     }
 

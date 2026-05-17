@@ -587,6 +587,7 @@ fn clone_agent_config(config: &crate::AgentConfig) -> crate::AgentConfig {
         fallback_model: config.fallback_model.clone(),
         auto_watch: config.auto_watch,
         disallowed_tools: vec![],
+        no_tools: false,
     }
 }
 

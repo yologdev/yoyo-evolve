@@ -407,6 +407,7 @@ pub struct AgentConfig {
     pub fallback_model: Option<String>,
     pub auto_watch: bool,
     pub disallowed_tools: Vec<String>,
+    pub no_tools: bool,
 }
 
 impl AgentConfig {
@@ -424,41 +425,48 @@ impl AgentConfig {
         // Store for display by /tokens and /status commands
         cli::set_effective_context_tokens(effective_window as u64);
 
-        let mut tools = build_tools(
-            self.auto_approve,
-            &self.permissions,
-            &self.dir_restrictions,
-            if std::io::stdin().is_terminal() {
-                TOOL_OUTPUT_MAX_CHARS
-            } else {
-                TOOL_OUTPUT_MAX_CHARS_PIPED
-            },
-            is_audit_enabled(),
-            self.shell_hooks.clone(),
-        );
-
-        // Filter out disallowed tools (--disallowed-tools flag)
-        if !self.disallowed_tools.is_empty() {
-            tools.retain(|t| !self.disallowed_tools.contains(&t.name().to_string()));
-            eprintln!(
-                "{DIM}  🔒 Disabled tools: {}{RESET}",
-                self.disallowed_tools.join(", ")
-            );
-        }
-
         agent = agent
             .with_system_prompt(&self.system_prompt)
             .with_model(&self.model)
             .with_api_key(&self.api_key)
             .with_thinking(self.thinking)
-            .with_skills(self.skills.clone())
-            .with_tools(tools);
+            .with_skills(self.skills.clone());
 
-        // Add sub-agent tool via the dedicated API (separate from build_tools count).
-        // The SharedState handle is kept for future use (e.g. pre-populating context
-        // before dispatching sub-agents like analyze-trajectory).
-        let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
-        agent = agent.with_sub_agent(sub_agent_tool);
+        // When --no-tools is active, skip all tool construction (build_tools,
+        // sub_agent, shared_state). This is cleaner than building then filtering
+        // and also avoids the sub_agent/shared_state bypass that disallowed_tools
+        // couldn't catch (they were added after filtering via with_sub_agent).
+        if !self.no_tools {
+            let mut tools = build_tools(
+                self.auto_approve,
+                &self.permissions,
+                &self.dir_restrictions,
+                if std::io::stdin().is_terminal() {
+                    TOOL_OUTPUT_MAX_CHARS
+                } else {
+                    TOOL_OUTPUT_MAX_CHARS_PIPED
+                },
+                is_audit_enabled(),
+                self.shell_hooks.clone(),
+            );
+
+            // Filter out disallowed tools (--disallowed-tools flag)
+            if !self.disallowed_tools.is_empty() {
+                tools.retain(|t| !self.disallowed_tools.contains(&t.name().to_string()));
+                eprintln!(
+                    "{DIM}  🔒 Disabled tools: {}{RESET}",
+                    self.disallowed_tools.join(", ")
+                );
+            }
+
+            agent = agent.with_tools(tools);
+
+            // Add sub-agent tool via the dedicated API (separate from build_tools count).
+            // The SharedState handle is kept for future use (e.g. pre-populating context
+            // before dispatching sub-agents like analyze-trajectory).
+            let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+            agent = agent.with_sub_agent(sub_agent_tool);
+        }
 
         // Tell yoagent the context window size so its built-in compaction knows the budget.
         // Uses 80% of the effective context window as the compaction threshold.
@@ -663,6 +671,7 @@ impl AgentConfig {
             fallback_model: self.fallback_model.clone(),
             auto_watch: self.auto_watch,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         editor_config.build_agent()
     }
@@ -800,6 +809,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         }
     }
 
@@ -828,6 +838,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         assert_eq!(config.api_key, "test-key");
@@ -867,6 +878,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config.build_agent();
         // Agent should have 6 tools (bash, read, write, edit, list, search)
@@ -900,6 +912,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -933,6 +946,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -965,6 +979,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config.build_agent();
         // Agent created successfully — verify it has empty message history
@@ -997,6 +1012,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent1 = config.build_agent();
         let agent2 = config.build_agent();
@@ -1085,6 +1101,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         assert_eq!(config.model, "claude-opus-4-6");
         config.model = "claude-haiku-35".to_string();
@@ -1118,6 +1135,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         assert_eq!(config.thinking, ThinkingLevel::Off);
         config.thinking = ThinkingLevel::High;
@@ -1259,6 +1277,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -1344,6 +1363,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
@@ -1402,6 +1422,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config.build_agent();
         // If this compiles and runs, BedrockProvider is correctly wired
@@ -1434,6 +1455,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         // Verify the anthropic ModelConfig would have headers set
         // (We test the helper directly since Agent doesn't expose model_config)
@@ -1529,6 +1551,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         // This should not panic — context config and execution limits are wired
         let agent =
@@ -1563,6 +1586,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         // Should not panic — limits are set with defaults
         let agent = config_no_turns
@@ -1592,6 +1616,7 @@ mod tests {
             fallback_model: None,
             auto_watch: true,
             disallowed_tools: vec![],
+            no_tools: false,
         };
         let agent = config_with_turns
             .configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
@@ -1893,5 +1918,65 @@ mod tests {
             "cache should be enabled for openai provider too"
         );
         assert_eq!(agent.cache_config.strategy, CacheStrategy::Auto);
+    }
+
+    #[test]
+    fn test_no_tools_builds_agent_without_panic() {
+        // When no_tools is true, build_agent should still succeed — it just
+        // won't have any tools attached.
+        let config = AgentConfig {
+            no_tools: true,
+            ..test_agent_config("anthropic", "claude-sonnet-4-20250514")
+        };
+        let _agent = config.build_agent();
+        // If we got here, no panic — success
+    }
+
+    #[test]
+    fn test_no_tools_default_false() {
+        // Verify the test helper defaults to no_tools: false
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        assert!(!config.no_tools);
+    }
+
+    #[test]
+    fn test_no_tools_with_disallowed_tools_builds_ok() {
+        // When both no_tools and disallowed_tools are set, no_tools wins:
+        // tools aren't built at all (disallowed_tools filtering is irrelevant).
+        let config = AgentConfig {
+            no_tools: true,
+            disallowed_tools: vec!["bash".to_string()],
+            ..test_agent_config("anthropic", "claude-sonnet-4-20250514")
+        };
+        let _agent = config.build_agent();
+        // No panic — disallowed_tools is silently ignored when no_tools is true
+    }
+
+    #[test]
+    fn test_no_tools_side_agent_builds_ok() {
+        // Side agents should also build fine when no_tools is set on the config.
+        // Side agents always get tools (they copy from main config but don't
+        // use no_tools themselves), so this just verifies no field mismatch.
+        let config = AgentConfig {
+            no_tools: true,
+            ..test_agent_config("anthropic", "claude-sonnet-4-20250514")
+        };
+        let _agent = config.build_side_agent();
+    }
+
+    #[test]
+    fn test_no_tools_across_providers() {
+        // Verify no_tools works for all supported providers (no panic during build).
+        for (provider, model) in &[
+            ("anthropic", "claude-sonnet-4-20250514"),
+            ("openai", "gpt-4o"),
+            ("google", "gemini-2.0-flash"),
+        ] {
+            let config = AgentConfig {
+                no_tools: true,
+                ..test_agent_config(provider, model)
+            };
+            let _agent = config.build_agent();
+        }
     }
 }
