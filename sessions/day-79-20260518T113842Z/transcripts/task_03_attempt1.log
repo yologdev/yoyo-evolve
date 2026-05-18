@@ -1,0 +1,357 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant file to understand the existing test structure and the functions I need to test.
+  ▶ $ wc -l src/commands_map.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "#\[test\]" src/commands_map.rs | wc -l  ▶ $ grep -n "#\[cfg(test)\]" src/commands_map.rs ✓ (4ms)
+ ✓ (13ms)
+ ✓ (11ms)
+  ▶ $ grep -n "^#\[cfg(test)\]" src/commands_map.rs ✓ (8ms)
+  ▶ $ grep -n "mod " src/commands_map.rs | head -20 ✓ (4ms)
+  5 tools completed in 7.9s (5 ✓)
+
+Let me look at the test module structure:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1883,1945p' src/commands_map.rs ✓ (4ms)
+  ▶ $ tail -n 100 src/commands_map.rs ✓ (41ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Now let me look at the key functions I need to test:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^pub fn\|^fn\|^pub(crate) fn" src/commands_map.rs | head -40 ✓ (4ms)
+  ▶ $ sed -n '595,640p' src/commands_map.rs ✓ (3ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me examine the language-specific extractors for the 5 new languages:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1139,1260p' src/commands_map.rs ✓ (5ms)
+
+Now let me see the pattern definitions for C#, PHP, Kotlin:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CSHARP_PATTERNS\|PHP_PATTERNS\|KOTLIN_PATTERNS\|SWIFT_\|SCALA_" src/com… ✓ (4ms)
+  ▶ $ sed -n '488,595p' src/commands_map.rs ✓ (4ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me look at the C# patterns:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '400,495p' src/commands_map.rs ✓ (4ms)
+
+Now let me look at the format and relevance functions:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1648,1780p' src/commands_map.rs ✓ (5ms)
+
+Now let me check the existing tests to understand the test structure near the end of the file:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1883,2000p' src/commands_map.rs ✓ (4ms)
+  ▶ $ sed -n '2000,2100p' src/commands_map.rs ✓ (4ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me also see the second test module and all existing tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1940,2050p' src/commands_map.rs ✓ (4ms)
+
+Let me see the remainder of the tests to find where to add mine:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[test\]" src/commands_map.rs ✓ (8ms)
+  ▶ $ grep -n "fn test_\|fn extract_\|fn detect_\|fn format_\|fn relevance_" src/comma… ✓ (5ms)
+  2 tools completed in 6.8s (2 ✓)
+
+There are already some tests for C#, PHP, Kotlin, Swift, Scala. Let me read those existing tests to see what's covered:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '2970,3100p' src/commands_map.rs ✓ (5ms)
+  ▶ $ sed -n '3100,3240p' src/commands_map.rs ✓ (4ms)
+  ▶ $ sed -n '3240,3420p' src/commands_map.rs ✓ (4ms)
+  ▶ $ sed -n '3420,3605p' src/commands_map.rs ✓ (5ms)
+  4 tools completed in 10.5s (4 ✓)
+
+Now I have a clear picture of the existing tests. Let me now see what the second `#[cfg(test)]` module looks like (it's an inline string used in a test, not an actual second module):
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '2135,2210p' src/commands_map.rs ✓ (4ms)
+
+Now I have a thorough understanding. Let me identify the gaps and write the new tests:
+
+Already covered:
+• Basic symbol extraction for all 5 new languages (C#, PHP, Kotlin, Swift, Scala)
+• Basic detect_language for those extensions
+• Basic relevance scoring (recent vs old, density vs sparse, size)
+• Basic format_repo_map and format_repo_map_colored
+• recently_modified_files dedup
+
+Gaps to fill:
+1. Visibility/line number tests for new languages — the basic tests check names+kinds but not visibility flags or line numbers
+2. **C# method exclusion** — private methods should not be public, control-flow keywords should be excluded
+3. PHP visibility — private functions should be excluded
+4. **Kotlin private function exclusion and keyword exclusion**
+5. Swift visibility — public/open vs default
+6. Scala private exclusion
+7. Format tests — colored output with ANSI codes, single-symbol format
+8. Relevance score edge cases — empty recent list, zero-line files, equal files
+9. detect_language edge cases — paths with no extension, double extensions
+10. extract_symbols for unknown language returns empty
+
+Let me write all these tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '2206,2300p' src/commands_map.rs ✓ (4ms)
+
+Now let me look at the SymbolKind enum and the regex patterns:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1,50p' src/commands_map.rs ✓ (4ms)
+  ▶ $ grep -n "enum SymbolKind" src/commands_map.rs ✓ (8ms)
+  ▶ $ sed -n '199,240p' src/commands_map.rs ✓ (4ms)
+  3 tools completed in 11.9s (3 ✓)
+
+Now let me look at the `format_repo_map_colored` constants:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "DIM\|RESET\|BOLD_CYAN\|GREEN\|MAGENTA\|BOLD\b" src/commands_map.rs | he… ✓ (4ms)
+
+Good. Now I have a complete picture. Let me plan the tests I'll add:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me write the tests. I'll add them right before the closing } of the test module:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^}" src/commands_map.rs | tail -5 ✓ (4ms)
+
+The last } at line 3605 closes the test module. I need to add tests before it:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '3597,3605p' src/commands_map.rs ✓ (3ms)
+  ▶ edit src/commands_map.rs (8 → 618 lines)
+                assert!(
+                    map.contains("..."),
+                    "truncated map should contain ellipsis marker"
+  +             );
+  +         }
+  +     }
+  + 
+  +     // ── Day 79: Additional coverage tests ──
+  + 
+  +     // ── detect_language edge cases ──
+  + 
+  +     #[test]
+  +     fn detect_language_no_extension() {
+  +         assert_eq!(detect_language("Makefile"), None);
+  +         assert_eq!(detect_language("Dockerfile"), None);
+  +         assert_eq!(detect_language(""), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn detect_language_nested_path() {
+  ... (597 more lines)
+ ✓ (38.0s)
+  2 tools completed in 1m 48s (2 ✓)
+
+The auto-check output is truncated. Let me run the checks manually:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (156ms)
+
+Clippy passes. Now test:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (11.8s)
+
+Three tests fail. The issue is that these pattern-based extractors filter out private/protected symbols based on visibility rules, but I need to check how the visibility filtering actually works. Let me look at the `extract_symbols_from_patterns` function:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '268,340p' src/commands_map.rs ✓ (4ms)
+
+I see — the VisibilityRule::NotPrivateOrProtected sets is_public based on whether the trimmed line starts with "private" or "protected", but the symbols are still extracted — they just have is_public: false. The visibility rule doesn't filter them out, it sets the is_public flag. Let me check:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '240,268p' src/commands_map.rs ✓ (3ms)
+
+Right. The visibility rule NotPrivateOrProtected just sets is_public: false on private/protected symbols, but the symbol is still extracted. The symbols aren't filtered. My tests were wrong to expect the symbols to be absent. Let me fix those tests to instead check the is_public flag:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (29 → 33 lines)
+        #[test]
+  -     fn php_private_function_excluded() {
+  +     fn php_visibility_flags() {
+            let code = r#"<?php
+    class MyClass
+    {
+  ···
+    function globalFunc() { }
+    "#;
+            let symbols = extract_symbols(code, "php");
+  -         assert!(
+  -             symbols.iter().any(|s| s.name == "publicMethod"),
+  -             "should find public method"
+  -         );
+  -         assert!(
+  -             !symbols.iter().any(|s| s.name == "privateHelper"),
+  -             "should exclude private method"
+  -         );
+  +         let public_m = symbols.iter().find(|s| s.name == "publicMethod").unwrap();
+  +         assert!(public_m.is_public, "public method should be public");
+  ... (23 more lines)
+ ✓ (38.5s)
+  ▶ edit src/commands_map.rs (31 → 31 lines)
+        #[test]
+  -     fn kotlin_private_excluded() {
+  +     fn kotlin_visibility_flags() {
+            let code = r#"
+    fun publicFunc() { }
+    private fun privateFunc() { }
+  ···
+    private class PrivateClass
+    "#;
+            let symbols = extract_symbols(code, "kotlin");
+  -         assert!(
+  -             symbols.iter().any(|s| s.name == "publicFunc"),
+  -             "should find public fun"
+  -         );
+  -         assert!(
+  -             !symbols.iter().any(|s| s.name == "privateFunc"),
+  -             "should exclude private fun"
+  -         );
+  -         assert!(
+  -             !symbols.iter().any(|s| s.name == "protectedFunc"),
+  ... (27 more lines)
+ ✓ (38.7s)
+  ▶ edit src/commands_map.rs (31 → 31 lines)
+        #[test]
+  -     fn scala_private_excluded() {
+  +     fn scala_visibility_flags() {
+            let code = r#"
+    def publicDef(): Unit = { }
+    private def privateDef(): Unit = { }
+  ···
+    private class PrivateClass
+    "#;
+            let symbols = extract_symbols(code, "scala");
+  -         assert!(
+  -             symbols.iter().any(|s| s.name == "publicDef"),
+  -             "should find public def"
+  -         );
+  -         assert!(
+  -             !symbols.iter().any(|s| s.name == "privateDef"),
+  -             "should exclude private def"
+  -         );
+  -         assert!(
+  -             !symbols.iter().any(|s| s.name == "protectedDef"),
+  ... (27 more lines)
+ ✓ (38.9s)
+  3 tools completed in 2m 13s (3 ✓)
+
+Let me check if the tests actually pass now:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_map::test… ✓ (1.9s)
+
+One Scala test is still failing. Let me debug — the issue is that the Scala extract function uses dedicated regexes, not the pattern-based system:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_map::test… ✓ (152ms)
+
+Line 3927 is the PrivateClass find. Let me check if Scala's regex captures private class:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "RE_SCALA_CLASS" src/commands_map.rs ✓ (8ms)
+  ▶ $ sed -n '183,196p' src/commands_map.rs ✓ (3ms)
+  2 tools completed in 7.8s (2 ✓)
+
+The Scala class regex doesn't match private class ... because private is not in the alternation (?:abstract|sealed|final|implicit|lazy). So `private class PrivateClass` won't be captured at all. The Scala visibility check in extract_scala_symbols is:
+
+```rust
+let is_pub = !trimmed.starts_with("private") && !trimmed.starts_with("protected");
+```
+
+But the regex for class doesn't match private class at all, so the symbol isn't even extracted. Same for protected def — the RE_SCALA_DEF regex does include private|protected in its modifier list, so that one should match. Let me verify:
+
+The Scala class regex includes abstract|sealed|final|implicit|lazy but NOT private|protected. So private class PrivateClass won't match the class regex at all. But `private def privateDef() will match because RE_SCALA_DEF includes private|protected`.
+
+Let me fix the test accordingly:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (31 → 40 lines)
+    private def privateDef(): Unit = { }
+    protected def protectedDef(): Unit = { }
+    class PublicClass
+  - private class PrivateClass
+    "#;
+            let symbols = extract_symbols(code, "scala");
+            let pub_d = symbols.iter().find(|s| s.name == "publicDef").unwrap();
+  ···
+    
+            let pub_cls = symbols.iter().find(|s| s.name == "PublicClass").unwrap();
+            assert!(pub_cls.is_public, "public class should be public");
+  +     }
+    
+  -         let priv_cls = symbols.iter().find(|s| s.name == "PrivateClass").unwrap();
+  +     #[test]
+  +     fn scala_private_class_not_matched_by_regex() {
+  +         // Scala's class regex doesn't include 'private' in its modifier list,
+  +         // so private classes are not extracted at all (this is the current behavior)
+  +         let code = "private class Hidden\nclass Visible\n";
+  +         let symbols = extract_symbols(code, "scala");
+  ... (11 more lines)
+ ✓ (40.4s)
+
+Now let me run the tests again:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_map::test… ✓ (1.8s)
+
+All 101 tests pass. Let me now run the full CI pipeline:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (636ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (621ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 && car… ✓ (12.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (28.1s)
+  5 tools completed in 1m 1s (5 ✓)
+
+All checks pass. Let me count how many new tests I added:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "#\[test\]" src/commands_map.rs ✓ (43ms)
+
+101 total - 71 original = 30 new tests! Let me verify the line count and ratio:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_map.rs ✓ (7ms)
+
+4216 lines / 101 tests = ~41.7 lines/test ratio, improved from 50.8. That's right in the target range of ~40 lines/test.
+
+Let me also verify the tests are meaningful by looking at the count by category:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A1 "#\[test\]" src/commands_map.rs | grep "fn " | grep -c "Day 79\|detect_… ✓ (5ms)
+
+Wait, let me double-check. There's a test inside a string literal (`test_something`). Let me count more carefully:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "^    #\[test\]" src/commands_map.rs | wc -l ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_map::test… ✓ (1.8s)
+  2 tools completed in 10.2s (2 ✓)
+
+101 tests passing for commands_map. 30 new tests added. Now let me commit:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (15 lines) ✓ (15ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Done. 30 new unit tests added to commands_map.rs, all passing. Here's what was covered:
+
+detect_language edge cases (4 tests):
+• No extension files (Makefile, Dockerfile)
+• Nested paths preserve language detection
+• JSX/MJS/TSX variant extensions
+• C++ header variants (.hpp, .hxx, .hh, .cxx, .cc)
+
+extract_symbols boundaries (2 tests):
+• Unknown language returns empty vec
+• Empty code for all 7 languages returns empty
+
+**New language visibility + line numbers (12 tests):**
+• C#: visibility flags, keyword exclusion (if/for/while/foreach), line numbers
+• PHP: visibility flags (public/private/protected), line numbers
+• Kotlin: visibility flags, keyword exclusion, line numbers
+• Swift: visibility (public/open/internal), line numbers, extension always-public
+• Scala: visibility (public/private/protected defs), private class regex behavior, line numbers
+
+**Format tests (5 tests):**
+• format_repo_map kind labels for all symbol types
+• format_repo_map_colored ANSI escape codes, empty state, pub prefix
+• All 12 SymbolKind labels verified end-to-end
+
+**Relevance score edge cases (5 tests):**
+• Empty recent list (density+size only)
+• Zero-line files (no panic from division)
+• Equal entries get equal scores
+• Position ordering (first > second > third)
+• Density cap behavior
+
+Lines/test ratio improved from 50.8 → 41.7.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

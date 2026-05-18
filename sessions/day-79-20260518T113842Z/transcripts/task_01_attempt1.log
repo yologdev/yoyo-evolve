@@ -1,0 +1,281 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code patterns, then implement the feature.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 17.6s (7 ✓)
+
+Let me study the existing patterns:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "offer_persist_pattern\|already_offered_persistence\|simplify_command_pa…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ $ grep -n "offer_persist_pattern\|already_offered_persistence\|simplify_command_pa… ✓ (4ms)
+  ▶ read src/tools.rs:660..740 ✓ (1ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Now let me look at the `confirm_file_operation` function:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "confirm_file_operation\|always_approved\|ConfirmTool" src/tool_wrappers… ✓ (4ms)
+  ▶ read src/tool_wrappers.rs:212..412 ✓ (2ms)
+  ▶ read src/tool_wrappers.rs:411..471 ✓ (1ms)
+  3 tools completed in 9.5s (3 ✓)
+
+Now let me check the `append_allow_pattern` function in config.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn append_allow_pattern\b" src/config.rs ✓ (8ms)
+  ▶ $ grep -n "fn append_allow_pattern" src/config.rs ✓ (8ms)
+  ▶ read src/config.rs:620..680 ✓ (1ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Good, now I understand the full picture. Let me also look at the existing imports at the top of tool_wrappers.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:1..21 ✓ (1ms)
+
+Now let me look at the tests section for tool_wrappers.rs to understand the test structure:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:900..1020 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:1019..1049 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Good, I have a clear picture. Now let me implement. I'll start with the helper function and tests.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, I need to find where to insert the new helper. I'll add it right before the ConfirmTool section, after the module imports:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:20..30 ✓ (1ms)
+
+Now I'll add the persistence helper right before the ConfirmTool section (line 212):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:208..213 ✓ (0ms)
+  ▶ edit src/tool_wrappers.rs (2 → 89 lines)
+  + // ---------------------------------------------------------------------------
+  + // Permission persistence for file operations
+  + // ---------------------------------------------------------------------------
+  + 
+  + use std::collections::HashSet as PersistHashSet;
+  + 
+  + /// Generate a directory-based allow pattern from a file path.
+  + ///
+  + /// For files in a subdirectory: extracts the directory and appends `/*`.
+  + /// For root files: uses `*.ext` based on the file extension.
+  + /// Examples:
+  + ///   `src/main.rs`        → `src/*`
+  + ///   `src/format/mod.rs`  → `src/format/*`
+  + ///   `README.md`          → `*.md`
+  + ///   `Cargo.toml`         → `*.toml`
+  + ///   `script`             → `script`  (no extension, no directory — use exact name)
+  + pub fn file_path_to_allow_pattern(path: &str) -> String {
+  +     let path = path.trim();
+  +     if path.is_empty() {
+  +         return "*".to_string();
+  ... (69 more lines)
+ ✓ (11.5s)
+  2 tools completed in 33.2s (2 ✓)
+
+Expected — the functions aren't used yet. Let me now integrate into `confirm_file_operation`:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+I need to modify confirm_file_operation to call offer_persist_file_pattern after the user says "always". The key spot is where always_approved.store(true, ...) happens:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:458..488 ✓ (1ms)
+
+I need to add the `offer_persist_file_pattern call after setting always_approved. The function currently takes description` and path — path is the file path, which is exactly what I need:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (6 → 8 lines)
+            eprintln!(
+                "{GREEN}  ✓ All subsequent operations will be auto-approved this session.{RESET}"
+            );
+  +         // Offer to persist a directory-based allow pattern to .yoyo.toml
+  +         offer_persist_file_pattern(path);
+        }
+ ✓ (39.2s)
+
+Now let me verify the code compiles:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (159ms)
+
+Good, it builds. Now let me add tests:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me find where the existing tests end in tool_wrappers.rs:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[cfg(test)\]\|mod tests\|^}" src/tool_wrappers.rs | tail -20 ✓ (4ms)
+  ▶ read src/tool_wrappers.rs:2400..2420 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+I'll add my tests right before the closing } of the module:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:760..780 ✓ (0ms)
+
+Now let me add the tests before the closing }:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (7 → 90 lines)
+            assert!(
+                result.is_ok(),
+                "ArcGuardedTool should allow non-denied path"
+  +         );
+  +     }
+  + 
+  +     // === file_path_to_allow_pattern tests ===
+  + 
+  +     #[test]
+  +     fn test_file_pattern_subdirectory() {
+  +         assert_eq!(file_path_to_allow_pattern("src/main.rs"), "src/*");
+  +         assert_eq!(
+  +             file_path_to_allow_pattern("src/format/mod.rs"),
+  +             "src/format/*"
+  +         );
+  +         assert_eq!(file_path_to_allow_pattern("tests/integration.rs"), "tests/*");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_file_pattern_root_files() {
+  ... (69 more lines)
+ ✓ (40.0s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 47.8s (3 ✓)
+
+Now let's run the full check suite:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (623ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (27.0s)
+  4 tools completed in 56.1s (4 ✓)
+
+All 88 tests pass, including the new ones. Let me verify my new tests actually ran:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test file_pattern 2>&1 | t… ✓ (167ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test file_persistence_dedu… ✓ (142ms)
+  2 tools completed in 5.1s (2 ✓)
+
+All 8 new tests pass. Let me also run the format check:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (629ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.4s (2 ✓)
+
+All checks pass. Let me now review what I've done before committing:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tool_wrappers.rs ✓ (6ms)
+  2 tools completed in 5.1s (2 ✓)
+
+The diff looks clean. Let me verify the CLAUDE.md architecture section needs updating — I need to check if tool_wrappers.rs description mentions the new functionality:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "tool_wrappers.rs" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "tool_wrappers.rs" CLAUDE.md ✓ (9ms)
+  ▶ read CLAUDE.md:57..60 ✓ (0ms)
+  3 tools completed in 7.4s (3 ✓)
+
+The description is high-level enough that it already covers this under "ConfirmTool ... and helper wrappers". The new functions are helpers within the same file. The architecture description is still accurate — no need to change CLAUDE.md.
+
+Let me also check if the README mentions permission persistence or the confirm flow:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "permission\|persist\|always.*approve\|allow.*pattern" README.md | head … ✓ (4ms)
+  ▶ $ grep -n -A2 "session.*approval\|always.*approved\|auto-approve" README.md | head… ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+The README doesn't have a specific section about the "always" persistence flow that I need to update. The docs under docs/src/ might — let me check:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "always.*approve\|permission.*persist\|offer.*save\|\.yoyo\.toml.*allow… ✓ (4ms)
+  ▶ $ grep -rn "always\|persist\|yoyo.toml" docs/src/configuration/permissions.md | he… ✓ (3ms)
+  ▶ read docs/src/configuration/permissions.md:90..120 ✓ (1ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Let me check if there's any mention of the bash "always" persistence feature in the docs, so I can add the parallel for file operations:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "persist\|save.*pattern\|offer.*save" docs/src/configuration/permission… ✓ (40ms)
+
+The docs don't mention the bash persistence either, so there's no existing section to update. The feature is consistent with the existing pattern. Let me also check the docs/troubleshooting/safety.md:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "always\|persist\|save.*pattern" docs/src/troubleshooting/safety.md | he… ✓ (3ms)
+
+No existing docs mention either version of the "offer to persist" feature. Since this is a new user-facing feature (users will see the persistence prompt on file operations), I should add a brief mention in the permissions docs:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/configuration/permissions.md:119..159 ✓ (1ms)
+  ▶ read docs/src/configuration/permissions.md:158..198 ✓ (1ms)
+  2 tools completed in 8.0s (2 ✓)
+
+I should add a section about the "always" persistence feature. Let me insert it right after the precedence section and before "Practical Examples":
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/permissions.md (1 → 10 lines)
+  + ## Persisting "Always" Approvals
+  + 
+  + When you answer "a" (always) to a confirmation prompt during a session, yoyo sets a session-wide auto-approve flag. It also offers to save the pattern to `.yoyo.toml` so the approval persists across sessions:
+  + 
+  + - **Bash commands**: yoyo simplifies the command into a glob (e.g., `cargo test*`) and asks if you'd like to save it.
+  + - **File operations**: yoyo generates a directory-based pattern (e.g., `src/*` for files under `src/`, or `*.rs` for root-level Rust files) and offers to save it.
+  + 
+  + The save prompt only appears once per pattern per session — you won't be asked repeatedly for the same directory.
+  + 
+    ## Practical Examples
+ ✓ (14.3s)
+
+I should also update the summary table to mention the "always" persistence:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/permissions.md (10 → 11 lines)
+    | `--deny-dir <dir>` | File tools | Block paths under these dirs |
+    | `[permissions]` in config | Bash commands | Same as `--allow`/`--deny` |
+    | `[directories]` in config | File tools | Same as `--allow-dir`/`--deny-dir` |
+  + | "Always" persistence | Bash + file tools | Offers to save patterns to `.yoyo.toml` on "always" |
+ ✓ (14.2s)
+
+Now let me run all the checks one final time:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (15.2s)
+
+All checks pass. Let me verify the full diff one more time:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+
+Now let me commit:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (15ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 17.0s (4 ✓)
+
+Done. Here's what I built:
+
+**Changes in `src/tool_wrappers.rs` (172 lines added):**
+
+1. `file_path_to_allow_pattern(path: &str) -> String` — Converts a file path to a directory-based allow pattern:
+   • src/main.rs → src/*
+   • `src/format/mod.rs → src/format/*`
+   • README.md → *.md (root file, extension-based)
+   • `Makefile → Makefile` (no extension, exact match)
+   • Handles ./ prefix stripping and \ → / normalisation
+
+2. **`already_offered_file_persistence(pattern: &str) -> bool** — Session-level dedup via LazyLock<Mutex<HashSet>>` (same pattern as bash version in tools.rs)
+
+3. **offer_persist_file_pattern(path: &str)** — Prompts user to save the pattern to .yoyo.toml, calls `crate::config::append_allow_pattern`
+
+4. Integration in `confirm_file_operation` — After user says "always" and the always_approved flag is set, `offer_persist_file_pattern(path)` is called
+
+5. 8 new tests covering all pattern generation cases + dedup mechanism
+
+Changes in `docs/src/configuration/permissions.md`:
+• Added "Persisting 'Always' Approvals" section explaining the feature
+• Updated summary table with the new mechanism
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
