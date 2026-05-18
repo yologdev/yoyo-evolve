@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current src/session.rs to understand the existing code and tests.
+  ▶ read src/session.rs ✓ (4ms)
+
+Let me see the full file, especially the middle section I missed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/session.rs:99..349 ✓ (2ms)
+  ▶ read src/session.rs:348..648 ✓ (2ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Good, now I have a complete picture. Let me count the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c '#\[test\]' src/session.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (41ms)
+
+29 existing tests. Now let me check what tempfile is available:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep 'tempfile' Cargo.toml ✓ (8ms)
+
+Good. Now I'll write the new tests. Let me plan them out and then add them all at once. I need to add ~30 new tests covering the gaps identified in the task.
+
+Let me see what's already covered vs what's not:
+
+SessionChanges: Already has - new, record_write, record_edit, deduplicates, multiple_files, clear, clone_independent, change_kind_display, shared_across_prompts, json_empty, json_mixed, json_valid, json_deduplicates. Missing: thread safety, record after clear, snapshot ordering stability.
+
+TurnSnapshot: Already has - new_is_empty, save_and_restore, created_files_deleted, no_duplicate_snapshots, nonexistent_file, created_not_duplicated, created_ignores_existing. Missing: mixed originals+created restore, file_count with both, restore returns correct action messages.
+
+TurnHistory: Already has - new_is_empty, push_pop, skips_empty, undo_last_n, undo_more_than_available, clear. Missing: undo_last(0), multiple pushes, pop from empty, undo reverse order verification.
+
+format_changes: Already has - empty, single_write, multiple_files. Missing: single edit, pluralization verification, icon correctness for each kind.
+
+Let me write all the new tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/session.rs (14 → 608 lines)
+            let arr = summary["changes"].as_array().unwrap();
+            assert_eq!(arr[0]["path"], "src/main.rs");
+            assert_eq!(arr[0]["kind"], "edit"); // latest kind wins
+  +     }
+  + 
+  +     // --- Additional SessionChanges tests ---
+  + 
+  +     #[test]
+  +     fn test_session_changes_record_after_clear() {
+  +         let changes = SessionChanges::new();
+  +         changes.record("a.rs", ChangeKind::Write);
+  +         changes.clear();
+  +         assert!(changes.is_empty());
+  + 
+  +         // Can record again after clearing
+  +         changes.record("b.rs", ChangeKind::Edit);
+  +         assert_eq!(changes.len(), 1);
+  +         assert_eq!(changes.snapshot()[0].path, "b.rs");
+  +     }
+  + 
+  ... (579 more lines)
+ ✓ (51.3s)
+
+Now let me count the new total and run the checks:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c '#\[test\]' src/session.rs ✓ (39ms)
+
+65 tests total — 36 new ones added. Let me run format, clippy, build, and test:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (630ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (38.6s)
+  4 tools completed in 1m 7s (4 ✓)
+
+All 88 tests pass, including the 36 new ones. Let me verify the session.rs tests specifically:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib session:: 2>&1 … ✓ (106ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test session 2>&1 ✓ (154ms)
+  2 tools completed in 5.5s (2 ✓)
+
+All 142 session-related tests pass (the filter catches tests from other modules with "session" in the name too). Let me also double-check fmt:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (636ms)
+
+All checks pass. Now let me commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (24 lines) ✓ (12ms)
+
+Done. Added 36 new unit tests to src/session.rs, more than doubling the test count from 29 to 65. The tests cover all the areas specified in the task:
+
+• SessionChanges: thread safety (concurrent writes and reads), record-after-clear, insertion order preservation, snapshot independence, JSON summary edge cases, `FileChange` equality
+• TurnSnapshot: multi-file restore, mixed originals+created files, graceful failure on nonexistent files, action message format, file_count with combined originals/created, restore preserving untracked files
+• TurnHistory: undo_last(0) as no-op, LIFO order verification, undo with created files, pop from empty, push after clear, undo on empty history
+• format_changes: per-kind icons (✏ vs 🔧), singular/plural "file"/"files", all paths present in output
+
+All checks pass: `cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test` (88 total, 0 failures).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

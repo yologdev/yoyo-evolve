@@ -1,0 +1,193 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement structured Rust compiler error parsing for smarter watch fix prompts. Let me start by understanding the current code.
+  ▶ read src/watch.rs ✓ (6ms)
+
+Now let me look at the `build_watch_fix_prompt` function more closely:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:120..210 ✓ (1ms)
+
+Good. Now I have a clear picture. Let me implement the structured Rust compiler error parsing. I'll write tests first, then the implementation.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:93..143 ✓ (1ms)
+
+Now let me look at the test section:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:900..1000 ✓ (1ms)
+
+Good. I have a clear picture. Now let me implement the feature. I'll add the struct, parser, hint function, and enhance build_watch_fix_prompt, plus thorough tests.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (2 → 352 lines)
+  + // ---------------------------------------------------------------------------
+  + // Structured Rust compiler error parsing
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Category of a Rust compiler/clippy/test error.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub enum ErrorCategory {
+  +     Borrow,
+  +     Type,
+  +     Lifetime,
+  +     Import,
+  +     Unused,
+  +     Syntax,
+  +     TestAssertion,
+  +     Other,
+  + }
+  + 
+  + impl ErrorCategory {
+  +     /// Short label for display in summaries.
+  +     pub fn label(&self) -> &'static str {
+  ... (332 more lines)
+ ✓ (12.2s)
+
+Two issues: duplicate E0412 across categories, and dead code warnings because I haven't updated `build_watch_fix_prompt` yet. Let me fix both.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (8 → 8 lines)
+            // Type errors
+  -         "E0308" | "E0277" | "E0271" | "E0369" | "E0412" | "E0609" | "E0614" | "E0618" => {
+  +         "E0308" | "E0277" | "E0271" | "E0369" | "E0609" | "E0614" | "E0618" => {
+                ErrorCategory::Type
+            }
+            // Lifetime errors
+ ✓ (12.9s)
+
+Now I need to update build_watch_fix_prompt to use the new parser. Let me do that:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (20 → 34 lines)
+            output.to_string()
+        };
+        let cmd_type = classify_watch_command(watch_cmd);
+  + 
+  +     // Try structured Rust error parsing for richer hints
+  +     let errors = parse_rust_errors(output);
+  +     let structured_section = build_error_summary(&errors);
+  + 
+        let hint = match cmd_type {
+            "lint" => "\n\nThis is a **lint** failure — fixes are usually mechanical (unused imports, \
+                       missing derives, formatting issues). Apply targeted fixes without changing logic.",
+  ···
+                       or fix the test if the new behavior is correct.",
+            _ => "",
+        };
+  -     format!(
+  -         "Your changes caused {cmd_type} failures. Here's the output from `{watch_cmd}`:\n\
+  -          ```\n{truncated}\n```\n\
+  -          Please fix the issues.{hint}"
+  -     )
+  ... (14 more lines)
+ ✓ (12.7s)
+  ▶ edit src/watch.rs (4 → 5 lines)
+    fn extract_location(lines: &[&str], start: usize) -> (Option<String>, Option<u32>) {
+  -     for j in (start + 1)..std::cmp::min(start + 6, lines.len()) {
+  -         let trimmed = lines[j].trim();
+  +     let end = std::cmp::min(start + 6, lines.len());
+  +     for line in &lines[start + 1..end] {
+  +         let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("--> ") {
+ ✓ (49.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.8s)
+  3 tools completed in 1m 31s (3 ✓)
+
+Clippy passes. Let me run the tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (22.7s)
+
+Let me check that failing test:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'test_build_watch_fix_prompt' in src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs:860..890 ✓ (1ms)
+  2 tools completed in 7.9s (2 ✓)
+
+The issue is that when we detect structured errors, we no longer include "Please fix" — we provide the structured summary instead. I need to update this test to accept the new behavior. The old test expected "Please fix" but now with structured parsing it gets the summary. Let me update the test:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (16 → 20 lines)
+                prompt.contains("error[E0308]: mismatched types"),
+                "prompt should include the output"
+            );
+  -         assert!(prompt.contains("Please fix"), "prompt should ask for a fix");
+  +         // With structured parsing, we get a detailed summary instead of "Please fix"
+  +         assert!(
+  +             prompt.contains("Parsed 1 Rust error"),
+  +             "prompt should include structured error summary: {prompt}"
+  +         );
+            assert!(
+                prompt.contains("```"),
+                "prompt should wrap output in code fence"
+ ✓ (50.8s)
+
+Now let me add the comprehensive tests for the new functionality. Let me find the end of the test module:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1350..1410 ✓ (1ms)
+
+Now let me add the comprehensive tests before the closing }:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (4 → 243 lines)
+            assert_eq!(phases[0], "make check");
+            clear_watch_command();
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // Structured Rust compiler error parsing tests
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn parse_rust_errors_borrow_checker() {
+  +         let output = r#"error[E0382]: borrow of moved value: `x`
+  +   --> src/main.rs:10:5
+  +    |
+  + 10 |     println!("{}", x);
+  +    |                    ^ value borrowed here after move
+  + "#;
+  +         let errors = parse_rust_errors(output);
+  +         assert_eq!(errors.len(), 1);
+  +         assert_eq!(errors[0].code.as_deref(), Some("E0382"));
+  +         assert_eq!(errors[0].category, ErrorCategory::Borrow);
+  ... (223 more lines)
+ ✓ (11.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '&output' src/watch.rs |… ✓ (3ms)
+  ▶ read src/watch.rs:1562..1567 ✓ (1ms)
+  3 tools completed in 28.1s (3 ✓)
+
+The issue is output is a &str literal so &output is an unnecessary extra reference. Let me fix both:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (1 → 1 lines)
+  -         let prompt = build_watch_fix_prompt("cargo build", &output);
+  +         let prompt = build_watch_fix_prompt("cargo build", output);
+ ✓ (11.7s)
+  ▶ edit src/watch.rs (1 → 1 lines)
+  -         let prompt = build_watch_fix_prompt("make build", &output);
+  +         let prompt = build_watch_fix_prompt("make build", output);
+ ✓ (50.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (39.0s)
+  4 tools completed in 2m 3s (4 ✓)
+
+All pass. Let me run the specific watch tests to confirm:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test watch::tests -- 2>&1 … ✓ (138ms)
+
+All 58 watch tests pass. Let me do a final full check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (38.1s)
+
+All four checks pass. Now let me check if CLAUDE.md needs updating — the watch.rs description:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search 'watch.rs' in CLAUDE.md ✓ (2ms)
+
+The description says "command-type-aware fix prompts" — I should extend this to mention structured Rust error parsing:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch
+  + - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts and structured Rust compiler error parsing (`CompilerError`, `parse_rust_errors`, category-specific hints) (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch
+ ✓ (38.0s)
+
+Now let me commit:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
