@@ -1,0 +1,274 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ read src/tools.rs:700..780 ✓ (1ms)
+  9 tools completed in 30.7s (9 ✓)
+
+Now let me see more context around this area - what's `flag and always_approved`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:640..700 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.3s (3 ✓)
+
+Now let me look at the config.rs for existing helpers:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn write_config_value_to|fn set_toml_key|fn write_config_val…' in src/config.rs ✓ (2ms)
+  ▶ search 'pub fn write_config|pub fn set_toml|pub fn parse_perm' in src/config.rs ✓ (2ms)
+  ▶ search 'write_config|set_toml|parse_perm|PermissionConfig' in src/config.rs ✓ (2ms)
+  ▶ search 'PermissionConfig|write_config|set_toml"' in src/config.rs ✓ (2ms)
+  ▶ $ grep -n "PermissionConfig\|write_config\|set_toml\|append_allow\|fn parse_permis… ✓ (4ms)
+  ▶ read src/config.rs:1..81 ✓ (1ms)
+  6 tools completed in 17.2s (6 ✓)
+
+Now let me read the glob_match function and parse_permissions_from_config:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:140..220 ✓ (1ms)
+  ▶ read src/config.rs:219..299 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me read write_config_value_to and set_toml_key:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:585..665 ✓ (1ms)
+  ▶ read src/config.rs:664..704 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Good, I have a good understanding of the structure. Now let me look at the existing test section for permissions:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:820..880 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Good. Now I have full context. Let me implement this step by step. I'll start with the `simplify_command_pattern function and its tests in src/tools.rs, then add append_allow_pattern to src/config.rs`, and finally wire it into the confirmation flow.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me first check the end of src/tools.rs for existing tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:2350..2410 ✓ (1ms)
+
+Now let me look at what's around line 2300 to understand imports and test module structure:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:2250..2300 ✓ (1ms)
+  ▶ read src/tools.rs:2296..2356 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me check the imports at the top of src/tools.rs:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1..31 ✓ (1ms)
+  ▶ read src/tools.rs:30..50 ✓ (1ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Good. Now I have all the context I need. Let me also look at what test infrastructure exists in tools.rs:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/tools.rs ✓ (2ms)
+  ▶ $ grep -n "mod tests\|#\[cfg(test)\]" src/tools.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (11ms)
+  ▶ read src/tools.rs:905..945 ✓ (1ms)
+  3 tools completed in 13.2s (3 ✓)
+
+Now I have a clear picture. Let me implement this:
+
+1. First, add `simplify_command_pattern to src/tools.rs`
+2. Add `append_allow_pattern to src/config.rs`  
+3. Modify the confirmation flow in src/tools.rs
+4. Add tests
+
+Let me start with the implementation. First, I'll add simplify_command_pattern in src/tools.rs:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:43..53 ✓ (1ms)
+
+I'll add the simplify_command_pattern function and the persistence prompt logic right before the `build_tools` function. Let me find the right location:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:655..675 ✓ (1ms)
+
+Now I'll add simplify_command_pattern right before build_tools:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (8 → 75 lines)
+  + // ---------------------------------------------------------------------------
+  + // Permission persistence — offer to save "always" approvals to .yoyo.toml
+  + // ---------------------------------------------------------------------------
+  + 
+  + use std::collections::HashSet;
+  + use std::sync::Mutex;
+  + 
+  + /// Simplify a bash command into a glob pattern suitable for the allow list.
+  + ///
+  + /// Heuristic: keep the first 2 tokens (base command + subcommand), append `*`.
+  + /// This produces patterns like `cargo test*`, `npm run*`, `git commit*`.
+  + pub fn simplify_command_pattern(cmd: &str) -> String {
+  +     let tokens: Vec<&str> = cmd.split_whitespace().collect();
+  +     let base = match tokens.len() {
+  +         0 => return "*".to_string(),
+  +         1 => tokens[0].to_string(),
+  +         _ => format!("{} {}", tokens[0], tokens[1]),
+  +     };
+  +     format!("{base}*")
+  + }
+  ... (50 more lines)
+ ✓ (6.6s)
+
+Expected - I need to add append_allow_pattern to config.rs next. Let me do that now:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me look at where to add append_allow_pattern in config.rs - right after `write_config_value_to`:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:620..635 ✓ (0ms)
+
+I'll add `append_allow_pattern right after write_config_value_to`:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (4 → 118 lines)
+  +     Ok(path.to_path_buf())
+  + }
+  + 
+  + /// Append a pattern to the `[permissions]` allow list in the project-local `.yoyo.toml`.
+  + ///
+  + /// If the file doesn't exist it is created. If the `[permissions]` section or `allow`
+  + /// key doesn't exist they are created. If the pattern is already present, the file is
+  + /// left unchanged (no duplicates).
+  + ///
+  + /// Returns the path written to on success.
+  + pub fn append_allow_pattern(pattern: &str) -> Result<std::path::PathBuf, String> {
+  +     let path = std::path::PathBuf::from(".yoyo.toml");
+  +     append_allow_pattern_to(pattern, &path)
+  + }
+  + 
+  + /// Testable version of [`append_allow_pattern`] that takes an explicit path.
+  + pub fn append_allow_pattern_to(
+  +     pattern: &str,
+  +     path: &std::path::Path,
+  + ) -> Result<std::path::PathBuf, String> {
+  ... (98 more lines)
+ ✓ (10.2s)
+
+The functions are declared but not called yet. Let me now wire in the `offer_persist_pattern` call in the "always" handling code. Let me also fix the tools.rs flow:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:772..802 ✓ (1ms)
+
+Now I need to add the offer_persist_pattern call after the "always" message:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (6 → 8 lines)
+                    eprintln!(
+                        "{GREEN}  ✓ All subsequent operations will be auto-approved this session.{RESET}"
+                    );
+  +                 // Offer to persist this pattern to .yoyo.toml
+  +                 offer_persist_pattern(cmd);
+                }
+ ✓ (45.8s)
+
+Now let me try building:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -40 ✓ (106ms)
+
+Good, it compiles. Now let me run clippy:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10.2s)
+
+Excellent! Let me check the tests pass:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (21.8s)
+
+All 88 tests pass. Now let me add tests. First tests for simplify_command_pattern:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 10.9s (3 ✓)
+
+Now let me add the tests. I'll add them to the test module in `src/tools.rs`:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:2395..2410 ✓ (1ms)
+
+I'll add the tests right after the `test_build_tools_no_ask_user_in_tests` test:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (5 → 43 lines)
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // simplify_command_pattern
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_simplify_command_pattern_two_tokens() {
+  +         assert_eq!(simplify_command_pattern("cargo test"), "cargo test*");
+  +         assert_eq!(simplify_command_pattern("cargo build"), "cargo build*");
+  +         assert_eq!(simplify_command_pattern("npm run"), "npm run*");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_simplify_command_pattern_more_tokens() {
+  +         assert_eq!(
+  +             simplify_command_pattern("cargo build --release"),
+  +             "cargo build*"
+  +         );
+  +         assert_eq!(
+  ... (21 more lines)
+ ✓ (46.1s)
+
+Now let me add tests for append_allow_pattern_to in src/config.rs. Let me find the end of the test module:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^}" src/config.rs | tail -5 ✓ (3ms)
+  ▶ read src/config.rs:1550..1580 ✓ (1ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Now I'll add tests for append_allow_pattern_to and set_permissions_allow:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (9 → 125 lines)
+                let dir = data_dir_hint();
+                assert!(dir.is_some(), "Should return a data dir path");
+            }
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // append_allow_pattern / set_permissions_allow
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_set_permissions_allow_creates_section() {
+  +         let content = "model = \"claude-sonnet-4-6\"\n";
+  +         let result = set_permissions_allow(content, &["cargo test*".to_string()]);
+  +         assert!(result.contains("[permissions]"));
+  +         assert!(result.contains("allow = [\"cargo test*\"]"));
+  +         // Original content preserved
+  +         assert!(result.contains("model = \"claude-sonnet-4-6\""));
+  +     }
+  + 
+  +     #[test]
+  ... (101 more lines)
+ ✓ (45.8s)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (35.5s)
+  4 tools completed in 1m 43s (4 ✓)
+
+Wait, only 88 tests? Same as before. Let me check if the new tests are being picked up:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -c "test … ✓ (13.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (13.2s)
+  2 tools completed in 47.0s (2 ✓)
+
+There are actually 2984 tests in the doc tests + unit tests, and 88 integration. Let me make sure my new tests are passing:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test simplify_command 2>&1 ✓ (137ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test append_allow 2>&1 ✓ (113ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test set_permissions_allow… ✓ (113ms)
+  3 tools completed in 9.0s (3 ✓)
+
+All 11 new tests pass. Let me run the full suite one more time to verify nothing broke:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (32.9s)
+
+All checks pass. Let me also verify the full test output:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (13.4s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

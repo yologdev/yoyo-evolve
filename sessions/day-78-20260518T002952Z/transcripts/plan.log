@@ -1,0 +1,99 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the current state and plan the session. Let me start by checking the issues and recent context.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ cat journals/JOURNAL.md | head -80  ▶ $ cat CHANGELOG.md | head -40 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what's been added since last release (v0.1.11, Day 7… (2 lines)  ▶ $ # Check test coverage for the files with lowest test density (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Check what's been committed since v0.1.11 (2 lines) ✓ (4ms)
+  ▶ $ # Count commits since v0.1.11 to gauge release readiness (2 lines)  ▶ $ # Look at what substantial features have shipped since v0.1.… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # How many tasks since v0.1.11? (2 lines)  ▶ $ # Full list (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Get a fuller picture - also include tasks from Day 75-76 (2 lines) ✓ (4ms)
+  ▶ $ # Check full list since v0.1.11 (Day 74) (4 lines) ✓ (4ms)
+  ▶ $ git tag -l 'v*' 2>/dev/null | sort -V | tail -5 (3 lines) ✓ (6ms)
+  ▶ $ # No local tags. Let's check CHANGELOG for the release date … (2 lines) ✓ (2ms)
+  ▶ $ # What's the competitive gap I should close? Let me look at … (9 lines) ✓ (3ms)
+  ▶ $ # Let me think about what's a good self-driven capability ga… (9 lines) ✓ (4ms)
+  ▶ $ # Check the ConfirmTool's y/n/always flow (2 lines) ✓ (3ms)
+  18 tools completed in 53.9s (18 ✓)
+
+Now I have a clear picture. Let me think about the three tasks:
+
+1. **Self-driven (competitive gap):** The "always" approval is session-only — it doesn't persist or remember per-command patterns. Claude Code has `permission-mode` where approvals can be remembered. But that's a bigger architectural change. A more actionable gap: interactive permission learning — when the user says "always" to a specific command pattern (like `cargo test), offer to add it to .yoyo.toml` automatically so it persists across sessions. This is the "allow once / allow always / remember" cycle.
+
+2. Self-driven (quality): `tool_wrappers.rs` at 1,688 lines with only 36 tests (2.13% density) is a critical file — every tool invocation flows through these wrappers. More tests here.
+
+3. Release check: 11 tasks shipped since v0.1.11 (4 days ago). That's meaningful — --print mode, --no-tools, session resume, relevance-ranked repo map, /compact args, 5 new languages, recovery hints wired up, project-type hints. Enough for a v0.1.12.
+
+Actually, let me reconsider. The release is important but the assessment says the competitive gaps are increasingly architectural. Let me pick something that closes a real gap.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check: does yoyo have any "remember this permission" flow? (2 lines) ✓ (3ms)
+  ▶ $ # No "remember" flow at all. Let me check what the confirm p… (2 lines) ✓ (3ms)
+  ▶ $ # Find the actual prompt text shown to user (4 lines) ✓ (4ms)
+  3 tools completed in 8.9s (3 ✓)
+
+Good. Now I have a clear picture. Let me plan the session:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check GuardedTool (bash confirmation) prompt (2 lines) ✓ (3ms)
+
+Now I have a solid understanding. Let me plan:
+
+**Task 1 (self-driven, competitive gap):** Permission persistence — when user says "always" in interactive mode, offer to save the pattern to `.yoyo.toml` so it persists across sessions. This is the key "smart permission cycle" gap vs Claude Code.
+
+Task 2 (self-driven, test quality): More tests for tool_wrappers.rs — the `AutoCheckTool, RecoveryHintTool, GuardedTool, and TruncatingTool` wrappers need coverage. Critical infrastructure with only 2.13% test density.
+
+Task 3 (self-driven, release): Prepare v0.1.12 release — update CHANGELOG.md with all post-v0.1.11 features. 11 shipped tasks across 4 days is enough for a release.
+
+Wait — the release task is just editing CHANGELOG.md and tagging. The release skill says to check if enough has accumulated. Let me reconsider — the tagging and actual release happens via workflow, but the CHANGELOG update is the prep. Actually, I should focus on capability first and save release for when there's a clear batch.
+
+Let me reconsider task 3. What else is high-impact?
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the commands_map.rs size? At 3,605 lines it's t… (8 lines) ✓ (3ms)
+  ▶ $ # Let me think about what's most impactful as task 3. (8 lines) ✓ (3ms)
+  ▶ $ sed -n '778,830p' src/commands_config.rs ✓ (3ms)
+  3 tools completed in 10.5s (3 ✓)
+
+Good. The /permissions command is read-only — it shows the current config but can't modify it. Task 1 (permission persistence) would add the "remember" capability to the confirmation flow. That's a strong self-driven task.
+
+Let me finalize my plan:
+
+**Task 1 (self-driven, competitive gap):** Permission persistence — when user says "always" to a bash command, ask if they want to save the pattern to `.yoyo.toml`. This is the "smart permission cycle" gap vs Claude Code. Touches src/tools.rs and src/config.rs.
+
+**Task 2 (self-driven, quality):** Test coverage for `tool_wrappers.rs — add tests for AutoCheckTool, TruncatingTool, and RecoveryHintTool` wrappers. Currently 2.13% test density on a critical 1,688-line file.
+
+Task 3 (self-driven, release prep): Prepare CHANGELOG for v0.1.12 release. 11+ tasks shipped since v0.1.11 across Days 75-78. This is a clean batch worth releasing.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (38 lines) ✓ (29.8s)
+  ▶ write session_plan/task_02.md (41 lines) ✓ (32.9s)
+  ▶ write session_plan/task_03.md (44 lines) ✓ (30.3s)
+  ▶ write session_plan/issue_responses.md (7 lines) ✓ (32.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (8ms)
+  6 tools completed in 3m 4s (6 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 78 (23:44) Session Plan — 3 Tasks
+
+### Task 1: Permission persistence — save "always" approvals to .yoyo.toml
+**Self-driven (competitive gap).** Closes the "smart permission cycle" gap vs Claude Code. When a user says "always" at a bash confirmation prompt, offer to save the command pattern to .yoyo.toml so it persists across sessions. Adds `append_allow_pattern()` to config.rs and a follow-up prompt in tools.rs.
+
+### Task 2: Unit tests for tool_wrappers.rs — AutoCheckTool, TruncatingTool, RecoveryHintTool
+Self-driven (quality). This file is 1,688 lines with only 2.13% test density — every tool invocation flows through these wrappers. Target: 20+ new tests covering truncation, recovery hint escalation, guard wrapping, and failure tracking.
+
+### Task 3: Prepare CHANGELOG for v0.1.12 release
+Self-driven (release). 11 tasks shipped since v0.1.11 across Days 75-78: --print mode, --no-tools, session resume summary, relevance-ranked repo map, /compact args, 5 new languages, recovery hints, project-type hints. Enough for a clean release. Update CHANGELOG.md and bump Cargo.toml version.
+
+### Issue Responses
+• #215 (TUI challenge): Deferred — large architectural project, needs multi-session research phase. No new follow-up promised.
+• #341, #307, #156, #141: No action — tracking/external/stale.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

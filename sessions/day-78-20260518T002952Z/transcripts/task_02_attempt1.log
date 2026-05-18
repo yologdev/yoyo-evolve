@@ -1,0 +1,158 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current tool_wrappers.rs to understand the structures and functions I need to test.
+  ▶ read src/tool_wrappers.rs ✓ (9ms)
+
+Let me read more of the file to see the existing tests and all the key structures:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:100..500 ✓ (2ms)
+  ▶ read src/tool_wrappers.rs:500..900 ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:598..798 ✓ (2ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now let me see the existing test section and the `DirectoryRestrictions` type:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:900..1000 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:1000..1200 ✓ (2ms)
+  ▶ read src/tool_wrappers.rs:1200..1400 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:1400..1600 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:1600..1690 ✓ (1ms)
+  5 tools completed in 13.7s (5 ✓)
+
+Now let me check the DirectoryRestrictions structure and `tool_recovery_hint`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub struct DirectoryRestrictions' (*.rs) ✓ (15ms)
+  ▶ read src/config.rs:52..102 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me check how tool_recovery_hint works and what it returns:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub.*fn tool_recovery_hint' (*.rs) ✓ (15ms)
+  ▶ read src/prompt_retry.rs:100..170 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Good, I now have a solid understanding. Let me also check what `with_truncation` does:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:197..217 ✓ (1ms)
+
+Now I have a clear picture. Let me count the existing tests to understand the baseline:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c '#\[test\]\|#\[tokio::test\]' src/tool_wrappers.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (31ms)
+
+There are already 45 tests (not 36 as the task description says — probably added since the count). Let me look at what's covered and what gaps exist. Let me also look at the AutoCheckTool description method since the task mentions testing if description includes auto-check hint text:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:476..491 ✓ (1ms)
+
+AutoCheckTool doesn't modify the description — it delegates to inner. Let me look at what `RecoveryHintTool` does:
+
+The RecoveryHintTool and AutoCheckTool both just delegate description() to their inner tool. So the task description was slightly off about "description includes auto-check hint text" — but I should still test that wrapping preserves name/description.
+
+Now let me plan and write the tests. I have a good understanding of what's already covered and what's not. Let me create the new tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me write the tests. I'll add them at the end of the existing test module:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (9 → 639 lines)
+            });
+            let desc = describe_file_operation("bash", &params);
+            assert!(desc.contains("bash"), "Should contain tool name: {desc}");
+  +     }
+  + 
+  +     // =========================================================================
+  +     // TruncatingTool / truncate_result — additional coverage
+  +     // =========================================================================
+  + 
+  +     #[test]
+  +     fn test_truncate_result_exact_limit_unchanged() {
+  +         // Text exactly at limit should pass through unchanged
+  +         let text = "abcdefghij"; // 10 chars
+  +         let result = yoagent::types::ToolResult {
+  +             content: vec![yoagent::Content::Text {
+  +                 text: text.to_string(),
+  +             }],
+  +             details: serde_json::Value::Null,
+  +         };
+  +         let truncated = truncate_result(result, 10);
+  ... (615 more lines)
+ ✓ (10.3s)
+
+Quick clippy fix:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -                 assert!(t.len() > 0, "Should produce some output");
+  +                 assert!(!t.is_empty(), "Should produce some output");
+ ✓ (46.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.9s)
+  2 tools completed in 1m 1s (2 ✓)
+
+Clippy passes. Now let's run the tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (35.5s)
+
+All 88 tests pass. Let me verify how many new tests I added:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '#\[test\]\|#\[tokio::te… ✓ (2ms)
+
+73 - 45 = 28 new tests. Let me verify with a focused test run:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_wrappers 2>&1 | … ✓ (135ms)
+
+All 73 tool_wrappers tests pass (28 new ones added). Let me run the full check suite one more time to be sure:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (33.4s)
+
+All four checks pass. Let me commit:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Done. Added 28 new tests to tool_wrappers.rs, bringing total test coverage from 45 to 73 tests. Here's what was added:
+
+**TruncatingTool / truncate_result (7 tests):**
+• Exact limit passthrough
+• Multi-byte UTF-8 safety (no panics on ✓日本語)
+• Emoji boundary safety (🦑 4-byte chars)
+• Empty text handling
+• Multiple content blocks (independent truncation)
+• Details field preservation
+• with_truncation wrapping preserves name/description/label
+• with_truncation truncates large output
+• with_truncation passes small output unchanged
+
+AutoCheckTool (2 tests):
+• with_auto_check preserves name/description/label
+• with_auto_check preserves parameter schema
+
+RecoveryHintTool (5 tests):
+• with_recovery_hints preserves name/description/label
+• Non-Failed errors (NotFound) still increment tracker
+• Success after multiple failures resets counter
+• Different tools produce different hints
+• Unknown tool gets generic "different approach" hint
+
+ToolFailureTracker (3 tests):
+• Record success on nonexistent tool is a no-op
+• Many tools tracked independently with correct counts
+• Thread safety (concurrent failures from two threads)
+
+GuardedTool / maybe_guard (5 tests):
+• Empty restrictions → no wrapping
+• Deny list → wraps but preserves name
+• Blocks denied paths
+• Allows non-denied paths
+• No path param passes through guard
+
+ArcGuardedTool / maybe_guard_arc (4 tests):
+• Empty restrictions → no wrapping
+• With restrictions → wraps, preserves name
+• Blocks denied paths
+• Allows valid paths
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
