@@ -6,8 +6,27 @@ use crate::commands_project::{detect_project_type, project_type_hints};
 use crate::format::{is_quiet, DIM, RESET};
 
 /// Project instruction files, checked in order. All found files are concatenated.
-/// YOYO.md is the canonical name; CLAUDE.md is a compatibility alias.
-pub const PROJECT_CONTEXT_FILES: &[&str] = &["YOYO.md", "CLAUDE.md", ".yoyo/instructions.md"];
+///
+/// YOYO.md is the canonical name for yoyo projects. The remaining entries are
+/// compatibility aliases so that yoyo automatically picks up project instructions
+/// written for other AI coding tools:
+///
+/// - **CLAUDE.md** — Claude Code
+/// - **.yoyo/instructions.md** — yoyo alternate location
+/// - **AGENTS.md** — Google Gemini CLI / generic agents
+/// - **.cursorrules** — Cursor
+/// - **.github/copilot-instructions.md** — GitHub Copilot
+///
+/// When a developer already has any of these in their project, yoyo reads them
+/// at startup — no configuration needed.
+pub const PROJECT_CONTEXT_FILES: &[&str] = &[
+    "YOYO.md",
+    "CLAUDE.md",
+    ".yoyo/instructions.md",
+    "AGENTS.md",
+    ".cursorrules",
+    ".github/copilot-instructions.md",
+];
 
 /// Maximum number of files to include in the project file listing.
 pub const MAX_PROJECT_FILES: usize = 200;
@@ -99,8 +118,10 @@ pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
     }
 }
 
-/// Load project context from YOYO.md (primary), CLAUDE.md (compatibility alias),
-/// or .yoyo/instructions.md.
+/// Load project context from instruction files (YOYO.md, CLAUDE.md, AGENTS.md,
+/// .cursorrules, .github/copilot-instructions.md, etc.).
+/// When multiple instruction files are found, each section is labeled with its
+/// origin so the model knows which file each block came from.
 /// Appends project file listing, recently changed files, git status, and memories
 /// when available.
 pub fn load_project_context() -> Option<String> {
@@ -112,6 +133,11 @@ pub fn load_project_context() -> Option<String> {
             if !content.is_empty() {
                 if !context.is_empty() {
                     context.push_str("\n\n");
+                }
+                // When loading multiple files, label each section so the model
+                // knows where the instructions came from.
+                if !found.is_empty() {
+                    context.push_str(&format!("--- From {name} ---\n"));
                 }
                 context.push_str(content);
                 found.push(*name);
@@ -226,12 +252,16 @@ mod tests {
 
     #[test]
     fn test_project_context_file_names_not_empty() {
-        assert_eq!(PROJECT_CONTEXT_FILES.len(), 3);
+        assert_eq!(PROJECT_CONTEXT_FILES.len(), 6);
         // YOYO.md must be first — it's the canonical context file name
         assert_eq!(PROJECT_CONTEXT_FILES[0], "YOYO.md");
         // CLAUDE.md is a compatibility alias
         assert_eq!(PROJECT_CONTEXT_FILES[1], "CLAUDE.md");
         assert_eq!(PROJECT_CONTEXT_FILES[2], ".yoyo/instructions.md");
+        // Cross-tool compatibility files
+        assert_eq!(PROJECT_CONTEXT_FILES[3], "AGENTS.md");
+        assert_eq!(PROJECT_CONTEXT_FILES[4], ".cursorrules");
+        assert_eq!(PROJECT_CONTEXT_FILES[5], ".github/copilot-instructions.md");
         for name in PROJECT_CONTEXT_FILES {
             assert!(!name.is_empty());
         }
@@ -410,6 +440,19 @@ mod tests {
             PROJECT_CONTEXT_FILES[0], "CLAUDE.md",
             "CLAUDE.md should not be the primary context file"
         );
+        // Cross-tool compatibility files
+        assert!(
+            PROJECT_CONTEXT_FILES.contains(&"AGENTS.md"),
+            "AGENTS.md should be supported (Gemini CLI)"
+        );
+        assert!(
+            PROJECT_CONTEXT_FILES.contains(&".cursorrules"),
+            ".cursorrules should be supported (Cursor)"
+        );
+        assert!(
+            PROJECT_CONTEXT_FILES.contains(&".github/copilot-instructions.md"),
+            ".github/copilot-instructions.md should be supported (GitHub Copilot)"
+        );
     }
 
     #[test]
@@ -487,5 +530,151 @@ mod tests {
             ctx.contains("Custom instructions"),
             "Should include YOYO.md content"
         );
+    }
+
+    #[test]
+    fn test_load_cursorrules_file() {
+        // A .cursorrules file should be loaded as project context
+        use std::process::Command;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join(".cursorrules"),
+            "Always use TypeScript strict mode.",
+        )
+        .unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let ctx = load_project_context();
+        let _ = std::env::set_current_dir(&original_dir);
+
+        let ctx = ctx.unwrap();
+        assert!(
+            ctx.contains("Always use TypeScript strict mode"),
+            "Should load .cursorrules content"
+        );
+    }
+
+    #[test]
+    fn test_load_agents_md_file() {
+        // An AGENTS.md file should be loaded as project context
+        use std::process::Command;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("AGENTS.md"),
+            "# Agent Instructions\nUse pytest for testing.",
+        )
+        .unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let ctx = load_project_context();
+        let _ = std::env::set_current_dir(&original_dir);
+
+        let ctx = ctx.unwrap();
+        assert!(
+            ctx.contains("Use pytest for testing"),
+            "Should load AGENTS.md content"
+        );
+    }
+
+    #[test]
+    fn test_load_copilot_instructions_file() {
+        // A .github/copilot-instructions.md file should be loaded as project context
+        use std::process::Command;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(dir.path().join(".github")).unwrap();
+        std::fs::write(
+            dir.path().join(".github/copilot-instructions.md"),
+            "Follow Google style guide.",
+        )
+        .unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let ctx = load_project_context();
+        let _ = std::env::set_current_dir(&original_dir);
+
+        let ctx = ctx.unwrap();
+        assert!(
+            ctx.contains("Follow Google style guide"),
+            "Should load .github/copilot-instructions.md content"
+        );
+    }
+
+    #[test]
+    fn test_multiple_context_files_get_separators() {
+        // When multiple instruction files exist, secondary files should have
+        // a "--- From <file> ---" separator for model clarity.
+        use std::process::Command;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("YOYO.md"), "Primary instructions").unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "Agent instructions").unwrap();
+        std::fs::write(dir.path().join(".cursorrules"), "Cursor rules").unwrap();
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .ok();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        let ctx = load_project_context();
+        let _ = std::env::set_current_dir(&original_dir);
+
+        let ctx = ctx.unwrap();
+        // First file (YOYO.md) should NOT have a separator
+        assert!(
+            !ctx.contains("--- From YOYO.md ---"),
+            "Primary file should not have a separator prefix"
+        );
+        // Secondary files should have separators
+        assert!(
+            ctx.contains("--- From AGENTS.md ---"),
+            "AGENTS.md should have a separator: got: {ctx}"
+        );
+        assert!(
+            ctx.contains("--- From .cursorrules ---"),
+            ".cursorrules should have a separator: got: {ctx}"
+        );
+        // Content from all files should be present
+        assert!(ctx.contains("Primary instructions"));
+        assert!(ctx.contains("Agent instructions"));
+        assert!(ctx.contains("Cursor rules"));
     }
 }
