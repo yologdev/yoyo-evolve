@@ -542,6 +542,25 @@ pub fn detect_project_name(dir: &std::path::Path) -> String {
         .unwrap_or_else(|| "my-project".to_string())
 }
 
+/// AI tool instruction files that yoyo recognises.
+/// Each entry is `(relative_path, label)`.
+const AI_CONFIG_FILES: &[(&str, &str)] = &[
+    ("CLAUDE.md", "Claude Code"),
+    ("AGENTS.md", "Gemini / generic agents"),
+    (".cursorrules", "Cursor"),
+    (".github/copilot-instructions.md", "GitHub Copilot"),
+];
+
+/// Detect which other AI tool instruction files already exist in `dir`.
+/// Returns a vec of `(path, label)` for each file found.
+pub fn detect_ai_config_files(dir: &std::path::Path) -> Vec<(&'static str, &'static str)> {
+    AI_CONFIG_FILES
+        .iter()
+        .filter(|(path, _)| dir.join(path).exists())
+        .copied()
+        .collect()
+}
+
 /// Generate a complete YOYO.md context file by scanning the project.
 pub fn generate_init_content(dir: &std::path::Path) -> String {
     let project_type = detect_project_type(dir);
@@ -605,6 +624,17 @@ pub fn generate_init_content(dir: &std::path::Path) -> String {
         }
     }
 
+    // Other AI Tool Configs section (if any found)
+    let ai_configs = detect_ai_config_files(dir);
+    if !ai_configs.is_empty() {
+        content.push_str("\n## Other AI Tool Configs\n\n");
+        content.push_str("This project also has instruction files for other AI tools:\n");
+        for (path, label) in &ai_configs {
+            content.push_str(&format!("- `{path}` ({label})\n"));
+        }
+        content.push_str("\nyoyo reads these automatically for additional project context.\n");
+    }
+
     content
 }
 
@@ -621,6 +651,14 @@ pub fn handle_init() {
         println!("{DIM}  Scanning project...{RESET}");
         if project_type != ProjectType::Unknown {
             println!("{DIM}  Detected: {project_type}{RESET}");
+        }
+        let ai_configs = detect_ai_config_files(&cwd);
+        if !ai_configs.is_empty() {
+            let names: Vec<&str> = ai_configs.iter().map(|(p, _)| *p).collect();
+            eprintln!(
+                "{DIM}  Found existing AI configs: {} — yoyo reads these automatically{RESET}",
+                names.join(", ")
+            );
         }
         let content = generate_init_content(&cwd);
         match std::fs::write(path, &content) {
@@ -1195,6 +1233,93 @@ mod tests {
         let content = generate_init_content(dir.path());
         assert!(content.contains("`src/`"));
         assert!(content.contains("`README.md`"));
+    }
+
+    #[test]
+    fn detect_ai_config_files_none() {
+        let dir = TempDir::new().unwrap();
+        let found = detect_ai_config_files(dir.path());
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn detect_ai_config_files_cursorrules() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".cursorrules"), "some rules").unwrap();
+        let found = detect_ai_config_files(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], (".cursorrules", "Cursor"));
+    }
+
+    #[test]
+    fn detect_ai_config_files_multiple() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "# Agents").unwrap();
+        fs::write(dir.path().join(".cursorrules"), "rules").unwrap();
+        let found = detect_ai_config_files(dir.path());
+        assert_eq!(found.len(), 2);
+        let paths: Vec<&str> = found.iter().map(|(p, _)| *p).collect();
+        assert!(paths.contains(&"AGENTS.md"));
+        assert!(paths.contains(&".cursorrules"));
+    }
+
+    #[test]
+    fn detect_ai_config_files_claude_md() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude instructions").unwrap();
+        let found = detect_ai_config_files(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], ("CLAUDE.md", "Claude Code"));
+    }
+
+    #[test]
+    fn detect_ai_config_files_copilot() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".github")).unwrap();
+        fs::write(
+            dir.path().join(".github/copilot-instructions.md"),
+            "instructions",
+        )
+        .unwrap();
+        let found = detect_ai_config_files(dir.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, "GitHub Copilot");
+    }
+
+    #[test]
+    fn init_content_with_cursorrules_has_ai_config_section() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".cursorrules"), "rules").unwrap();
+        let content = generate_init_content(dir.path());
+        assert!(content.contains("## Other AI Tool Configs"));
+        assert!(content.contains("`.cursorrules` (Cursor)"));
+        assert!(content.contains("yoyo reads these automatically"));
+    }
+
+    #[test]
+    fn init_content_no_ai_configs_omits_section() {
+        let dir = TempDir::new().unwrap();
+        let content = generate_init_content(dir.path());
+        assert!(!content.contains("Other AI Tool Configs"));
+    }
+
+    #[test]
+    fn init_content_with_multiple_ai_configs_lists_both() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("AGENTS.md"), "# Agents").unwrap();
+        fs::write(dir.path().join(".cursorrules"), "rules").unwrap();
+        let content = generate_init_content(dir.path());
+        assert!(content.contains("## Other AI Tool Configs"));
+        assert!(content.contains("`.cursorrules` (Cursor)"));
+        assert!(content.contains("`AGENTS.md` (Gemini / generic agents)"));
+    }
+
+    #[test]
+    fn init_content_claude_md_labeled_correctly() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude").unwrap();
+        let content = generate_init_content(dir.path());
+        assert!(content.contains("`CLAUDE.md` (Claude Code)"));
     }
 
     // ── parse_prompt_sections ──────────────────────────────────────────

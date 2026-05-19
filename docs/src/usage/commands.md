@@ -810,6 +810,12 @@ The `/init` command scans your project and generates a `YOYO.md` context file au
 
 If `YOYO.md` or `CLAUDE.md` already exists, `/init` won't overwrite it. The generated file is a starting point — edit it to add your project's specific conventions and instructions.
 
+If the project already has instruction files from other AI tools (`.cursorrules`, `AGENTS.md`, `.github/copilot-instructions.md`, `CLAUDE.md`), `/init` will:
+- Print a notice: "Found existing AI configs: .cursorrules — yoyo reads these automatically"
+- Add an "Other AI Tool Configs" section to the generated YOYO.md listing the found files
+
+yoyo reads these files automatically for additional project context, so there's no need to duplicate their content.
+
 ## Project Memory
 
 | Command | Description |
