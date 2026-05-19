@@ -159,6 +159,35 @@ static RE_KOTLIN_ENUM_CLASS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*(?:(?:public|private|protected|internal)\s+)*enum\s+class\s+(\w+)").unwrap()
 });
 
+// ── Lua regexes ──
+// `function name(...)` — top-level global function
+static RE_LUA_FUNC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^function\s+(\w+)\s*\(").unwrap());
+// `local function name(...)` — file-scoped function
+static RE_LUA_LOCAL_FUNC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^local\s+function\s+(\w+)\s*\(").unwrap());
+// `function M.name(...)` or `function M:name(...)` — module method
+static RE_LUA_MODULE_FUNC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^function\s+\w+[.:]\s*(\w+)\s*\(").unwrap());
+// `M.name = function(...)` — assigned module function
+static RE_LUA_ASSIGNED_FUNC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\w+\.\s*(\w+)\s*=\s*function\s*\(").unwrap());
+
+// ── Zig regexes ──
+// `pub fn name(...)` or `fn name(...)` — functions
+static RE_ZIG_FN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:pub\s+)?fn\s+(\w+)\s*\(").unwrap());
+// `pub const Name = struct { ... }` or `const Name = struct { ... }`
+static RE_ZIG_STRUCT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(?:pub\s+)?const\s+(\w+)\s*=\s*(?:extern\s+|packed\s+)?struct\b").unwrap()
+});
+// `pub const Name = enum { ... }` or `const Name = enum { ... }`
+static RE_ZIG_ENUM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:pub\s+)?const\s+(\w+)\s*=\s*enum\b").unwrap());
+// `pub const Name = union { ... }` or `const Name = union { ... }`
+static RE_ZIG_UNION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:pub\s+)?const\s+(\w+)\s*=\s*union\b").unwrap());
+
 // ── Swift regexes ──
 static RE_SWIFT_CLASS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open|final)\s+)*class\s+(\w+)")
@@ -243,6 +272,8 @@ enum VisibilityRule {
     StartsWithPublic,
     /// Public unless the (trimmed) line starts with "private" or "protected" (Kotlin/PHP).
     NotPrivateOrProtected,
+    /// Public if the (trimmed) line starts with "pub " (Zig convention).
+    StartsWithPub,
 }
 
 /// A single pattern rule mapping a regex to a symbol kind.
@@ -295,6 +326,7 @@ fn extract_symbols_from_patterns(code: &str, patterns: &LanguagePatterns) -> Vec
                     VisibilityRule::NotPrivateOrProtected => {
                         !trimmed.starts_with("private") && !trimmed.starts_with("protected")
                     }
+                    VisibilityRule::StartsWithPub => trimmed.starts_with("pub "),
                 };
                 symbols.push(Symbol {
                     name,
@@ -589,6 +621,91 @@ static KOTLIN_PATTERNS: LanguagePatterns = LanguagePatterns {
     trim_leading: false,
 };
 
+// ── Lua pattern rules ──
+// Order matters: module methods before top-level functions (both start with `function`).
+static LUA_PATTERN_RULES: &[PatternRule] = &[
+    // `function M.name(...)` or `function M:name(...)` — module method (public)
+    PatternRule {
+        regex: &RE_LUA_MODULE_FUNC,
+        kind: SymbolKind::Function,
+        name_group: 1,
+        visibility: VisibilityRule::AlwaysPublic,
+        exclude_names: &[],
+    },
+    // `M.name = function(...)` — assigned module function (public)
+    PatternRule {
+        regex: &RE_LUA_ASSIGNED_FUNC,
+        kind: SymbolKind::Function,
+        name_group: 1,
+        visibility: VisibilityRule::AlwaysPublic,
+        exclude_names: &[],
+    },
+    // `local function name(...)` — file-scoped function (treated as public for map visibility)
+    PatternRule {
+        regex: &RE_LUA_LOCAL_FUNC,
+        kind: SymbolKind::Function,
+        name_group: 1,
+        visibility: VisibilityRule::AlwaysPublic,
+        exclude_names: &[],
+    },
+    // `function name(...)` — top-level global function (public)
+    PatternRule {
+        regex: &RE_LUA_FUNC,
+        kind: SymbolKind::Function,
+        name_group: 1,
+        visibility: VisibilityRule::AlwaysPublic,
+        exclude_names: &["if", "for", "while", "return", "end", "else", "elseif"],
+    },
+];
+
+static LUA_PATTERNS: LanguagePatterns = LanguagePatterns {
+    rules: LUA_PATTERN_RULES,
+    trim_leading: false,
+};
+
+// ── Zig pattern rules ──
+// Order: struct/enum/union before fn (more specific first). Tests are naturally
+// skipped because no pattern matches `test "..."`.
+static ZIG_PATTERN_RULES: &[PatternRule] = &[
+    // Struct definitions
+    PatternRule {
+        regex: &RE_ZIG_STRUCT,
+        kind: SymbolKind::Struct,
+        name_group: 1,
+        visibility: VisibilityRule::StartsWithPub,
+        exclude_names: &[],
+    },
+    // Enum definitions
+    PatternRule {
+        regex: &RE_ZIG_ENUM,
+        kind: SymbolKind::Enum,
+        name_group: 1,
+        visibility: VisibilityRule::StartsWithPub,
+        exclude_names: &[],
+    },
+    // Union definitions
+    PatternRule {
+        regex: &RE_ZIG_UNION,
+        kind: SymbolKind::Type,
+        name_group: 1,
+        visibility: VisibilityRule::StartsWithPub,
+        exclude_names: &[],
+    },
+    // Functions (pub fn and fn)
+    PatternRule {
+        regex: &RE_ZIG_FN,
+        kind: SymbolKind::Function,
+        name_group: 1,
+        visibility: VisibilityRule::StartsWithPub,
+        exclude_names: &["if", "for", "while", "return"],
+    },
+];
+
+static ZIG_PATTERNS: LanguagePatterns = LanguagePatterns {
+    rules: ZIG_PATTERN_RULES,
+    trim_leading: false,
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Detect programming language from file extension.
@@ -609,6 +726,8 @@ pub fn detect_language(path: &str) -> Option<&'static str> {
         "kt" | "kts" => Some("kotlin"),
         "swift" => Some("swift"),
         "scala" | "sc" => Some("scala"),
+        "lua" => Some("lua"),
+        "zig" => Some("zig"),
         _ => None,
     }
 }
@@ -632,6 +751,8 @@ pub fn extract_symbols(code: &str, language: &str) -> Vec<Symbol> {
         "csharp" => extract_symbols_from_patterns(code, &CSHARP_PATTERNS),
         "php" => extract_symbols_from_patterns(code, &PHP_PATTERNS),
         "kotlin" => extract_symbols_from_patterns(code, &KOTLIN_PATTERNS),
+        "lua" => extract_symbols_from_patterns(code, &LUA_PATTERNS),
+        "zig" => extract_symbols_from_patterns(code, &ZIG_PATTERNS),
         "swift" => extract_swift_symbols(code),
         "scala" => extract_scala_symbols(code),
         _ => Vec::new(),
@@ -3407,6 +3528,296 @@ abstract class Base {
                 .iter()
                 .any(|s| s.name == "Base" && s.kind == SymbolKind::Class),
             "should find abstract class"
+        );
+    }
+
+    // ── Lua tests ──
+
+    #[test]
+    fn detect_language_lua_extensions() {
+        assert_eq!(detect_language("script.lua"), Some("lua"));
+        assert_eq!(detect_language("init.lua"), Some("lua"));
+    }
+
+    #[test]
+    fn extract_lua_basic_functions() {
+        let code = r#"
+function greet(name)
+    print("Hello, " .. name)
+end
+
+local function helper()
+    return 42
+end
+"#;
+        let symbols = extract_symbols(code, "lua");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "greet" && s.kind == SymbolKind::Function),
+            "should find top-level function"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "helper" && s.kind == SymbolKind::Function),
+            "should find local function"
+        );
+    }
+
+    #[test]
+    fn extract_lua_module_methods() {
+        let code = r#"
+local M = {}
+
+function M.init(config)
+    M.config = config
+end
+
+function M:update(dt)
+    self.time = self.time + dt
+end
+
+M.create = function(name)
+    return { name = name }
+end
+"#;
+        let symbols = extract_symbols(code, "lua");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "init" && s.kind == SymbolKind::Function),
+            "should find M.init module method"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "update" && s.kind == SymbolKind::Function),
+            "should find M:update method"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "create" && s.kind == SymbolKind::Function),
+            "should find assigned module function"
+        );
+    }
+
+    #[test]
+    fn extract_lua_skips_comments() {
+        let code = r#"
+-- function commented_out()
+--   return false
+-- end
+
+function real_function()
+    return true
+end
+"#;
+        let symbols = extract_symbols(code, "lua");
+        assert!(
+            !symbols.iter().any(|s| s.name == "commented_out"),
+            "should skip commented function"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "real_function" && s.kind == SymbolKind::Function),
+            "should find real function"
+        );
+    }
+
+    // ── Zig tests ──
+
+    #[test]
+    fn detect_language_zig_extensions() {
+        assert_eq!(detect_language("main.zig"), Some("zig"));
+        assert_eq!(detect_language("build.zig"), Some("zig"));
+    }
+
+    #[test]
+    fn extract_zig_functions() {
+        let code = r#"
+const std = @import("std");
+
+pub fn main() !void {
+    std.debug.print("hello\n", .{});
+}
+
+fn helper() void {
+    // private function
+}
+
+pub fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+"#;
+        let symbols = extract_symbols(code, "zig");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "main" && s.kind == SymbolKind::Function && s.is_public),
+            "should find pub fn main"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "helper" && s.kind == SymbolKind::Function && !s.is_public),
+            "should find private fn helper"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "add" && s.kind == SymbolKind::Function && s.is_public),
+            "should find pub fn add"
+        );
+    }
+
+    #[test]
+    fn extract_zig_structs_enums_unions() {
+        let code = r#"
+pub const Allocator = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+};
+
+const InternalState = struct {
+    count: usize,
+};
+
+pub const Color = enum {
+    red,
+    green,
+    blue,
+};
+
+pub const Value = union {
+    int: i64,
+    float: f64,
+};
+"#;
+        let symbols = extract_symbols(code, "zig");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Allocator" && s.kind == SymbolKind::Struct && s.is_public),
+            "should find pub struct Allocator"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "InternalState" && s.kind == SymbolKind::Struct && !s.is_public),
+            "should find private struct InternalState"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Color" && s.kind == SymbolKind::Enum && s.is_public),
+            "should find pub enum Color"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "Value" && s.kind == SymbolKind::Type && s.is_public),
+            "should find pub union Value"
+        );
+    }
+
+    #[test]
+    fn extract_zig_skips_tests() {
+        let code = r#"
+pub fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+
+test "basic addition" {
+    const result = add(1, 2);
+    try std.testing.expectEqual(@as(i32, 3), result);
+}
+
+test "overflow" {
+    // another test
+}
+"#;
+        let symbols = extract_symbols(code, "zig");
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "add" && s.kind == SymbolKind::Function),
+            "should find the add function"
+        );
+        assert!(
+            !symbols.iter().any(|s| s.name == "basic addition"),
+            "should skip test blocks"
+        );
+        assert!(
+            !symbols.iter().any(|s| s.name == "overflow"),
+            "should skip test blocks"
+        );
+    }
+
+    #[test]
+    fn extract_zig_skips_comments() {
+        let code = r#"
+// pub fn commented_out() void {}
+
+pub fn real_fn() void {}
+"#;
+        let symbols = extract_symbols(code, "zig");
+        assert!(
+            !symbols.iter().any(|s| s.name == "commented_out"),
+            "should skip commented function"
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.name == "real_fn" && s.kind == SymbolKind::Function),
+            "should find real function"
+        );
+    }
+
+    // ── Regression: existing languages still work ──
+
+    #[test]
+    fn regression_rust_and_python_still_extract() {
+        // Spot-check that adding Lua/Zig didn't break existing extractors
+        let rust_code = r#"
+pub fn hello() {}
+struct Foo;
+"#;
+        let rust_syms = extract_symbols(rust_code, "rust");
+        assert!(
+            rust_syms
+                .iter()
+                .any(|s| s.name == "hello" && s.kind == SymbolKind::Function),
+            "Rust extraction should still work"
+        );
+        assert!(
+            rust_syms
+                .iter()
+                .any(|s| s.name == "Foo" && s.kind == SymbolKind::Struct),
+            "Rust struct extraction should still work"
+        );
+
+        let python_code = r#"
+def greet(name):
+    pass
+
+class Animal:
+    pass
+"#;
+        let py_syms = extract_symbols(python_code, "python");
+        assert!(
+            py_syms
+                .iter()
+                .any(|s| s.name == "greet" && s.kind == SymbolKind::Function),
+            "Python extraction should still work"
+        );
+        assert!(
+            py_syms
+                .iter()
+                .any(|s| s.name == "Animal" && s.kind == SymbolKind::Class),
+            "Python class extraction should still work"
         );
     }
 
