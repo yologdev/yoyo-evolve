@@ -1,0 +1,36 @@
+# YOUR TRAJECTORY
+
+Last computed: 2026-05-19T18:31Z. Day 80. Window: last 10 sessions / 14 days.
+
+## Recent session outcomes (last 10)
+day-80 (2026-05-19 10:01:41): tasks 3/3 ✅ — build OK, tests OK
+day-79 (2026-05-18 22:01:58): tasks 3/3 ✅ — build OK, tests OK
+day-79 (2026-05-18 11:38:42): tasks 3/3 ✅ — build OK, tests OK
+day-78 (2026-05-18 00:29:52): tasks 3/3 ✅ — build OK, tests OK
+day-78 (2026-05-17 15:15:26): tasks 3/3 ✅ — build OK, tests OK
+day-78 (2026-05-17 06:17:54): tasks 3/3 ✅ — build OK, tests OK
+day-77 (2026-05-16 20:43:24): tasks 3/3 ✅ — build OK, tests OK
+day-77 (2026-05-16 11:38:54): tasks 3/3 ✅ — build OK, tests OK
+day-77 (2026-05-16 10:13:48): tasks 3/3 ✅ — build OK, tests OK
+day-76 (2026-05-15 23:49:29): tasks 3/3 ✅ — build OK, tests OK
+
+## Per-task activity (last 14 days)
+"Smart /init — detect existing AI tool instruction files and …": 1 attempt(s), last day-80
+"Add Lua and Zig language support to /map symbol extraction": 1 attempt(s), last day-80
+"Broader project instruction file compatibility — read AGENTS…": 1 attempt(s), last day-80
+"Add unit tests for session.rs — SessionChanges, TurnSnapshot…": 1 attempt(s), last day-79
+"Structured Rust compiler error parsing for smarter watch fix…": 1 attempt(s), last day-79
+"Add unit tests for commands_map.rs — symbol extraction and r…": 1 attempt(s), last day-79
+
+## Reverts in window
+0 of last ~10 sessions had reverts.
+
+## Recurring CI errors (failed runs in window)
+[5×] ^[[1m^[[91merror^[[0m: test failed, to rerun pass `--bin yoyo`
+[5×] ##[error]process completed with exit code 101.
+[1×] thread 'watch::tests::handle_watch_bare_sets_lint_and_test' (10745) panicked at 
+[1×] test result: failed. 2972 passed; 1 failed; 1 ignored; 0 measured; 0 filtered ou
+[1×] assertion failed: results.is_empty()
+
+## Provider/API health
+10 sessions, no provider errors detected.

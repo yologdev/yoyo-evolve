@@ -1,0 +1,294 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --system flag for /spawn. Let me start by understanding the current code.
+  ▶ read src/commands_spawn.rs ✓ (8ms)
+
+Let me see the full `SpawnArgs struct and the parse_spawn_args` function:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:243..443 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:200..300 ✓ (1ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Now let me see the SpawnArgs struct and handle_spawn:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:180..230 ✓ (1ms)
+
+Now let me see handle_spawn fully — where the system prompt is used:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:400..600 ✓ (2ms)
+
+Now let me check the help.rs for spawn help:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'spawn' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:817..852 ✓ (2ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. Now I have the full picture. Let me also check the rest of handle_spawn and apply_model_override:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:599..699 ✓ (1ms)
+
+Now I have a complete understanding. Let me plan and implement:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 16.7s (6 ✓)
+
+Let me start with the tests first (TDD), then implement.
+
+### Step 1: Add `system_prompt` field to `SpawnArgs`
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_spawn.rs (14 → 16 lines)
+        pub collect_id: Option<usize>,
+        /// Optional model override for the subagent (`--model <name>`).
+        pub model: Option<String>,
+  +     /// Optional custom system prompt for the subagent (`--system <prompt>`).
+  +     pub system_prompt: Option<String>,
+    }
+ ✓ (7.9s)
+  2 tools completed in 16.1s (2 ✓)
+
+Expected — need to add the field to the two constructor sites. Let me fix both:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+### Step 2: Parse --system flag and fix all constructor sites
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, fix the collect constructor:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (7 → 8 lines)
+                    background: false,
+                    collect_id: Some(id),
+                    model: None,
+  +                 system_prompt: None,
+                });
+ ✓ (8.6s)
+
+Now the main constructor — and I need to add the --system parsing logic. The --system flag is special because it supports quoted multi-word prompts. Let me look at the parsing section more carefully and implement the full thing:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:211..261 ✓ (1ms)
+
+The issue is that --system needs to support quoted multi-word arguments. But the current approach splits on whitespace first, which breaks quoted strings. I need a different approach for --system. 
+
+The cleanest approach: when we see --system, we need to extract the value from the *original rest string* rather than the split words, so we can handle quotes properly. But the current code pattern uses `words: Vec<&str>` after splitting whitespace.
+
+Let me think about this... The simplest approach that fits the existing pattern: when --system is found, consume from the original rest string by finding it, then extracting the quoted or single-word value. But that's fragile because flag positions vary.
+
+Actually, a cleaner approach: handle --system extraction before the whitespace split, directly on rest. Since --system value can be quoted, we need to parse it from the raw string. Let me implement it by modifying the approach: extract --system "..." or `--system word from rest` before doing the whitespace split for other flags.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (22 → 52 lines)
+        let mut background = false;
+        let mut output_path = None;
+        let mut model = None;
+  +     let mut system_prompt = None;
+    
+  -     // Extract flags from the front
+  +     // Extract flags from the front.
+  +     // For --system, the value can be a quoted multi-word string. Since we
+  +     // split on whitespace above, we need to rejoin quoted segments when we
+  +     // encounter --system. We do this by checking if the next token after
+  +     // --system starts with a quote.
+        while !words.is_empty() {
+            if words[0] == "--bg" {
+                background = true;
+  ···
+                model = Some(words[1].to_string());
+                words.remove(0); // remove "--model"
+                words.remove(0); // remove the model name (now at position 0)
+  +         } else if words[0] == "--system" && words.len() > 1 {
+  +             words.remove(0); // remove "--system"
+  ... (26 more lines)
+ ✓ (7.8s)
+
+Now fix the return value constructor:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:289..304 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (7 → 8 lines)
+            background,
+            collect_id: None,
+            model,
+  +         system_prompt,
+        })
+ ✓ (51.9s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 0s (3 ✓)
+
+### Step 3: Use system_prompt in handle_spawn and handle_spawn_bg
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+I need to prepend the custom system prompt to the context prompt. Let me modify handle_spawn (synchronous path):
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:493..533 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (13 → 23 lines)
+        if args.model.is_some() {
+            println!("{DIM}  model: {effective_model}{RESET}");
+  +     }
+  +     if args.system_prompt.is_some() {
+  +         println!("{DIM}  system: (custom){RESET}");
+        }
+    
+        // Load project context for the subagent
+        let project_context = crate::cli::load_project_context();
+        let context_prompt = spawn_context_prompt(main_messages, project_context.as_deref());
+  + 
+  +     // Prepend custom system prompt if provided
+  +     let effective_prompt = if let Some(ref sp) = args.system_prompt {
+  +         format!("{sp}\n\n{context_prompt}")
+  +     } else {
+  +         context_prompt
+  +     };
+    
+        // Build a fresh agent with context-enriched system prompt
+        let mut sub_config = crate::AgentConfig {
+  ... (4 more lines)
+ ✓ (51.6s)
+  2 tools completed in 1m 0s (2 ✓)
+
+Now do the same for handle_spawn_bg:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:555..585 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (10 → 21 lines)
+        if args.model.is_some() {
+            println!("{DIM}  model: {effective_model}{RESET}");
+  +     }
+  +     if args.system_prompt.is_some() {
+  +         println!("{DIM}  system: (custom){RESET}");
+        }
+        println!("{DIM}  use /spawn status to check progress, /spawn collect {spawn_id} to get results{RESET}\n");
+    
+        // Prepare everything the background task needs (clone before moving)
+        let project_context = crate::cli::load_project_context();
+        let context_prompt = spawn_context_prompt(main_messages, project_context.as_deref());
+  + 
+  +     // Prepend custom system prompt if provided
+  +     let effective_prompt = if let Some(ref sp) = args.system_prompt {
+  +         format!("{sp}\n\n{context_prompt}")
+  +     } else {
+  +         context_prompt
+  +     };
+  + 
+        let mut sub_config = crate::AgentConfig {
+  ... (2 more lines)
+ ✓ (53.0s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 7s (3 ✓)
+
+### Step 4: Update usage help in handle_spawn and help.rs
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Update the inline usage help in handle_spawn:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (10 → 12 lines)
+                println!("         /spawn --bg <task>              (run in background)");
+                println!("         /spawn -o <file> <task>         (capture output to file)");
+                println!("         /spawn --model <name> <task>    (use a specific model)");
+  +             println!("         /spawn --system <prompt> <task> (custom system prompt)");
+                println!("         /spawn collect <id>             (collect background result)");
+                println!("         /spawn status                   (show tracked spawns)");
+                println!("  Spawn a subagent with project context to handle a task.");
+                println!("  The result is summarized back into your main conversation.");
+                println!("  Example: /spawn read src/main.rs and summarize the architecture");
+  -             println!("           /spawn --model claude-haiku-4-5 summarize this file{RESET}\n");
+  +             println!("           /spawn --model claude-haiku-4-5 summarize this file");
+  +             println!("           /spawn --system \"You are a security auditor\" review src/safety.rs{RESET}\n");
+ ✓ (52.5s)
+
+Now update the doc comment for parse_spawn_args:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (10 → 12 lines)
+    /// - `/spawn --bg <task>` — run a task in the background
+    /// - `/spawn -o <path> <task>` — run a task and capture output to a file
+    /// - `/spawn --bg -o <path> <task>` — background with output capture
+  + /// - `/spawn --model <name> <task>` — use a specific model
+  + /// - `/spawn --system <prompt> <task>` — custom system prompt (quoted for multi-word)
+    /// - `/spawn collect <id>` — collect a finished background spawn
+    ///
+    /// Returns `None` if no task or if this is a subcommand like `status`.
+ ✓ (52.2s)
+
+Now update help.rs:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (28 → 32 lines)
+                 \x20 /spawn --bg <task>              Run in background (returns immediately)\n\
+                 \x20 /spawn -o <file> <task>         Capture output to a file\n\
+                 \x20 /spawn --model <name> <task>    Use a specific model for the subagent\n\
+  +              \x20 /spawn --system <prompt> <task> Custom system prompt for the subagent\n\
+                 \x20 /spawn --bg -o <f> <task>       Background with output capture\n\
+                 \x20 /spawn collect <id>             Collect a finished background spawn\n\
+                 \x20 /spawn status                   Show all tracked spawns\n\n\
+  ···
+                 tools but operates independently.\n\n\
+                 Use --model to run the subagent with a different model than\n\
+                 your main session (e.g. a cheaper model for simple tasks,\n\
+  -              or a more powerful one for complex analysis). The provider\n\
+  -              and API key are auto-detected from the model name.\n\n\
+  +              or a more powerful one for complex analysis).\n\n\
+  +              Use --system to give the subagent a custom persona or instruction\n\
+  +              set. Quote multi-word prompts. The custom prompt is prepended to\n\
+  +              the standard subagent context (project info + conversation summary).\n\n\
+                 Background spawns (--bg) return control immediately so you can\n\
+                 keep working while the subagent runs in parallel. Use\n\
+                 /spawn collect <id> to retrieve the result when ready.\n\n\
+  ... (7 more lines)
+ ✓ (53.4s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 58.1s (2 ✓)
+
+### Step 5: Add tests
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me see the end of the test module:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:1093..1143 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:1142..1147 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now add the tests for --system:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (4 → 61 lines)
+            assert!(args.model.is_none());
+            assert_eq!(args.task, "--model");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_system_quoted_prompt() {
+  +         let args =
+  +             parse_spawn_args("/spawn --system \"You are a security auditor\" review src/safety.rs");
+  +         assert!(args.is_some());
+  +         let args = args.unwrap();
+  +         assert_eq!(
+  +             args.system_prompt,
+  +             Some("You are a security auditor".to_string())
+  +         );
+  +         assert_eq!(args.task, "review src/safety.rs");
+  +         assert!(args.model.is_none());
+  +         assert!(!args.background);
+  +     }
+  + 
+  +     #[test]
+  ... (41 more lines)
+ ✓ (52.8s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 57.0s (2 ✓)
+
+### Step 6: Run cargo fmt, clippy, build, test
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (6.2s)
+  3 tools completed in 24.3s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

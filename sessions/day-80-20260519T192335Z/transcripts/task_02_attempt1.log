@@ -1,0 +1,337 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure for /spawn and then implement the changes.
+  ▶ read src/commands_spawn.rs  ▶ search 'spawn' in src/help.rs ✓ (8ms)
+ ✓ (8ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me read the key parts - the SpawnArgs struct, parse_spawn_args, handle_spawn, and the handle_spawn background code:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:198..348  ▶ read src/commands_spawn.rs:350..550 ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Now let me see the SpawnArgs struct and the rest of the file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:180..200  ▶ read src/commands_spawn.rs:560..660 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Now let me check what AgentConfig looks like and how models/providers work:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub struct AgentConfig' in src/agent_builder.rs  ▶ search 'fn find_provider_for_model' in src/commands_info.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/agent_builder.rs:388..448  ▶ read src/commands_info.rs:547..587 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 10.7s (4 ✓)
+
+Now let me check how providers are referenced and if there's an `api_key_for_provider` or similar:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn api_key|fn get_api_key|fn provider_api_key|KNOWN_PROVIDER…' in src/providers.rs ✓ (3ms)
+  ▶ read src/providers.rs:1..61 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Good. Now I have a clear picture. Let me also check how `find_provider_for_model is imported/accessible from commands_spawn.rs`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search '^use ' in src/commands_spawn.rs ✓ (3ms)
+
+Now let me look at the full test section to understand the existing test patterns:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:594..694 ✓ (1ms)
+
+Now let me see the existing collect test and the bg test:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:700..780 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:780..880 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:878..988 ✓ (1ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Now I have a complete understanding. Let me also check the help.rs spawn help text to see what needs updating:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:815..845 ✓ (1ms)
+
+Good. Now I have everything I need. Let me create a plan and implement:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 16.6s (6 ✓)
+
+Let me start. First, write the tests, then the implementation.
+
+**Step 1: Add `model` field to SpawnArgs**
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_spawn.rs (12 → 14 lines)
+        pub background: bool,
+        /// If set, this is a `/spawn collect <id>` request.
+        pub collect_id: Option<usize>,
+  +     /// Optional model override for the subagent (`--model <name>`).
+  +     pub model: Option<String>,
+    }
+ ✓ (7.8s)
+  2 tools completed in 16.1s (2 ✓)
+
+Expected — now fix the constructors:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+**Step 2: Parse --model <name> and fix all SpawnArgs constructors**
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Fix the collect constructor first:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (6 → 7 lines)
+                    output_path: None,
+                    background: false,
+                    collect_id: Some(id),
+  +                 model: None,
+                });
+ ✓ (7.7s)
+
+Now fix the main constructor and add --model parsing:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (29 → 35 lines)
+        let mut words: Vec<&str> = rest.split_whitespace().collect();
+        let mut background = false;
+        let mut output_path = None;
+  +     let mut model = None;
+    
+        // Extract flags from the front
+        while !words.is_empty() {
+  ···
+                output_path = Some(words[1].to_string());
+                words.remove(0); // remove "-o"
+                words.remove(0); // remove the path (now at position 0)
+  +         } else if words[0] == "--model" && words.len() > 1 {
+  +             model = Some(words[1].to_string());
+  +             words.remove(0); // remove "--model"
+  +             words.remove(0); // remove the model name (now at position 0)
+            } else {
+                break; // stop processing flags once we hit a non-flag word
+            }
+  ···
+            output_path,
+  ... (4 more lines)
+ ✓ (52.5s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 58.4s (2 ✓)
+
+**Step 3: Use model override in handle_spawn and handle_spawn_bg**
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now I need to modify handle_spawn (sync) and handle_spawn_bg to use `args.model when building the sub-agent and passing the model to run_prompt`. Let me look at how run_prompt uses the model parameter — it's just a string:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub async fn run_prompt' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:689..704 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Good — model is just a &str passed to run_prompt. Now I need to check what happens in the agent config when the model is different. Let me look at `build_agent`:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn build_agent' in src/agent_builder.rs ✓ (3ms)
+  ▶ read src/agent_builder.rs:532..562 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+The key insight: the AgentConfig has both `model and provider fields, and build_agent` uses them. So when we override the model, we also need to potentially update the provider. Let me also check how provider_api_key_env works to make sure we can get the right API key:
+
+Now I understand the full picture. For the model override, I need to:
+1. Override model in the cloned AgentConfig
+2. Potentially override provider if the model maps to a different provider
+3. Potentially override api_key if we need a different provider's key
+
+Let me implement this carefully in handle_spawn:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (31 → 43 lines)
+        // Synchronous spawn (existing behavior)
+        // Register task in tracker
+        let spawn_id = tracker.register(&args.task, args.output_path.clone());
+  + 
+  +     // Determine the effective model (override or inherited)
+  +     let effective_model = args.model.as_deref().unwrap_or(model);
+    
+        println!("{CYAN}  🐙 spawning subagent #{spawn_id}...{RESET}");
+        println!(
+            "{DIM}  task: {}{RESET}",
+            crate::format::truncate_with_ellipsis(&args.task, 100)
+        );
+  +     if args.model.is_some() {
+  +         println!("{DIM}  model: {effective_model}{RESET}");
+  +     }
+    
+        // Load project context for the subagent
+        let project_context = crate::cli::load_project_context();
+        let context_prompt = spawn_context_prompt(main_messages, project_context.as_deref());
+    
+  ... (20 more lines)
+ ✓ (7.6s)
+
+Expected — I need to add the apply_model_override helper function. Let me also update handle_spawn_bg. First, let me add the helper:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (3 → 3 lines) ✓ (7.7s)
+
+Let me add the helper function before clone_agent_config:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (3 → 23 lines)
+  + /// Apply a model override to an AgentConfig.
+  + /// Updates the model name and, if the model implies a different provider,
+  + /// switches the provider and API key accordingly.
+  + fn apply_model_override(config: &mut crate::AgentConfig, model_name: &str) {
+  +     config.model = model_name.to_string();
+  + 
+  +     // Try to detect the provider for the given model
+  +     if let Some(provider) = crate::commands_info::find_provider_for_model(model_name) {
+  +         if provider != config.provider {
+  +             config.provider = provider.to_string();
+  +             // Try to load the API key for the new provider
+  +             if let Some(env_var) = crate::providers::provider_api_key_env(provider) {
+  +                 if let Ok(key) = std::env::var(env_var) {
+  +                     config.api_key = key;
+  +                 }
+  +             }
+  +         }
+  +     }
+  + }
+  + 
+  ... (3 more lines)
+ ✓ (53.4s)
+
+Now update handle_spawn_bg to use the model override:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:508..563 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (54 → 66 lines)
+    ) -> Option<String> {
+        // Register task in tracker with background flag
+        let spawn_id = tracker.register_with_bg(&args.task, args.output_path.clone(), true);
+  + 
+  +     // Determine the effective model (override or inherited)
+  +     let effective_model = args.model.as_deref().unwrap_or(model);
+    
+        println!("{CYAN}  🐙 spawning subagent #{spawn_id} in background...{RESET}");
+        println!(
+            "{DIM}  task: {}{RESET}",
+            crate::format::truncate_with_ellipsis(&args.task, 100)
+        );
+  +     if args.model.is_some() {
+  +         println!("{DIM}  model: {effective_model}{RESET}");
+  +     }
+        println!("{DIM}  use /spawn status to check progress, /spawn collect {spawn_id} to get results{RESET}\n");
+    
+        // Prepare everything the background task needs (clone before moving)
+        let project_context = crate::cli::load_project_context();
+        let context_prompt = spawn_context_prompt(main_messages, project_context.as_deref());
+  ... (18 more lines)
+ ✓ (52.9s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 11s (3 ✓)
+
+**Step 4: Update help text**
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Update the usage message in handle_spawn:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (8 → 10 lines)
+                println!("{DIM}  usage: /spawn <task>");
+  -             println!("         /spawn --bg <task>         (run in background)");
+  -             println!("         /spawn -o <file> <task>    (capture output to file)");
+  -             println!("         /spawn collect <id>        (collect background result)");
+  -             println!("         /spawn status              (show tracked spawns)");
+  +             println!("         /spawn --bg <task>              (run in background)");
+  +             println!("         /spawn -o <file> <task>         (capture output to file)");
+  +             println!("         /spawn --model <name> <task>    (use a specific model)");
+  +             println!("         /spawn collect <id>             (collect background result)");
+  +             println!("         /spawn status                   (show tracked spawns)");
+                println!("  Spawn a subagent with project context to handle a task.");
+                println!("  The result is summarized back into your main conversation.");
+  -             println!("  Example: /spawn read src/main.rs and summarize the architecture{RESET}\n");
+  +             println!("  Example: /spawn read src/main.rs and summarize the architecture");
+  +             println!("           /spawn --model claude-haiku-4-5 summarize this file{RESET}\n");
+ ✓ (54.1s)
+
+Now update the help.rs spawn section:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (22 → 28 lines)
+                "/spawn <task> — Spawn a subagent to handle a task\n\n\
+                 Usage:\n\
+                 \x20 /spawn <task description>\n\
+  -              \x20 /spawn --bg <task>         Run in background (returns immediately)\n\
+  -              \x20 /spawn -o <file> <task>    Capture output to a file\n\
+  -              \x20 /spawn --bg -o <f> <task>  Background with output capture\n\
+  -              \x20 /spawn collect <id>        Collect a finished background spawn\n\
+  -              \x20 /spawn status              Show all tracked spawns\n\n\
+  +              \x20 /spawn --bg <task>              Run in background (returns immediately)\n\
+  +              \x20 /spawn -o <file> <task>         Capture output to a file\n\
+  +              \x20 /spawn --model <name> <task>    Use a specific model for the subagent\n\
+  +              \x20 /spawn --bg -o <f> <task>       Background with output capture\n\
+  +              \x20 /spawn collect <id>             Collect a finished background spawn\n\
+  +              \x20 /spawn status                   Show all tracked spawns\n\n\
+                 Creates a new AI agent with a separate context window to\n\
+                 handle the given task. The subagent has access to the same\n\
+                 tools but operates independently.\n\n\
+  +              Use --model to run the subagent with a different model than\n\
+  +              your main session (e.g. a cheaper model for simple tasks,\n\
+  +              or a more powerful one for complex analysis). The provider\n\
+  ... (13 more lines)
+ ✓ (53.0s)
+
+Now update the short help line for spawn in help.rs:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ search '/spawn.*--bg for background' in src/help.rs ✓ (3ms)
+
+These are fine — they're short-form hints that mention --bg. Adding --model there would make them too long. Let me leave those as-is and just make sure the detailed help is updated (which I already did).
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+**Step 5: Add tests**
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now add the tests. I'll add them before the closing } of the tests module:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:1028..1038 ✓ (0ms)
+  ▶ read src/commands_spawn.rs:1035..1045 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (3 → 47 lines)
+            assert_eq!(result, "bg result");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_model_flag() {
+  +         let args = parse_spawn_args("/spawn --model claude-haiku-4-5 summarize this file");
+  +         assert!(args.is_some());
+  +         let args = args.unwrap();
+  +         assert_eq!(args.model, Some("claude-haiku-4-5".to_string()));
+  +         assert_eq!(args.task, "summarize this file");
+  +         assert!(!args.background);
+  +         assert!(args.output_path.is_none());
+  +         assert!(args.collect_id.is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_model_with_bg_and_output() {
+  +         let args =
+  +             parse_spawn_args("/spawn --bg --model gpt-4o -o report.md review error handling");
+  +         assert!(args.is_some());
+  ... (27 more lines)
+ ✓ (52.8s)
+  3 tools completed in 1m 6s (3 ✓)
+
+Wait — looking at the parsing logic, --model at the end without a value: `words[0] == "--model" && words.len() > 1` would be false (len is 1), so it falls through to break, and the task becomes --model. Let me verify that test is correct. Yes, that should work.
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+**Step 6: Build and test**
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.2s)
+  2 tools completed in 16.6s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

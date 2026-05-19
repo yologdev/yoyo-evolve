@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the flaky context.rs tests by adding #[serial] to all tests that use set_current_dir. Let me start by examining the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use serial_test" src/co… ✓ (6ms)
+ ✓ (3ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Good — 6 tests with set_current_dir, and no existing serial_test import. Let me see the test module structure:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,680p' src/context.rs ✓ (5ms)
+
+Now let me see the beginning of the test module to find where the use imports are:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '249,260p' src/context.rs ✓ (3ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now let me find the exact test function names that use `set_current_dir`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B5 "set_current_dir(dir" s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/context.r… ✓ (3ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Now I need to identify which test functions use set_current_dir. Let me match them precisely:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/fn test_/{name=$0} /set_cu… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/fn test_/{name=$2} /set_cu… ✓ (5ms)
+  2 tools completed in 6.9s (2 ✓)
+
+That's 6 tests. The task listed slightly different names but the actual test names are:
+1. test_project_context_includes_conventions (task called it test_load_project_context_with_yoyo_md)
+2. `test_project_context_skips_conventions_with_context_file (task called it test_load_project_context_with_claude_md`)
+3. test_load_cursorrules_file
+4. test_load_agents_md_file
+5. test_load_copilot_instructions_file
+6. test_multiple_context_files_get_separators
+
+Now let me make the changes. First, add the use serial_test::serial; import:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (3 → 4 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+ ✓ (11.9s)
+
+Expected — clippy complains because it's unused until I add the attributes. Let me add #[serial] to all 6 tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_project_context… ✓ (3ms)
+
+Now let me see the #[test] lines right before each of these functions to add #[serial]:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '458,461p' src/context.rs ✓ (3ms)
+  ▶ edit src/context.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_project_context_includes_conventions() {
+ ✓ (51.0s)
+  ▶ edit src/context.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_project_context_skips_conventions_with_context_file() {
+ ✓ (52.0s)
+  ▶ edit src/context.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_load_cursorrules_file() {
+ ✓ (51.5s)
+  ▶ edit src/context.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_load_agents_md_file() {
+ ✓ (51.0s)
+  ▶ edit src/context.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_load_copilot_instructions_file() {
+ ✓ (52.1s)
+  ▶ edit src/context.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_multiple_context_files_get_separators() {
+ ✓ (51.8s)
+  7 tools completed in 5m 34s (7 ✓)
+
+Now let me verify the changes look right:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/context.rs ✓ (3ms)
+
+6 #[serial] attributes and the import. Now run the full checks:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (649ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (24.4s)
+  4 tools completed in 54.6s (4 ✓)
+
+All 88 tests pass. Now run the context tests multiple times to verify no flakiness:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do echo "===… ✓ (1.0s)
+
+The filter isn't matching. The module path in the test binary is different:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "context" ✓ (14.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (177ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do echo "===… ✓ (1.0s)
+  3 tools completed in 23.6s (3 ✓)
+
+The filter isn't matching because these are binary tests. Let me try with -- and the test name:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- "context::tests" 2… ✓ (208ms)
+
+All 21 context tests pass. Let me run them 5 times to confirm no flakiness:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do echo "===… ✓ (1.0s)
+
+All 21 context tests pass consistently across 5 runs. Now commit:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done. Clean fix — 7 lines added to `src/context.rs`:
+
+1. **`use serial_test::serial;`** — import at the top of the test module
+2. **6× #[serial]** — one on each test that calls `std::env::set_current_dir()`
+
+This is the same pattern already applied in watch.rs (Day 79) and `commands_config.rs (Day 77). The serial_test` crate was already a dev-dependency. All 88 tests pass, no flakiness across 5 consecutive runs. 🐙
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
