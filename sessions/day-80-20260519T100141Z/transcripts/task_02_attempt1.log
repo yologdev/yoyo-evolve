@@ -1,0 +1,370 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current pattern-based extraction approach in commands_map.rs, then add Lua and Zig support.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LanguagePatterns\|_PATT… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '260,320p' src/commands_m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,260p' src/commands_m… ✓ (3ms)
+  3 tools completed in 7.7s (3 ✓)
+
+Now let me look at an example of how patterns are defined (like the Kotlin one which is recent and well-structured):
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,600p' src/commands_m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '595,650p' src/commands_m… ✓ (3ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now let me see where the regex patterns are defined (the LazyLock statics):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^static RE_KOTLIN\|^sta… ✓ (2ms)
+
+Now let me see the area right after Kotlin patterns where I need to add the new patterns:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,200p' src/commands_m… ✓ (3ms)
+
+Now let me see the visibility rule handling to understand which ones would work for Lua and Zig:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '286,310p' src/commands_m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '288,300p' src/commands_m… ✓ (2ms)
+  2 tools completed in 4.2s (2 ✓)
+
+The file has collapsed lines. Let me read the actual content:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:288..303 ✓ (1ms)
+
+Good. I need a new visibility rule for Zig — where pub prefix means public. Let me also check if there's a StartsWithPub variant already. Actually, StartsWithPublic checks for "public" (C# style). For Zig, I need one that checks for "pub " prefix. Let me think about this...
+
+For Zig, functions start with pub fn (public) or just fn (private). Structs/enums are pub const Name = struct or const Name = struct. I can use separate regexes — one for pub and one for non-pub — and use AlwaysPublic / a new approach. Actually, let me look at how the Swift extractor handles this since Swift has similar visibility modifiers...
+
+Actually, the simplest approach: I can add a new visibility rule StartsWithPub that checks if the trimmed line starts with "pub ". Or I can create separate regex patterns for pub/non-pub and use AlwaysPublic for the pub ones. Let me check if adding a visibility rule is cleaner.
+
+Let me add a `StartsWithPub` visibility rule — it's the cleanest approach.
+
+For Lua, all functions are effectively public (there's no real access control in the language sense for our purposes — local function is file-scoped but we'll mark those as non-public).
+
+Let me now plan the implementation:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 22.1s (8 ✓)
+
+Let me start. First, I need to understand how Lua's local function should be handled for visibility. In Lua, local function is scoped to the file (private). `function name() is global (public). function M.name() / function M:name()` are module methods (public). I'll treat local function as private and the rest as public.
+
+For Zig, pub prefix = public, no pub = private.
+
+Now let me implement. First, the visibility rule:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (3 → 5 lines)
+        /// Public unless the (trimmed) line starts with "private" or "protected" (Kotlin/PHP).
+        NotPrivateOrProtected,
+  +     /// Public if the (trimmed) line starts with "pub " (Zig convention).
+  +     StartsWithPub,
+    }
+ ✓ (6.9s)
+  2 tools completed in 12.7s (2 ✓)
+
+Expected — need to add the match arm:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (3 → 4 lines)
+                        VisibilityRule::NotPrivateOrProtected => {
+                            !trimmed.starts_with("private") && !trimmed.starts_with("protected")
+                        }
+  +                     VisibilityRule::StartsWithPub => trimmed.starts_with("pub "),
+ ✓ (10.6s)
+
+Good — it's unused until I add the Zig patterns. Let me add everything together now.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me add the Lua and Zig regex patterns. I'll insert them after the Kotlin regexes and before the Swift regexes:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:159..165 ✓ (1ms)
+  ▶ edit src/commands_map.rs (4 → 35 lines)
+        Regex::new(r"^\s*(?:(?:public|private|protected|internal)\s+)*enum\s+class\s+(\w+)").unwrap()
+    });
+  + 
+  + // ── Lua regexes ──
+  + // `function name(...)` — top-level global function
+  + static RE_LUA_FUNC: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^function\s+(\w+)\s*\(").unwrap());
+  + // `local function name(...)` — file-scoped function
+  + static RE_LUA_LOCAL_FUNC: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^local\s+function\s+(\w+)\s*\(").unwrap());
+  + // `function M.name(...)` or `function M:name(...)` — module method
+  + static RE_LUA_MODULE_FUNC: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^function\s+\w+[.:]\s*(\w+)\s*\(").unwrap());
+  + // `M.name = function(...)` — assigned module function
+  + static RE_LUA_ASSIGNED_FUNC: LazyLock<Regex> =
+  +     LazyLock::new(|| Regex::new(r"^\w+\.\s*(\w+)\s*=\s*function\s*\(").unwrap());
+  + 
+  + // ── Zig regexes ──
+  + // `pub fn name(...)` or `fn name(...)` — functions
+  + static RE_ZIG_FN: LazyLock<Regex> =
+  ... (15 more lines)
+ ✓ (10.6s)
+  2 tools completed in 24.1s (2 ✓)
+
+Expected — haven't wired them up yet. Let me now add the pattern rule arrays and pattern structs. First, let me find where KOTLIN_PATTERNS ends:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^static KOTLIN_PATTERNS… ✓ (2ms)
+  ▶ read src/commands_map.rs:621..626 ✓ (1ms)
+  ▶ read src/commands_map.rs:625..630 ✓ (1ms)
+  3 tools completed in 8.2s (3 ✓)
+
+I need to add Lua and Zig pattern rules and patterns between the KOTLIN_PATTERNS and detect_language. Let me also check what comment-line handling approach exists for other languages. Looking at Shell:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:430..455 ✓ (1ms)
+
+I see that comment-skipping isn't built into the pattern infrastructure — the patterns simply won't match comment lines because the regex won't match the `-- or // prefix. Let me verify: for Lua, a line starting with -- function foo() wouldn't match ^function` so it's naturally skipped. Good. For Zig, // pub fn wouldn't match ^\s*(?:pub\s+)?fn either. The pattern-based approach handles this naturally.
+
+Now let me add the pattern rules and patterns:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (4 → 105 lines)
+    static KOTLIN_PATTERNS: LanguagePatterns = LanguagePatterns {
+        rules: KOTLIN_PATTERN_RULES,
+  +     trim_leading: false,
+  + };
+  + 
+  + // ── Lua pattern rules ──
+  + // Order matters: module methods before top-level functions (both start with `function`).
+  + static LUA_PATTERN_RULES: &[PatternRule] = &[
+  +     // `function M.name(...)` or `function M:name(...)` — module method (public)
+  +     PatternRule {
+  +         regex: &RE_LUA_MODULE_FUNC,
+  +         kind: SymbolKind::Function,
+  +         name_group: 1,
+  +         visibility: VisibilityRule::AlwaysPublic,
+  +         exclude_names: &[],
+  +     },
+  +     // `M.name = function(...)` — assigned module function (public)
+  +     PatternRule {
+  +         regex: &RE_LUA_ASSIGNED_FUNC,
+  +         kind: SymbolKind::Function,
+  ... (85 more lines)
+ ✓ (10.5s)
+
+Still unused because I haven't updated detect_language and `extract_symbols` yet. Let me clean up those verbose comments in the pattern rules first, then wire everything up:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me clean up those overly verbose comments:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (17 → 8 lines)
+  -     // `local function name(...)` — file-scoped function (private)
+  +     // `local function name(...)` — file-scoped function (treated as public for map visibility)
+        PatternRule {
+            regex: &RE_LUA_LOCAL_FUNC,
+            kind: SymbolKind::Function,
+            name_group: 1,
+  -         // local functions are private; we use UnderscoreIsPrivate as a no-op
+  -         // since local function names don't start with _, but we need a way to mark
+  -         // them as not public. We'll use AlwaysPublic=false approach — actually
+  -         // the cleanest way is a dedicated rule. Let's just treat local as always-public
+  -         // false. We need a new approach. Actually: the regex already tells us it's local.
+  -         // Simplest: use a separate "always private" convention. But we don't have that.
+  -         // Instead: we use UnderscoreIsPrivate — names without _ are "public" which is
+  -         // wrong for local functions. Let's keep it simple: treat all Lua functions as
+  -         // public in the map (like shell functions). Local is implementation detail.
+            visibility: VisibilityRule::AlwaysPublic,
+            exclude_names: &[],
+        },
+ ✓ (10.5s)
+
+Also clean up the Zig verbose comments:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (10 → 4 lines)
+    // ── Zig pattern rules ──
+  - // Order: test (skip) first, then struct/enum/union before fn (more specific first).
+  + // Order: struct/enum/union before fn (more specific first). Tests are naturally
+  + // skipped because no pattern matches `test "..."`.
+    static ZIG_PATTERN_RULES: &[PatternRule] = &[
+  -     // `test "name"` — skip test blocks (exclude by name not needed; we skip via empty exclude)
+  -     // Actually, we want to skip tests entirely. Since there's no "skip" rule, we include
+  -     // test names but mark them as Function — similar to how other languages handle test
+  -     // detection. But the task says to skip them. We can use exclude_names but that only
+  -     // works for specific names. Instead, let's just not include the test pattern at all,
+  -     // and rely on the regex not matching `test "..."` in other patterns. Since none of the
+  -     // other patterns match `test "..."`, tests are naturally skipped.
+ ✓ (10.4s)
+
+Good, expected errors. Now let me wire up detect_language and extract_symbols:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_map.rs (2 → 4 lines)
+            "swift" => Some("swift"),
+            "scala" | "sc" => Some("scala"),
+  +         "lua" => Some("lua"),
+  +         "zig" => Some("zig"),
+ ✓ (10.6s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 21.5s (4 ✓)
+
+Now update extract_symbols:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (1 → 3 lines)
+            "kotlin" => extract_symbols_from_patterns(code, &KOTLIN_PATTERNS),
+  +         "lua" => extract_symbols_from_patterns(code, &LUA_PATTERNS),
+  +         "zig" => extract_symbols_from_patterns(code, &ZIG_PATTERNS),
+ ✓ (10.8s)
+
+Good — just one issue: RE_ZIG_TEST is unused because we don't include it in the patterns (tests are skipped). Let me remove it since it's not needed:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (8 → 5 lines)
+    // `pub const Name = union { ... }` or `const Name = union { ... }`
+    static RE_ZIG_UNION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\s*(?:pub\s+)?const\s+(\w+)\s*=\s*union\b").unwrap());
+  - // `test "name"` — test blocks (to be skipped)
+  - static RE_ZIG_TEST: LazyLock<Regex> =
+  -     LazyLock::new(|| Regex::new(r#"^\s*test\s+"([^"]+)""#).unwrap());
+    
+    // ── Swift regexes ──
+ ✓ (47.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (106ms)
+  2 tools completed in 52.9s (2 ✓)
+
+Build passes. Now let me add the tests:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me find the end of the test module to add new tests:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_map.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_map.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn detect_language_scal… ✓ (3ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Let me look at the structure of the Kotlin test to model my tests after:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:3268..3343 ✓ (1ms)
+
+Good pattern. Now let me find a good insertion point for my tests. Let me look after the Scala tests:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_scala_symbol… ✓ (3ms)
+  ▶ read src/commands_map.rs:3447..3477 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3476,3540p' src/commands… ✓ (3ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Good. I'll insert my tests right after the Scala tests and before test_recently_modified_files_returns_deduped_paths. Let me find the exact location:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_recently_modifi… ✓ (2ms)
+  ▶ read src/commands_map.rs:3532..3537 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I'll insert the Lua and Zig tests before that:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (4 → 295 lines)
+        }
+  + 
+  +     // ── Lua tests ──
+    
+        #[test]
+  -     fn test_recently_modified_files_returns_deduped_paths() {
+  +     fn detect_language_lua_extensions() {
+  +         assert_eq!(detect_language("script.lua"), Some("lua"));
+  +         assert_eq!(detect_language("init.lua"), Some("lua"));
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_lua_basic_functions() {
+  +         let code = r#"
+  + function greet(name)
+  +     print("Hello, " .. name)
+  + end
+  + 
+  + local function helper()
+  +     return 42
+  ... (276 more lines)
+ ✓ (275ms)
+
+I have a brace mismatch. Let me check the area around line 3830-3841:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:3822..3832 ✓ (1ms)
+
+I see — the fn test_recently_modified_files_returns_deduped_paths() line was lost. Let me fix it:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (2 → 3 lines)
+        #[test]
+  +     fn test_recently_modified_files_returns_deduped_paths() {
+            // This test runs in the actual git repo, so git log should work
+ ✓ (49.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (110ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_map 2>&1 … ✓ (1.8s)
+  3 tools completed in 59.0s (3 ✓)
+
+All 111 tests pass. Let me now run the full suite:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (37.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (610ms)
+  5 tools completed in 1m 3s (5 ✓)
+
+All four checks pass: build, test, clippy (no warnings), fmt. Let me verify the test output more carefully to make sure my new tests all ran:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- lua zig regression… ✓ (158ms)
+
+All 11 new tests pass (4 Lua tests + 5 Zig tests + 1 regression + 1 detect_language test that matches "lua"/"zig").
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me commit:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Only src/commands_map.rs changed, as expected. Let me verify the CLAUDE.md Repository Structure section mentions commands_map.rs and check if it needs updating:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "commands_map" CLAUDE.md ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "detect_language\|extract_s… ✓ (2ms)
+  2 tools completed in 4.9s (2 ✓)
+
+CLAUDE.md doesn't mention /map details specifically — it's covered under the file listing. The Architecture section lists commands_map.rs functions but doesn't mention specific languages. The change doesn't affect architecture docs — it's just adding two more languages to an existing pattern. No doc updates needed.
+
+Let me also quickly check README.md for any language count mentions:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -i "15 lang\|languages\|/ma… ✓ (3ms)
+
+No specific language count in README. Good — no doc updates needed.
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (12ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Done. Here's what I implemented:
+
+Lua support — 4 regex patterns covering:
+• function name() — top-level global functions
+• local function name() — file-scoped functions
+• function M.name() / function M:name() — module methods (dot and colon notation)
+• M.name = function() — assigned module functions
+• Comment lines (`-- ...) naturally skipped since they don't match ^function` etc.
+
+Zig support — 4 regex patterns covering:
+• pub fn name() / fn name() — public and private functions
+• `pub const Name = struct / const Name = struct — struct definitions (including extern`/packed variants)
+• pub const Name = enum — enum definitions
+• pub const Name = union — union definitions
+• Test blocks (`test "name"`) naturally skipped — no pattern matches them
+• New StartsWithPub visibility rule for Zig's pub convention
+
+Tests — 11 new tests covering all symbol types, comment skipping, test skipping, plus a regression test confirming Rust and Python extraction still works.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
