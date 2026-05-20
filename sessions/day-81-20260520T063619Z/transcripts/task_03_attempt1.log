@@ -1,0 +1,112 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll prepare the v0.1.13 release. Let me start by verifying what exists in the codebase, then make the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep '^version' Cargo.toml | hea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'parse_typescript_errors…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 CHANGELOG.md ✓ (4ms)
+ ✓ (7ms)
+ ✓ (5ms)
+  3 tools completed in 1.9s (3 ✓)
+
+TypeScript and Python error parsing already exist. Now let me verify the other features mentioned in the changelog:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'offer_persist_file_patt…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'CompilerError\|parse_ru…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'AGENTS.md\|cursorrules\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"lua"\|"zig"\|Lua\|Zig'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'detect_ai_config_files'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'serial' src/session.rs … ✓ (7ms)
+ ✓ (7ms)
+ ✓ (6ms)
+ ✓ (3ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  6 tools completed in 2.0s (6 ✓)
+
+Let me also check for the flaky set_current_dir test fix and the #[serial] migration:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --since="2026-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '#\[serial\]' src/ | wc… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Good — everything checks out. Let me also verify the session.rs tests and commands_map.rs tests were added in Day 79:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline | grep -i 'map…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --all | grep -… ✓ (6ms)
+ ✓ (6ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now let me check what the permission persistence feature looks like:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline | grep -i 'per… ✓ (5ms)
+
+All features verified. Now let me also check the current session's Task 1 (the #[serial] fix that just shipped) and Task 2 status:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only HEAD ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+There's an uncommitted change to watch.rs — that's likely from Task 2 (TypeScript/Python parsing). Let me check if those functions already exist (they do from earlier grep) and whether the uncommitted changes are additions:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/watch.rs | head -80 ✓ (6ms)
+
+The TypeScript/Python parsing was added as part of Task 2 but not yet committed. Since these functions already exist in the working tree, I should include them in the changelog. Now let me make the changes.
+
+**Step 1: Bump version in Cargo.toml**
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit Cargo.toml (1 → 1 lines)
+  - version = "0.1.12"
+  + version = "0.1.13"
+ ✓ (42.8s)
+
+**Step 2: Write the CHANGELOG.md entry**
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read CHANGELOG.md:1..9 ✓ (0ms)
+  ▶ edit CHANGELOG.md (1 → 23 lines)
+  + ## [0.1.13] — 2026-05-20
+  + 
+  + 6 sessions spanning Days 79–81. Watch mode learns to parse TypeScript and Python errors alongside Rust, file operation permissions can be persisted to config, and startup now reads instruction files from five AI tools. Lua and Zig join `/map`, `/init` detects existing AI configs, and a steady cleanup arc squashes flaky tests across multiple modules.
+  + 
+  + ### Added
+  + 
+  + - **Permission persistence for file operations** — `/allow` patterns can be saved to `.yoyo.toml` when the user chooses "always" on a file confirmation prompt (Day 79)
+  + - **Structured Rust compiler error parsing** — watch mode now parses `rustc` error codes into categories (borrow, type, lifetime, import, syntax, unused, test assertion) with category-specific fix hints (Day 79)
+  + - **TypeScript and Python error parsing** — watch mode structured error parsing extended to `tsc`/`eslint` and `pytest`/`mypy` output formats (Day 81)
+  + - **Broader project instruction file support** — startup now reads `AGENTS.md`, `.cursorrules`, and `.github/copilot-instructions.md` alongside `CLAUDE.md` and `YOYO.md` (Day 80)
+  + - **Lua and Zig language support in `/map`** — 17 languages total (Day 80)
+  + - **Smart `/init`** — detects existing AI tool instruction files and notes them in generated config (Day 80)
+  + 
+  + ### Improved
+  + 
+  + - **36 new unit tests for `session.rs`** — SessionChanges, TurnSnapshot, TurnHistory, format_changes now thoroughly tested (Day 79)
+  + - **Unit tests for `commands_map.rs`** — symbol extraction and repo map formatting (Day 79)
+  + 
+  + ### Fixed
+  + 
+  ... (3 more lines)
+ ✓ (15.2s)
+  2 tools completed in 28.9s (2 ✓)
+
+**Step 3: Verify build and tests pass**
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (659ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (152ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (15.1s)
+  4 tools completed in 26.3s (4 ✓)
+
+All 88 tests pass. Let me verify the version bump looks right:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep '^version' Cargo.toml | hea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 CHANGELOG.md ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Everything looks clean. Step 4: Commit
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (15ms)
+
+Done! v0.1.13 is ready. The commit includes:
+
+1. Cargo.toml — version bumped from 0.1.12 → 0.1.13
+2. CHANGELOG.md — new section documenting 6 sessions across Days 79–81 with 6 additions (permission persistence, structured Rust/TypeScript/Python error parsing, broader instruction file support, Lua/Zig in /map, smart /init), 2 improvements (session.rs and commands_map.rs test coverage), and 1 fix (flaky #[serial] test migration)
+3. src/watch.rs — the TypeScript/Python error parsing from Task 2 was included in the same commit
+
+All checks green: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (88 passed). The tag and publish will happen through the release workflow after push.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

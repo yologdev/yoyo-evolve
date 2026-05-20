@@ -1,0 +1,118 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 2.6s (2 ✓)
+
+No community issues. Good — this is a fully self-driven session. Let me review the assessment findings and trajectory to plan the highest-impact work.
+
+Let me check a few things to inform planning:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat CHANGELOG.md | head -30  ▶ $ git log --oneline -20📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "CWD_MUTEX\|cwd_mutex" src/commands_git.rs | head -10 ✓ (4ms)
+ ✓ (4ms)
+ ✓ (14ms)
+  ▶ $ # Check the CWD_MUTEX bug more closely - which test uses it? (2 lines)  ▶ $ # Check what #[serial] is used for in the codebase (2 lines)  ▶ $ # Check spawn command's current state for the --model/--syst… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ # Check if spawn --model is actually wired up to the agent b… (2 lines)  ▶ $ # Check test coverage for prompt.rs and tools.rs (assessment… (2 lines)  ▶ $ # What's the current release version? (2 lines) ✓ (4ms)
+ ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ # Check what's been added since 0.1.12 release (2 lines)  ▶ $ # Check when v0.1.12 was tagged (3 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ git tag -l | tail -10  ▶ $ # Check how handle_spawn actually builds the agent — does it… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  13 tools completed in 20.7s (13 ✓)
+
+Good — spawn --model and --system are already parsed and wired up. The assessment note about "planned Day 80 but didn't ship" seems to be about a different scope or it was already done. Let me focus on the most impactful work.
+
+Let me look at what areas would have the most competitive impact:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the CWD_MUTEX test more specifically - is it still u… (2 lines)  ▶ $ # Check what tests exist in commands_bg.rs (2 lines)  ▶ $ # Look at what conversations.rs tests exist (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  3 tools completed in 1.8s (3 ✓)
+
+Now let me think about what to plan. Based on the assessment:
+
+**Key priorities:**
+1. Bug fix: commands_git.rs CWD_MUTEX → `#[serial]` — same class of bug fixed 3 times now, should be cleaned up
+2. Competitive gap: Multi-agent coordination is the biggest near-term gap vs Claude Code. But that's too large for one task.
+3. Test coverage: `prompt.rs and tools.rs` are the thinnest at ~22 tests/kLOC
+4. Release check: v0.1.12 was released Day 78 (May 17). Days 78-80 added several features. Worth checking if enough for 0.1.13.
+
+Let me check what's accumulated since the last release:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's in changelog above v0.1.12 (2 lines)  ▶ $ # Check what's been committed since Day 78 tag (4 lines) ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Good context. Since v0.1.12 (Day 78), there have been significant changes across Days 79-80 that should go into a release. But first, let me focus on the highest-impact tasks.
+
+Let me now plan the three tasks:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what error recovery looks like for non-Rust language… (2 lines)  ▶ $ # What does the watch fix prompt look like for non-Rust proj… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check the non-Rust fallthrough behavior (2 lines)  ▶ $ # Check what TypeScript/Python/Go error parsing would look l… (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 5.8s (4 ✓)
+
+Now I have a good picture. Let me plan the three tasks:
+
+Task 1 (Bug fix): Fix the commands_git.rs CWD_MUTEX → #[serial] — same class of bug fixed 3 times now (Days 77, 79, 80). This is a known race condition.
+
+Task 2 (Competitive/capability): TypeScript/Python/Go structured error parsing for watch mode. This extends the Day 79 Rust-only structured error parsing to cover the most common project types, directly closing the "improved error recovery" gap identified in the assessment.
+
+Task 3 (Release): Prepare 0.1.13 changelog and release. Days 79-80 added significant features (permission persistence, structured error parsing, broader project instruction file compatibility, Lua/Zig in /map, smart /init). That's enough for a release.
+
+Let me check release readiness:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the release skill (2 lines) ✓ (3ms)
+  ▶ $ cat skills/release/SKILL.md ✓ (39ms)
+  2 tools completed in 4.2s (2 ✓)
+
+OK, the release task involves updating Cargo.toml, CHANGELOG.md, and tagging. But it also requires cargo publish which needs a CRATES_IO_TOKEN. Let me reconsider — the release skill says "never release twice in one session" and needs real credentials. The changelog preparation and version bump are worth doing, but actual cargo publish and git tag should happen through the release workflow.
+
+Actually, let me reconsider the tasks more carefully. The release task would touch Cargo.toml, CHANGELOG.md — that's fine as a task. But the actual publish happens through the GitHub Actions release workflow triggered by a tag. So a release prep task makes sense.
+
+But wait — is a release the highest impact? Let me think about what competes with Claude Code most directly:
+
+1. **TypeScript/Python error parsing** — makes watch mode work better for the most common languages
+2. **CWD_MUTEX fix** — stability (same bug class 3 times)
+3. **Release prep** — gets features into users' hands
+
+Let me finalize the plan:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (28 lines) ✓ (37.4s)
+  ▶ write session_plan/task_02.md (50 lines) ✓ (36.5s)
+  ▶ write session_plan/task_03.md (46 lines) ✓ (37.2s)
+  ▶ write session_plan/issue_responses.md (8 lines) ✓ (37.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 3m 19s (6 ✓)
+
+Plan committed. Here's the session summary:
+
+## Day 81 Session Plan — 3 Tasks
+
+Task 1: Fix `commands_git.rs` CWD_MUTEX race → `#[serial]` (Bug fix, stability)
+• Same class of bug fixed 3 times already (Days 77, 79, 80). Last known instance.
+• 5-minute fix: replace local `static CWD_MUTEX with #[serial]` attribute.
+• Files: src/commands_git.rs
+
+**Task 2: TypeScript and Python structured error parsing for watch mode** (Competitive gap — error recovery)
+• Extends Day 79's Rust-only structured error parsing to the two most common non-Rust languages.
+• parse_typescript_errors handles tsc/eslint output. parse_python_errors handles pytest/mypy/tracebacks.
+• Reuses existing CompilerError struct and build_error_summary. 8+ new tests.
+• Files: src/watch.rs
+
+**Task 3: Prepare v0.1.13 release — changelog + version bump** (Getting features to users)
+• 6 sessions of features since v0.1.12: permission persistence, structured error parsing, broader project file support, Lua/Zig in /map, smart /init, 50+ new tests.
+• Files: CHANGELOG.md, `Cargo.toml`
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

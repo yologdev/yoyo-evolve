@@ -1,0 +1,91 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the CWD_MUTEX race in commands_git.rs by migrating to #[serial]. Let me start by examining the relevant test code.
+  ▶ $ grep -n "CWD_MUTEX\|cwd_mutex\|static.*Mutex.*=.*Mutex::new\|use std::sync::Mute…📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "mod tests" src/commands_git.rs ✓ (10ms)
+ ✓ (18ms)
+  ▶ read src/commands_git.rs:1022..1032  ▶ read src/commands_git.rs:2005..2070 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 6.8s (4 ✓)
+
+Now let me find the test function definition line:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_handle_undo_last_commit" src/commands_git.rs ✓ (8ms)
+  ▶ $ grep -n "fn test_handle_undo\|fn test.*undo" src/commands_git.rs ✓ (8ms)
+  ▶ read src/commands_git.rs:1945..1975 ✓ (1ms)
+  3 tools completed in 5.7s (3 ✓)
+
+Now let me find the second test that has the CWD_MUTEX:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1975..1995 ✓ (1ms)
+
+Good. So the test undo_last_commit_in_real_repo at line 1952 already has `#[serial], but it also uses the CWD_MUTEX` starting at line 2012. I need to:
+
+1. Remove the CWD_MUTEX lines (2012-2016)
+2. The #[serial] attribute is already there
+
+Let me also check if there are any other tests after this one, or if this is the only test with the CWD_MUTEX:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1994..2004 ✓ (0ms)
+
+Now I'll make the surgical edit. Remove the CWD_MUTEX block and its comment:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (7 → 1 lines)
+  -         // Use a static mutex to serialize tests that change cwd,
+  -         // preventing races with other tests that depend on cwd.
+  -         use std::sync::Mutex;
+  -         static CWD_MUTEX: Mutex<()> = Mutex::new(());
+  -         let _lock = CWD_MUTEX.lock().unwrap();
+  - 
+            let original_dir = std::env::current_dir().unwrap();
+ ✓ (52.0s)
+
+Now remove the stale comment about lock release since there's no lock anymore:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:2012..2022 ✓ (1ms)
+  ▶ edit src/commands_git.rs (4 → 3 lines)
+            std::env::set_current_dir(&original_dir).unwrap();
+  -         // Release lock after cwd is restored (drop happens at end of scope)
+    
+            // The revert should succeed
+ ✓ (51.8s)
+  2 tools completed in 59.5s (2 ✓)
+
+Now verify the changes look correct:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:2005..2035 ✓ (1ms)
+
+Good. Now verify there are no remaining references to `CWD_MUTEX` in the file:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CWD_MUTEX\|cwd_mutex" src/commands_git.rs ✓ (8ms)
+
+Confirm #[serial] is on the test and the import exists:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "serial" src/commands_git.rs ✓ (8ms)
+
+The import is at line 1025 and #[serial] is on the test at line 1951. Now run the checks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (151ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- test_handle_undo 2… ✓ (129ms)
+  3 tools completed in 19.2s (3 ✓)
+
+The test name doesn't match that filter. Let me find the exact name:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- undo_last_commit 2… ✓ (160ms)
+
+Both undo tests pass. Now run the full test suite:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (24.6s)
+
+All 88 tests pass (1 ignored). Now commit:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done. Clean fix — removed the local CWD_MUTEX (static Mutex, its import, the lock acquisition, and the stale comment about lock release) from `undo_last_commit_in_real_repo in commands_git.rs`. The test already had #[serial] and the import `use serial_test::serial;` was already present in the test module. This eliminates the last known instance of the CWD race condition pattern where a local mutex couldn't protect against cross-file set_current_dir conflicts. All 88 tests pass, clippy clean, fmt clean.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

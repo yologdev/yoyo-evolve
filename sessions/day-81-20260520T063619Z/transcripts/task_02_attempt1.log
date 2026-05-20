@@ -1,0 +1,334 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing watch.rs code, particularly the Rust error parsing structures and the build_watch_fix_prompt function.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CompilerError\|ErrorCat… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,420p' src/watch.rs ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,530p' src/watch.rs ✓ (4ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Now let me look at the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '800,1200p' src/watch.rs ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1350p' src/watch.rs ✓ (4ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I have a full understanding of the code. Let me also check if there are any more tests after the current ones:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/watch.rs && tail -30 s… ✓ (4ms)
+
+Now I have a clear picture. Let me plan and implement this:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.4s (7 ✓)
+
+Let me look at the build_error_summary function more closely to understand how it formats the language name, since I need to extend it:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '377,435p' src/watch.rs ✓ (4ms)
+
+I see that build_error_summary currently hardcodes "Rust error(s)" in its summary line. I'll need to make that parameterizable. Let me also check the safe_truncate import:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,18p' src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/watch.rs | head -18 ✓ (3ms)
+  4 tools completed in 9.9s (4 ✓)
+
+Good. Now I have the full picture. Let me implement everything. I'll start with the TypeScript and Python parsers, then update build_error_summary to accept a language label, update build_watch_fix_prompt to detect languages, add language-specific hints, and write thorough tests.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add the TypeScript error parser right after the extract_location function and before error_category_hint:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn extract_location\|^… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '319,339p' src/watch.rs ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now I'll add the TypeScript and Python parsers, update build_error_summary to accept a language label, add language-specific hint functions, and update build_watch_fix_prompt:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (2 → 415 lines)
+  + // ---------------------------------------------------------------------------
+  + // TypeScript error parser
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Classify a TypeScript error code (e.g. `"TS2345"`) into an [`ErrorCategory`].
+  + fn categorize_ts_code(code: &str) -> ErrorCategory {
+  +     // Strip optional "TS" prefix to get the numeric part
+  +     let num_str = code.strip_prefix("TS").unwrap_or(code);
+  +     if let Ok(num) = num_str.parse::<u32>() {
+  +         match num {
+  +             // Type errors: TS2xxx family (common type mismatches)
+  +             2000..=2999 => {
+  +                 match num {
+  +                     // Import / module resolution errors within the 2xxx range
+  +                     2307 | 2305 | 2306 | 2314 | 2315 => ErrorCategory::Import,
+  +                     _ => ErrorCategory::Type,
+  +                 }
+  +             }
+  +             // Syntax errors: TS1xxx family
+  +             1000..=1999 => ErrorCategory::Syntax,
+  ... (395 more lines)
+ ✓ (12.3s)
+
+Good — the functions are added but not yet used. Now I need to update `build_error_summary to accept a language label, and update build_watch_fix_prompt` to use the new parsers. Let me also add language-specific hint functions.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.8s (3 ✓)
+
+Now let me add TS and Python-specific hint functions and update build_error_summary:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub fn error_category_… ✓ (3ms)
+
+Now add the TS and Python hint functions right after the Rust one:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '754,785p' src/watch.rs ✓ (3ms)
+  ▶ edit src/watch.rs (4 → 81 lines)
+  - /// Build a structured error summary for Rust compiler output.
+  + /// Return a targeted fix hint for TypeScript errors.
+  + fn ts_error_category_hint(category: &ErrorCategory) -> &'static str {
+  +     match category {
+  +         ErrorCategory::Type => {
+  +             "This is a TypeScript type error. Check the expected vs actual types, \
+  +              consider type assertions, generics, or updating interface definitions."
+  +         }
+  +         ErrorCategory::Import => {
+  +             "Missing module or export. Run `npm install` if the package is missing, \
+  +              check import paths, or add type declarations for untyped modules."
+  +         }
+  +         ErrorCategory::Unused => {
+  +             "Unused variable/import warnings. Remove the unused items or prefix with \
+  +              underscore (e.g. `_unusedVar`)."
+  +         }
+  +         ErrorCategory::Syntax => {
+  +             "TypeScript syntax error. Check for missing brackets, semicolons, \
+  +              or incorrect JSX/TSX syntax."
+  +         }
+  ... (64 more lines)
+ ✓ (7.8s)
+  2 tools completed in 23.7s (2 ✓)
+
+Good — I need to update the body of build_error_summary_for to use the lang parameter, and update the caller. Let me now fix the summary function body:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '864,925p' src/watch.rs ✓ (4ms)
+  ▶ edit src/watch.rs (11 → 13 lines)
+  -     let summary_line = format!("**Parsed {total} Rust error(s):** {}", parts.join(", "));
+  +     let lang_name = language_label(lang);
+  +     let summary_line = format!("**Parsed {total} {lang_name} error(s):** {}", parts.join(", "));
+    
+        // Find dominant category (highest count)
+        let dominant = sorted.first().map(|(cat, _)| **cat).unwrap_or("other");
+  ···
+            .map(|e| &e.category)
+            .unwrap_or(&ErrorCategory::Other);
+    
+  -     let hint = error_category_hint(dominant_category);
+  +     let hint_fn = hint_for_language(lang);
+  +     let hint = hint_fn(dominant_category);
+ ✓ (7.8s)
+  2 tools completed in 14.5s (2 ✓)
+
+Now let me update build_watch_fix_prompt to use the new language detection and parsers:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn build_watch_fix_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '958,1000p' src/watch.rs ✓ (3ms)
+  ▶ edit src/watch.rs (35 → 65 lines)
+        };
+        let cmd_type = classify_watch_command(watch_cmd);
+    
+  -     // Try structured Rust error parsing for richer hints
+  -     let errors = parse_rust_errors(output);
+  -     let structured_section = build_error_summary(&errors);
+  +     // Detect language from the watch command, then try the appropriate parser.
+  +     // Fall through to generic prompt if no structured errors are found.
+  +     let lang = detect_watch_language(watch_cmd);
+  +     let (errors, detected_lang) = match lang {
+  +         WatchLanguage::Rust => {
+  +             let errs = parse_rust_errors(output);
+  +             (errs, WatchLanguage::Rust)
+  +         }
+  +         WatchLanguage::TypeScript => {
+  +             let errs = parse_typescript_errors(output);
+  +             (errs, WatchLanguage::TypeScript)
+  +         }
+  +         WatchLanguage::Python => {
+  +             let errs = parse_python_errors(output);
+  ... (22 more lines)
+ ✓ (7.6s)
+  3 tools completed in 24.1s (3 ✓)
+
+Let me fix the clippy warnings:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (7 → 7 lines)
+            // Pattern 3: Python traceback — `File "foo.py", line 42, in func_name`
+  -         if trimmed.starts_with("File \"") {
+  -             if let Some(quote_end) = trimmed[6..].find('"') {
+  -                 let file = trimmed[6..6 + quote_end].to_string();
+  +         if let Some(after_prefix) = trimmed.strip_prefix("File \"") {
+  +             if let Some(quote_end) = after_prefix.find('"') {
+  +                 let file = after_prefix[..quote_end].to_string();
+                    // Extract line number: ", line 42"
+  -                 let after_file = &trimmed[6 + quote_end + 1..];
+  +                 let after_file = &after_prefix[quote_end + 1..];
+                    if let Some(line_start) = after_file.find("line ") {
+ ✓ (7.7s)
+  ▶ edit src/watch.rs (1 → 1 lines)
+  -                     .map_or(false, |c| c.is_uppercase())
+  +                     .is_some_and(|c| c.is_uppercase())
+ ✓ (7.6s)
+  2 tools completed in 20.6s (2 ✓)
+
+Now I need to fix the tests that reference build_error_summary. Let me find them:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_error_summary" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2107,2150p' src/watch.rs ✓ (3ms)
+  2 tools completed in 4.0s (2 ✓)
+
+I need to add a compatibility wrapper build_error_summary that calls build_error_summary_for with `WatchLanguage::Rust` for the existing tests:
+
+Actually, let me just update the test calls instead. The old function name was internal (`fn, not pub fn`), so only tests reference it:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (38 → 40 lines)
+        #[test]
+        fn build_error_summary_empty_returns_none() {
+  -         assert!(build_error_summary(&[]).is_none());
+  +         assert!(build_error_summary_for(&[], WatchLanguage::Rust).is_none());
+        }
+    
+        #[test]
+  ···
+                line: Some(42),
+                category: ErrorCategory::Borrow,
+            }];
+  -         let summary = build_error_summary(&errors).expect("should return summary");
+  +         let summary =
+  +             build_error_summary_for(&errors, WatchLanguage::Rust).expect("should return summary");
+            assert!(
+                summary.contains("src/main.rs:42"),
+                "should include file:line: {summary}"
+  ···
+                    category: ErrorCategory::Type,
+                })
+  ... (7 more lines)
+ ✓ (52.7s)
+
+Now let me check compilation:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (125ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.9s)
+  2 tools completed in 17.2s (2 ✓)
+
+Clean build and clippy! Now let me run the existing tests:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (25.4s)
+
+All 88 tests pass. Now let me also check the existing test about `build_watch_fix_prompt` to make sure it still works (it asserts "Parsed 1 Rust error"):
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_build_watch_fix_… ✓ (131ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.1s (4 ✓)
+
+Now let me write the 8+ tests. I'll add them right before the closing `} of the mod tests`:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -10 src/watch.rs ✓ (2ms)
+  ▶ edit src/watch.rs (9 → 323 lines)
+            assert_eq!(errors.len(), 1);
+            // This is a general clippy warning, not specifically unused
+            assert!(errors[0].code.is_none());
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // TypeScript error parser tests
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn parse_typescript_errors_tsc_type_error() {
+  +         let output = "src/app.ts(15,3): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.\n";
+  +         let errors = parse_typescript_errors(output);
+  +         assert_eq!(errors.len(), 1, "should parse one error");
+  +         assert_eq!(errors[0].code.as_deref(), Some("TS2345"));
+  +         assert_eq!(errors[0].file.as_deref(), Some("src/app.ts"));
+  +         assert_eq!(errors[0].line, Some(15));
+  +         assert_eq!(errors[0].category, ErrorCategory::Type);
+  +         assert!(errors[0].message.contains("not assignable"));
+  +     }
+  ... (299 more lines)
+ ✓ (49.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAIL|… ✓ (12.5s)
+  4 tools completed in 1m 54s (4 ✓)
+
+Two test failures. Let me debug the mypy parser and the Python hint test:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test build_watch_fix_promp… ✓ (159ms)
+
+The mypy parser doesn't match. The issue is in the mypy pattern matching. Let me debug:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/watch.rs | sed -n '59… ✓ (3ms)
+
+The issue is `splitn(3, ':'). For src/models.py:42: error: ...`, splitn(3, ':') gives:
+• parts[0] = src/models.py
+• parts[1] = 42
+• parts[2] = ` error: Incompatible types in assignment (expression has type "str", variable has type "int")`
+
+So rest =  error: Incompatible... and rest.strip_prefix(" error: ") should work. But wait — the test string uses \" inside the string. Let me trace more carefully:
+
+Actually, parts[2] is everything after the second colon. So `rest = parts[2..].join(":") would be just parts[2]` since there are only 3 parts. Let me check exactly what rest would be:
+
+For `src/models.py:42: error: Incompatible types...`:
+• splitn(3, ':') → ["src/models.py", "42", " error: Incompatible types..."]
+• rest = " error: Incompatible types..."
+• rest.trim() = "error: Incompatible types..."
+• rest.strip_prefix(" error: ") → None because we trimmed first!
+
+That's the bug — I trim rest before checking for the prefix that starts with a space. Let me fix:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (18 → 21 lines)
+                if parts.len() >= 3 && parts[0].ends_with(".py") {
+                    if let Ok(line_num) = parts[1].trim().parse::<u32>() {
+                        let rest = parts[2..].join(":");
+  -                     let rest = rest.trim();
+  -                     // Check for " error: " or similar mypy prefixes
+  -                     if let Some(msg) = rest.strip_prefix(" error: ").or_else(|| {
+  -                         // Handle `col: error: msg` format
+  -                         if let Some(colon_pos) = rest.find(": error: ") {
+  -                             Some(&rest[colon_pos + 9..])
+  -                         } else {
+  -                             None
+  -                         }
+  -                     }) {
+  +                     // Check for " error: " or "error: " mypy prefixes (before/after trim)
+  +                     let msg_opt = rest
+  +                         .strip_prefix(" error: ")
+  +                         .or_else(|| rest.trim().strip_prefix("error: "))
+  +                         .or_else(|| {
+  +                             // Handle `col: error: msg` format (e.g. `10: error: msg`)
+  +                             if let Some(colon_pos) = rest.find(": error: ") {
+  ... (6 more lines)
+ ✓ (52.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_python_errors_m… ✓ (132ms)
+  2 tools completed in 58.2s (2 ✓)
+
+Now check the other failure:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test build_watch_fix_promp… ✓ (132ms)
+
+Both fixed. Now run the full suite:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (40.2s)
+  2 tools completed in 55.5s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

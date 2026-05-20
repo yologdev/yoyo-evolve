@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll review the diff against the task requirements and verify the implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1990,2060p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[serial\]' src/comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'use serial_test::serial… ✓ (3ms)
+ ✓ (7ms)
+ ✓ (4ms)
+  3 tools completed in 2.2s (3 ✓)
+
+Critical finding: The task required adding #[serial] to test_handle_undo_last_commit, but the diff only removes the `CWD_MUTEX — it does **not** add #[serial]` to the test function. Let me confirm:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B3 'fn test_handle_undo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B3 'fn test_handle_undo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_' src/commands_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'undo' src/commands_git.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1945,1960p' src/commands… ✓ (3ms)
+  5 tools completed in 15.9s (5 ✓)
+
+So the test is undo_last_commit_in_real_repo (not test_handle_undo_last_commit). It already has #[serial]. Let me check the diff more carefully — the diff removes the CWD_MUTEX from this function. Let me verify #[serial] is present:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1948,1955p' src/commands… ✓ (3ms)
+
+Good — #[serial] is already present on the test. The diff removes the redundant CWD_MUTEX approach while #[serial] was already in place. Let me also verify there are no remaining CWD_MUTEX references:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'CWD_MUTEX' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- undo_last_commit_i… ✓ (3ms)
+ ✓ (186ms)
+  2 tools completed in 2.2s (2 ✓)
+
+No CWD_MUTEX remaining. The test seems to be filtered — maybe it's #[ignore]d or requires a different filter:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- undo_last_commit 2… ✓ (158ms)
+
+Tests pass. The implementation is correct: the CWD_MUTEX was removed and #[serial] was already in place on the test. The task description mentioned the test name as test_handle_undo_last_commit but the actual function is undo_last_commit_in_real_repo — the diff correctly targets the right function.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (36.9s)
+
+**Verdict: PASS** — The diff correctly removes the local CWD_MUTEX approach (3 lines: the use, the static, and the `lock() call, plus a stale comment) from undo_last_commit_in_real_repo`. The test already had #[serial] and the use serial_test::serial import was already present in the test module. Tests pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
