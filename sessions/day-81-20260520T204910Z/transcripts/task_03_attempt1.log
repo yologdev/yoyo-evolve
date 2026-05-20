@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: showing a git status summary in the startup banner. Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "print_banner\|banner_pr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_git\|pub(cra… ✓ (7ms)
+ ✓ (4ms)
+  ▶ read src/cli.rs:55..105 ✓ (1ms)
+  ▶ read src/cli.rs:104..124 ✓ (1ms)
+  4 tools completed in 7.5s (4 ✓)
+
+Now let me look at the existing tests for the banner:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2560..2640 ✓ (2ms)
+
+Now let me check the `run_git` function to understand its test guard:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:58..98 ✓ (1ms)
+
+Good — git status --porcelain is NOT a destructive command, so `run_git` will work fine in tests too. But the task plan suggests extracting a pure parsing function, which is the better approach for testability. Let me implement this.
+
+Now let me write the code — tests first, then the implementation.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 19.8s (6 ✓)
+
+Let me start by adding the pure parsing function and the git_status_summary function, then integrating them into the banner:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli.rs (1 → 67 lines)
+  + /// Parse `git status --porcelain` output into (staged, modified, untracked) counts.
+  + ///
+  + /// Each line of porcelain output has two status columns:
+  + /// - Column 0 = index (staging area) status
+  + /// - Column 1 = worktree status
+  + /// Lines starting with `??` are untracked files.
+  + fn parse_git_status_counts(porcelain: &str) -> (u32, u32, u32) {
+  +     let mut staged = 0u32;
+  +     let mut modified = 0u32;
+  +     let mut untracked = 0u32;
+  + 
+  +     for line in porcelain.lines() {
+  +         let bytes = line.as_bytes();
+  +         if bytes.len() < 2 {
+  +             continue;
+  +         }
+  + 
+  +         let index = bytes[0];
+  +         let worktree = bytes[1];
+  + 
+  ... (47 more lines)
+ ✓ (12.8s)
+  2 tools completed in 24.7s (2 ✓)
+
+Need to fix the doc comment and integrate the function into print_banner. Let me fix both:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli.rs (6 → 6 lines)
+    /// Parse `git status --porcelain` output into (staged, modified, untracked) counts.
+    ///
+    /// Each line of porcelain output has two status columns:
+  - /// - Column 0 = index (staging area) status
+  - /// - Column 1 = worktree status
+  - /// Lines starting with `??` are untracked files.
+  + ///   - Column 0 = index (staging area) status
+  + ///   - Column 1 = worktree status
+  + ///   - Lines starting with `??` are untracked files.
+ ✓ (12.8s)
+  3 tools completed in 21.1s (3 ✓)
+
+Now integrate into print_banner() to fix the dead-code warning:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli.rs (3 → 6 lines)
+        if let Some(line) = banner_project_line(&project_type, &name, branch.as_deref()) {
+  -         println!("{DIM}  {line}{RESET}");
+  +         let status_suffix = git_status_summary()
+  +             .map(|s| format!(" · {s}"))
+  +             .unwrap_or_default();
+  +         println!("{DIM}  {line}{status_suffix}{RESET}");
+        }
+ ✓ (53.7s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 9s (4 ✓)
+
+Now let me add the tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find where the existing banner tests end to add new ones:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2676..2686 ✓ (1ms)
+  ▶ read src/cli.rs:2685..2695 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I'll add the tests right after the Make banner test:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2685..2690 ✓ (1ms)
+  ▶ edit src/cli.rs (3 → 64 lines)
+            assert_eq!(line, Some("\u{1F4C1} Make project".to_string()));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_status_counts_empty() {
+  +         assert_eq!(parse_git_status_counts(""), (0, 0, 0));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_status_counts_worktree_modified() {
+  +         // " M src/main.rs" = modified in worktree, not staged
+  +         assert_eq!(parse_git_status_counts(" M src/main.rs"), (0, 1, 0));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_status_counts_untracked() {
+  +         assert_eq!(parse_git_status_counts("?? new.txt"), (0, 0, 1));
+  +     }
+  + 
+  +     #[test]
+  ... (44 more lines)
+ ✓ (54.7s)
+  2 tools completed in 1m 8s (2 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (660ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (167ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.9s)
+  6 tools completed in 57.3s (6 ✓)
+
+All 3274 tests pass (3186 unit + 88 integration), 0 failures. Let me also verify the format check:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (666ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.7s (2 ✓)
+
+All checks pass. Let me verify the final state of the changes:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:55..145 ✓ (1ms)
+  ▶ read src/cli.rs:144..194 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Everything looks clean. Now let me commit:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (18 lines) ✓ (14ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 13.3s (3 ✓)
+
+Done. Here's what I implemented:
+
+**`parse_git_status_counts(porcelain: &str) -> (u32, u32, u32)** — a pure function that parses git status --porcelain` output into (staged, modified, untracked) counts. Each porcelain line has two status columns: index (column 0) and worktree (column 1). Lines starting with ?? are untracked; other non-space index chars mean staged; other non-space worktree chars mean modified.
+
+**git_status_summary() -> Option<String>** — calls run_git(["status", "--porcelain"]), returns "clean" for empty output, or a comma-separated summary like "3 staged, 2 modified, 1 untracked".
+
+`print_banner()` — now appends  · <status> after the project context line, so the banner reads:
+```
+  📁 Rust project (yoyo-evolve) on main · 2 modified, 1 staged
+```
+
+10 tests covering: empty input, worktree-modified, untracked, staged, mixed, both-staged-and-modified, multiple untracked, deleted (both staged and worktree), renamed, and short lines.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

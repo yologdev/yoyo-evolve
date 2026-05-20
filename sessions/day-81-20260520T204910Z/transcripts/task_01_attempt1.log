@@ -1,0 +1,229 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of help.rs, then extract the two static-data functions into a new help_data.rs module.
+  ▶ $ wc -l src/help.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "^pub fn\|^fn\|^pub(crate) fn" src/help.rs ✓ (14ms)
+ ✓ (15ms)
+  2 tools completed in 2.7s (2 ✓)
+
+Let me get a cleaner view of the function signatures and their line numbers:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^pub fn\|^fn\|^pub(crate) fn\|^#\[cfg(test)\]\|^mod " src/help.rs ✓ (8ms)
+  ▶ $ grep -n "^pub fn\|^fn\|^pub(crate) fn" src/help.rs ✓ (8ms)
+  2 tools completed in 4.8s (2 ✓)
+
+The grep output is confusing because it's matching across files. Let me be more precise:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^pub fn\|^fn\|^pub(crate) fn\|^#\[cfg(test)\]\|^mod " src/help.rs 2>/de… ✓ (4ms)
+
+Now let me look at the boundaries of the two functions I need to extract:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1..41  ▶ read src/help.rs:1170..1185 ✓ (2ms)
+ ✓ (2ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me see the command_short_description function:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:2000..2020  ▶ read src/help.rs:2090..2105 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Good. Now I understand the structure:
+• command_help: lines 37-1170 (large match statement)
+• command_short_description: lines 2004-2095
+• Tests: lines 2097-3397
+
+Let me also check the end of the file and see the tests that reference these functions:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "command_help\|command_short_description" src/help.rs ✓ (9ms)
+
+Now let me check how these functions are referenced from other files:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "command_help\|command_short_description" src/ --include="*.rs" | grep … ✓ (7ms)
+
+All references use crate::help::command_help or crate::help::command_short_description. If I re-export from help.rs, everything will just work.
+
+Let me also check main.rs to see how `help` module is declared:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^mod " src/main.rs ✓ (8ms)
+  ▶ $ grep -n "^mod " src/main.rs | grep -A1 -B1 "help" ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Good. Now I have a clear plan. Let me execute it:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 15.5s (6 ✓)
+
+First, let me read the exact content of the two functions to extract:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ sed -n '33,1171p' src/help.rs | wc -l  ▶ $ sed -n '2003,2095p' src/help.rs | wc -l ✓ (3ms)
+ ✓ (5ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Let me read the exact boundaries:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:33..39  ▶ read src/help.rs:1168..1173  ▶ read src/help.rs:2001..2006  ▶ read src/help.rs:2093..2098 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+ ✓ (3ms)
+  4 tools completed in 1.7s (4 ✓)
+
+Now let me create the new help_data.rs file by extracting the two functions:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Extract the two functions into a new file (14 lines) ✓ (6ms)
+
+Wait, that's lower than expected. Let me check — the command_help function is 1138 lines and command_short_description is 93 lines, plus module doc = ~1237. But the task says ~2531. Let me re-read the task... it says `help.rs drops from ~3397 to ~866, and help_data.rs` is ~2531. But command_help is 1138 lines (33-1170) and command_short_description is 93 lines (2003-2095). That's only ~1231 lines of actual function content. Let me double-check my line counts:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ echo "command_help: $(( 1170 - 33 + 1 )) lines" (3 lines) ✓ (4ms)
+
+So the two functions are ~1231 lines total. After extraction, help.rs would be 3397 - 1231 = ~2166 lines. The task's estimate of ~866 lines doesn't match. But the task description is just an estimate — what matters is the correct extraction. Let me verify by checking the actual sizes:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Verify help_data.rs looks right (4 lines) ✓ (4ms)
+
+Good. Now I need to remove those functions from help.rs and add re-exports. Let me do this carefully:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ read src/help.rs:1..13 ✓ (1ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Now I need to:
+1. Remove lines 33-1170 (the command_help function with its doc comment) from help.rs
+2. Remove lines 2003-2095 (the command_short_description function with its doc comment) from help.rs
+3. Add re-exports
+
+Let me do this with a script approach — it's safer for such large removals:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Build new help.rs by keeping everything except the two ext… (18 lines) ✓ (8ms)
+  ▶ $ # Verify the new file looks good at boundaries (9 lines) ✓ (6ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Looks good. Let me replace the original file:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ mv src/help_new.rs src/help.rs (2 lines) ✓ (5ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 4.5s (3 ✓)
+
+Now add mod help_data; to main.rs:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:78..88 ✓ (1ms)
+  ▶ edit src/main.rs (2 → 3 lines)
+    mod help;
+  + mod help_data;
+    mod hooks;
+ ✓ (52.6s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 0s (4 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (662ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (6.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (38.8s)
+  4 tools completed in 1m 8s (4 ✓)
+
+All 3260 tests pass (3172 unit + 88 integration), 0 failures. Let me verify the final line counts:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/help.rs src/help_data.rs ✓ (8ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 4.3s (3 ✓)
+
+Now update CLAUDE.md architecture section. Let me find the `help.rs` entry:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "help.rs" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "help.rs" CLAUDE.md ✓ (8ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Let me search for the exact help.rs architecture line:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ search 'help\.rs.*canonical source' in CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+  - - `help.rs` — canonical source for all help content: `cli_help_text()` (`--help` output), `/help` REPL help, per-command detailed help
+  + - `help.rs` — canonical source for all help content: `cli_help_text()` (`--help` output), `/help` REPL help, per-command detailed help (re-exports data from `help_data.rs`)
+  + - `help_data.rs` — static command help text and short descriptions: `command_help()`, `command_short_description()` (pure data, extracted from `help.rs`)
+ ✓ (37.5s)
+  2 tools completed in 43.6s (2 ✓)
+
+Now update the Project Files section in CLAUDE.md to include help_data.rs:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ search 'src/help\.rs' in CLAUDE.md ✓ (3ms)
+  ▶ $ grep -n "src/help" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "help" CLAUDE.md | head -20 ✓ (4ms)
+  3 tools completed in 6.1s (3 ✓)
+
+Good, the architecture section is updated. Now let me also check the Repository Structure section at the bottom of CLAUDE.md:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "help" CLAUDE.md | grep -i "repository\|structure\|help.rs" ✓ (4ms)
+
+The Repository Structure section at the bottom of CLAUDE.md also has function listings. Let me check if `help.rs` is listed there:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^src/help" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "help.rs\|help_data" CLAUDE.md | tail -20 ✓ (4ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me check the "Repository Structure" section that lists files with their functions:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^src/help" CLAUDE.md ✓ (8ms)
+  ▶ $ grep -n "Repository Structure\|help" CLAUDE.md | grep -A2 -B2 "Repository" ✓ (4ms)
+  ▶ $ grep -n "Repository Structure" CLAUDE.md ✓ (8ms)
+  3 tools completed in 7.1s (3 ✓)
+
+There's no "Repository Structure" section in CLAUDE.md to update — good. The architecture section is already updated. Now let me also check the "Project Files" section:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Project Files" CLAUDE.md ✓ (12ms)
+  ▶ $ grep -n "Recently Changed" CLAUDE.md ✓ (8ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Those sections aren't in the CLAUDE.md file itself (they're injected as context). Architecture section is updated. Let me verify:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE.md:65..70 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 4.6s (3 ✓)
+
+Let me do a final sanity check before committing:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ echo "help.rs: $(wc -l < src/help.rs) lines" (6 lines) ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (7ms)
+  ▶ $ git status ✓ (13ms)
+  3 tools completed in 9.6s (3 ✓)
+
+Now commit:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (19ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 8.1s (2 ✓)
+
+Done. Here's what I did:
+
+**Created `src/help_data.rs`** (1,237 lines) — contains the two pure-data match functions:
+• command_help(cmd) -> Option<&'static str> — detailed per-command help text
+• command_short_description(cmd) -> Option<&'static str> — one-line command descriptions
+
+**Modified src/help.rs** (3,397 → 2,167 lines) — removed the two data functions, added:
+```rust
+pub use crate::help_data::{command_help, command_short_description};
+```
+All existing callers use crate::help::command_help / crate::help::command_short_description, so the re-export makes everything work unchanged.
+
+Modified `src/main.rs` — added mod help_data;
+
+Updated `CLAUDE.md` — added help_data.rs entry in the architecture section.
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, `cargo build, cargo test` (3,260 tests, 0 failures).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
