@@ -1,0 +1,278 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the structure of commands_map.rs to identify exactly what needs to move.
+  ▶ $ wc -l src/commands_map.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "^pub enum\|^pub struct\|^pub fn\|^fn\|^enum\|^struct\|^const\|^#\[cfg(t… ✓ (16ms)
+ ✓ (16ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Let me get a cleaner view:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^pub enum\|^pub struct\|^pub fn\|^fn \|^enum \|^struct \|^const \|^#\[c… ✓ (9ms)
+  ▶ $ grep -n "^pub enum\|^pub struct\|^pub fn\|^fn \|^enum \|^struct \|^const \|^#\[c… ✓ (4ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I have a clear picture. Let me read the key sections to understand the boundaries:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -227 src/commands_map.rs  ▶ $ sed -n '228,298p' src/commands_map.rs ✓ (3ms)
+ ✓ (41ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Now let me understand the boundary between what stays and what moves. Let me look at lines around 1677-1700 where MapBackend and `build_repo_map` are:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1670,1710p' src/commands_map.rs ✓ (4ms)
+
+Now let me check where the tests section begins and understand what tests belong to what:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '2000,2020p' src/commands_map.rs  ▶ $ grep -n "^    #\[test\]\|^    fn test_\|^    fn " src/commands_map.rs | head -80 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ grep -n "^    #\[test\]\|^    fn test_\|^    fn " src/commands_map.rs | tail -80 ✓ (4ms)
+  3 tools completed in 5.2s (3 ✓)
+
+Now I need to understand which tests belong to the symbol extraction engine vs the map command. This is a lot of code — let me delegate the actual extraction work to a sub-agent to do it methodically:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 21.1s (7 ✓)
+
+Let me read the complete file structure to understand exact cut points. I need to identify all the things that need to move vs stay, and which tests go with which:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what external files import from commands_map (2 lines) ✓ (6ms)
+  ▶ $ # Check what uses is_ast_grep_available (2 lines) ✓ (5ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me look at the boundary more carefully. The is_ast_grep_available is used in `build_repo_map_with_backend (which stays) and potentially in extract_symbols_ast_grep` (which moves):
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1650,1680p' src/commands_map.rs ✓ (3ms)
+
+Good — extract_symbols_ast_grep doesn't use is_ast_grep_available directly. Only build_repo_map_with_backend (which stays) does. Now let me check if there's a list_project_files function used by `build_repo_map_with_backend`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "list_project_files" src/commands_map.rs ✓ (8ms)
+  ▶ $ grep -n "^use \|^pub use " src/commands_map.rs ✓ (8ms)
+  ▶ $ sed -n '1,8p' src/commands_map.rs ✓ (3ms)
+  3 tools completed in 7.7s (3 ✓)
+
+OK, now let me understand the complete picture. Let me check if is_binary_extension is used in the symbol extraction code or only in the map command code:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "is_binary_extension" src/commands_map.rs ✓ (7ms)
+
+`is_binary_extension is used on line 1722, which is inside build_repo_map_with_backend` — that stays. Good.
+
+Now let me identify the exact line ranges. Let me look at lines around 1674-1700 to confirm the cut point:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1672,1700p' src/commands_map.rs ✓ (3ms)
+
+So the cut is clear:
+• Lines 1-1681 (header/statics/types/extraction functions through MapBackend enum) → move to `symbols.rs`
+• Lines 1682+ (build_repo_map onward + handler + tests for handler) → stay in commands_map.rs
+
+But wait — lines 1-8 are imports, 9-226 are regex statics. The module doc comment (line 1) should be updated for both files. And the uses on lines 3-8: is_ast_grep_available stays (used by build_repo_map_with_backend), regex and LazyLock move, format stays, is_binary_extension/list_project_files stay.
+
+Now I need to figure out the tests. Let me categorize them:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Get all test function names (2 lines) ✓ (5ms)
+  ▶ $ grep -n "    fn " src/commands_map.rs | grep -v "^2014\|^2015\|^2060\|^2064\|^36… ✓ (5ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now I need to categorize these tests. Tests that test extraction functions move; tests that test formatting/map/handler stay. Let me identify which tests stay:
+
+Tests that STAY (format, repo_map, handle, known_commands, relevance, recently_modified):
+• format_repo_map_empty_project
+• format_repo_map_basic
+• `generate_repo_map_respects_size_limit`
+• generate_repo_map_for_prompt_does_not_panic
+• handle_map_no_panic_empty / _with_path / `_with_all / _with_regex_flag / _with_regex_and_all`
+• map_in_known_commands
+• `map_in_help_text`
+• map_has_detailed_help
+• build_repo_map_with_regex_backend
+• map_backend_display
+• `format_repo_map_includes_kind_labels`
+• format_repo_map_colored_contains_ansi_codes
+• format_repo_map_colored_empty_shows_message
+• format_repo_map_colored_shows_pub_prefix
+• `format_repo_map_all_kind_labels`
+• relevance_score_* (all 5)
+• `test_recently_modified_files_returns_deduped_paths`
+
+Everything else moves (extract_, detect_language_, ast_grep_*, parse_symbol_, regression_, language-specific tests like csharp_, php_, kotlin_, swift_, scala_, table_driven_).
+
+Let me find exact line ranges for the tests that stay vs move. Let me read the test module to understand the structure:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Get line numbers of all #[test] annotations (2 lines) ✓ (4ms)
+  ▶ $ grep -n "#\[test\]" src/commands_map.rs | tail -20 ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+This is a large file. Rather than trying to manually track every test, let me take a different approach — I'll read the entire file and create the two new files programmatically:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_map.rs ✓ (7ms)
+
+Let me read the file in chunks to understand the exact structure. First, the non-test portion before line 2004:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1..9 ✓ (1ms)
+
+The plan is clear. Let me now read the transition from extraction to map command code:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:1680..1800 ✓ (2ms)
+
+Good. Now let me check the test section. I need to know where the "stay" tests are so I can separate them:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:2004..2034 ✓ (1ms)
+
+This is going to be a huge extraction. The best approach is to do this systematically using a script to split the file. Let me do it:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Let me build the symbols.rs file. I need:
+1. Lines 9-226 (all the static regex definitions) 
+2. Lines 228-1681 (types + extraction functions through `MapBackend`)
+3. Selected tests from the test module
+
+First, let me extract the non-test code for symbols.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let's get the exact range of each section (7 lines) ✓ (3ms)
+
+Good. Now let me create a Python script to do the split cleanly:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/split_map.py << 'PYEOF' (81 lines) ✓ (28ms)
+
+Good — the categorization looks correct. Now let me write a script to actually generate both files:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/do_split.py << 'PYEOF' (173 lines) ✓ (29ms)
+
+3765 + 980 = 4745, slightly more than 4627 due to module headers, use statements. Let me verify the new files look right:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ head -20 src/symbols.rs ✓ (38ms)
+  ▶ $ tail -20 src/symbols.rs ✓ (38ms)
+  2 tools completed in 4.2s (2 ✓)
+
+I see there's a stray // ── format_repo_map tests ── comment at the end. Let me also check the commands_map.rs.new:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ head -30 src/commands_map.rs.new ✓ (38ms)
+  ▶ $ tail -20 src/commands_map.rs.new ✓ (38ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me move the new file into place and add the module declaration:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/commands_map.rs.new src/commands_map.rs (2 lines) ✓ (4ms)
+
+Now add mod symbols; to main.rs:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^mod commands_map" src/main.rs ✓ (8ms)
+  ▶ read src/main.rs:50..60 ✓ (1ms)
+  ▶ $ grep -n "^mod " src/main.rs | tail -20 ✓ (3ms)
+  ▶ edit src/main.rs (5 → 6 lines)
+  + mod symbols;
+    mod sync_util;
+    mod tool_wrappers;
+    mod tools;
+ ✓ (7.4s)
+  4 tools completed in 20.8s (4 ✓)
+
+The issue is that use crate::symbols::*; in commands_map.rs brings items in privately. I need to re-export them publicly. Let me fix commands_map.rs:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (4 → 4 lines)
+    use crate::commands_ast_grep::is_ast_grep_available;
+    use crate::commands_search::{is_binary_extension, list_project_files};
+    use crate::format::*;
+  - use crate::symbols::*;
+  + pub use crate::symbols::*;
+ ✓ (51.2s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -30 ✓ (122ms)
+  6 tools completed in 1m 7s (6 ✓)
+
+Build passes! Let me run tests:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (14.7s)
+
+All 88 tests pass. Let me run clippy:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (675ms)
+  2 tools completed in 17.9s (2 ✓)
+
+There are formatting issues — extra blank lines between tests. Let me just run cargo fmt:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (654ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (664ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Now let me verify everything still compiles and tests pass after formatting:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 && cargo clippy… ✓ (57.5s)
+
+All checks pass. Let me verify the file sizes to confirm the extraction was substantial:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/symbols.rs src/commands_map.rs ✓ (7ms)
+
+`commands_map.rs went from 4,627 lines to 952 lines. symbols.rs` is 3,681 lines. Let me also quickly verify that the external imports still work:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "commands_map" src/commands_search.rs src/commands_file.rs src/cli.rs ✓ (8ms)
+
+All external consumers still import from commands_map, which re-exports from symbols via `pub use crate::symbols::*;`. Everything works without changing any external code.
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Let me also clean up that stray comment at the end of symbols.rs that I noticed:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -10 src/symbols.rs ✓ (38ms)
+  ▶ edit src/symbols.rs (4 → 2 lines)
+        }
+  - 
+  -     // ── format_repo_map tests ──
+    }
+ ✓ (52.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (38.4s)
+  3 tools completed in 1m 38s (3 ✓)
+
+All clean. Now let me commit:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (17ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 15.2s (4 ✓)
+
+Done. Here's what happened:
+
+**Extracted `src/symbols.rs** (3,679 lines) from commands_map.rs` (was 4,627 lines → now 952 lines).
+
+What moved:
+• All regex static definitions (~60 patterns for 18+ languages)
+• SymbolKind, Symbol, FileSymbols types
+• Helper types (VisibilityRule, PatternRule, `LanguagePatterns`)
+• detect_language, extract_symbols, all per-language extraction functions
+• ast-grep integration (`ast_grep_rule_for_language, parse_ast_grep_symbols, extract_symbols_ast_grep`)
+• MapBackend enum
+• 83 tests covering the extraction engine
+
+What stayed in `commands_map.rs`:
+• build_repo_map, build_repo_map_with_backend
+• `format_repo_map, format_repo_map_colored`
+• recently_modified_files, relevance_score
+• `generate_repo_map_for_prompt, generate_repo_map_for_prompt_with_limit`
+• handle_map
+• 28 tests for the above
+
+Backward compatibility: `pub use crate::symbols::*; in commands_map.rs means all external consumers (commands_search.rs, commands_file.rs, cli.rs`, commands.rs) continue working without changes.
+
+All checks pass: build ✅, 88 tests ✅, clippy ✅, fmt ✅.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

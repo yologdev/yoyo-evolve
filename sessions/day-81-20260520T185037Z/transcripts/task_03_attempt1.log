@@ -1,0 +1,310 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement AI-powered commit message generation for /commit --ai. Let me start by understanding the current code.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 9s)
+
+Now I have a clear picture. The help text already claims AI generation, but the implementation is heuristic-only. Let me look at what I need more carefully:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:780..870 ✓ (1ms)
+  ▶ read src/dispatch.rs:690..715 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me check the imports and types used in dispatch.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1..31 ✓ (1ms)
+  ▶ read src/commands_git.rs:1..31 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me check how other async handlers work in dispatch (e.g., handle_side or handle_quick for reference on using side agents):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search '\.await;' in src/dispatch.rs ✓ (3ms)
+  ▶ read src/dispatch.rs:1000..1020 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Good — the dispatch is already async. Now let me check what `AgentConfig is and how handle_side uses build_side_agent`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/conversations.rs:130..180 ✓ (1ms)
+
+Now let me check how AgentConfig is referenced in commands_git.rs and what's available:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'AgentConfig' in src/commands_git.rs ✓ (2ms)
+  ▶ search 'pub fn handle_commit"' in src/commands_git.rs ✓ (3ms)
+  ▶ search 'pub fn handle_commit' in src/commands_git.rs ✓ (3ms)
+  3 tools completed in 8.8s (3 ✓)
+
+Now let me check the DispatchContext struct to understand what's available there:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct DispatchContext' in src/dispatch.rs ✓ (3ms)
+  ▶ read src/dispatch.rs:283..323 ✓ (1ms)
+  2 tools completed in 10.5s (2 ✓)
+
+Good. Now let me look at how handle_changes_summary is called — it's async and uses agent_config:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:625..635 ✓ (1ms)
+
+Now let me check the existing tests for commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]"' in src/commands_git.rs ✓ (2ms)
+  ▶ search '#\[cfg\(test\)\]' in src/commands_git.rs ✓ (2ms)
+  ▶ search 'mod tests"' in src/commands_git.rs ✓ (2ms)
+  ▶ search '#\[test\]' in src/commands_git.rs ✓ (3ms)
+  4 tools completed in 11.1s (4 ✓)
+
+Let me check the test module structure:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1130..1160 ✓ (1ms)
+
+Now let me look at the route_command function to see how Commit is routed:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search '\"commit\"' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:213..223 ✓ (1ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me check the help text more carefully:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:130..150 ✓ (2ms)
+
+Interesting — the help text already mentions AI generates a message, even though the current implementation is heuristic. Now let me also check the general help listing:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search '/commit' in src/help.rs ✓ (3ms)
+
+Now I have a complete picture. Let me create the implementation plan:
+
+1. Add `build_commit_prompt` function (testable, pure) and handle_commit_ai async function in commands_git.rs
+2. Update dispatch to call the async handler when `--ai/--generate` flag is present
+3. Update help text to document --ai flag
+4. Add tests for the prompt builder and flag parsing
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 15.4s (6 ✓)
+
+Let me start with the tests and implementation. First, let me check how `AgentConfig` is imported in other command files:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate' in src/conversations.rs ✓ (2ms)
+  ▶ search 'agent_config: &AgentConfig' in src/conversations.rs ✓ (2ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me check the floor_char_boundary availability — the plan mentioned it but that's nightly-only. Let me check what yoyo uses:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_char_boundary' (*.rs) ✓ (20ms)
+
+Good, the project uses the is_char_boundary pattern for safe truncation. Let me see the existing pattern used in commands_git.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:505..520 ✓ (1ms)
+
+Now let me check the `AgentEvent and StreamDelta` types to make sure I match the right pattern:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ search 'AgentEvent::MessageUpdate.*StreamDelta::Text"' (*.rs) ✓ (18ms)
+  ▶ search 'StreamDelta::Text' (*.rs) ✓ (18ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Let me also check git_review for how it builds its side agent - it's the closest pattern to what I need:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:130..210 ✓ (1ms)
+
+This is the perfect pattern to follow. Now I have everything I need. Let me implement it.
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me write the tests and the new functions in commands_git.rs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1..6 ✓ (1ms)
+
+Let me also check which imports I need — specifically AgentConfig:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ search '^use' in src/commands_git_review.rs ✓ (2ms)
+
+Now let me add the `build_commit_ai_prompt function and the handle_commit_ai` async function. First, let me add the necessary imports:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (11 → 12 lines)
+    //! Git-related command handlers: /diff, /undo, /commit, /pr, /git.
+    
+  + use crate::agent_builder::AgentConfig;
+    use crate::commands_session::auto_compact_if_needed;
+    use crate::format::*;
+    use crate::git::*;
+ ✓ (12.3s)
+
+The import is unused for now — I'll add the function that uses it. Let me add the build_commit_ai_prompt function and `handle_commit_ai right after the existing handle_commit`:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:852..862 ✓ (1ms)
+
+Now let me add the new functions after handle_commit:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 180 lines)
+  + /// Maximum diff size (in bytes) sent to the AI for commit message generation.
+  + const COMMIT_AI_MAX_BYTES: usize = 30_000;
+  + 
+  + /// Build the prompt sent to the side agent for AI commit message generation.
+  + ///
+  + /// This is a pure function — easy to test without an actual agent.
+  + pub(crate) fn build_commit_ai_prompt(diff: &str) -> String {
+  +     let truncated = if diff.len() > COMMIT_AI_MAX_BYTES {
+  +         let mut b = COMMIT_AI_MAX_BYTES;
+  +         while b > 0 && !diff.is_char_boundary(b) {
+  +             b -= 1;
+  +         }
+  +         format!(
+  +             "{}\n\n... (diff truncated, {} total bytes)",
+  +             &diff[..b],
+  +             diff.len()
+  +         )
+  +     } else {
+  +         diff.to_string()
+  +     };
+  ... (160 more lines)
+ ✓ (12.3s)
+
+Functions are unused because dispatch.rs doesn't call them yet, and tests don't exist yet. Let me add the tests first, then update dispatch. Let me find the end of the test module:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:2360..2380 ✓ (1ms)
+  ▶ $ tail -5 src/commands_git.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (40ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me add tests right before the closing } of the test module:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:2375..2385 ✓ (1ms)
+  ▶ edit src/commands_git.rs (6 → 83 lines)
+            assert_eq!(
+                content, "initial",
+                "File should be reverted to initial content"
+  +         );
+  +     }
+  + 
+  +     // --- AI commit message tests ---
+  + 
+  +     #[test]
+  +     fn build_commit_ai_prompt_includes_diff() {
+  +         let diff = "+++ b/src/main.rs\n+fn hello() {}\n";
+  +         let prompt = build_commit_ai_prompt(diff);
+  +         assert!(prompt.contains("conventional commit format"));
+  +         assert!(prompt.contains("+fn hello() {}"));
+  +         assert!(prompt.contains("```diff"));
+  +     }
+  + 
+  +     #[test]
+  +     fn build_commit_ai_prompt_truncates_large_diff() {
+  +         // Create a diff larger than COMMIT_AI_MAX_BYTES
+  ... (63 more lines)
+ ✓ (12.4s)
+  2 tools completed in 27.1s (2 ✓)
+
+The functions are unused from the bin target. I need to update dispatch.rs to wire them up. Let me do that now:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/dispatch.rs (4 → 8 lines)
+            CommandRoute::Commit => {
+  -             commands::handle_commit(ctx.input);
+  +             if commands::wants_ai_commit(ctx.input) {
+  +                 commands::handle_commit_ai(ctx.input, ctx.agent_config).await;
+  +             } else {
+  +                 commands::handle_commit(ctx.input);
+  +             }
+                CommandResult::Continue
+            }
+ ✓ (7.4s)
+  3 tools completed in 16.6s (3 ✓)
+
+The functions are in commands_git, not commands. I need to re-export them through commands.rs or use the correct module path. Let me check how other commands_git functions are used:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_git' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:499..514 ✓ (0ms)
+  2 tools completed in 13.8s (2 ✓)
+
+I need to add `handle_commit_ai and wants_ai_commit` to the re-exports:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (4 → 4 lines)
+    pub use crate::commands_git::{
+  -     handle_commit, handle_diff, handle_diff_explain, handle_git, handle_pr, handle_undo,
+  -     parse_diff_args,
+  +     handle_commit, handle_commit_ai, handle_diff, handle_diff_explain, handle_git, handle_pr,
+  +     handle_undo, parse_diff_args, wants_ai_commit,
+    };
+ ✓ (7.4s)
+
+Need to make wants_ai_commit fully pub:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 1 lines)
+  - pub(crate) fn wants_ai_commit(input: &str) -> bool {
+  + pub fn wants_ai_commit(input: &str) -> bool {
+ ✓ (54.0s)
+
+Also build_commit_ai_prompt is pub(crate) but the tests in the same crate can access it. Let me check if it compiles:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (124ms)
+
+Build passes. Let me run the tests:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commit_ai wants_ai… ✓ (133ms)
+
+All 4 tests pass. Let me also run the clean message tests:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- clean_ai 2>&1 ✓ (132ms)
+
+All tests pass. Now let me run clippy:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.4s)
+
+Clean. Let me update the dispatch:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 10.9s (2 ✓)
+
+Now let me update the help text. The current help text already says "AI generates" but it's not accurate. Let me update it to properly document the --ai flag:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (11 → 16 lines)
+            "commit" => Some(
+                "/commit [message] — Commit staged changes\n\n\
+                 Usage:\n\
+  -              \x20 /commit              AI generates a commit message from the diff\n\
+  +              \x20 /commit              Generate a heuristic commit message from the diff\n\
+  +              \x20 /commit --ai         Use AI to generate a descriptive commit message\n\
+                 \x20 /commit <message>    Commit with the given message\n\n\
+  -              Stages all changes and commits. If no message is provided, the AI\n\
+  -              analyzes the diff and generates an appropriate commit message.\n\n\
+  +              Without arguments, a heuristic message is generated from the diff.\n\
+  +              With --ai (or --generate), a side agent analyzes the diff and writes\n\
+  +              a conventional-commit-style message describing the actual changes.\n\
+  +              Both modes show the suggestion and let you accept (y), reject (n),\n\
+  +              or edit (e) before committing.\n\n\
+                 Examples:\n\
+                 \x20 /commit\n\
+  +              \x20 /commit --ai\n\
+                 \x20 /commit fix: resolve off-by-one in parser",
+            ),
+ ✓ (54.0s)
+
+Now let me also update the short help line:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1544..1549 ✓ (1ms)
+  ▶ read src/help.rs:1549..1554 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -         "    /commit [msg]      Commit staged changes (AI message if omitted)"
+  +         "    /commit [msg]      Commit staged changes (--ai for AI-generated message)"
+ ✓ (54.0s)
+  3 tools completed in 1m 7s (3 ✓)
+
+Now update the REPL help text too:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1838..1843 ✓ (1ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -     out.push_str("  /commit [msg]      Commit staged changes (AI-generates message if no msg)\n");
+  +     out.push_str("  /commit [msg]      Commit staged changes (--ai for AI-generated message)\n");
+ ✓ (54.3s)
+  2 tools completed in 1m 0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

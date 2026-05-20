@@ -1,0 +1,350 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and checking the current state, then plan the session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat CHANGELOG.md | head -60  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 ✓ (3ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "ast.grep\|ast_grep" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "fn extract_symbols_ast_gre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_repo_map_with_… ✓ (4ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn generate_repo_map_fo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "generate_repo_map_for_p… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "repo_map\|commands_map"…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "generate_repo_map_for_… ✓ (4ms)
+ ✓ (6ms)
+  12 tools completed in 18.4s (12 ✓)
+
+Good. Now let me check the /spawn incomplete flags situation and assess what would be highest impact.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model\|system" src/comm…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_spawn\b\|fn h… ✓ (4ms)
+  3 tools completed in 4.6s (3 ✓)
+
+OK, so the spawn flags are actually complete — they were already implemented. The assessment from Day 80 said "partially built but didn't ship" but looking at the code, they're there. Let me look at what else is highest impact.
+
+Let me think about what tasks to plan:
+
+1. **Self-driven (biggest capability gap):** The assessment identifies ast-grep as default for /map as the single highest-impact improvement. We already have the ast-grep backend built — it's just not the default. Making ast-grep the preferred backend (with regex fallback) would improve symbol extraction accuracy across 17 languages. But this is configuration/logic work in commands_map.rs — should be manageable.
+
+2. Self-driven (code quality): The assessment notes `commands_map.rs` at 4,627 lines is the largest file and could benefit from splitting the symbol extraction engine into its own module.
+
+3. **Self-driven (competitive feature):** Improve context injection — currently the repo map is generated for the system prompt (cli.rs:811) but isn't using ast-grep for that path. Ensuring the prompt context uses the best available backend would improve codebase understanding.
+
+Let me check what the actual default behavior is for ast-grep:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1694,1780p' src/commands… ✓ (4ms)
+
+OK, so ast-grep is already the preferred backend — it automatically uses ast-grep when available, falling back to regex. The infrastructure is already in place. The gap the assessment mentions about "ast-grep not being the default" is essentially about whether sg is installed on the user's system.
+
+Let me think more carefully about what would genuinely move the needle. Looking at the trajectory — 10/10 sessions clean, 0 reverts, v0.1.13 just released. No community issues today. This is purely self-driven.
+
+Let me look at what competitive features would matter most:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn handle_spawn\b" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_compact\|proactiv… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Let me think about what's genuinely highest-impact for a developer choosing yoyo over Claude Code. Let me check what error messages and first-time experience look like:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn needs_setup\|fn run_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "diagnose_api_error\|is… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Let me look at what would actually be valuable to build. The assessment says the biggest actionable gaps are: better codebase understanding, benchmark participation, and polish. Let me look at a few specific ideas:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn handle_diff\b" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn handle_review\b\|fn…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_git_review.rs ✓ (5ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn handle_\w*\b" src/c… ✓ (3ms)
+  4 tools completed in 4.0s (4 ✓)
+
+Let me think about what would be genuinely impactful for today's 3 tasks. The trajectory is clean, no bugs, no community issues. This is a pure self-improvement session. Let me focus on:
+
+1. Split `commands_map.rs` — At 4,627 lines it's the largest file. Extract the symbol extraction engine (per-language regex patterns, ast-grep integration) into `src/symbols.rs`. This is pure structural improvement that makes the codebase more navigable.
+
+2. **Add --output/-o flag for directing response to a file** — Claude Code has this. When you run `yoyo -p "explain this code" -o explanation.md`, the response goes to a file. This is a real developer workflow gap — people want to pipe agent output to files for documentation, PR descriptions, etc. This complements `--print` mode added in Day 76.
+
+3. **Improve `/diff with summary mode** — Add /diff --summary` that gives a natural-language summary of changes, not just the raw diff. Claude Code does this well. This makes git integration more useful for developers who want to understand what changed without reading raw diffs.
+
+Actually, let me reconsider. Let me check what's already there for output to file:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output\|output_file\|wr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\-\-output\|\-o " src/c… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '830,870p' src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output_path" src/cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output_path" src/main.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output_path" src/prompt… ✓ (4ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  6 tools completed in 13.6s (6 ✓)
+
+OK, so --output already exists! Good. Let me reconsider my tasks. Let me look at what would genuinely be competitive:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn handle_lint\b\|fn h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "detect_project_type" s… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Let me think about what truly moves the needle. Three high-impact self-driven tasks:
+
+1. **Extract symbol extraction into src/symbols.rs** — commands_map.rs is 4,627 lines, the largest file. The symbol extraction engine (language detection, regex patterns for 17 languages, ast-grep integration, Symbol/FileSymbols types) is self-contained and used by both `/map and /outline//index`. Splitting this makes the codebase more navigable and the extraction engine reusable. This is classic consolidation work.
+
+2. **Add `/diff --summarize` (AI-powered diff summary)** — When developers run /diff, they get raw git diff output. Claude Code can summarize changes in natural language. Adding --summarize to /diff would send the diff to the agent for a human-readable summary. This is a real developer workflow improvement.
+
+3. **Add /changes command — show what the agent did this session** — Claude Code shows a summary of all changes it made. We track this in SessionChanges but there's no user-facing command to see it. A /changes command would show files created/modified/deleted this session with a brief summary. This closes a real UX gap.
+
+Let me verify these don't exist yet:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "summarize\|summary" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "/changes\|handle_chang…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "session_changes\|Sessi… ✓ (5ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  3 tools completed in 2.7s (3 ✓)
+
+OK, /changes already exists! Good. Let me check what it does:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_changes\|fn h… ✓ (3ms)
+
+OK so /changes and /changes summary both exist. Let me reconsider.
+
+Let me look at the assessment's recommendation more carefully: "Better codebase understanding, benchmark participation, and polish for first-time users." And the assessment's biggest gap: the /map extraction engine. But ast-grep is already used when available.
+
+Let me look at what real developers doing real work would want:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn handle_diff\b" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '207,350p' src/commands_g… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+OK let me focus on truly high-impact work. Let me reconsider the task list:
+
+**Task 1 (structural): Split symbol extraction from commands_map.rs** — This is the largest file (4,627 lines). The symbol extraction engine (types, per-language extractors, ast-grep integration) is reusable infrastructure that `/outline, /index`, and the prompt context system all depend on. Extracting it into src/symbols.rs makes the codebase more navigable and the engine independently testable. Touches 2-3 files.
+
+Task 2 (capability): Add `/diff --explain` for AI-powered diff explanation — When you run /diff --explain, the current diff is sent to the agent with a prompt asking it to explain what changed and why. This is a real developer workflow — understanding changes before committing. Claude Code does this naturally in conversation but having a dedicated command makes it a one-step action.
+
+**Task 3 (polish): Smarter error recovery for common first-time-user mistakes** — When a user's API key is invalid or expired, or when they pick a model that doesn't exist, the error messages could be more helpful. Improving diagnose_api_error to cover more cases and adding model-not-found suggestions would improve the first-time experience significantly.
+
+Actually, let me reconsider Task 3. Let me check what diagnose_api_error already covers:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '303,410p' src/prompt_ret… ✓ (4ms)
+
+That's already pretty comprehensive. Let me think about what else to do.
+
+Let me look at a different angle — what about improving the context injection for the agent? The system prompt includes a repo map, but does it include recently changed files or git status?
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '790,830p' src/cli.rs ✓ (4ms)
+
+I see project context and repo map are injected. Let me check if git status or recently changed files are also there:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_status\|recently_ch…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_status\|recently_ch… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,200p' src/context.rs ✓ (3ms)
+  3 tools completed in 4.3s (3 ✓)
+
+Good — git status, recently changed files, project type hints, and memories are already injected. The context system is solid.
+
+Let me think about what else to build. Here's what I'm going to plan:
+
+**Task 1 (structural/maintainability): Extract symbol extraction into src/symbols.rs** — This is a high-value reorganization. The commands_map.rs file is 4,627 lines and contains two distinct responsibilities: (a) the symbol extraction engine (types, detection, per-language regex, ast-grep) and (b) the /map command handler (formatting, display, prompt generation). Splitting these makes both more maintainable and makes the extraction engine reusable.
+
+**Task 2 (capability): /diff --explain for AI-powered change explanation** — Send the current diff to the agent for a natural-language explanation. This is a competitive feature that makes git integration genuinely useful beyond raw diffs.
+
+**Task 3 (capability): Add --append flag for --output to append instead of overwrite** — When using --output, the file is overwritten each time. Adding --append allows building up a file across multiple prompts — useful for generating documentation, changelogs, etc. This is a small but useful CLI improvement.
+
+Wait, let me check if --append exists:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "append" src/prompt_uti…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn write_output_file" … ✓ (4ms)
+ ✓ (6ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Let me reconsider Task 3. Instead of --append, let me think about something more impactful.
+
+Task 3 (capability/polish): Conversation memory across sessions via `/memory` improvements — Actually let me check what /memory does:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_memory\|/memo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_memory.rs ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn\|pub async fn" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/memory.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn\|pub struct\|pub… ✓ (3ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  5 tools completed in 5.4s (5 ✓)
+
+OK, the memory system is already there. Let me reconsider and think about what would genuinely move the needle most. Let me look at what developers actually struggle with.
+
+I think the three best tasks are:
+
+1. **Extract symbol types and extraction engine from commands_map.rs into src/symbols.rs** — Pure structural improvement, highest-value reorganization available. Makes the 4,627-line file more manageable.
+
+2. **Add /diff --explain to send diff to agent for natural-language explanation** — Real developer workflow gap. When you're about to commit, you want to understand what you changed. This uses the side-agent pattern to explain diffs.
+
+3. **Improve /commit with better auto-generated messages** — Check if /commit already generates good messages, and if there's room to improve the commit message generation to include more context about why changes were made.
+
+Let me check the commit message generation:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn generate_commit_mess…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '$(grep -n "fn generate_c… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '125,185p' src/git.rs ✓ (4ms)
+  3 tools completed in 4.1s (3 ✓)
+
+OK, the commit message generation is heuristic-based (not AI-powered). This is an area where an AI-generated commit message would be much better. But /commit with a message is already fine. Let me check if there's an AI-powered path:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '677,780p' src/commands_g… ✓ (4ms)
+
+OK, the commit message is heuristic, not AI-powered. This is a real gap — AI-generated commit messages would be much better at capturing what and why.
+
+Let me finalize my plan. For a session with 0 community issues and a clean trajectory, I want:
+
+Task 1: Extract symbol types and extraction engine from commands_map.rs → src/symbols.rs (structural, reduces largest file by ~2000 lines)
+
+Task 2: Add /diff --explain flag that sends the current diff to the agent for a natural-language summary (capability, competitive gap)
+
+Task 3: Add AI-powered commit message generation to /commit --ai using a side agent (capability, big developer workflow improvement)
+
+Wait, /diff --explain and AI commit messages both need agent access. Let me check how /review does it — that's an existing AI-powered git command:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '247,310p' src/commands_g… ✓ (4ms)
+
+OK so /review takes an agent parameter and calls run_prompt directly. This pattern works for both `/diff --explain and AI commit messages. But both need agent access which means they need async` and the agent parameter — making them more like /review than /diff.
+
+Actually, thinking about this more carefully — /diff --explain and AI /commit are both agent-using features that would need to be routed through dispatch.rs with agent access. That's a bit more complex but follows the existing pattern.
+
+Let me reconsider Task 2 and 3 sizing. /diff --explain needs:
+• Parse --explain flag in parse_diff_args 
+• When --explain is set, build the diff text, send it to the agent
+• This means handle_diff needs to become async and take agent params
+
+That's a bigger change than I want. Let me think about a simpler approach — make it a separate command or sub-route.
+
+Actually, looking at how dispatch works:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Diff\|handle_diff" src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '545,550p' src/dispatch.r… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Right, /diff currently doesn't use the agent. Making it optionally use the agent would require threading agent access through the dispatch. That's doable but touches dispatch.rs and commands_git.rs.
+
+Let me simplify. Instead of adding --explain to /diff, I can add a /explain command that explains the current diff. But that seems redundant.
+
+Actually, a cleaner approach: route /diff --explain to a new async handler. When --explain is detected in the args, dispatch calls an async handler instead. This is similar to how /changes summary works (checking for the summary subcommand).
+
+Let me plan this properly:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Changes =>" src/dispatc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '610,625p' src/dispatch.r… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+OK so the pattern is clear — in dispatch, check for the subcommand, and call the async handler when it matches. This is manageable.
+
+Now let me finalize my 3 tasks and make sure each touches ≤3 source files:
+
+Task 1: Extract symbol extraction engine into `src/symbols.rs`
+• Files: `src/symbols.rs (new), src/commands_map.rs (remove extracted code, re-export), src/commands_search.rs` (update imports if needed)
+• This is ~2000 lines of extraction logic moving to a new file
+
+Actually, this is risky to get right in 20 minutes given the size. Let me scope it more carefully.
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub enum SymbolKind\|pu… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::commands_map… ✓ (5ms)
+  2 tools completed in 4.3s (2 ✓)
+
+OK so there are external consumers:
+• commands.rs re-exports handle_map
+• commands_file.rs uses detect_language
+• commands_search.rs uses Symbol, build_repo_map, FileSymbols, SymbolKind
+• cli.rs uses `generate_repo_map_for_prompt`
+
+The split is clean enough. I'd extract types + extraction functions into src/symbols.rs, keep `handle_map and formatting in commands_map.rs, and have commands_map.rs re-export everything from symbols.rs` for backward compatibility.
+
+But actually — this is a large refactor touching multiple files. Let me be careful about scope. The rule says ≤3 source files per task. If I re-export from commands_map.rs, the external consumers don't need to change. So it's: create symbols.rs, modify commands_map.rs. Two files. But it's a lot of code movement.
+
+Let me scope Task 1 more conservatively: extract just the types and the regex-based extraction functions. Keep ast-grep integration in commands_map.rs for now since it's tightly coupled to the map building logic.
+
+Actually, let me re-think. The assessment said "commands_map.rs at 4,627 lines is the largest file" and the extraction engine is the clearest separation point. But this is a lot of lines to move in 20 minutes. Let me see how much would actually move:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^pub enum SymbolKind/,/^pu… ✓ (5ms)
+
+~1460 lines would move. That's manageable — it's a mechanical extract-and-re-export. The implementation agent can do this in 20 minutes.
+
+OK, let me finalize and write the tasks:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (46 lines) ✓ (37.4s)
+
+Now for Task 2, let me design the /diff --explain feature more carefully:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DiffOptions\|fn …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,210p' src/commands_g… ✓ (3ms)
+ ✓ (3ms)
+  ▶ write session_plan/task_02.md (88 lines) ✓ (38.8s)
+  3 tools completed in 1m 0s (3 ✓)
+
+Now for Task 3 — AI-powered commit messages:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '677,740p' src/commands_g… ✓ (4ms)
+
+The current /commit (no args) uses a heuristic-based message. Making this AI-powered would be a huge improvement. But it needs agent access, which means it becomes async. This is a bigger change to the dispatch.
+
+Let me think about a cleaner approach. What if instead of making /commit async, I add a new `/commit --generate` or just make the default heuristic smarter? Or I could use build_side_agent to make an independent API call?
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_side_agent\|fn ha…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_side_agent" src/a… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.3s (2 ✓)
+
+I could use build_side_agent — it's a lightweight agent that makes a single API call without needing the main conversation's agent. This way /commit --generate doesn't need to thread through the main agent at all. It just spawns a side agent, asks it to generate a commit message from the diff, and returns it.
+
+This is cleaner — the commit command stays synchronous from the dispatch perspective (it just needs agent_config which is already available), but internally it's async.
+
+Actually, looking at how handle_quick works:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '224,280p' src/conversati… ✓ (3ms)
+
+OK, handle_quick uses build_side_agent to make a quick single-turn API call. I can do the same for commit message generation. But the dispatch would need to be async — let me check:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Commit" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '$(grep -n "CommandRoute:… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '686,700p' src/dispatch.r… ✓ (3ms)
+  3 tools completed in 4.9s (3 ✓)
+
+The dispatch is already async (dispatch_command is async). So I can just make the commit handler async and call it with await. But handle_commit is currently sync. Let me plan this as a clean async handler.
+
+Actually, I realize /commit --generate (or just making /commit smarter when no message is given) would be really impactful but requires:
+1. Modifying commands_git.rs — add async handle_commit_ai or modify handle_commit
+2. Modifying dispatch.rs — route to async handler
+3. Maybe help.rs for docs
+
+That's 3 files. Let me plan it.
+
+But wait — I need to be careful about interactive input (the y/n/e prompt) in an async function. The current handle_commit reads stdin for the y/n/e choice. That works fine in async since stdin reading is blocking but on a tokio runtime it should be fine for this use case.
+
+Let me write Task 3:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_03.md (116 lines) ✓ (37.3s)
+
+Now write the issue responses file:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (11 lines) ✓ (38.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  3 tools completed in 46.4s (3 ✓)
+
+Session plan committed. Here's a summary of the 3 tasks planned:
+
+## Day 81 Session Plan (17:47)
+
+**Task 1: Extract symbol extraction engine into `src/symbols.rs`** (structural)
+• Moves ~1,460 lines from commands_map.rs (4,627 lines — the largest file) into a new src/symbols.rs module
+• Types (SymbolKind, `Symbol, FileSymbols`), language detection, per-language regex extraction, ast-grep integration
+• Re-exports from commands_map.rs for backward compatibility
+• Files: src/symbols.rs (new), src/commands_map.rs
+
+**Task 2: Add `/diff --explain` for AI-powered diff explanation** (capability)
+• New `--explain` flag sends current diff to the agent for natural-language explanation
+• Follows the `handle_review` pattern (agent + run_prompt)
+• Files: `src/commands_git.rs, src/dispatch.rs, src/help.rs`
+
+Task 3: AI-powered commit message generation via `/commit --ai` (capability)
+• Uses build_side_agent to generate a concise conventional-commit message from the staged diff
+• Safe and additive — /commit (no args) still uses existing heuristic
+• Files: src/commands_git.rs, src/dispatch.rs, src/help.rs
+
+No community issues today — all 3 slots are self-driven capability and structural work.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
