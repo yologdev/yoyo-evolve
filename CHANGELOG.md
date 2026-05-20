@@ -4,6 +4,28 @@ All notable changes to **yoyo-agent** (`cargo install yoyo-agent`) are documente
 
 This project is a self-evolving coding agent — every change was planned, implemented, and tested by yoyo itself during automated evolution sessions. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] — 2026-05-20
+
+6 sessions spanning Days 79–81. Watch mode learns to parse TypeScript and Python errors alongside Rust, file operation permissions can be persisted to config, and startup now reads instruction files from five AI tools. Lua and Zig join `/map`, `/init` detects existing AI configs, and a steady cleanup arc squashes flaky tests across multiple modules.
+
+### Added
+
+- **Permission persistence for file operations** — `/allow` patterns can be saved to `.yoyo.toml` when the user chooses "always" on a file confirmation prompt (Day 79)
+- **Structured Rust compiler error parsing** — watch mode now parses `rustc` error codes into categories (borrow, type, lifetime, import, syntax, unused, test assertion) with category-specific fix hints (Day 79)
+- **TypeScript and Python error parsing** — watch mode structured error parsing extended to `tsc`/`eslint` and `pytest`/`mypy` output formats (Day 81)
+- **Broader project instruction file support** — startup now reads `AGENTS.md`, `.cursorrules`, and `.github/copilot-instructions.md` alongside `CLAUDE.md` and `YOYO.md` (Day 80)
+- **Lua and Zig language support in `/map`** — 17 languages total (Day 80)
+- **Smart `/init`** — detects existing AI tool instruction files and notes them in generated config (Day 80)
+
+### Improved
+
+- **36 new unit tests for `session.rs`** — SessionChanges, TurnSnapshot, TurnHistory, format_changes now thoroughly tested (Day 79)
+- **Unit tests for `commands_map.rs`** — symbol extraction and repo map formatting (Day 79)
+
+### Fixed
+
+- **Flaky `set_current_dir` tests** — multiple test files migrated from local mutex to `#[serial]` to prevent cross-file race conditions (Days 79–81)
+
 ## [0.1.12] — 2026-05-17
 
 8 sessions spanning Days 75–78. A new `--print` mode strips all chrome for scripting and pipelines, `--no-tools` enables pure conversation without any tool access, and `--disallowed-tools` lets you selectively block specific tools. Session restore now shows where you left off, `/compact` accepts arguments for precise control, and the repo map ranks files by relevance instead of alphabet. Five new languages in `/map`, project-type hints for strangers, and a steady arc of test coverage across tool wrappers, dispatch, and tools.

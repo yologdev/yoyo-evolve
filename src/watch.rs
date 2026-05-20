@@ -337,6 +337,419 @@ fn extract_location(lines: &[&str], start: usize) -> (Option<String>, Option<u32
     (None, None)
 }
 
+// ---------------------------------------------------------------------------
+// TypeScript error parser
+// ---------------------------------------------------------------------------
+
+/// Classify a TypeScript error code (e.g. `"TS2345"`) into an [`ErrorCategory`].
+fn categorize_ts_code(code: &str) -> ErrorCategory {
+    // Strip optional "TS" prefix to get the numeric part
+    let num_str = code.strip_prefix("TS").unwrap_or(code);
+    if let Ok(num) = num_str.parse::<u32>() {
+        match num {
+            // Type errors: TS2xxx family (common type mismatches)
+            2000..=2999 => {
+                match num {
+                    // Import / module resolution errors within the 2xxx range
+                    2307 | 2305 | 2306 | 2314 | 2315 => ErrorCategory::Import,
+                    _ => ErrorCategory::Type,
+                }
+            }
+            // Syntax errors: TS1xxx family
+            1000..=1999 => ErrorCategory::Syntax,
+            // Unused variable/parameter: TS6133
+            6133 => ErrorCategory::Unused,
+            _ => ErrorCategory::Other,
+        }
+    } else {
+        ErrorCategory::Other
+    }
+}
+
+/// Classify a TypeScript/eslint error message using text heuristics.
+fn categorize_ts_message(msg: &str) -> ErrorCategory {
+    let lower = msg.to_lowercase();
+    if lower.contains("cannot find module")
+        || lower.contains("has no exported member")
+        || lower.contains("module not found")
+        || lower.contains("unable to resolve")
+    {
+        return ErrorCategory::Import;
+    }
+    if lower.contains("type") && (lower.contains("not assignable") || lower.contains("mismatch")) {
+        return ErrorCategory::Type;
+    }
+    if lower.contains("no-unused-vars")
+        || lower.contains("is declared but")
+        || lower.contains("is defined but never used")
+    {
+        return ErrorCategory::Unused;
+    }
+    if lower.contains("parsing error")
+        || lower.contains("unexpected token")
+        || lower.contains("expression expected")
+    {
+        return ErrorCategory::Syntax;
+    }
+    if lower.contains("assertion") || lower.contains("expect(") || lower.contains("test failed") {
+        return ErrorCategory::TestAssertion;
+    }
+    ErrorCategory::Other
+}
+
+/// Parse TypeScript compiler (`tsc`) and eslint output into structured [`CompilerError`]s.
+///
+/// Handles two main formats:
+/// - **tsc**: `src/file.ts(line,col): error TS2345: message`
+/// - **eslint**: `src/file.ts:line:col: error message [rule-name]`
+/// - **jest/vitest**: `FAIL src/file.test.ts` + assertion messages
+pub fn parse_typescript_errors(output: &str) -> Vec<CompilerError> {
+    let mut errors: Vec<CompilerError> = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        // Pattern 1: tsc format — `path(line,col): error TSxxxx: message`
+        // Also matches: `path(line,col): warning TSxxxx: message`
+        if let Some(paren_pos) = trimmed.find('(') {
+            if let Some(paren_end) = trimmed[paren_pos..].find(')') {
+                let after_paren = &trimmed[paren_pos + paren_end + 1..];
+                // Check for ": error TS" or ": warning TS" pattern
+                if let Some(rest) = after_paren
+                    .strip_prefix(": error ")
+                    .or_else(|| after_paren.strip_prefix(": warning "))
+                {
+                    // Try to extract TSxxxx code
+                    if let Some(colon) = rest.find(": ") {
+                        let code_part = &rest[..colon];
+                        if code_part.starts_with("TS") {
+                            let msg = rest[colon + 2..].trim();
+                            let file = trimmed[..paren_pos].to_string();
+                            let loc_str = &trimmed[paren_pos + 1..paren_pos + paren_end];
+                            let line_num = loc_str
+                                .split(',')
+                                .next()
+                                .and_then(|s| s.parse::<u32>().ok());
+
+                            let category = {
+                                let cat = categorize_ts_code(code_part);
+                                if cat == ErrorCategory::Other {
+                                    categorize_ts_message(msg)
+                                } else {
+                                    cat
+                                }
+                            };
+
+                            errors.push(CompilerError {
+                                code: Some(code_part.to_string()),
+                                message: msg.to_string(),
+                                file: Some(file),
+                                line: line_num,
+                                category,
+                            });
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pattern 2: eslint format — `path:line:col: error message`
+        // Also: `path:line:col: warning message`
+        // eslint often ends with a rule name in parens or brackets
+        {
+            let parts: Vec<&str> = trimmed.splitn(4, ':').collect();
+            if parts.len() == 4 {
+                // parts[0]=file, parts[1]=line, parts[2]=col, parts[3]=" error msg"
+                if let (Ok(line_num), Ok(_col)) = (
+                    parts[1].trim().parse::<u32>(),
+                    parts[2].trim().parse::<u32>(),
+                ) {
+                    let rest = parts[3].trim();
+                    if let Some(msg) = rest
+                        .strip_prefix("error ")
+                        .or_else(|| rest.strip_prefix("warning "))
+                    {
+                        let msg = msg.trim();
+                        let file = parts[0].to_string();
+                        // Check if there's a rule name like [no-unused-vars]
+                        let category = categorize_ts_message(msg);
+                        errors.push(CompilerError {
+                            code: None,
+                            message: msg.to_string(),
+                            file: Some(file),
+                            line: Some(line_num),
+                            category,
+                        });
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Pattern 3: jest/vitest failure line — `FAIL src/file.test.ts`
+        if trimmed.starts_with("FAIL ") {
+            let file = trimmed.strip_prefix("FAIL ").unwrap().trim();
+            if !file.is_empty() {
+                errors.push(CompilerError {
+                    code: None,
+                    message: format!("Test suite failed: {file}"),
+                    file: Some(file.to_string()),
+                    line: None,
+                    category: ErrorCategory::TestAssertion,
+                });
+            }
+        }
+
+        // Pattern 4: jest/vitest assertion — `expect(received).toEqual(expected)`
+        // or `● test name` (jest test name indicator)
+        if trimmed.starts_with("● ") || trimmed.starts_with("× ") {
+            errors.push(CompilerError {
+                code: None,
+                message: trimmed.to_string(),
+                file: None,
+                line: None,
+                category: ErrorCategory::TestAssertion,
+            });
+        }
+    }
+
+    errors
+}
+
+// ---------------------------------------------------------------------------
+// Python error parser
+// ---------------------------------------------------------------------------
+
+/// Classify a Python error message using text heuristics.
+fn categorize_python_message(msg: &str) -> ErrorCategory {
+    let lower = msg.to_lowercase();
+    if lower.contains("incompatible type")
+        || lower.contains("has no attribute")
+        || lower.contains("unexpected type")
+        || lower.contains("invalid type")
+        || (lower.contains("error:") && lower.contains("type"))
+    {
+        return ErrorCategory::Type;
+    }
+    if lower.contains("modulenotfounderror")
+        || lower.contains("importerror")
+        || lower.contains("no module named")
+        || lower.contains("cannot find implementation")
+    {
+        return ErrorCategory::Import;
+    }
+    if lower.contains("syntaxerror")
+        || lower.contains("indentationerror")
+        || lower.contains("unexpected indent")
+        || lower.contains("invalid syntax")
+    {
+        return ErrorCategory::Syntax;
+    }
+    if lower.contains("assertionerror")
+        || lower.contains("assert ")
+        || lower.contains("failed")
+        || lower.contains("assertion")
+    {
+        return ErrorCategory::TestAssertion;
+    }
+    ErrorCategory::Other
+}
+
+/// Parse Python tool output (pytest, mypy, tracebacks) into structured [`CompilerError`]s.
+///
+/// Handles three main formats:
+/// - **pytest**: `FAILED tests/test_foo.py::test_bar - ErrorType: message`
+/// - **mypy**: `src/foo.py:42: error: message`
+/// - **traceback**: `File "foo.py", line 42, in func_name` (extracts last frame)
+pub fn parse_python_errors(output: &str) -> Vec<CompilerError> {
+    let mut errors: Vec<CompilerError> = Vec::new();
+    let lines: Vec<&str> = output.lines().collect();
+
+    // Track the last traceback frame so we can attach it to the error line
+    let mut last_tb_file: Option<String> = None;
+    let mut last_tb_line: Option<u32> = None;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+
+        // Pattern 1: pytest — `FAILED tests/test_foo.py::test_bar - ErrorType: message`
+        if trimmed.starts_with("FAILED ") {
+            let rest = trimmed.strip_prefix("FAILED ").unwrap();
+            let (test_path, msg) = if let Some(dash_pos) = rest.find(" - ") {
+                (&rest[..dash_pos], rest[dash_pos + 3..].trim())
+            } else {
+                (rest.trim(), rest.trim())
+            };
+            // Extract file from `path::test_name`
+            let file = test_path.split("::").next().map(|s| s.to_string());
+            let category = categorize_python_message(msg);
+            errors.push(CompilerError {
+                code: None,
+                message: msg.to_string(),
+                file,
+                line: None,
+                category,
+            });
+            continue;
+        }
+
+        // Pattern 2: mypy — `src/foo.py:42: error: message` or `src/foo.py:42: note: ...`
+        // Also matches: `src/foo.py:42:10: error: message` (with column)
+        {
+            // Try splitting into at least 3 parts: file, line, rest
+            let parts: Vec<&str> = trimmed.splitn(3, ':').collect();
+            if parts.len() >= 3 && parts[0].ends_with(".py") {
+                if let Ok(line_num) = parts[1].trim().parse::<u32>() {
+                    let rest = parts[2..].join(":");
+                    // Check for " error: " or "error: " mypy prefixes (before/after trim)
+                    let msg_opt = rest
+                        .strip_prefix(" error: ")
+                        .or_else(|| rest.trim().strip_prefix("error: "))
+                        .or_else(|| {
+                            // Handle `col: error: msg` format (e.g. `10: error: msg`)
+                            if let Some(colon_pos) = rest.find(": error: ") {
+                                Some(&rest[colon_pos + 9..])
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(msg) = msg_opt {
+                        let msg = msg.trim();
+                        let category = categorize_python_message(msg);
+                        errors.push(CompilerError {
+                            code: None,
+                            message: msg.to_string(),
+                            file: Some(parts[0].to_string()),
+                            line: Some(line_num),
+                            category,
+                        });
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Pattern 3: Python traceback — `File "foo.py", line 42, in func_name`
+        if let Some(after_prefix) = trimmed.strip_prefix("File \"") {
+            if let Some(quote_end) = after_prefix.find('"') {
+                let file = after_prefix[..quote_end].to_string();
+                // Extract line number: ", line 42"
+                let after_file = &after_prefix[quote_end + 1..];
+                if let Some(line_start) = after_file.find("line ") {
+                    let line_str = &after_file[line_start + 5..];
+                    let line_num = line_str
+                        .split(|c: char| !c.is_ascii_digit())
+                        .next()
+                        .and_then(|s| s.parse::<u32>().ok());
+                    last_tb_file = Some(file);
+                    last_tb_line = line_num;
+                }
+            }
+            continue;
+        }
+
+        // Pattern 4: Error line following a traceback — `ErrorType: message`
+        // Only capture if we have a preceding traceback frame
+        if last_tb_file.is_some() && !trimmed.is_empty() && !trimmed.starts_with("File ") {
+            // Check if it looks like an error: `SomeError: message` or `SomeError(message)`
+            if let Some(colon_pos) = trimmed.find(": ") {
+                let error_type = &trimmed[..colon_pos];
+                // Error type names are typically CamelCase and end with Error/Exception
+                if error_type.chars().next().is_some_and(|c| c.is_uppercase())
+                    && !error_type.contains(' ')
+                {
+                    let category = categorize_python_message(trimmed);
+                    errors.push(CompilerError {
+                        code: None,
+                        message: trimmed.to_string(),
+                        file: last_tb_file.take(),
+                        line: last_tb_line.take(),
+                        category,
+                    });
+                    continue;
+                }
+            }
+        }
+
+        // Pattern 5: Short summary lines — `1 failed, 2 passed` (pytest summary)
+        // Also: `E   AssertionError: ...` (pytest assertion detail)
+        if trimmed.starts_with("E   ") || trimmed.starts_with("E\t") {
+            let msg = trimmed[1..].trim();
+            if !msg.is_empty() {
+                let category = categorize_python_message(msg);
+                errors.push(CompilerError {
+                    code: None,
+                    message: msg.to_string(),
+                    file: None,
+                    line: None,
+                    category,
+                });
+            }
+            continue;
+        }
+
+        // Reset traceback state on blank lines
+        if trimmed.is_empty() {
+            last_tb_file = None;
+            last_tb_line = None;
+        }
+
+        // Suppress unused-variable warning for loop index
+        let _ = i;
+    }
+
+    errors
+}
+
+// ---------------------------------------------------------------------------
+// Language detection for watch commands
+// ---------------------------------------------------------------------------
+
+/// Detected language from a watch command, used to select the right error parser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchLanguage {
+    Rust,
+    TypeScript,
+    Python,
+    Unknown,
+}
+
+/// Detect the language associated with a watch command.
+fn detect_watch_language(watch_cmd: &str) -> WatchLanguage {
+    let lower = watch_cmd.to_lowercase();
+    // Rust
+    if lower.contains("cargo") || lower.contains("rustc") {
+        return WatchLanguage::Rust;
+    }
+    // TypeScript / JavaScript
+    if lower.contains("tsc")
+        || lower.contains("npm ")
+        || lower.contains("npx ")
+        || lower.contains("eslint")
+        || lower.contains("jest")
+        || lower.contains("vitest")
+        || lower.contains("yarn ")
+        || lower.contains("pnpm ")
+        || lower.contains("node ")
+        || lower.contains("bun ")
+    {
+        return WatchLanguage::TypeScript;
+    }
+    // Python
+    if lower.contains("pytest")
+        || lower.contains("python")
+        || lower.contains("mypy")
+        || lower.contains("ruff")
+        || lower.contains("flake8")
+        || lower.contains("pylint")
+        || lower.contains("pyright")
+    {
+        return WatchLanguage::Python;
+    }
+    WatchLanguage::Unknown
+}
+
 /// Return a targeted fix hint for a given error category.
 pub fn error_category_hint(category: &ErrorCategory) -> &'static str {
     match category {
@@ -371,10 +784,84 @@ pub fn error_category_hint(category: &ErrorCategory) -> &'static str {
     }
 }
 
-/// Build a structured error summary for Rust compiler output.
+/// Return a targeted fix hint for TypeScript errors.
+fn ts_error_category_hint(category: &ErrorCategory) -> &'static str {
+    match category {
+        ErrorCategory::Type => {
+            "This is a TypeScript type error. Check the expected vs actual types, \
+             consider type assertions, generics, or updating interface definitions."
+        }
+        ErrorCategory::Import => {
+            "Missing module or export. Run `npm install` if the package is missing, \
+             check import paths, or add type declarations for untyped modules."
+        }
+        ErrorCategory::Unused => {
+            "Unused variable/import warnings. Remove the unused items or prefix with \
+             underscore (e.g. `_unusedVar`)."
+        }
+        ErrorCategory::Syntax => {
+            "TypeScript syntax error. Check for missing brackets, semicolons, \
+             or incorrect JSX/TSX syntax."
+        }
+        ErrorCategory::TestAssertion => {
+            "Test assertion failed. Read the expected vs actual values in the \
+             jest/vitest output and fix the implementation or update the test."
+        }
+        _ => "Read the error messages carefully and apply targeted fixes.",
+    }
+}
+
+/// Return a targeted fix hint for Python errors.
+fn python_error_category_hint(category: &ErrorCategory) -> &'static str {
+    match category {
+        ErrorCategory::Type => {
+            "This is a type error (mypy/pyright). Check the expected vs actual types, \
+             add type annotations, or use `cast()` / `# type: ignore` if correct."
+        }
+        ErrorCategory::Import => {
+            "Missing module or import. Run `pip install` for missing packages, \
+             check import paths, or fix circular imports."
+        }
+        ErrorCategory::Syntax => {
+            "Python syntax error. Check for missing colons, incorrect indentation, \
+             unclosed brackets, or invalid syntax."
+        }
+        ErrorCategory::TestAssertion => {
+            "Test assertion failed. Read the expected vs actual values in the \
+             pytest output and fix the implementation or update the test."
+        }
+        ErrorCategory::Unused => {
+            "Unused import or variable. Remove the unused items or use the `noqa` \
+             comment to suppress if intentional."
+        }
+        _ => "Read the error messages carefully and apply targeted fixes.",
+    }
+}
+
+/// Return the appropriate hint function for a detected language.
+fn hint_for_language(lang: WatchLanguage) -> fn(&ErrorCategory) -> &'static str {
+    match lang {
+        WatchLanguage::Rust => error_category_hint,
+        WatchLanguage::TypeScript => ts_error_category_hint,
+        WatchLanguage::Python => python_error_category_hint,
+        WatchLanguage::Unknown => error_category_hint,
+    }
+}
+
+/// Language label for error summary display.
+fn language_label(lang: WatchLanguage) -> &'static str {
+    match lang {
+        WatchLanguage::Rust => "Rust",
+        WatchLanguage::TypeScript => "TypeScript",
+        WatchLanguage::Python => "Python",
+        WatchLanguage::Unknown => "Rust",
+    }
+}
+
+/// Build a structured error summary from parsed compiler/tool output.
 ///
-/// Returns `None` if no Rust errors were parsed (non-Rust output falls through).
-fn build_error_summary(errors: &[CompilerError]) -> Option<String> {
+/// Returns `None` if no errors were parsed (output falls through to generic prompt).
+fn build_error_summary_for(errors: &[CompilerError], lang: WatchLanguage) -> Option<String> {
     if errors.is_empty() {
         return None;
     }
@@ -394,7 +881,11 @@ fn build_error_summary(errors: &[CompilerError]) -> Option<String> {
     for (cat, count) in &sorted {
         parts.push(format!("{count} {cat}"));
     }
-    let summary_line = format!("**Parsed {total} Rust error(s):** {}", parts.join(", "));
+    let lang_name = language_label(lang);
+    let summary_line = format!(
+        "**Parsed {total} {lang_name} error(s):** {}",
+        parts.join(", ")
+    );
 
     // Find dominant category (highest count)
     let dominant = sorted.first().map(|(cat, _)| **cat).unwrap_or("other");
@@ -404,7 +895,8 @@ fn build_error_summary(errors: &[CompilerError]) -> Option<String> {
         .map(|e| &e.category)
         .unwrap_or(&ErrorCategory::Other);
 
-    let hint = error_category_hint(dominant_category);
+    let hint_fn = hint_for_language(lang);
+    let hint = hint_fn(dominant_category);
 
     // Show up to 5 specific errors with file locations
     let mut detail_lines: Vec<String> = Vec::new();
@@ -471,9 +963,39 @@ pub fn build_watch_fix_prompt(watch_cmd: &str, output: &str) -> String {
     };
     let cmd_type = classify_watch_command(watch_cmd);
 
-    // Try structured Rust error parsing for richer hints
-    let errors = parse_rust_errors(output);
-    let structured_section = build_error_summary(&errors);
+    // Detect language from the watch command, then try the appropriate parser.
+    // Fall through to generic prompt if no structured errors are found.
+    let lang = detect_watch_language(watch_cmd);
+    let (errors, detected_lang) = match lang {
+        WatchLanguage::Rust => {
+            let errs = parse_rust_errors(output);
+            (errs, WatchLanguage::Rust)
+        }
+        WatchLanguage::TypeScript => {
+            let errs = parse_typescript_errors(output);
+            (errs, WatchLanguage::TypeScript)
+        }
+        WatchLanguage::Python => {
+            let errs = parse_python_errors(output);
+            (errs, WatchLanguage::Python)
+        }
+        WatchLanguage::Unknown => {
+            // Try each parser in order: Rust → TypeScript → Python
+            let rust_errs = parse_rust_errors(output);
+            if !rust_errs.is_empty() {
+                (rust_errs, WatchLanguage::Rust)
+            } else {
+                let ts_errs = parse_typescript_errors(output);
+                if !ts_errs.is_empty() {
+                    (ts_errs, WatchLanguage::TypeScript)
+                } else {
+                    let py_errs = parse_python_errors(output);
+                    (py_errs, WatchLanguage::Python)
+                }
+            }
+        }
+    };
+    let structured_section = build_error_summary_for(&errors, detected_lang);
 
     let hint = match cmd_type {
         "lint" => "\n\nThis is a **lint** failure — fixes are usually mechanical (unused imports, \
@@ -1585,7 +2107,7 @@ error: aborting due to 2 previous errors
 
     #[test]
     fn build_error_summary_empty_returns_none() {
-        assert!(build_error_summary(&[]).is_none());
+        assert!(build_error_summary_for(&[], WatchLanguage::Rust).is_none());
     }
 
     #[test]
@@ -1597,7 +2119,8 @@ error: aborting due to 2 previous errors
             line: Some(42),
             category: ErrorCategory::Borrow,
         }];
-        let summary = build_error_summary(&errors).expect("should return summary");
+        let summary =
+            build_error_summary_for(&errors, WatchLanguage::Rust).expect("should return summary");
         assert!(
             summary.contains("src/main.rs:42"),
             "should include file:line: {summary}"
@@ -1615,7 +2138,8 @@ error: aborting due to 2 previous errors
                 category: ErrorCategory::Type,
             })
             .collect();
-        let summary = build_error_summary(&errors).expect("should return summary");
+        let summary =
+            build_error_summary_for(&errors, WatchLanguage::Rust).expect("should return summary");
         assert!(
             summary.contains("and 3 more"),
             "should indicate truncated errors: {summary}"
@@ -1629,5 +2153,326 @@ error: aborting due to 2 previous errors
         assert_eq!(errors.len(), 1);
         // This is a general clippy warning, not specifically unused
         assert!(errors[0].code.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // TypeScript error parser tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_typescript_errors_tsc_type_error() {
+        let output = "src/app.ts(15,3): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.\n";
+        let errors = parse_typescript_errors(output);
+        assert_eq!(errors.len(), 1, "should parse one error");
+        assert_eq!(errors[0].code.as_deref(), Some("TS2345"));
+        assert_eq!(errors[0].file.as_deref(), Some("src/app.ts"));
+        assert_eq!(errors[0].line, Some(15));
+        assert_eq!(errors[0].category, ErrorCategory::Type);
+        assert!(errors[0].message.contains("not assignable"));
+    }
+
+    #[test]
+    fn parse_typescript_errors_tsc_import_error() {
+        let output = "src/index.ts(1,22): error TS2307: Cannot find module 'nonexistent' or its corresponding type declarations.\n";
+        let errors = parse_typescript_errors(output);
+        assert_eq!(errors.len(), 1, "should parse one import error");
+        assert_eq!(errors[0].code.as_deref(), Some("TS2307"));
+        assert_eq!(errors[0].category, ErrorCategory::Import);
+        assert_eq!(errors[0].file.as_deref(), Some("src/index.ts"));
+    }
+
+    #[test]
+    fn parse_typescript_errors_eslint_output() {
+        let output = "\
+/home/user/project/src/utils.ts:10:5: warning 'foo' is defined but never used  no-unused-vars
+/home/user/project/src/utils.ts:20:1: error Parsing error: Unexpected token
+";
+        let errors = parse_typescript_errors(output);
+        assert_eq!(
+            errors.len(),
+            2,
+            "should parse two eslint errors: {errors:?}"
+        );
+        // First: unused variable warning
+        assert_eq!(errors[0].category, ErrorCategory::Unused);
+        assert_eq!(
+            errors[0].file.as_deref(),
+            Some("/home/user/project/src/utils.ts")
+        );
+        assert_eq!(errors[0].line, Some(10));
+        // Second: parsing error
+        assert_eq!(errors[1].category, ErrorCategory::Syntax);
+    }
+
+    #[test]
+    fn parse_typescript_errors_jest_failure() {
+        let output = "\
+FAIL src/components/Button.test.tsx
+  ● Button component › should render correctly
+
+    expect(received).toBe(expected)
+";
+        let errors = parse_typescript_errors(output);
+        assert!(
+            errors.len() >= 2,
+            "should parse FAIL + assertion: {errors:?}"
+        );
+        // FAIL line
+        let fail = errors.iter().find(|e| e.message.contains("Test suite"));
+        assert!(fail.is_some(), "should have FAIL entry");
+        assert_eq!(fail.unwrap().category, ErrorCategory::TestAssertion);
+        // ● line
+        let assertion = errors.iter().find(|e| e.message.contains("●"));
+        assert!(assertion.is_some(), "should have assertion entry");
+        assert_eq!(assertion.unwrap().category, ErrorCategory::TestAssertion);
+    }
+
+    #[test]
+    fn parse_typescript_errors_multiple_tsc_errors() {
+        let output = "\
+src/api.ts(5,10): error TS2304: Cannot find name 'Response'.
+src/api.ts(12,3): error TS1005: ';' expected.
+src/api.ts(20,7): error TS6133: 'unused' is declared but its value is never read.
+";
+        let errors = parse_typescript_errors(output);
+        assert_eq!(errors.len(), 3, "should parse all three errors: {errors:?}");
+        // TS2304 is a 2xxx error → Type by default
+        assert_eq!(errors[0].category, ErrorCategory::Type);
+        // TS1005 is 1xxx → Syntax
+        assert_eq!(errors[1].category, ErrorCategory::Syntax);
+        // TS6133 → Unused
+        assert_eq!(errors[2].category, ErrorCategory::Unused);
+    }
+
+    // -----------------------------------------------------------------------
+    // Python error parser tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_python_errors_pytest_failure() {
+        let output = "\
+FAILED tests/test_auth.py::test_login - AssertionError: expected 200 but got 401
+FAILED tests/test_auth.py::test_signup - ValueError: invalid email
+";
+        let errors = parse_python_errors(output);
+        assert_eq!(
+            errors.len(),
+            2,
+            "should parse two pytest failures: {errors:?}"
+        );
+        assert_eq!(
+            errors[0].file.as_deref(),
+            Some("tests/test_auth.py"),
+            "should extract file from test path"
+        );
+        assert!(errors[0].message.contains("AssertionError"));
+        assert_eq!(errors[0].category, ErrorCategory::TestAssertion);
+        assert!(errors[1].message.contains("ValueError"));
+    }
+
+    #[test]
+    fn parse_python_errors_mypy_output() {
+        let output = "\
+src/models.py:42: error: Incompatible types in assignment (expression has type \"str\", variable has type \"int\")
+src/views.py:15: error: Module \"flask\" has no attribute \"missing\"
+";
+        let errors = parse_python_errors(output);
+        assert_eq!(errors.len(), 2, "should parse two mypy errors: {errors:?}");
+        // First: type error
+        assert_eq!(errors[0].file.as_deref(), Some("src/models.py"));
+        assert_eq!(errors[0].line, Some(42));
+        assert_eq!(errors[0].category, ErrorCategory::Type);
+        // Second: attribute error (categorized as Other or Type)
+        assert_eq!(errors[1].file.as_deref(), Some("src/views.py"));
+        assert_eq!(errors[1].line, Some(15));
+    }
+
+    #[test]
+    fn parse_python_errors_traceback() {
+        let output = "\
+Traceback (most recent call last):
+  File \"app.py\", line 10, in main
+    import nonexistent_module
+ModuleNotFoundError: No module named 'nonexistent_module'
+";
+        let errors = parse_python_errors(output);
+        assert!(
+            !errors.is_empty(),
+            "should parse at least one error from traceback: {errors:?}"
+        );
+        let import_err = errors.iter().find(|e| e.category == ErrorCategory::Import);
+        assert!(
+            import_err.is_some(),
+            "should find an import error: {errors:?}"
+        );
+        let err = import_err.unwrap();
+        assert_eq!(err.file.as_deref(), Some("app.py"));
+        assert_eq!(err.line, Some(10));
+        assert!(err.message.contains("ModuleNotFoundError"));
+    }
+
+    #[test]
+    fn parse_python_errors_pytest_assertion_detail() {
+        let output = "\
+FAILED tests/test_math.py::test_add - AssertionError: assert 3 == 4
+E       AssertionError: assert add(1, 2) == 4
+E       assert 3 == 4
+";
+        let errors = parse_python_errors(output);
+        assert!(
+            errors.len() >= 2,
+            "should parse FAILED line + E lines: {errors:?}"
+        );
+        // The FAILED line
+        let failed = errors
+            .iter()
+            .find(|e| e.message.contains("AssertionError: assert 3 == 4"));
+        assert!(failed.is_some(), "should have FAILED line: {errors:?}");
+        // E lines
+        let e_lines: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.starts_with("AssertionError") || e.message.contains("assert"))
+            .collect();
+        assert!(
+            !e_lines.is_empty(),
+            "should have assertion detail lines: {errors:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // build_watch_fix_prompt integration tests for TS and Python
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_watch_fix_prompt_npm_test_typescript_errors() {
+        let output = "src/app.ts(15,3): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.";
+        let prompt = build_watch_fix_prompt("npm test", output);
+        assert!(
+            prompt.contains("Parsed 1 TypeScript error"),
+            "should show structured TypeScript summary: {prompt}"
+        );
+        assert!(
+            prompt.contains("TS2345"),
+            "should include error code: {prompt}"
+        );
+        assert!(
+            prompt.contains("type"),
+            "should include type hint: {prompt}"
+        );
+    }
+
+    #[test]
+    fn build_watch_fix_prompt_pytest_python_errors() {
+        let output =
+            "FAILED tests/test_auth.py::test_login - AssertionError: expected 200 but got 401";
+        let prompt = build_watch_fix_prompt("pytest", output);
+        assert!(
+            prompt.contains("Parsed") && prompt.contains("Python error"),
+            "should show structured Python summary: {prompt}"
+        );
+        assert!(
+            prompt.contains("test_auth.py"),
+            "should include file name: {prompt}"
+        );
+    }
+
+    #[test]
+    fn build_watch_fix_prompt_unknown_cmd_falls_through_to_generic() {
+        let output = "Something went wrong but it's not any recognizable format";
+        let prompt = build_watch_fix_prompt("make build", output);
+        assert!(
+            prompt.contains("Please fix the issues"),
+            "non-matching output should get generic prompt: {prompt}"
+        );
+        assert!(
+            !prompt.contains("Parsed"),
+            "should not have structured summary for unrecognized output: {prompt}"
+        );
+    }
+
+    #[test]
+    fn build_watch_fix_prompt_tsc_uses_ts_hints() {
+        let output = "src/index.ts(1,22): error TS2307: Cannot find module 'foo' or its corresponding type declarations.";
+        let prompt = build_watch_fix_prompt("npx tsc --noEmit", output);
+        assert!(
+            prompt.contains("TypeScript"),
+            "should identify as TypeScript: {prompt}"
+        );
+        assert!(
+            prompt.contains("npm install") || prompt.contains("import path"),
+            "should give TS-specific import hint: {prompt}"
+        );
+    }
+
+    #[test]
+    fn build_watch_fix_prompt_mypy_uses_python_hints() {
+        let output =
+            "src/models.py:42: error: Incompatible types in assignment (expression has type \"str\", variable has type \"int\")";
+        let prompt = build_watch_fix_prompt("mypy src/", output);
+        assert!(
+            prompt.contains("Python"),
+            "should identify as Python: {prompt}"
+        );
+        assert!(
+            prompt.contains("type") || prompt.contains("annotation"),
+            "should give Python-specific type hint: {prompt}"
+        );
+    }
+
+    #[test]
+    fn detect_watch_language_classification() {
+        assert_eq!(detect_watch_language("cargo test"), WatchLanguage::Rust);
+        assert_eq!(detect_watch_language("cargo clippy"), WatchLanguage::Rust);
+        assert_eq!(detect_watch_language("npm test"), WatchLanguage::TypeScript);
+        assert_eq!(detect_watch_language("npx tsc"), WatchLanguage::TypeScript);
+        assert_eq!(
+            detect_watch_language("npx eslint ."),
+            WatchLanguage::TypeScript
+        );
+        assert_eq!(detect_watch_language("jest"), WatchLanguage::TypeScript);
+        assert_eq!(detect_watch_language("vitest"), WatchLanguage::TypeScript);
+        assert_eq!(detect_watch_language("pytest"), WatchLanguage::Python);
+        assert_eq!(
+            detect_watch_language("python -m pytest"),
+            WatchLanguage::Python
+        );
+        assert_eq!(detect_watch_language("mypy src/"), WatchLanguage::Python);
+        assert_eq!(detect_watch_language("ruff check ."), WatchLanguage::Python);
+        assert_eq!(detect_watch_language("make build"), WatchLanguage::Unknown);
+    }
+
+    #[test]
+    fn build_error_summary_for_typescript_label() {
+        let errors = vec![CompilerError {
+            code: Some("TS2345".to_string()),
+            message: "type mismatch".to_string(),
+            file: Some("src/app.ts".to_string()),
+            line: Some(10),
+            category: ErrorCategory::Type,
+        }];
+        let summary = build_error_summary_for(&errors, WatchLanguage::TypeScript)
+            .expect("should return summary");
+        assert!(
+            summary.contains("TypeScript"),
+            "should label as TypeScript: {summary}"
+        );
+        assert!(!summary.contains("Rust"), "should not say Rust: {summary}");
+    }
+
+    #[test]
+    fn build_error_summary_for_python_label() {
+        let errors = vec![CompilerError {
+            code: None,
+            message: "AssertionError: expected True".to_string(),
+            file: Some("tests/test_foo.py".to_string()),
+            line: None,
+            category: ErrorCategory::TestAssertion,
+        }];
+        let summary =
+            build_error_summary_for(&errors, WatchLanguage::Python).expect("should return summary");
+        assert!(
+            summary.contains("Python"),
+            "should label as Python: {summary}"
+        );
     }
 }
