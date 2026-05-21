@@ -102,6 +102,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/grep",
     "/test",
     "/lint",
+    "/security",
     "/loop",
     "/spawn",
     "/update",
@@ -534,7 +535,7 @@ pub use crate::watch::handle_watch;
 
 pub use crate::commands_update::handle_update;
 
-pub use crate::commands_lint::{handle_lint, handle_lint_fix, handle_test};
+pub use crate::commands_lint::{handle_lint, handle_lint_fix, handle_security, handle_test};
 
 pub use crate::commands_run::{handle_loop, handle_run, handle_run_usage};
 

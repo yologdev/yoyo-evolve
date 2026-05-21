@@ -458,6 +458,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "    /security          Run dependency vulnerability scan"
+    );
+    let _ = writeln!(
+        s,
         "    /run <cmd>         Run a shell command (no AI, no tokens)"
     );
     let _ = writeln!(
@@ -737,6 +741,9 @@ pub fn help_text() -> String {
     out.push_str(
         "  /lint [pedantic|strict|fix|unsafe]  Run project linter (clippy, eslint, ruff, etc.)\n",
     );
+    out.push_str(
+        "  /security          Run dependency vulnerability scan (cargo audit, npm audit, etc.)\n",
+    );
     out.push_str("  /run <cmd>         Run a shell command directly (no AI, no tokens)\n");
     out.push_str("  !<cmd>             Shortcut for /run\n");
     out.push_str("  /bg <sub>          Manage background shell processes (run/list/output/kill)\n");
@@ -907,6 +914,7 @@ mod tests {
             "/fix",
             "/test",
             "/lint",
+            "/security",
             "/loop",
             "/run",
             "/docs",
@@ -1013,8 +1021,19 @@ mod tests {
         let ai_start = text.find("── AI ──").expect("AI header missing");
         let project_section = &text[project_start..ai_start];
         for cmd in &[
-            "/context", "/init", "/health", "/fix", "/test", "/lint", "/loop", "/run", "/docs",
-            "/find", "/index", "/tree",
+            "/context",
+            "/init",
+            "/health",
+            "/fix",
+            "/test",
+            "/lint",
+            "/security",
+            "/loop",
+            "/run",
+            "/docs",
+            "/find",
+            "/index",
+            "/tree",
         ] {
             assert!(
                 project_section.contains(cmd),

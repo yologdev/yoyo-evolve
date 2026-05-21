@@ -56,6 +56,7 @@ pub(crate) enum CommandRoute {
     LintFix,
     Lint,
     Fix,
+    Security,
     History,
     Search,
     Marks,
@@ -143,6 +144,7 @@ pub(crate) fn route_command(input: &str) -> CommandRoute {
         "/health" => CommandRoute::Health,
         "/doctor" => CommandRoute::Doctor,
         "/test" => CommandRoute::Test,
+        "/security" => CommandRoute::Security,
         "/lint fix" => CommandRoute::LintFix,
         "/fix" => CommandRoute::Fix,
         "/marks" => CommandRoute::Marks,
@@ -580,6 +582,10 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         }
         CommandRoute::Test => {
             commands::handle_test();
+            CommandResult::Continue
+        }
+        CommandRoute::Security => {
+            commands::handle_security();
             CommandResult::Continue
         }
         CommandRoute::LintFix => {

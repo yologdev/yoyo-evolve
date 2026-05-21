@@ -1,4 +1,4 @@
-//! Lint and test command handlers: /test, /lint, /lint fix, /lint unsafe.
+//! Lint, test, and security command handlers: /test, /lint, /lint fix, /lint unsafe, /security.
 
 use crate::commands_project::{detect_project_type, ProjectType};
 use crate::commands_session::auto_compact_if_needed;
@@ -546,8 +546,288 @@ pub fn handle_lint_unsafe() -> Option<String> {
 
     Some(summary)
 }
+/// Return the security audit command for a given project type, or `None` if
+/// the tool isn't installed (with an install hint as the error string).
+fn security_audit_command(
+    project_type: &ProjectType,
+) -> Result<(&'static str, Vec<&'static str>), Option<&'static str>> {
+    match project_type {
+        ProjectType::Rust => {
+            // Check if cargo-audit is installed
+            let check = std::process::Command::new("cargo")
+                .args(["audit", "--version"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if check.map(|s| s.success()).unwrap_or(false) {
+                Ok(("cargo audit", vec!["cargo", "audit"]))
+            } else {
+                Err(Some("cargo install cargo-audit"))
+            }
+        }
+        ProjectType::Node => Ok(("npm audit", vec!["npm", "audit", "--json"])),
+        ProjectType::Python => {
+            // Try pip-audit first, then safety
+            let pip_check = std::process::Command::new("pip-audit")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if pip_check.map(|s| s.success()).unwrap_or(false) {
+                Ok(("pip-audit", vec!["pip-audit"]))
+            } else {
+                let safety_check = std::process::Command::new("safety")
+                    .arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+                if safety_check.map(|s| s.success()).unwrap_or(false) {
+                    Ok(("safety check", vec!["safety", "check"]))
+                } else {
+                    Err(Some("pip install pip-audit"))
+                }
+            }
+        }
+        ProjectType::Go => {
+            let check = std::process::Command::new("govulncheck")
+                .arg("-version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if check.map(|s| s.success()).unwrap_or(false) {
+                Ok(("govulncheck ./...", vec!["govulncheck", "./..."]))
+            } else {
+                Err(Some("go install golang.org/x/vuln/cmd/govulncheck@latest"))
+            }
+        }
+        ProjectType::Java => Err(Some(
+            "For Java, consider: mvn org.owasp:dependency-check-maven:check",
+        )),
+        ProjectType::Ruby => {
+            let check = std::process::Command::new("bundle-audit")
+                .arg("version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if check.map(|s| s.success()).unwrap_or(false) {
+                Ok(("bundle-audit check", vec!["bundle-audit", "check"]))
+            } else {
+                Err(Some("gem install bundler-audit"))
+            }
+        }
+        _ => Err(None),
+    }
+}
 
-// ── /watch ──────────────────────────────────────────────────────────────
+/// Severity level for vulnerability findings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    Critical,
+    High,
+    Medium,
+    Low,
+    Info,
+}
+
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Severity::Critical => write!(f, "critical"),
+            Severity::High => write!(f, "high"),
+            Severity::Medium => write!(f, "medium"),
+            Severity::Low => write!(f, "low"),
+            Severity::Info => write!(f, "info"),
+        }
+    }
+}
+
+fn severity_color(severity: &Severity) -> &'static Color {
+    match severity {
+        Severity::Critical | Severity::High => &RED,
+        Severity::Medium => &YELLOW,
+        Severity::Low | Severity::Info => &DIM,
+    }
+}
+
+/// Parse npm audit --json output into a severity summary.
+fn parse_npm_audit_json(json_str: &str) -> (Vec<(Severity, u32)>, Vec<String>) {
+    let mut counts = Vec::new();
+    let mut findings = Vec::new();
+
+    // npm audit JSON has: { "metadata": { "vulnerabilities": { "critical": N, ... } } }
+    // and: { "vulnerabilities": { "<pkg>": { "severity": "...", ... } } }
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+        // Try metadata.vulnerabilities first (npm 7+)
+        if let Some(meta_vulns) = val.get("metadata").and_then(|m| m.get("vulnerabilities")) {
+            for (sev_name, sev_enum) in [
+                ("critical", Severity::Critical),
+                ("high", Severity::High),
+                ("moderate", Severity::Medium),
+                ("low", Severity::Low),
+                ("info", Severity::Info),
+            ] {
+                if let Some(n) = meta_vulns.get(sev_name).and_then(|v| v.as_u64()) {
+                    if n > 0 {
+                        counts.push((sev_enum, n as u32));
+                    }
+                }
+            }
+        }
+
+        // Extract top findings from vulnerabilities object
+        if let Some(vulns) = val.get("vulnerabilities").and_then(|v| v.as_object()) {
+            for (pkg, info) in vulns.iter().take(10) {
+                let sev = info
+                    .get("severity")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("unknown");
+                findings.push(format!("{pkg} ({sev})"));
+            }
+        }
+    }
+
+    (counts, findings)
+}
+
+/// Run a dependency vulnerability scan appropriate for the detected project type.
+pub fn handle_security() -> Option<String> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let project_type = detect_project_type(&cwd);
+
+    println!("\n{BOLD}  \u{1f512} Security Audit{RESET}");
+    println!("{DIM}  Detected project: {project_type}{RESET}");
+
+    if project_type == ProjectType::Unknown {
+        println!(
+            "{DIM}  Could not detect project type. Looked for: Cargo.toml, package.json, go.mod, pyproject.toml, etc.{RESET}"
+        );
+        println!("{DIM}  Try running your language's audit tool manually:{RESET}");
+        println!("{DIM}    Rust:   cargo audit{RESET}");
+        println!("{DIM}    Node:   npm audit{RESET}");
+        println!("{DIM}    Python: pip-audit{RESET}");
+        println!("{DIM}    Go:     govulncheck ./...{RESET}\n");
+        return Some("Security scan: could not detect project type".to_string());
+    }
+
+    let (label, args) = match security_audit_command(&project_type) {
+        Ok(cmd) => cmd,
+        Err(Some(install_hint)) => {
+            println!("\n{YELLOW}  \u{26a0} No audit tool found for {project_type}{RESET}");
+            println!("{DIM}  Install with: {install_hint}{RESET}\n");
+            return Some(format!(
+                "Security scan: audit tool not installed for {project_type}. Install with: {install_hint}"
+            ));
+        }
+        Err(None) => {
+            println!("\n{DIM}  No audit tool configured for {project_type}{RESET}\n");
+            return Some(format!(
+                "Security scan: no audit tool configured for {project_type}"
+            ));
+        }
+    };
+
+    println!("{DIM}  Running: {label}...{RESET}");
+    let start = std::time::Instant::now();
+
+    let output = std::process::Command::new(args[0])
+        .args(&args[1..])
+        .output();
+
+    let elapsed = format_duration(start.elapsed());
+
+    match output {
+        Err(e) => {
+            println!("\n{RED}  \u{2717} Failed to run {label}: {e}{RESET}\n");
+            Some(format!("Security scan failed to run {label}: {e}"))
+        }
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let combined = if stderr.is_empty() {
+                stdout.to_string()
+            } else {
+                format!("{stdout}\n{stderr}")
+            };
+
+            // For npm audit --json, parse the JSON for a clean summary
+            let is_npm_json = project_type == ProjectType::Node && args.contains(&"--json");
+
+            if o.status.success() {
+                println!("\n{GREEN}  \u{2713} No vulnerabilities found ({elapsed}){RESET}\n");
+                if !combined.trim().is_empty() {
+                    let lines: Vec<&str> = combined.lines().collect();
+                    let tail = if lines.len() > 5 {
+                        &lines[lines.len() - 5..]
+                    } else {
+                        &lines
+                    };
+                    for line in tail {
+                        println!("{DIM}  {line}{RESET}");
+                    }
+                    println!();
+                }
+                Some(format!("Security scan passed ({elapsed}): {label}"))
+            } else {
+                let code = o.status.code().unwrap_or(-1);
+
+                if is_npm_json {
+                    let (counts, findings) = parse_npm_audit_json(&stdout);
+                    if !counts.is_empty() || !findings.is_empty() {
+                        let total: u32 = counts.iter().map(|(_, n)| n).sum();
+                        println!(
+                            "\n{RED}  \u{26a0} Found {total} vulnerability/ies ({elapsed}){RESET}\n"
+                        );
+
+                        for (sev, count) in &counts {
+                            let color = severity_color(sev);
+                            println!("  {color}  {sev}: {count}{RESET}");
+                        }
+                        if !findings.is_empty() {
+                            println!();
+                            println!("{DIM}  Top findings:{RESET}");
+                            for f in &findings {
+                                println!("  {YELLOW}  \u{2022} {f}{RESET}");
+                            }
+                        }
+                        println!();
+
+                        let mut summary = format!(
+                            "Security scan FOUND {total} vulnerabilities ({elapsed}): {label}\n"
+                        );
+                        for (sev, count) in &counts {
+                            summary.push_str(&format!("  {sev}: {count}\n"));
+                        }
+                        return Some(summary);
+                    }
+                }
+
+                // Generic output for non-npm or fallback
+                println!("\n{RED}  \u{26a0} Audit found issues (exit {code}, {elapsed}){RESET}\n");
+
+                let lines: Vec<&str> = combined.lines().collect();
+                let tail = if lines.len() > 20 {
+                    &lines[lines.len() - 20..]
+                } else {
+                    &lines
+                };
+                for line in tail {
+                    println!("  {line}");
+                }
+                println!();
+
+                let mut summary =
+                    format!("Security scan found issues (exit {code}, {elapsed}): {label}\n");
+                let preview: String = tail.iter().take(20).fold(String::new(), |mut acc, l| {
+                    acc.push_str(l);
+                    acc.push('\n');
+                    acc
+                });
+                summary.push_str(&preview);
+                Some(summary)
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1020,5 +1300,233 @@ unsafe impl Send for Foo {}
             LINT_SUBCOMMANDS.contains(&"unsafe"),
             "LINT_SUBCOMMANDS should contain 'unsafe'"
         );
+    }
+
+    // ── /security tests ──
+
+    #[test]
+    fn security_command_recognized() {
+        assert!(!is_unknown_command("/security"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/security"),
+            "/security should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn security_audit_command_rust() {
+        // Result depends on whether cargo-audit is installed, but type must be correct
+        let result = security_audit_command(&ProjectType::Rust);
+        match result {
+            Ok((label, args)) => {
+                assert_eq!(label, "cargo audit");
+                assert_eq!(args[0], "cargo");
+                assert!(args.contains(&"audit"));
+            }
+            Err(hint) => {
+                assert_eq!(hint, Some("cargo install cargo-audit"));
+            }
+        }
+    }
+
+    #[test]
+    fn security_audit_command_node() {
+        // Node always returns Ok (npm is assumed present)
+        let result = security_audit_command(&ProjectType::Node);
+        assert!(result.is_ok(), "Node should always return a command");
+        let (label, args) = result.unwrap();
+        assert_eq!(label, "npm audit");
+        assert_eq!(args[0], "npm");
+        assert!(args.contains(&"audit"));
+        assert!(args.contains(&"--json"));
+    }
+
+    #[test]
+    fn security_audit_command_python() {
+        // Returns Ok with pip-audit or safety, or Err with install hint
+        let result = security_audit_command(&ProjectType::Python);
+        match result {
+            Ok((label, _args)) => {
+                assert!(
+                    label == "pip-audit" || label == "safety check",
+                    "Python audit label should be pip-audit or safety check, got: {label}"
+                );
+            }
+            Err(hint) => {
+                assert_eq!(hint, Some("pip install pip-audit"));
+            }
+        }
+    }
+
+    #[test]
+    fn security_audit_command_go() {
+        let result = security_audit_command(&ProjectType::Go);
+        match result {
+            Ok((label, args)) => {
+                assert_eq!(label, "govulncheck ./...");
+                assert_eq!(args[0], "govulncheck");
+            }
+            Err(hint) => {
+                assert_eq!(
+                    hint,
+                    Some("go install golang.org/x/vuln/cmd/govulncheck@latest")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn security_audit_command_ruby() {
+        let result = security_audit_command(&ProjectType::Ruby);
+        match result {
+            Ok((label, args)) => {
+                assert_eq!(label, "bundle-audit check");
+                assert_eq!(args[0], "bundle-audit");
+            }
+            Err(hint) => {
+                assert_eq!(hint, Some("gem install bundler-audit"));
+            }
+        }
+    }
+
+    #[test]
+    fn security_audit_command_java() {
+        // Java always returns Err with a Maven hint
+        let result = security_audit_command(&ProjectType::Java);
+        assert!(result.is_err(), "Java should return Err (hint only)");
+        let hint = result.unwrap_err();
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("mvn"));
+    }
+
+    #[test]
+    fn security_audit_command_unknown() {
+        let result = security_audit_command(&ProjectType::Unknown);
+        assert!(result.is_err(), "Unknown project should return Err");
+        assert_eq!(result.unwrap_err(), None);
+    }
+
+    #[test]
+    fn security_audit_command_make_returns_none() {
+        // Make has no security audit tool
+        let result = security_audit_command(&ProjectType::Make);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), None);
+    }
+
+    #[test]
+    fn parse_npm_audit_json_full() {
+        let json = r#"{
+            "metadata": {
+                "vulnerabilities": {
+                    "critical": 1,
+                    "high": 2,
+                    "moderate": 3,
+                    "low": 4,
+                    "info": 0
+                }
+            },
+            "vulnerabilities": {
+                "lodash": {"severity": "critical", "via": []},
+                "express": {"severity": "high", "via": []}
+            }
+        }"#;
+
+        let (counts, findings) = parse_npm_audit_json(json);
+        assert_eq!(counts.len(), 4, "Should have 4 non-zero severity counts");
+        assert_eq!(counts[0], (Severity::Critical, 1));
+        assert_eq!(counts[1], (Severity::High, 2));
+        assert_eq!(counts[2], (Severity::Medium, 3));
+        assert_eq!(counts[3], (Severity::Low, 4));
+
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().any(|f| f.contains("lodash")));
+        assert!(findings.iter().any(|f| f.contains("express")));
+    }
+
+    #[test]
+    fn parse_npm_audit_json_empty() {
+        let json = r#"{
+            "metadata": {
+                "vulnerabilities": {
+                    "critical": 0,
+                    "high": 0,
+                    "moderate": 0,
+                    "low": 0,
+                    "info": 0
+                }
+            },
+            "vulnerabilities": {}
+        }"#;
+
+        let (counts, findings) = parse_npm_audit_json(json);
+        assert!(counts.is_empty(), "All-zero counts should be empty");
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn parse_npm_audit_json_invalid() {
+        let (counts, findings) = parse_npm_audit_json("not valid json");
+        assert!(counts.is_empty());
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn parse_npm_audit_json_missing_metadata() {
+        // Only vulnerabilities object, no metadata
+        let json = r#"{
+            "vulnerabilities": {
+                "shelljs": {"severity": "high", "via": []}
+            }
+        }"#;
+        let (counts, findings) = parse_npm_audit_json(json);
+        assert!(counts.is_empty(), "No metadata means no severity counts");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].contains("shelljs"));
+        assert!(findings[0].contains("high"));
+    }
+
+    #[test]
+    fn parse_npm_audit_json_truncates_findings() {
+        // More than 10 vulnerabilities — should only take first 10
+        let mut vulns = String::from("{\"vulnerabilities\":{");
+        for i in 0..15 {
+            if i > 0 {
+                vulns.push(',');
+            }
+            vulns.push_str(&format!("\"pkg-{i}\":{{\"severity\":\"low\",\"via\":[]}}"));
+        }
+        vulns.push_str("},\"metadata\":{\"vulnerabilities\":{\"low\":15}}}");
+
+        let (counts, findings) = parse_npm_audit_json(&vulns);
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0], (Severity::Low, 15));
+        assert_eq!(
+            findings.len(),
+            10,
+            "Should truncate findings to 10, got {}",
+            findings.len()
+        );
+    }
+
+    #[test]
+    fn severity_display() {
+        assert_eq!(format!("{}", Severity::Critical), "critical");
+        assert_eq!(format!("{}", Severity::High), "high");
+        assert_eq!(format!("{}", Severity::Medium), "medium");
+        assert_eq!(format!("{}", Severity::Low), "low");
+        assert_eq!(format!("{}", Severity::Info), "info");
+    }
+
+    #[test]
+    fn severity_colors_correct() {
+        // Critical and High should be red
+        assert!(std::ptr::eq(severity_color(&Severity::Critical), &RED));
+        assert!(std::ptr::eq(severity_color(&Severity::High), &RED));
+        // Medium should be yellow
+        assert!(std::ptr::eq(severity_color(&Severity::Medium), &YELLOW));
+        // Low and Info should be dim
+        assert!(std::ptr::eq(severity_color(&Severity::Low), &DIM));
+        assert!(std::ptr::eq(severity_color(&Severity::Info), &DIM));
     }
 }

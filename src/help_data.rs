@@ -403,7 +403,7 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /load my-debug-session.json",
         ),
         "diff" => Some(
-            "/diff [options] [file] — Show git changes\n\n\
+            "/diff [options] [file|ref] — Show git changes\n\n\
              Usage:\n\
              \x20 /diff                    Show all uncommitted changes\n\
              \x20 /diff --staged           Show only staged changes\n\
@@ -413,10 +413,17 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /diff src/main.rs        Show changes for a specific file\n\
              \x20 /diff --staged main.rs   Staged changes for a specific file\n\
              \x20 /diff --stat --staged    Diffstat for staged changes only\n\
+             \x20 /diff --stat HEAD~3      Diffstat of last 3 commits\n\
+             \x20 /diff --stat main        Diffstat vs another branch\n\
              \x20 /diff --explain --staged Explain only staged changes\n\n\
-             Aliases: --staged, --cached\n\n\
+             Flags:\n\
+             \x20 --staged, --cached  Show only staged (index) changes\n\
+             \x20 --name-only         List changed filenames without diff content\n\
+             \x20 --stat              Show compact per-file change summary (visual bar)\n\
+             \x20 --explain           Send diff to AI for natural-language explanation\n\n\
+             --stat accepts a git ref (branch, tag, HEAD~N) to compare against.\n\
+             --stat is mutually exclusive with --explain (--stat wins if both given).\n\n\
              Displays file summary, change stats, and colored diff output.\n\
-             --explain sends the diff to the AI for a natural-language summary.\n\
              Works in any git repository.",
         ),
         "blame" => Some(
@@ -784,6 +791,22 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Strictness levels only affect Rust projects (clippy). Other languages\n\
              use their default linter regardless of strictness level.\n\n\
              Output is displayed directly in the terminal.",
+        ),
+        "security" => Some(
+            "/security — Run dependency vulnerability scan\n\n\
+             Detects the project type and runs the appropriate security audit tool:\n\
+             \x20 • Rust: cargo audit\n\
+             \x20 • Node: npm audit (with JSON summary)\n\
+             \x20 • Python: pip-audit / safety check\n\
+             \x20 • Go: govulncheck\n\
+             \x20 • Ruby: bundle-audit\n\n\
+             If the audit tool isn't installed, prints a helpful install command.\n\
+             Findings are grouped by severity (critical/high/medium/low) with\n\
+             colored output.\n\n\
+             This is a read-only scan — it reports vulnerabilities but does not\n\
+             attempt to fix them automatically.\n\n\
+             Examples:\n\
+             \x20 /security          Scan current project for known vulnerabilities",
         ),
         "loop" => Some(
             "/loop <N|until-pass> <prompt> — Repeat a prompt in a polling loop\n\n\
@@ -1218,6 +1241,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "run" => Some("Run a shell command"),
         "save" => Some("Save session to file"),
         "search" => Some("Search conversation history"),
+        "security" => Some("Run dependency vulnerability scan"),
         "side" => Some("Ask a quick question without affecting conversation"),
         "skill" => Some("List, inspect, install, and search for skills"),
         "spawn" => Some("Run a task in a sub-agent"),
