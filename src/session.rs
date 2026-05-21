@@ -255,6 +255,48 @@ impl TurnHistory {
     }
 }
 
+/// Format a compact, one-line summary of files changed in the current turn only.
+///
+/// `before` is the list of file paths that were already tracked before this turn.
+/// Only files in `changes` that are NOT in `before` are shown.
+///
+/// For 1–3 files: inline list like `Files changed: ✏ src/main.rs, 🔧 src/cli.rs`
+/// For 4+ files: `Files changed (6): ✏ src/main.rs, 🔧 src/cli.rs, ✏ src/lib.rs, …`
+pub fn format_turn_changes(before: &[String], changes: &SessionChanges) -> String {
+    let snapshot = changes.snapshot();
+    // Filter to only files NOT in the before list
+    let new_changes: Vec<&FileChange> = snapshot
+        .iter()
+        .filter(|c| !before.contains(&c.path))
+        .collect();
+    if new_changes.is_empty() {
+        return String::new();
+    }
+
+    let icon = |kind: ChangeKind| match kind {
+        ChangeKind::Write => "✏",
+        ChangeKind::Edit => "🔧",
+    };
+
+    let total = new_changes.len();
+    let show_count = if total > 3 { 3 } else { total };
+    let file_parts: Vec<String> = new_changes[..show_count]
+        .iter()
+        .map(|c| format!("{} {}", icon(c.kind), c.path))
+        .collect();
+    let mut line = String::new();
+    if total <= 3 {
+        line.push_str(&format!("  Files changed: {}", file_parts.join(", ")));
+    } else {
+        line.push_str(&format!(
+            "  Files changed ({}): {}, …",
+            total,
+            file_parts.join(", ")
+        ));
+    }
+    line
+}
+
 /// Format a human-readable summary of session changes.
 pub fn format_changes(changes: &SessionChanges) -> String {
     let snapshot = changes.snapshot();
@@ -1283,5 +1325,95 @@ mod tests {
         for p in &paths {
             assert!(output.contains(p), "Missing path: {p}");
         }
+    }
+
+    // --- format_turn_changes tests ---
+
+    #[test]
+    fn test_format_turn_changes_empty_no_changes() {
+        let changes = SessionChanges::new();
+        let before: Vec<String> = vec![];
+        let output = format_turn_changes(&before, &changes);
+        assert!(output.is_empty(), "Expected empty for no changes");
+    }
+
+    #[test]
+    fn test_format_turn_changes_all_before_returns_empty() {
+        let changes = SessionChanges::new();
+        changes.record("src/main.rs", ChangeKind::Write);
+        let before = vec!["src/main.rs".to_string()];
+        let output = format_turn_changes(&before, &changes);
+        assert!(
+            output.is_empty(),
+            "Expected empty when all files were in before"
+        );
+    }
+
+    #[test]
+    fn test_format_turn_changes_single_new_file() {
+        let changes = SessionChanges::new();
+        changes.record("src/main.rs", ChangeKind::Write);
+        let before: Vec<String> = vec![];
+        let output = format_turn_changes(&before, &changes);
+        assert!(output.contains("Files changed:"), "Missing header");
+        assert!(output.contains("✏ src/main.rs"), "Missing file entry");
+        // Should NOT contain count in parens for <=3 files
+        assert!(!output.contains("(1)"), "Should not show count for 1 file");
+    }
+
+    #[test]
+    fn test_format_turn_changes_single_edit() {
+        let changes = SessionChanges::new();
+        changes.record("src/cli.rs", ChangeKind::Edit);
+        let before: Vec<String> = vec![];
+        let output = format_turn_changes(&before, &changes);
+        assert!(output.contains("🔧 src/cli.rs"), "Missing edit icon");
+    }
+
+    #[test]
+    fn test_format_turn_changes_multiple_files() {
+        let changes = SessionChanges::new();
+        changes.record("src/main.rs", ChangeKind::Write);
+        changes.record("src/cli.rs", ChangeKind::Edit);
+        changes.record("README.md", ChangeKind::Write);
+        let before: Vec<String> = vec![];
+        let output = format_turn_changes(&before, &changes);
+        assert!(output.contains("src/main.rs"));
+        assert!(output.contains("src/cli.rs"));
+        assert!(output.contains("README.md"));
+        assert!(!output.contains("…"), "Should not truncate for 3 files");
+    }
+
+    #[test]
+    fn test_format_turn_changes_filters_before() {
+        let changes = SessionChanges::new();
+        changes.record("src/old.rs", ChangeKind::Write);
+        changes.record("src/new.rs", ChangeKind::Edit);
+        let before = vec!["src/old.rs".to_string()];
+        let output = format_turn_changes(&before, &changes);
+        assert!(
+            !output.contains("src/old.rs"),
+            "Should not show files from before"
+        );
+        assert!(output.contains("src/new.rs"), "Should show new files");
+    }
+
+    #[test]
+    fn test_format_turn_changes_four_plus_truncates() {
+        let changes = SessionChanges::new();
+        changes.record("a.rs", ChangeKind::Write);
+        changes.record("b.rs", ChangeKind::Edit);
+        changes.record("c.rs", ChangeKind::Write);
+        changes.record("d.rs", ChangeKind::Edit);
+        let before: Vec<String> = vec![];
+        let output = format_turn_changes(&before, &changes);
+        assert!(output.contains("(4)"), "Should show count for 4+ files");
+        assert!(output.contains("…"), "Should show ellipsis for 4+ files");
+        // Should show first 3
+        assert!(output.contains("a.rs"));
+        assert!(output.contains("b.rs"));
+        assert!(output.contains("c.rs"));
+        // d.rs is truncated
+        assert!(!output.contains("d.rs"), "4th file should be truncated");
     }
 }

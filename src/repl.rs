@@ -9,7 +9,7 @@ use crate::dispatch::CommandResult;
 use crate::format::*;
 use crate::git::*;
 use crate::prompt::{run_prompt_auto_retry, run_prompt_auto_retry_with_content, PromptOutcome};
-use crate::session::{SessionChanges, TurnHistory, TurnSnapshot};
+use crate::session::{format_turn_changes, SessionChanges, TurnHistory, TurnSnapshot};
 use crate::watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
 use crate::AgentConfig;
 
@@ -542,6 +542,15 @@ async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
     ctx.turn_history.push(ctx.turn_snap);
 
     let files_modified = changes_after.len() > ctx.changes_before.len();
+
+    // Show a compact summary of files changed in this turn
+    if files_modified && !is_quiet() {
+        let summary = format_turn_changes(ctx.changes_before, ctx.session_changes);
+        if !summary.is_empty() {
+            eprintln!("{DIM}{summary}{RESET}");
+        }
+    }
+
     if files_modified {
         let watch_result = run_watch_after_prompt(
             ctx.agent,
