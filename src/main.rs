@@ -36,6 +36,7 @@
 //!   /retry          Re-send the last user input
 
 mod agent_builder;
+mod banner;
 mod cli;
 mod cli_config;
 mod commands;
