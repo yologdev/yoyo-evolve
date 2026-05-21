@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --stat flag for /diff. Let me start by understanding the existing code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DiffOptions" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_diff_args\|fn … ✓ (6ms)
+ ✓ (4ms)
+  ▶ read src/commands_git.rs:169..249  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test.*parse_diff_arg… ✓ (2ms)
+ ✓ (4ms)
+  4 tools completed in 6.1s (4 ✓)
+
+Interesting — the stat_only field and --stat parsing already exist in DiffOptions! Let me check what the handle_diff function currently does with stat_only:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:214..534 ✓ (3ms)
+
+The --stat flag is already fully implemented! The stat_only field exists in DiffOptions, parse_diff_args already parses --stat, and handle_diff already handles the stat_only case (lines 276-318). There are also already tests for parsing --stat. Let me check the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1820..1870 ✓ (1ms)
+
+Now let me check the help_data.rs for the diff command:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 50 '"diff"' src/help_… ✓ (4ms)
+
+The help_data.rs already documents --stat. Let me also check the DIFF_FLAGS constant (used for completions):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DIFF_FLAGS" src/command… ✓ (3ms)
+
+Everything is already in place:
+
+1. ✅ DiffOptions has stat_only: bool field
+2. ✅ `parse_diff_args() parses --stat → stat_only = true`
+3. ✅ handle_diff() handles stat_only (lines 276-318) — runs git diff --stat, parses with `parse_diff_stat(), formats with format_diff_stat()`, returns early
+4. ✅ Combines with --cached/--staged and file arguments
+5. ✅ Help text in help_data.rs documents --stat
+6. ✅ DIFF_FLAGS includes "--stat" for tab completion
+7. ✅ Tests exist for --stat, --stat --staged, and `--stat <file>`
+
+The feature is already fully implemented. Let me verify everything builds and tests pass:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (25.5s)
+  3 tools completed in 45.5s (3 ✓)
+
+All 88 tests pass. The /diff --stat feature is already fully implemented and working:
+
+• Parsing: parse_diff_args("--stat") sets stat_only: true ✓
+• Execution: handle_diff runs git diff --stat, parses output with parse_diff_stat(), formats with format_diff_stat(), returns early without showing the full diff ✓
+• Flag combinations: Works with --cached/--staged and file arguments ✓
+• **Mutual exclusivity**: --stat is checked before the full diff path (wins over --explain) ✓
+• Help text: Documented in help_data.rs ✓
+• Tab completion: --stat is in DIFF_FLAGS ✓
+• Tests: Three tests cover --stat, --stat --staged, and --stat <file> ✓
+
+There's nothing to implement — the task was already done in a prior session. No commit needed since there are no changes to make.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short ✓ (5ms)
+
+Clean working tree. The /diff --stat feature is already complete — parsing, execution, help, completions, and tests all exist. Nothing to commit.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

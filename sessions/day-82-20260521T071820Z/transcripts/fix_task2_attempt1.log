@@ -1,0 +1,322 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code to see what exists and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stat" src/commands_git.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DiffOptions" src… ✓ (3ms)
+ ✓ (7ms)
+  ▶ read src/commands_git.rs:165..220 ✓ (1ms)
+  3 tools completed in 4.8s (3 ✓)
+
+The --stat flag is already parsed and there's already handling in handle_diff. Let me check what the evaluator is actually looking for — the issue says "no changes were made." Let me check git status:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_gi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 2.0s (2 ✓)
+
+So the evaluator says "no changes were made" — the feature was already there from a prior session. But the evaluator still wants to see changes to these files. Let me check what might be missing or incomplete:
+
+1. Let me check the help_data.rs for diff documentation
+2. Let me check if there are tests for the --stat flag parsing
+3. Let me verify the --stat handling works properly with all the flag combinations mentioned in the task
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "diff" src/help_data.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stat" src/help_data.rs ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.9s (2 ✓)
+
+So help_data.rs already has --stat documented. Let me now check what tests exist:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_diff_args\|test.*… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_parse_diff_args_st… ✓ (3ms)
+  ▶ read src/commands_git.rs:1820..1855 ✓ (2ms)
+  3 tools completed in 8.1s (3 ✓)
+
+OK, so everything is already implemented — the --stat flag parsing, the handling in handle_diff, help text, and tests. The evaluator says "no changes were made to the required files" and it failed because the feature already existed from a prior session.
+
+The evaluator wants to see actual diffs in these files. Since the feature is already fully implemented, I need to find something genuinely incomplete or improvable about the current `--stat` implementation to make meaningful changes. Let me look more carefully at the task requirements vs what's implemented:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:270..370 ✓ (2ms)
+
+Now let me check what the task says about commit-range support. The task says:
+• `/diff --stat HEAD~3` — stat of last 3 commits
+• /diff --stat branch — stat vs another branch
+
+Let me check if this is handled — the current file field would capture HEAD~3 or branch as a file path, which wouldn't work correctly with `git diff --stat`.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:520..580 ✓ (1ms)
+
+Now let me look at how the file field is being used in --stat mode. When someone types /diff --stat HEAD~3, the current code would treat HEAD~3 as a file path and pass -- HEAD~3 to git, which is wrong. It should be passed as a ref before --. This is a genuine gap.
+
+Let me also look at what the task says about --stat being mutually exclusive with --explain:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "explain\|stat_only" src… ✓ (4ms)
+
+Now let me check where handle_diff_explain is called and how stat_only interacts:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_diff_explain\|op… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_diff_explain" sr… ✓ (3ms)
+  ▶ read src/dispatch.rs:540..560 ✓ (0ms)
+  3 tools completed in 7.5s (3 ✓)
+
+I see! In dispatch.rs, when opts.explain is true, it calls handle_diff_explain. But the task says `--stat should win over --explain. Currently if both are passed, --explain` wins because the dispatch checks opts.explain first. The stat_only check is inside handle_diff() which only runs in the else branch.
+
+Now let me look more carefully at what's missing. Let me also check if there's a ref or commit-range support for --stat:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:275..280 ✓ (1ms)
+
+When the user types /diff --stat HEAD~3, the DiffOptions will have stat_only: true and `file: Some("HEAD~3")`. Then line 283-285 will do args.push("--"); args.push("HEAD~3") — which tells git "HEAD~3 is a file path." That's wrong. For a ref like HEAD~3 or a branch name, it should be git diff --stat HEAD~3 (without `--`).
+
+Let me now create a plan and implement the fixes:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 16.2s (6 ✓)
+
+Let me first understand the full DiffOptions struct usage across the codebase to avoid breaking anything:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DiffOptions\|opts\.\(fi… ✓ (4ms)
+
+Now I need to think about the right approach. The task specifically says:
+• /diff --stat HEAD~3 — stat of last 3 commits
+• /diff --stat branch — stat vs another branch
+
+The current implementation treats the positional arg as a file which is pushed after --. For refs, it needs to be placed before --. I need to detect whether the positional arg is a git ref or a file path.
+
+A practical approach: detect if the positional arg looks like a git ref (contains ~, ^, .., starts with HEAD, or is a known branch/tag). But a simpler and more correct approach is to try `git rev-parse` on the argument.
+
+Actually, looking at this more carefully, the simplest approach that matches how git diff itself works: positional args that look like refs (contain ~, ^, .., or match a branch/tag) go before --, while file paths go after --. Let me look at how git handles this disambiguation.
+
+The cleanest approach: add a `git_ref: Option<String>` field. In the parser, detect if a positional arg looks like a ref vs a file. For simplicity, let's use git rev-parse --verify as a test, but that requires running git. Alternatively, a heuristic: if the arg contains ~, `^, .., or starts with HEAD/@`, treat it as a ref. Otherwise, check if it looks like a file path (contains / or .).
+
+Actually, let me keep it simpler and more aligned with how the existing code works. I'll add a git_ref field and use a heuristic in parsing:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me first look at the complete handle_diff function structure to understand all branches:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:214..464 ✓ (2ms)
+
+Now I have a clear picture. Let me implement the changes:
+
+1. Add git_ref field to DiffOptions with heuristic detection in parse_diff_args
+2. Wire git_ref into the `--stat handling in handle_diff`
+3. Fix `--stat winning over --explain` in dispatch
+4. Update help text
+5. Add tests
+
+Let me start:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_git.rs:167..217 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now let me implement the changes. I'll add a git_ref field and a helper to distinguish refs from file paths:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (46 → 98 lines)
+        pub name_only: bool,
+        pub stat_only: bool,
+        pub explain: bool,
+  +     /// A file path to scope the diff to a specific file.
+        pub file: Option<String>,
+  +     /// A git ref (branch, tag, `HEAD~N`, commit range) to diff against.
+  +     pub git_ref: Option<String>,
+  + }
+  + 
+  + /// Heuristic: does this positional arg look like a git ref rather than a file path?
+  + ///
+  + /// Git refs include things like `HEAD~3`, `main`, `v1.0..v2.0`, `@~2`, `abc1234`.
+  + /// File paths typically contain `/` or `.` (extensions). This is a best-effort heuristic;
+  + /// ambiguous cases (e.g. a branch named `foo`) are treated as refs since `git diff`
+  + /// will resolve them correctly either way.
+  + fn looks_like_git_ref(arg: &str) -> bool {
+  +     // Explicit ref syntax: HEAD, @, contains ~ ^ .. or looks like a commit hash
+  +     if arg.starts_with("HEAD")
+  +         || arg.starts_with('@')
+  +         || arg.contains('~')
+  ... (72 more lines)
+ ✓ (52.2s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 57.5s (2 ✓)
+
+Now I need to wire git_ref into the --stat handling. Let me update the handle_diff function's --stat branch:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_git.rs:325..385 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now I need to rewrite the --stat block to properly handle git_ref. When a git_ref is provided, we diff against that ref (no need for combining staged + unstaged — it's a specific range):
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (45 → 72 lines)
+                // --stat: show compact diffstat summary without full diff
+                if opts.stat_only {
+  +                 // When a git ref is provided, diff against that ref directly
+  +                 if let Some(ref r) = opts.git_ref {
+  +                     let mut args = vec!["diff", "--stat"];
+  +                     let ref_str = r.as_str();
+  +                     args.push(ref_str);
+  +                     if opts.staged_only {
+  +                         args.push("--cached");
+  +                     }
+  +                     let file_ref;
+  +                     if let Some(ref f) = opts.file {
+  +                         args.push("--");
+  +                         file_ref = f.as_str();
+  +                         args.push(file_ref);
+  +                     }
+  +                     let stat_text = run_git(&args).unwrap_or_default();
+  +                     if stat_text.trim().is_empty() {
+  +                         println!("{DIM}  (no changes vs {r}){RESET}\n");
+  +                     } else {
+  ... (12 more lines)
+ ✓ (52.7s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 57.0s (2 ✓)
+
+Now fix the dispatch.rs to have --stat win over --explain:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/dispatch.rs:545..570 ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+The --stat already wins in parse_diff_args now (I added the if stat_only { explain = false; } line). So when `stat_only is true, explain will be false, and the dispatch will correctly call handle_diff instead of handle_diff_explain`. The fix is already in the parser. But let me verify the dispatch still works correctly — since explain gets set to false when stat_only is true, the if opts.explain check won't fire. Good.
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me also check if there are any existing tests that need updating due to the new git_ref field:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DiffOptions {" src/comm… ✓ (3ms)
+
+The tests use parse_diff_args and check individual fields, so they shouldn't break as long as the existing fields still work. But I should check if any test constructs DiffOptions directly:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DiffOptions {" src/ -r ✓ (6ms)
+
+Good, no one constructs DiffOptions directly outside the parser. Now let me check if any tests will need updating for the file vs git_ref change:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1860..1960 ✓ (1ms)
+
+Good — existing tests check individual fields and don't assert on `git_ref, so they'll pass. The file field tests use paths like src/main.rs and src/tools.rs` which contain / and ., so `looks_like_git_ref will return false` for them — correct.
+
+Now let me update help_data.rs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/help_data.rs:405..435 ✓ (1ms)
+  ▶ edit src/help_data.rs (17 → 24 lines)
+            "diff" => Some(
+  -             "/diff [options] [file] — Show git changes\n\n\
+  +             "/diff [options] [file|ref] — Show git changes\n\n\
+                 Usage:\n\
+                 \x20 /diff                    Show all uncommitted changes\n\
+                 \x20 /diff --staged           Show only staged changes\n\
+  ···
+                 \x20 /diff src/main.rs        Show changes for a specific file\n\
+                 \x20 /diff --staged main.rs   Staged changes for a specific file\n\
+                 \x20 /diff --stat --staged    Diffstat for staged changes only\n\
+  +              \x20 /diff --stat HEAD~3      Diffstat of last 3 commits\n\
+  +              \x20 /diff --stat main        Diffstat vs another branch\n\
+                 \x20 /diff --explain --staged Explain only staged changes\n\n\
+  -              Aliases: --staged, --cached\n\n\
+  +              Flags:\n\
+  +              \x20 --staged, --cached  Show only staged (index) changes\n\
+  +              \x20 --name-only         List changed filenames without diff content\n\
+  +              \x20 --stat              Show compact per-file change summary (visual bar)\n\
+  +              \x20 --explain           Send diff to AI for natural-language explanation\n\n\
+  +              --stat accepts a git ref (branch, tag, HEAD~N) to compare against.\n\
+  ... (5 more lines)
+ ✓ (53.6s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 13s (4 ✓)
+
+Now let me add the new tests:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_git.rs:1940..1955 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+I need to add tests right after the existing diff tests. Let me insert them:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (7 → 99 lines)
+            let opts = parse_diff_args("/diff --explain src/main.rs");
+            assert!(opts.explain);
+            assert!(!opts.staged_only);
+  +         assert_eq!(opts.file, Some("src/main.rs".to_string()));
+  +         assert_eq!(opts.git_ref, None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_diff_args_stat_with_ref_head() {
+  +         let opts = parse_diff_args("/diff --stat HEAD~3");
+  +         assert!(opts.stat_only);
+  +         assert_eq!(opts.git_ref, Some("HEAD~3".to_string()));
+  +         assert_eq!(opts.file, None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_diff_args_stat_with_branch() {
+  +         let opts = parse_diff_args("/diff --stat main");
+  +         assert!(opts.stat_only);
+  +         assert_eq!(opts.git_ref, Some("main".to_string()));
+  ... (77 more lines)
+ ✓ (53.3s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 58.7s (2 ✓)
+
+Now I also need to update the existing tests to check git_ref where relevant — let me verify the existing stat tests also assert git_ref:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1900..1950 ✓ (1ms)
+
+Good — the existing tests don't check git_ref (it's a new field defaulting to None), so they'll all pass. And the src/tools.rs test has / so it's correctly detected as a file.
+
+Now let me also check if DIFF_FLAGS in commands.rs needs updating for tab completion:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DIFF_FLAGS" src/command… ✓ (3ms)
+
+Good, --stat is already in DIFF_FLAGS.
+
+Now let me build and test:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (659ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (176ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (26.4s)
+  5 tools completed in 54.4s (5 ✓)
+
+All 3284 tests pass (3196 + 88), 0 failures. Let me also run the fmt check:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (668ms)
+
+All checks pass. Let me verify the diff shows changes to both required files:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD -- src/comm… ✓ (6ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Let me do a final review of the changes:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_gi… ✓ (9ms)
+
+Everything looks good. Let me verify the final task list:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+All tasks complete. Here's a summary of the changes made:
+
+### Changes to `src/commands_git.rs`:
+
+1. Added `git_ref` field to `DiffOptions` — distinguishes git refs (branches, tags, HEAD~N, commit ranges) from file paths
+2. Added `looks_like_git_ref()` heuristic — detects refs by patterns like HEAD, @, ~, ^, .., commit hashes, and simple names without path separators/extensions
+3. **Updated `parse_diff_args()** — routes positional args to either file or git_ref` based on the heuristic; enforces --stat winning over --explain (sets explain = false when `stat_only` is true)
+4. **Wired git_ref into handle_diff() --stat branch** — when a ref is provided, passes it before -- to git (not after), enabling /diff --stat HEAD~3, /diff --stat main, etc.
+5. **Added 11 new tests** — covering ref parsing (HEAD~3, branches, commit ranges, hashes, @~2, HEAD^), --stat vs --explain precedence, file-path-not-treated-as-ref, and the `looks_like_git_ref` heuristic itself
+
+### Changes to `src/help_data.rs`:
+
+1. Updated diff help text — added examples for /diff --stat HEAD~3 and /diff --stat main, added a structured "Flags" section documenting all four flags, documented --stat/--explain mutual exclusivity
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

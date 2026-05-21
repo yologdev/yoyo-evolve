@@ -1,0 +1,473 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /security command for project-aware dependency vulnerability scanning. Let me start by understanding the existing patterns.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 11s)
+
+Excellent. Now let me look at the specific areas I need to modify:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_lint_unsafe\|handle_lint_fix\|pub fn handle_lint\|pub fn handle_…  ▶ $ grep -n "handle_lint\|handle_test\|commands_lint" src/commands.rs | head -20  ▶ $ grep -n "handle_lint\|commands_lint\|LintFix\|Lint\b" src/dispatch.rs | head -30 ✓ (7ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ read src/commands_lint.rs:1..13  ▶ $ tail -20 src/commands_lint.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (1ms)
+ ✓ (44ms)
+  5 tools completed in 5.0s (5 ✓)
+
+Now let me check the exact end of the file with line numbers and look at the test module:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[cfg(test)\]\|mod tests" src/commands_lint.rs  ▶ $ wc -l src/commands_lint.rs ✓ (7ms)
+ ✓ (9ms)
+  ▶ read src/commands_lint.rs:438..553 ✓ (1ms)
+  3 tools completed in 8.8s (3 ✓)
+
+Now let me look at the dispatch routing more closely:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:40..70  ▶ read src/dispatch.rs:125..215 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/dispatch.rs:214..274 ✓ (1ms)
+  3 tools completed in 4.5s (3 ✓)
+
+Now let me see how Test is dispatched in dispatch_command:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:580..620 ✓ (1ms)
+
+Now let me check the KNOWN_COMMANDS array to see where to insert:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "KNOWN_COMMANDS" src/commands.rs | head -5 ✓ (4ms)
+  ▶ read src/commands.rs:52..112 ✓ (1ms)
+  ▶ read src/commands.rs:111..141 ✓ (1ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Now let me look at the re-export line to see what to add:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^pub use" src/commands.rs ✓ (8ms)
+
+Good. Now I have a clear picture. Let me plan and implement:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.2s (7 ✓)
+
+Now let's implement. Starting with the main handler in commands_lint.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_lint.rs:548..558 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me add the handle_security() function and its helper, plus tests. I'll insert before the #[cfg(test)] module:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (1 → 1 lines)
+  - //! Lint and test command handlers: /test, /lint, /lint fix, /lint unsafe.
+  + //! Lint, test, and security command handlers: /test, /lint, /lint fix, /lint unsafe, /security.
+ ✓ (52.9s)
+
+Now add the security command function before the test module:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (7 → 309 lines)
+  + }
+  + 
+  + /// Return the security audit command for a given project type, or `None` if
+  + /// the tool isn't installed (with an install hint as the error string).
+  + fn security_audit_command(
+  +     project_type: &ProjectType,
+  + ) -> Result<(&'static str, Vec<&'static str>), Option<&'static str>> {
+  +     match project_type {
+  +         ProjectType::Rust => {
+  +             // Check if cargo-audit is installed
+  +             let check = std::process::Command::new("cargo")
+  +                 .args(["audit", "--version"])
+  +                 .stdout(std::process::Stdio::null())
+  +                 .stderr(std::process::Stdio::null())
+  +                 .status();
+  +             if check.map(|s| s.success()).unwrap_or(false) {
+  +                 Ok(("cargo audit", vec!["cargo", "audit"]))
+  +             } else {
+  +                 Err(Some("cargo install cargo-audit"))
+  +             }
+  ... (287 more lines)
+ ✗ (0ms)
+    │ old_text not found in src/commands_lint.rs.
+
+Let me check the exact text around line 548-555:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat -A src/commands_lint.rs | sed -n '548,556p' ✓ (4ms)
+
+There's a decorative comment line with special unicode characters. Let me read it properly:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_lint.rs:548..558 ✓ (0ms)
+
+The line 550 is being hidden. Let me get exact bytes:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '549,552p' src/commands_lint.rs | xxd | head -20 ✓ (4ms)
+
+OK, so line 550 is a decorative comment line: `// ── /watch ──...`. Let me use a different anchor for my edit:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '547,555p' src/commands_lint.rs ✓ (3ms)
+
+Wait, lines 549-551 include the decorative comment but sed shows it. Let me try with a different approach — use the fact that the closing brace of `handle_lint_unsafe` at line 548 is followed by the decorative line and then #[cfg(test)]:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (5 lines) ✓ (19ms)
+
+Hmm, line 550 is skipped in the output — that's the decorative line. Let me check what it actually is:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (6 lines) ✓ (20ms)
+
+Line 550 is being counted but not printed. Let me get it explicitly:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (4 lines) ✓ (19ms)
+  ▶ $ python3 -c " (4 lines) ✓ (19ms)
+  2 tools completed in 5.2s (2 ✓)
+
+OK, so line 550 is // ── /watch ──────.... I'll use a strategy of reading and rewriting the section. Let me find the exact text to match by using read_file with the range right before #[cfg(test)]:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'EOF' (9 lines) ✓ (20ms)
+  ▶ $ python3 << 'PYEOF' (8 lines) ✓ (20ms)
+  2 tools completed in 6.6s (2 ✓)
+
+OK, so there's \n\n (two newlines) right before #[cfg(test)]. The decorative comment ends with `─\n\n#[cfg(test)]. Let me use a simpler approach — match     Some(summary)\n} at the end of handle_lint_unsafe` and then anchor to #[cfg(test)]:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (13 lines) ✓ (20ms)
+
+Let me try a different approach — just write the file with the new content inserted at the right place:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (13 lines) ✓ (20ms)
+
+The simplest approach: I'll find the line before #[cfg(test)] and insert my code. Let me use a Python script to do this insertion cleanly:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (24 lines) ✓ (20ms)
+  ▶ $ python3 << 'PYEOF' (296 lines) ✓ (23ms)
+  2 tools completed in 47.5s (2 ✓)
+
+OK, dealing with Python string escaping for Rust code is tricky. Let me write the new code directly to a temp file and then splice it in:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/security_code.rs (290 lines) ✓ (41.7s)
+
+Now let me splice this into the file:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 << 'PYEOF' (22 lines) ✓ (21ms)
+
+Now let me check the file compiles and the serde_json import is available:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "serde_json" Cargo.toml ✓ (8ms)
+
+Good, serde_json is already a dependency. Now let me check if BOLD is available in the format module:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "pub const BOLD\b" src/format/mod.rs ✓ (8ms)
+  ▶ $ grep "BOLD" src/format/mod.rs | head -5 ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Good, BOLD is available. Let me do a quick compile check:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | head -40 ✓ (3.8s)
+
+`RED is a Color type, not &str`. Let me check how Color is used:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A5 "pub struct Color\|pub static RED\|pub static YELLOW\|pub static DIM" s… ✓ (4ms)
+
+OK, Color implements Display but isn't &str. I need to change severity_color to return `&'static Color`:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (7 → 7 lines)
+  - fn severity_color(severity: &Severity) -> &'static str {
+  + fn severity_color(severity: &Severity) -> &'static Color {
+        match severity {
+  -         Severity::Critical | Severity::High => RED,
+  -         Severity::Medium => YELLOW,
+  -         Severity::Low | Severity::Info => DIM,
+  +         Severity::Critical | Severity::High => &RED,
+  +         Severity::Medium => &YELLOW,
+  +         Severity::Low | Severity::Info => &DIM,
+        }
+    }
+ ✓ (13.9s)
+
+Good — the code compiles once referenced. The "never used" errors are expected since I haven't wired it up yet. Let me also need to add tests. First, let me wire everything up, then add tests. Let me proceed with dispatch.rs:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 15.8s (2 ✓)
+
+Now wire up dispatch.rs. I need to:
+1. Add Security variant to `CommandRoute`
+2. Add routing in route_command or route_command_prefix
+3. Add dispatch in dispatch_command
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:55..75 ✓ (1ms)
+
+Add Security variant after Fix:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (5 → 6 lines)
+        LintFix,
+        Lint,
+        Fix,
+  +     Security,
+        History,
+ ✓ (8.7s)
+
+Expected — now add the routing. First the exact match in route_command:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (2 → 3 lines)
+            "/test" => CommandRoute::Test,
+  +         "/security" => CommandRoute::Security,
+            "/lint fix" => CommandRoute::LintFix,
+ ✓ (7.6s)
+
+Now add the dispatch arm. Let me find where Test is dispatched:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:581..611 ✓ (1ms)
+
+Add the Security dispatch arm after Test:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (5 → 9 lines)
+            CommandRoute::Test => {
+                commands::handle_test();
+  +             CommandResult::Continue
+  +         }
+  +         CommandRoute::Security => {
+  +             commands::handle_security();
+                CommandResult::Continue
+            }
+            CommandRoute::LintFix => {
+ ✓ (7.9s)
+
+Need to add the re-export in commands.rs. Let me do that now:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_lint::{handle_lint, handle_lint_fix, handle_test};
+  + pub use crate::commands_lint::{handle_lint, handle_lint_fix, handle_security, handle_test};
+ ✓ (54.4s)
+  2 tools completed in 1m 0s (2 ✓)
+
+Now add "/security" to KNOWN_COMMANDS:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (3 → 4 lines)
+        "/test",
+        "/lint",
+  +     "/security",
+        "/loop",
+ ✓ (52.5s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3197 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_openai ... ok
+test agent_builder::tests::...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix the failing tests. They all relate to the /security command not having help text entries yet, and not being listed in the help text.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "panicked… ✓ (12.1s)
+
+Good — 7 test failures, all about missing help text for /security. Let me also check the cli.rs help text test:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "help_text_documents_all_repl" src/cli.rs ✓ (11ms)
+  ▶ read src/cli.rs:929..954 ✓ (1ms)
+  2 tools completed in 6.6s (2 ✓)
+
+I need to:
+1. Add help text in help_data.rs (command_help and command_short_description)
+2. Add /security to the help_text() in help.rs 
+3. Add /security to the --help text in cli.rs
+
+Let me tackle all three:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, help_data.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"test" =>' src/help_data.rs | head -5 ✓ (4ms)
+  ▶ read src/help_data.rs:767..797 ✓ (1ms)
+  2 tools completed in 8.6s (2 ✓)
+
+Add /security help entry after the /lint entry:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (3 → 19 lines)
+                  Output is displayed directly in the terminal.",
+  +         ),
+  +         "security" => Some(
+  +             "/security — Run dependency vulnerability scan\n\n\
+  +              Detects the project type and runs the appropriate security audit tool:\n\
+  +              \x20 • Rust: cargo audit\n\
+  +              \x20 • Node: npm audit (with JSON summary)\n\
+  +              \x20 • Python: pip-audit / safety check\n\
+  +              \x20 • Go: govulncheck\n\
+  +              \x20 • Ruby: bundle-audit\n\n\
+  +              If the audit tool isn't installed, prints a helpful install command.\n\
+  +              Findings are grouped by severity (critical/high/medium/low) with\n\
+  +              colored output.\n\n\
+  +              This is a read-only scan — it reports vulnerabilities but does not\n\
+  +              attempt to fix them automatically.\n\n\
+  +              Examples:\n\
+  +              \x20 /security          Scan current project for known vulnerabilities",
+            ),
+            "loop" => Some(
+ ✗ (1ms)
+    │ old_text not found in src/help_data.rs.
+
+There might be two "Output is displayed directly in the terminal." lines. Let me match more context:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:790..798 ✓ (1ms)
+  ▶ edit src/help_data.rs (4 → 20 lines)
+                 Output is displayed directly in the terminal.",
+  +         ),
+  +         "security" => Some(
+  +             "/security — Run dependency vulnerability scan\n\n\
+  +              Detects the project type and runs the appropriate security audit tool:\n\
+  +              \x20 • Rust: cargo audit\n\
+  +              \x20 • Node: npm audit (with JSON summary)\n\
+  +              \x20 • Python: pip-audit / safety check\n\
+  +              \x20 • Go: govulncheck\n\
+  +              \x20 • Ruby: bundle-audit\n\n\
+  +              If the audit tool isn't installed, prints a helpful install command.\n\
+  +              Findings are grouped by severity (critical/high/medium/low) with\n\
+  +              colored output.\n\n\
+  +              This is a read-only scan — it reports vulnerabilities but does not\n\
+  +              attempt to fix them automatically.\n\n\
+  +              Examples:\n\
+  +              \x20 /security          Scan current project for known vulnerabilities",
+            ),
+            "loop" => Some(
+                "/loop <N|until-pass> <prompt> — Repeat a prompt in a polling loop\n\n\
+ ✓ (52.3s)
+  2 tools completed in 1m 0s (2 ✓)
+
+Now add the short description:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1244..1254 ✓ (1ms)
+  ▶ edit src/help_data.rs (3 → 4 lines)
+            "save" => Some("Save conversation to disk"),
+            "search" => Some("Search conversation history"),
+  +         "security" => Some("Run dependency vulnerability scan"),
+            "side" => Some("Ask a quick question without affecting conversation"),
+ ✗ (1ms)
+    │ old_text not found in src/help_data.rs.
+  ▶ $ grep -n '"save"\|"search"\|"side"' src/help_data.rs | tail -10 ✓ (4ms)
+  ▶ read src/help_data.rs:1242..1247 ✓ (1ms)
+  ▶ edit src/help_data.rs (2 → 3 lines)
+            "search" => Some("Search conversation history"),
+  +         "security" => Some("Run dependency vulnerability scan"),
+            "side" => Some("Ask a quick question without affecting conversation"),
+ ✓ (50.2s)
+  5 tools completed in 1m 7s (4 ✓, 1 ✗)
+
+Now I need to add /security to the help text displays in help.rs and cli.rs. Let me find where commands are listed in help.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "/test\|/lint\|/security\|/health" src/help.rs | head -20 ✓ (4ms)
+
+I need to add /security in several places in help.rs. Let me look at each:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:446..461 ✓ (1ms)
+  ▶ read src/help.rs:459..464 ✓ (1ms)
+  ▶ edit src/help.rs (7 → 11 lines)
+        let _ = writeln!(
+            s,
+            "    /lint [opts]       Run project linter (pedantic/strict/fix/unsafe)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /security          Run dependency vulnerability scan"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (49.9s)
+  3 tools completed in 1m 0s (3 ✓)
+
+Now the second location in help.rs (the detailed help text function):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:730..745 ✓ (1ms)
+  ▶ edit src/help.rs (4 → 7 lines)
+        out.push_str(
+            "  /lint [pedantic|strict|fix|unsafe]  Run project linter (clippy, eslint, ruff, etc.)\n",
+  +     );
+  +     out.push_str(
+  +         "  /security          Run dependency vulnerability scan (cargo audit, npm audit, etc.)\n",
+        );
+        out.push_str("  /run <cmd>         Run a shell command directly (no AI, no tokens)\n");
+ ✓ (54.3s)
+  2 tools completed in 1m 1s (2 ✓)
+
+Now find the list at line ~910 and the one at ~1016:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:906..916 ✓ (1ms)
+  ▶ read src/help.rs:914..922 ✓ (1ms)
+  ▶ edit src/help.rs (3 → 4 lines)
+                "/test",
+                "/lint",
+  +             "/security",
+                "/loop",
+ ✓ (54.3s)
+  3 tools completed in 1m 4s (3 ✓)
+
+Now the line ~1020:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1019..1024 ✓ (0ms)
+  ▶ read src/help.rs:1023..1033 ✓ (0ms)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -             "/context", "/init", "/health", "/fix", "/test", "/lint", "/loop", "/run", "/docs",
+  +             "/context", "/init", "/health", "/fix", "/test", "/lint", "/security", "/loop", "/run", "/docs",
+ ✓ (51.6s)
+  3 tools completed in 1m 1s (3 ✓)
+
+Now I need to add /security to the --help output in cli.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "/lint\|/test\|/security" src/cli.rs | head -10 ✓ (4ms)
+
+Hmm, /lint and /test aren't directly mentioned in cli.rs. Let me check where the `help_text()` function is that the test uses:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn help_text\|pub fn help_text" src/cli.rs | head -5 ✓ (4ms)
+  ▶ read src/cli.rs:51..56 ✓ (1ms)
+  2 tools completed in 7.5s (2 ✓)
+
+It delegates to help::cli_help_text(). Let me find where /lint appears in cli_help_text:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "/lint\|/test\|/security" src/help.rs | head -20 ✓ (4ms)
+
+Good — /security is already in both the cli_help_text() and help_text() functions since they share the same code path. Let me now run the tests to see if the failures are resolved:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "FAILED\|… ✓ (14.4s)
+
+No failures mentioning security. Let me check the overall test result:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (14.5s)
+
+All tests pass. Now let me run the full suite:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.3s)
