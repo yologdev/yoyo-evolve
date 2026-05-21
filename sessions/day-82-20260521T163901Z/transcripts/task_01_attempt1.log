@@ -1,0 +1,201 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the per-turn file change summary feature. Let me start by understanding the existing code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -50 src/session.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_changes" src/ses…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "files_modified\|changes… ✓ (6ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '259,330p' src/session.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '510,570p' src/repl.rs ✓ (4ms)
+ ✓ (4ms)
+  5 tools completed in 5.8s (5 ✓)
+
+Now let me see how is_quiet is used and what imports are available:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_quiet" src/repl.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,470p' src/repl.rs ✓ (3ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  3 tools completed in 3.1s (3 ✓)
+
+Now let me understand the full structure of the changes_after area and the PostPromptContext:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,550p' src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::format" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DIM\|RESET\|GREEN\|YELL… ✓ (3ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  3 tools completed in 1.5s (3 ✓)
+
+Now let me check the `is_quiet` function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn is_quiet" src/fo… ✓ (3ms)
+
+Good. Now I have a clear picture. Let me implement this step by step:
+
+1. Add format_turn_changes to session.rs
+2. Add tests for it
+3. Call it in repl.rs after the turn completes
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 6.5s (3 ✓)
+
+Let me look at the full FileChange structure and `snapshot` method:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,100p' src/session.rs ✓ (3ms)
+
+Now let me implement format_turn_changes. The function takes the list of file paths that were already known before this turn and the current session changes, and returns a compact summary of only the new files.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/session.rs:255..280 ✓ (1ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I'll add the format_turn_changes function right after format_changes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/session.rs (2 → 44 lines)
+  + /// Format a compact, one-line summary of files changed in the current turn only.
+  + ///
+  + /// `before` is the list of file paths that were already tracked before this turn.
+  + /// Only files in `changes` that are NOT in `before` are shown.
+  + ///
+  + /// For 1–3 files: inline list like `Files changed: ✏ src/main.rs, 🔧 src/cli.rs`
+  + /// For 4+ files: `Files changed (6): ✏ src/main.rs, 🔧 src/cli.rs, ✏ src/lib.rs, …`
+  + pub fn format_turn_changes(before: &[String], changes: &SessionChanges) -> String {
+  +     let snapshot = changes.snapshot();
+  +     // Filter to only files NOT in the before list
+  +     let new_changes: Vec<&FileChange> = snapshot
+  +         .iter()
+  +         .filter(|c| !before.contains(&c.path))
+  +         .collect();
+  +     if new_changes.is_empty() {
+  +         return String::new();
+  +     }
+  + 
+  +     let icon = |kind: ChangeKind| match kind {
+  +         ChangeKind::Write => "✏",
+  ... (24 more lines)
+ ✓ (12.4s)
+
+That's expected — it's unused until I wire it up in repl.rs. Let me add the tests first, then wire it up.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me add tests. Let me find where the existing format_changes tests end:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_format_changes" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1310,1330p' src/session.… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+I'll add the format_turn_changes tests at the end of the test module:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/session.rs (13 → 103 lines)
+            for p in &paths {
+                assert!(output.contains(p), "Missing path: {p}");
+            }
+  +     }
+  + 
+  +     // --- format_turn_changes tests ---
+  + 
+  +     #[test]
+  +     fn test_format_turn_changes_empty_no_changes() {
+  +         let changes = SessionChanges::new();
+  +         let before: Vec<String> = vec![];
+  +         let output = format_turn_changes(&before, &changes);
+  +         assert!(output.is_empty(), "Expected empty for no changes");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_turn_changes_all_before_returns_empty() {
+  +         let changes = SessionChanges::new();
+  +         changes.record("src/main.rs", ChangeKind::Write);
+  +         let before = vec!["src/main.rs".to_string()];
+  ... (75 more lines)
+ ✓ (12.2s)
+
+Still the expected dead-code warning. Let me wire it up in repl.rs now to fix this.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+I need to add the call in handle_post_prompt right after computing files_modified and before the watch section. Let me check that area more carefully:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,560p' src/repl.rs ✓ (3ms)
+
+I need to check what imports are already available. The session module is used via use crate::session::* likely:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "use crate::session" src/re… ✓ (3ms)
+
+I need to add format_turn_changes to the import. Then print the summary right after computing files_modified, before the watch section:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 1 lines)
+  - use crate::session::{SessionChanges, TurnHistory, TurnSnapshot};
+  + use crate::session::{format_turn_changes, SessionChanges, TurnHistory, TurnSnapshot};
+ ✓ (12.3s)
+
+Now let me wire it up in the `handle_post_prompt function. I'll add the print right after the files_modified` line and before the watch section, respecting quiet mode:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (2 → 11 lines)
+        let files_modified = changes_after.len() > ctx.changes_before.len();
+  + 
+  +     // Show a compact summary of files changed in this turn
+  +     if files_modified && !is_quiet() {
+  +         let summary = format_turn_changes(ctx.changes_before, ctx.session_changes);
+  +         if !summary.is_empty() {
+  +             eprintln!("{DIM}{summary}{RESET}");
+  +         }
+  +     }
+  + 
+        if files_modified {
+ ✓ (53.6s)
+
+Now let me run the full check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (157ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (26.4s)
+  3 tools completed in 46.9s (3 ✓)
+
+All 3297 tests pass. Let me verify the new tests are included:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_turn 2>&1 ✓ (138ms)
+
+All 11 format_turn tests pass (the 5 existing `format_changes tests plus 6 new format_turn_changes` tests... wait, let me count). Let me check:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_turn_changes 2… ✓ (137ms)
+
+All 7 tests for format_turn_changes pass. Let me also run the format check:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (682ms)
+
+Everything is clean. Let me review the changes I made:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/session.rs | head -… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/repl.rs ✓ (4ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Clean and minimal changes. Now let me commit:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (13 lines) ✓ (15ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Done. Here's what I implemented:
+
+`src/session.rs` — Added format_turn_changes(before: &[String], changes: &SessionChanges) -> String:
+• Filters the session changes to show only files NOT in the before snapshot (i.e., new this turn)
+• For 1–3 files: `Files changed: ✏ src/main.rs, 🔧 src/cli.rs`
+• For 4+ files: `Files changed (6): ✏ src/main.rs, 🔧 src/cli.rs, ✏ src/lib.rs, …`
+• Returns empty string when nothing new was changed
+
+`src/repl.rs` — Wired the summary into handle_post_prompt:
+• Prints right after computing files_modified, before the watch/auto-commit section
+• Uses `DIM` styling so it's visible but unobtrusive
+• Skipped in quiet mode (is_quiet())
+
+**7 new tests** covering empty, filtering, single file, icons, multiple files, and 4+ truncation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
