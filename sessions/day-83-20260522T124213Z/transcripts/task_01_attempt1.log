@@ -1,0 +1,335 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the SmartEditTool wrapper.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -80 src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct\|fn \|impl " src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RecoveryHintTool\|with_… ✓ (7ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '690,770p' src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,800p' src/tool_wrapp… ✓ (4ms)
+ ✓ (4ms)
+  5 tools completed in 7.0s (5 ✓)
+
+Now let me look at how `build_tools` wires everything together:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_tools\|with_recov…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_tools" src/too… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '730,910p' src/tools.rs ✓ (5ms)
+  3 tools completed in 6.0s (3 ✓)
+
+Now I see the wiring. The edit_tool is wrapped: `maybe_guard(maybe_confirm(EditFileTool))` → then in the tools vec it's: with_auto_check(edit_tool) → `with_truncation(...) → with_recovery_hints(...) → maybe_hook(...)`.
+
+I need to insert `SmartEditTool to wrap edit_file before the RecoveryHintTool`. Let me look at the test section to understand patterns:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1390,1600p' src/tool_wra… ✓ (5ms)
+
+Now let me see how `test_tool_context()` is defined:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_tool_context" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_tool_context" s… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1226,1240p' src/tool_wra… ✓ (3ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Good. Now let me look at the end of the file to see what tests exist and where I should add my code:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -120 src/tool_wrappers.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now I have a clear understanding of the structure. Let me plan and implement:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 12.3s (5 ✓)
+
+Let me start with writing tests first (TDD), then the implementation. First, let me find a good spot to insert the SmartEditTool struct — right before RecoveryHintTool:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '640,700p' src/tool_wrapp… ✓ (3ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me write the `SmartEditTool implementation. I'll insert it between AutoCheckTool and the RecoveryHintTool` section:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (3 → 196 lines)
+  + // ---------------------------------------------------------------------------
+  + // SmartEditTool — augments edit_file "not found" errors with line-number context
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Maximum file size (bytes) we'll read for nearest-match searching.
+  + const SMART_EDIT_MAX_FILE_SIZE: u64 = 100_000;
+  + 
+  + /// Number of context lines to show around the nearest match.
+  + const SMART_EDIT_CONTEXT_LINES: usize = 5;
+  + 
+  + /// A wrapper tool specifically for `edit_file` that intercepts "not found"
+  + /// failures and augments the error message with:
+  + /// - The line number of the nearest match (first-line matching with whitespace normalization)
+  + /// - A snippet of actual content at that location
+  + /// - A hint when the mismatch is purely whitespace/indentation
+  + pub(crate) struct SmartEditTool {
+  +     inner: Box<dyn AgentTool>,
+  + }
+  + 
+  + /// Search a file's content for the best match of `old_text`, returning
+  ... (176 more lines)
+ ✓ (12.4s)
+
+Good — it compiled but clippy warns about unused code because nothing calls it yet. Let me wire it in first, then add tests. Let me look at the exact line in tools.rs for the edit_tool:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_auto_check\|with_t… ✓ (4ms)
+  2 tools completed in 5.2s (2 ✓)
+
+I need to add with_smart_edit to the import and wrap the edit_tool entry. The edit_tool entry is at line 868-871:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '865,875p' src/tools.rs ✓ (3ms)
+
+The task says SmartEditTool should wrap edit_file before the RecoveryHintTool wrapper, so both layers fire. The wrapping order from inside out is: edit_tool → with_auto_check → `with_smart_edit → with_truncation → with_recovery_hints`. Actually, let me re-read: "SmartEditTool provides context, RecoveryHintTool provides escalating strategy". So SmartEditTool should fire first (inner), then RecoveryHintTool (outer). The current chain is: `with_auto_check(edit_tool) → with_truncation(...) → with_recovery_hints(...)`. I should insert with_smart_edit around the auto_check result, before truncation:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (2 → 2 lines)
+        maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_recovery_hints,
+  -     with_truncation, ToolFailureTracker,
+  +     with_smart_edit, with_truncation, ToolFailureTracker,
+ ✓ (12.3s)
+
+Now wire it in the actual tool chain:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (7 → 7 lines)
+            maybe_hook(
+                with_recovery_hints(
+  -                 with_truncation(with_auto_check(edit_tool), max_tool_output),
+  +                 with_truncation(with_smart_edit(with_auto_check(edit_tool)), max_tool_output),
+                    &failure_tracker,
+                ),
+                &hooks,
+ ✓ (12.4s)
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -             if best_match.map_or(true, |(_, prev_count)| match_count > prev_count) {
+  +             if best_match.is_none_or(|(_, prev_count)| match_count > prev_count) {
+ ✓ (54.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (149ms)
+  3 tools completed in 1m 17s (3 ✓)
+
+Build passes. Now let me add tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now let me find the right place to insert tests — right before the `}` at the end of the test module, but after the existing tests. Let me find the last test:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/tool_wrappers.rs ✓ (3ms)
+
+I'll add the SmartEditTool tests right before the closing } of the test module:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (2 → 239 lines)
+  +     }
+  + 
+  +     // === SmartEditTool / find_nearest_match tests ===
+  + 
+  +     #[test]
+  +     fn test_find_nearest_match_exact_line() {
+  +         let file_content = "line one\nline two\nfn hello() {\n    world()\n}\nline six\n";
+  +         let old_text = "fn hello() {\n    world()\n}";
+  +         let result = find_nearest_match(file_content, old_text);
+  +         assert!(result.is_some(), "Should find a match");
+  +         let (line, is_ws, snippet) = result.unwrap();
+  +         assert_eq!(line, 3, "Match should be at line 3");
+  +         assert!(!is_ws, "Should not be whitespace-only diff");
+  +         assert!(snippet.contains("fn hello()"), "Snippet should contain the match");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_find_nearest_match_whitespace_only_diff() {
+  +         // File has 4-space indent, old_text has 2-space indent
+  +         let file_content = "fn main() {\n    let x = 1;\n    let y = 2;\n}\n";
+  ... (219 more lines)
+ ✗ (0ms)
+    │ old_text matches 16 locations in src/tool_wrappers.rs. Include more surrounding context to make the match unique.
+
+I need more context. Let me get the unique ending:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -10 src/tool_wrappers.rs ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (5 → 248 lines)
+                already_offered_file_persistence(unique),
+                "Second call for same pattern should return true (duplicate)"
+  +         );
+  +     }
+  + 
+  +     // === SmartEditTool / find_nearest_match tests ===
+  + 
+  +     #[test]
+  +     fn test_find_nearest_match_exact_line() {
+  +         let file_content = "line one\nline two\nfn hello() {\n    world()\n}\nline six\n";
+  +         let old_text = "fn hello() {\n    world()\n}";
+  +         let result = find_nearest_match(file_content, old_text);
+  +         assert!(result.is_some(), "Should find a match");
+  +         let (line, is_ws, snippet) = result.unwrap();
+  +         assert_eq!(line, 3, "Match should be at line 3");
+  +         assert!(!is_ws, "Should not be whitespace-only diff");
+  +         assert!(
+  +             snippet.contains("fn hello()"),
+  +             "Snippet should contain the match"
+  +         );
+  ... (228 more lines)
+ ✓ (53.8s)
+  2 tools completed in 1m 20s (2 ✓)
+
+Now let's run the full check suite:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.0s)
+
+Clippy passes. Let's run tests:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (41.1s)
+
+All 88 tests pass. Let me verify the new tests are among them:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "smart… ✓ (15.2s)
+
+All 11 new tests pass. Let me verify clippy and fmt one more time with the full check:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (675ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Now let me update the docs. The CLAUDE.md architecture section mentions `tool_wrappers.rs`:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "tool_wrappers" CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker) and helper wrappers
+  + - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, SmartEditTool, RecoveryHintTool, ToolFailureTracker) and helper wrappers
+ ✓ (40.0s)
+  3 tools completed in 49.7s (3 ✓)
+
+Let me also check if README.md mentions anything about tool wrappers or edit_file error handling that needs updating:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -i "edit_file\|tool_wrapper… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -i "edit_file\|smart.edit\|… ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+The README and docs don't have detailed architecture about tool wrappers, so the CLAUDE.md update is sufficient. Let me check if docs/src/architecture.md mentions tool wrappers:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -i "wrapper\|smart.edit\|re… ✓ (3ms)
+
+No specific tool wrapper mention in the architecture docs. The CLAUDE.md update covers it. Let me now commit:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (38.6s)
+
+All green. Let me commit:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (20 lines) ✓ (16ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Done. Here's what I built:
+
+## Summary
+
+SmartEditTool — a new tool wrapper in src/tool_wrappers.rs that intercepts edit_file "not found" failures and augments them with precise location context.
+
+### What it does
+When edit_file fails because old_text wasn't found, instead of just saying "not found", the agent now sees:
+• **📍 Nearest match at line N** — the exact line number where the closest match lives
+• **5-line snippet** — the actual file content at that location so the agent can see what's really there
+• ⚠️ Whitespace hint — if the text matches perfectly except for indentation, it says so explicitly
+
+### How it works
+• find_nearest_match() takes the first non-empty line of `old_text`, normalizes whitespace, and searches the file for matching lines
+• When multiple matches exist, it picks the one with the most consecutive matching lines
+• Whitespace-only diff detection compares trimmed vs exact content across all old_text lines
+• Files >100KB are skipped (graceful fallback to original error)
+• Missing/unreadable files produce no augmentation, no panic
+
+### Wiring
+In build_tools(): `with_auto_check(edit_tool) → with_smart_edit(...) → with_truncation(...) → with_recovery_hints(...)`. SmartEditTool fires first (positional context), then RecoveryHintTool adds escalating strategy ("use read_file", "try write_file instead").
+
+### Tests
+11 new tests: 6 unit tests for find_nearest_match (exact match, whitespace-only diff, no match, empty input, all-whitespace, snippet length limit) and 5 async integration tests for the full wrapper (passthrough success, passthrough non-not-found errors, line number augmentation, whitespace detection, missing file handling).
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3237 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_openai ... ok
+test agent_builder::tests::...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the failing test to understand what's going on:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_handle_add_url_d… ✓ (734ms)
+
+Interesting — the test passes now. This might be a flaky test that depends on network (httpbin.org). Let me run the full test suite to see if it passes:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (15.3s)
+
+All tests pass. Let me also verify clippy:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.4s)
+
+Let me look at that test more closely to understand what's happening — it's a network-dependent test:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1980,2010p' src/commands… ✓ (3ms)
+
+This is test_handle_add_url_detection which calls httpbin.org — a flaky network test. The failure shown in the CI output is:
+
+```
+thread 'commands_file::tests::test_handle_add_url_detection' (131687) panicked at src/commands_file.rs:1990:9
+```
+
+Line 1990 is `assert!(results.is_empty())`. This means the fetch returned something (a non-empty result) when httpbin.org returned something unexpected. This is a pre-existing flaky test — not caused by my changes (I only modified tool_wrappers.rs, tools.rs, and CLAUDE.md).
+
+Let me verify my changes didn't touch anything related:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (6ms)
+
+My changes are only in tool_wrappers.rs, tools.rs (import + wiring), and CLAUDE.md. The failing test is in commands_file.rs and depends on network access to httpbin.org — it's a flaky test unrelated to my changes.
+
+Let me run it a few times to confirm the flakiness:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "--- Run… ✓ (12.5s)
+
+Passes consistently on this machine. The CI failure was a transient network issue where httpbin.org returned a non-empty body for a 404 instead of an empty one. 
+
+All checks pass — my changes are clean:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (27.2s)
+
+All four checks pass (fmt ✓, clippy ✓, build ✓, test ✓). The reported failure in test_handle_add_url_detection is a pre-existing flaky network test in commands_file.rs — it depends on httpbin.org returning an empty body for a 404, which is not guaranteed. My changes only touched tool_wrappers.rs, tools.rs, and CLAUDE.md. No fix needed.
+
+  ✓ Watch passed after fix (attempt 1)
+

@@ -1,0 +1,219 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this step by step. Let me start by understanding the existing code.
+  ▶ $ grep -n "format_exit_summary\|collect_diffs\|truncate_diff" src/commands_retry.r…  ▶ $ grep -n "format_exit_summary" src/repl.rs | head -10 ✓ (3ms)
+ ✓ (6ms)
+  ▶ read src/commands_retry.rs:117..227 ✓ (1ms)
+  ▶ read src/commands_retry.rs:226..256 ✓ (1ms)
+  4 tools completed in 8.0s (4 ✓)
+
+Now let me check how colorize_diff works and what imports are needed:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "use crate\|use super\|^use " src/commands_retry.rs | head -20📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "pub fn colorize_diff" src/git.rs  ▶ $ grep -n "is_quiet" src/format/mod.rs | head -5 ✓ (4ms)
+ ✓ (4ms)
+ ✓ (8ms)
+  3 tools completed in 1.6s (3 ✓)
+
+Now let me check the existing tests for format_exit_summary:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:400..600 ✓ (2ms)
+
+Now I have a clear picture. Let me look at the colorize_diff function and how `is_quiet` is available:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn colorize_diff" src/git.rs  ▶ $ grep -n "^pub fn is_quiet\|pub use\|pub fn enable_quiet" src/format/mod.rs | hea… ✓ (4ms)
+ ✓ (8ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Good - is_quiet() is accessible via crate::format::* which is already imported. Now let me implement this. I'll start with the truncate_diff_lines helper and tests, then integrate it into format_exit_summary.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 15.1s (5 ✓)
+
+Let me first write the tests, then the implementation. Let me add the `truncate_diff_lines` function and tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_retry.rs:160..170 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me add the truncate_diff_lines function right after format_file_list:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:190..200 ✓ (0ms)
+  ▶ edit src/commands_retry.rs (2 → 21 lines)
+  + /// Truncate a diff string to at most `max_lines` lines. If the original has
+  + /// more lines, appends a dim hint with the overflow count.
+  + fn truncate_diff_lines(diff: &str, max_lines: usize) -> String {
+  +     if diff.is_empty() {
+  +         return String::new();
+  +     }
+  +     let all_lines: Vec<&str> = diff.lines().collect();
+  +     let total = all_lines.len();
+  +     if total <= max_lines {
+  +         return diff.to_string();
+  +     }
+  +     let kept: Vec<&str> = all_lines[..max_lines].to_vec();
+  +     let overflow = total - max_lines;
+  +     format!(
+  +         "{}\n{DIM}  … and {overflow} more lines (use /changes --diff to see all){RESET}",
+  +         kept.join("\n"),
+  +     )
+  + }
+  + 
+    /// Returns `true` if the raw `/changes` input contains the `--diff` flag.
+  ... (1 more lines)
+ ✓ (12.5s)
+  2 tools completed in 21.4s (2 ✓)
+
+Expected — the function isn't used yet. Let me now integrate it into format_exit_summary:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now integrate into format_exit_summary. I need to:
+1. After the "Files changed" line, collect diffs and append a truncated version
+2. Guard with is_quiet()
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (8 → 20 lines)
+                snapshot.len(),
+                format_file_list(&snapshot),
+            ));
+  + 
+  +         // Show a compact colored diff if we're not in quiet mode
+  +         if !is_quiet() {
+  +             let paths: Vec<String> = snapshot.iter().map(|fc| fc.path.clone()).collect();
+  +             let diffs = collect_diffs(&paths);
+  +             let trimmed = diffs.trim();
+  +             if !trimmed.is_empty() {
+  +                 let truncated = truncate_diff_lines(trimmed, 15);
+  +                 lines.push(String::new()); // blank separator
+  +                 lines.push(truncated);
+  +             }
+  +         }
+        }
+ ✓ (53.1s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 58.1s (2 ✓)
+
+Now let me add the tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ grep -n "^    #\[test\]" src/commands_retry.rs | tail -5 ✓ (3ms)
+  ▶ $ wc -l src/commands_retry.rs ✓ (7ms)
+  ▶ read src/commands_retry.rs:795..810 ✓ (0ms)
+  ▶ edit src/commands_retry.rs (8 → 55 lines)
+            let result = build_retry_prompt("hello", &None, Some("bash"));
+            // No error means no enrichment, even if tool name provided
+            assert_eq!(result, "hello");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_truncate_diff_lines_empty() {
+  +         let result = truncate_diff_lines("", 15);
+  +         assert_eq!(result, "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_truncate_diff_lines_shorter_than_max() {
+  +         let input = "line 1\nline 2\nline 3";
+  +         let result = truncate_diff_lines(input, 15);
+  +         assert_eq!(result, input);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_truncate_diff_lines_exact_max() {
+  ... (32 more lines)
+ ✓ (7.6s)
+  5 tools completed in 30.3s (5 ✓)
+
+`GREEN is a Color` struct, not a string. Let me fix the test:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub struct Color\|impl.*Display.*Color\|GREEN" src/format/mod.rs | head… ✓ (3ms)
+  ▶ edit src/commands_retry.rs (2 → 2 lines)
+            // Should keep the ANSI codes in the kept lines
+  -         assert!(result.contains(GREEN));
+  +         assert!(result.contains(GREEN.0));
+ ✓ (51.4s)
+  2 tools completed in 56.8s (2 ✓)
+
+Let me check the full result:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 ✓ (12.5s)
+
+Clippy passes. Let me run tests:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | tail -30 ✓ (24.2s)
+
+The one failing test is a pre-existing flaky network test (httpbin.org), not related to my changes. Let me verify by checking if it's my code:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test truncate_diff 2>&1 ✓ (132ms)
+
+All my tests pass. Let me also run the tests for just the commands_retry module to make sure nothing broke:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test commands_retry 2>&1 ✓ (142ms)
+
+All 38 tests in commands_retry pass. Let me also run fmt:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo fmt -- --check 2>&1 ✓ (1.3s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.6s (3 ✓)
+
+Let me verify the full build one more time and confirm the pre-existing flaky test:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -3 ✓ (6.0s)
+
+Let me verify the failing test is pre-existing by checking git blame:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ git stash && cargo test commands_file::tests::test_handle_add_url_detection -- 2… ✓ (15.4s)
+
+Interesting - the test passed when stashed but failed earlier. It's a flaky network test (depends on httpbin.org responses). Not my code. Let me re-run the full test suite to confirm everything passes:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | tail -10 ✓ (40.9s)
+
+All tests pass. Let me review the final changes:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ git diff src/commands_retry.rs ✓ (14ms)
+
+Let me see the full diff cleanly:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ git diff --stat src/commands_retry.rs ✓ (23ms)
+
+Let me verify the code looks right by reading the key sections:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:154..179 ✓ (1ms)
+  ▶ read src/commands_retry.rs:204..226 ✓ (0ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Everything looks clean. Now let me commit:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ git add -A && git commit -m "Day 83 (11:35): Show compact colored diff in exit s… ✓ (11ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 12.1s (3 ✓)
+
+Done. Here's what I built:
+
+What changed: When a user quits yoyo (Ctrl-D or `/quit`), the exit summary now shows a compact colored diff of session changes — not just file names.
+
+**Implementation:**
+
+1. `truncate_diff_lines(diff, max_lines)` — new helper that truncates a diff to at most N lines, appending a dim overflow hint like … and 15 more lines (use /changes --diff to see all). Preserves ANSI color codes in kept lines.
+
+2. `format_exit_summary()` — after the "Files changed" line, if not in quiet mode (is_quiet()), collects git diffs via the existing collect_diffs() function and appends a truncated (15 lines max) colored diff.
+
+3. Guards:
+   • Skipped in quiet/`--print mode (is_quiet()`)
+   • Skipped when diff is empty (already-committed changes won't show in git diff)
+
+4. 5 new tests covering: empty input, shorter-than-max, exact-max, over-max with overflow hint, and ANSI preservation.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
