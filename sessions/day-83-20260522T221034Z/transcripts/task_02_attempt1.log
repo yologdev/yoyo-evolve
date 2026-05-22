@@ -1,0 +1,328 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement auto-lite detection and .yoyo.toml config support. Let me start by understanding the current codebase.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  9 tools completed in 41.1s (9 ✓)
+
+Let me first understand the current lite mode implementation:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'lite' (src/cli.rs) ✓ (13ms)
+  ▶ search 'lite' (src/cli_config.rs) ✓ (12ms)
+  ▶ search 'lite' (*.rs) ✓ (18ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.3s (4 ✓)
+
+Let me read the relevant sections:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:1..101 ✓ (1ms)
+  ▶ read src/cli_config.rs:100..170 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me see how --lite is currently handled in `parse_args`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:750..950 ✓ (2ms)
+
+Now let me look at the config.rs file for SETTABLE_KEYS and validate_config_value:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'SETTABLE_KEYS' (src/config.rs) ✓ (12ms)
+  ▶ search 'SETTABLE|settable|validate_config' (src/config.rs) ✓ (12ms)
+  ▶ search 'SETTABLE_KEYS' (*.rs) ✓ (17ms)
+  ▶ read src/config.rs:480..600 ✓ (1ms)
+  4 tools completed in 15.8s (4 ✓)
+
+Now let me see how the config file is parsed and how existing boolean configs (like auto_watch) are loaded:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'parse_config_file|load_config_file' (src/config.rs) ✓ (12ms)
+  ▶ search 'pub fn.*config' (src/config.rs) ✓ (12ms)
+  ▶ search 'fn.*config' (src/config.rs) ✓ (12ms)
+  ▶ search 'pub fn' (src/config.rs) ✓ (12ms)
+  ▶ search '^pub fn"' (src/config.rs) ✓ (12ms)
+  ▶ $ grep -n "pub fn\|fn " src/config.rs | head -40 ✓ (5ms)
+  6 tools completed in 19.2s (6 ✓)
+
+Let me see parse_config_file and load_config_file:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:873..943 ✓ (1ms)
+
+Now let me see how auto_watch is read from config in cli.rs to understand the pattern for loading boolean config values:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_watch|file_config' (src/cli.rs) ✓ (12ms)
+  ▶ $ grep -n "file_config\|auto_watch\|load_config" src/cli.rs | head -20 ✓ (3ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me look at the full parse_args function to understand the flow and see line 608 where load_config_file is called and how file_config is used:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:600..650 ✓ (1ms)
+
+Now let me see the existing tests for lite mode:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2795..2915 ✓ (1ms)
+
+Now let me also check the parse_auto_watch_from_config to understand the boolean config pattern:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:453..483 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Good, now I have a clear picture. Let me implement step by step. I'll start with tests, then the implementation.
+
+Let me also check the KNOWN_FLAGS for --lite:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ search 'KNOWN_FLAGS' (src/cli.rs) ✓ (12ms)
+  ▶ $ grep -n "KNOWN_FLAGS" src/cli.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (7ms)
+  ▶ read src/cli.rs:85..145 ✓ (1ms)
+  3 tools completed in 12.5s (3 ✓)
+
+Now I have the full picture. Let me also look at how --disallowed-tools interacts with the current lite code more carefully to understand the user-explicit-override logic:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:862..912 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now I understand the full picture. Let me implement all changes. Here's my plan:
+
+1. **src/cli.rs**: Extract compute_lite_disallowed_tools() helper, add auto-lite detection after the Config struct is built, load lite from config file
+2. `src/config.rs`: Add lite to `SETTABLE_KEYS, add validation, add parse_lite_from_config`
+3. **Tests**: Add tests for auto-lite, config validation, and config-file lite
+
+Let me start with the `config.rs` changes:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (17 → 21 lines)
+        (
+            "max_auto_continues",
+            "max auto-continue follow-ups per turn (0-20)",
+  +     ),
+  +     (
+  +         "lite",
+  +         "enable lite mode for small/local LLMs (true/false)",
+        ),
+    ];
+ ✓ (43.1s)
+
+Now add the lite validation case in validate_config_value:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (5 → 15 lines)
+                Ok(n) => Err(format!("max_auto_continues {n} out of range (0-20)")),
+                Err(_) => Err(format!("'{value}' is not a valid integer")),
+            },
+  +         "lite" => {
+  +             let lower = value.to_ascii_lowercase();
+  +             match lower.as_str() {
+  +                 "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+  +                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
+  +                 _ => Err(format!(
+  +                     "invalid lite value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+ ✓ (44.1s)
+
+Now add the parse_lite_from_config helper function:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (6 → 17 lines)
+        match config.get("auto_watch").map(|v| v.as_str()) {
+            Some("false") | Some("0") | Some("no") | Some("off") => false,
+            _ => true, // default: enabled
+  +     }
+  + }
+  + 
+  + /// Check whether lite mode is enabled in the config.
+  + ///
+  + /// Reads `lite` from the given config map. Defaults to `false`
+  + /// when the key is absent — lite mode must be explicitly opted into.
+  + pub fn parse_lite_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  +     match config.get("lite").map(|v| v.as_str()) {
+  +         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  +         _ => false, // default: disabled
+        }
+    }
+ ✓ (9.8s)
+
+That's expected — I'll use it soon. Let me now work on the cli.rs changes. First, I'll create the compute_lite_disallowed_tools() function:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:83..93 ✓ (1ms)
+  ▶ edit src/cli.rs (4 → 14 lines)
+        }
+  + }
+  + 
+  + /// Compute the list of disallowed tools for lite mode.
+  + /// Disallows everything NOT in `LITE_TOOLS` from the builtin tool set.
+  + pub fn compute_lite_disallowed_tools() -> Vec<String> {
+  +     crate::agent_builder::BUILTIN_TOOL_NAMES
+  +         .iter()
+  +         .filter(|name| !LITE_TOOLS.contains(name))
+  +         .map(|name| (*name).to_string())
+  +         .collect()
+    }
+    
+    /// All known CLI flags (both boolean and value-taking).
+ ✓ (9.8s)
+  2 tools completed in 16.3s (2 ✓)
+
+Expected. Let me now refactor the inline lite disallowed_tools computation to use the new helper, and also wire in the config file `lite` support and auto-lite detection. I'll do all the cli.rs changes at once:
+
+First, let me refactor the disallowed_tools section to use compute_lite_disallowed_tools():
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (30 → 26 lines)
+            disallowed_tools: {
+                let no_tools = args.iter().any(|a| a == "--no-tools");
+                let lite = args.iter().any(|a| a == "--lite");
+  -             let mut tools: Vec<String> = collect_repeatable_flag(args, "--disallowed-tools")
+  +             let user_disallowed: Vec<String> = collect_repeatable_flag(args, "--disallowed-tools")
+                    .iter()
+                    .flat_map(|v| v.split(','))
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+  +             let has_explicit_disallowed = !user_disallowed.is_empty();
+  +             let mut tools = user_disallowed;
+                if no_tools {
+                    // Add all builtin tool names
+                    for name in crate::agent_builder::BUILTIN_TOOL_NAMES {
+  ···
+                            tools.push(s);
+                        }
+                    }
+  -             } else if lite {
+  ... (15 more lines)
+ ✓ (9.9s)
+
+Good, the compute_lite_disallowed_tools is now used. Now I need to wire in the config file lite and auto-lite detection. Let me look at the full Config construction more carefully:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:838..888 ✓ (1ms)
+
+The approach I need: Instead of building the Config inline and then modifying it, I should compute the lite boolean properly first (CLI flag OR config file), then use it everywhere. Let me restructure.
+
+Let me see the lines around the --lite handling:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:770..800 ✓ (1ms)
+
+Now I need to:
+
+1. Modify the lite variable to also check the config file
+2. Add auto-lite detection logic after the Config is built
+3. Print the notice for auto-lite
+
+Let me restructure the lite declaration to also check config:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (6 → 13 lines)
+        // --lite: replace system prompt with minimal version for small/local LLMs
+        // (skips project context, repo map, goal — they consume too much context)
+  -     let lite = args.iter().any(|a| a == "--lite");
+  -     if lite {
+  +     // CLI flag takes priority; falls back to config file `lite = true`
+  +     let lite_flag = args.iter().any(|a| a == "--lite");
+  +     let lite_from_config = crate::config::parse_lite_from_config(&file_config);
+  +     let lite = lite_flag || lite_from_config;
+  + 
+  +     // Track whether user explicitly set a custom system prompt
+  +     let user_set_system_prompt = args.iter().any(|a| a == "--system" || a == "--system-file");
+  + 
+  +     if lite && !user_set_system_prompt {
+            system_prompt = LITE_SYSTEM_PROMPT.to_string();
+        }
+ ✓ (43.4s)
+
+Now update the disallowed_tools section to not re-compute lite:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (11 → 10 lines)
+            disallowed_tools: {
+                let no_tools = args.iter().any(|a| a == "--no-tools");
+  -             let lite = args.iter().any(|a| a == "--lite");
+                let user_disallowed: Vec<String> = collect_repeatable_flag(args, "--disallowed-tools")
+                    .iter()
+                    .flat_map(|v| v.split(','))
+ ✓ (43.0s)
+
+Now update the lite: field assignment:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 37 lines)
+            no_tools: args.iter().any(|a| a == "--no-tools"),
+  -         lite: args.iter().any(|a| a == "--lite"),
+  -     })
+  +         lite,
+  +     });
+  + 
+  +     // Auto-lite detection: when context window ≤16K, automatically enable lite mode
+  +     // (but don't override any explicit user choices)
+  +     if let Some(ref mut config) = result {
+  +         if !config.lite {
+  +             if let Some(cw) = config.context_window {
+  +                 if cw <= 16_000 {
+  +                     config.lite = true;
+  + 
+  +                     // Only override system_prompt if user didn't pass --system/--system-file
+  +                     if !user_set_system_prompt {
+  +                         config.system_prompt = LITE_SYSTEM_PROMPT.to_string();
+  +                     }
+  + 
+  +                     // Only set disallowed_tools if user didn't pass --disallowed-tools
+  ... (19 more lines)
+ ✓ (6.4s)
+
+Right, I need to restructure. The function currently returns `Some(Config {...})` directly. Let me fix this properly:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:845..895 ✓ (0ms)
+  ▶ read src/cli.rs:894..954 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+I need to change Some(Config { ... }) to `let mut result = Some(Config { ... })`:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (1 → 1 lines)
+  -     Some(Config {
+  +     let mut result = Some(Config {
+ ✓ (43.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (100ms)
+  2 tools completed in 1m 0s (2 ✓)
+
+Now let me also need to check: does the user_set_system_prompt variable get used in the original system prompt section correctly? Let me look at how system prompt is resolved to understand the interaction:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ search 'resolve_system_prompt|system_prompt.*=' (src/cli.rs) ✓ (12ms)
+  ▶ $ grep -n "system_prompt" src/cli.rs | head -30 ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. The user_set_system_prompt is already being tracked. But I also need to account for the case where the config file had system_prompt set (not just CLI flags). Let me check resolve_system_prompt:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:260..300 ✓ (1ms)
+
+I should also check if the config file set a system_prompt. Let me expand user_set_system_prompt to also check the config:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:740..760 ✓ (0ms)
+  ▶ edit src/cli.rs (2 → 4 lines)
+  -     // Track whether user explicitly set a custom system prompt
+  -     let user_set_system_prompt = args.iter().any(|a| a == "--system" || a == "--system-file");
+  +     // Track whether user explicitly set a custom system prompt (CLI or config file)
+  +     let user_set_system_prompt = args.iter().any(|a| a == "--system" || a == "--system-file")
+  +         || file_config.contains_key("system_prompt")
+  +         || file_config.contains_key("system_file");
+ ✓ (42.9s)
+  2 tools completed in 51.1s (2 ✓)
+
+Now let's also check: the existing --lite test for system prompt checks that it equals LITE_SYSTEM_PROMPT. That should still pass because --lite would set user_set_system_prompt=false (no --system or --system-file flag). Let me verify by running the build and tests:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (100ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (12.8s)
+  2 tools completed in 17.3s (2 ✓)
+
+All tests pass. Now let me add the new tests:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.1s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

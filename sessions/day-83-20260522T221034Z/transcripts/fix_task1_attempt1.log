@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the implementation and the specific issues to fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | head… ✓ (526ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lite" src/help.rs | hea… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lite" src/cli.rs | head… ✓ (3ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Good. Now let me fix the two issues: (1) add --lite to help text, and (2) fix formatting.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "help_text\|cli_help_tex… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,200p' src/help.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,240p' src/help.rs ✓ (3ms)
+  3 tools completed in 5.8s (3 ✓)
+
+Now I know where to add --lite in the help text. Let me find the right spot — it should go near other mode-related flags. I'll add it near --no-tools:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no-tools\|context-strat… ✓ (3ms)
+
+I'll add --lite right after --no-tools:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (8 → 12 lines)
+        let _ = writeln!(
+            s,
+            "  --no-tools        Disable all tools (chat-only mode, no file access or commands)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --lite            Optimize for small/local LLMs (minimal prompt, 4 tools, 8K context)"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (43.0s)
+
+Now let me also check cli.rs for the help_text() function:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn help_text" src/cli.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '51,60p' src/cli.rs ✓ (3ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Good — help_text() delegates to cli_help_text(), so adding to `cli_help_text() in help.rs` covers both. Now fix the formatting issues:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (523ms)
+
+Now verify everything passes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (525ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (9.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (5.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (32.4s)
+  4 tools completed in 55.5s (4 ✓)
+
+All 3343 tests pass (3255 unit + 88 integration), 0 failures. Let me verify the help text now contains --lite:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lite" src/help.rs ✓ (2ms)
+
+Let me also verify the existing test for help text would catch `--lite`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A5 "no-tools.*help" src/he… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "no.tools\|lite" src/hel… ✓ (15ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Both evaluator issues are now fixed:
+
+1. `--lite` added to help text — Line 191 in src/help.rs within cli_help_text(), which is also what cli::help_text() delegates to. Users can now discover the flag via --help.
+
+2. Formatting fixed — cargo fmt corrected the indentation of lite: false in `commands_spawn.rs and dispatch_sub.rs. cargo fmt -- --check` now passes cleanly.
+
+All CI checks pass:
+• ✅ `cargo fmt -- --check` 
+• ✅ cargo clippy --all-targets -- -D warnings
+• ✅ `cargo build`
+• ✅ cargo test (3255 + 88 = 3343 tests, 0 failures)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

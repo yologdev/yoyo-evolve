@@ -1,0 +1,382 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --lite flag for small LLM usability. Let me start by understanding the current code structure.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 28.7s (8 ✓)
+
+Let me read the relevant files to understand the current structure:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub struct Config" src/cli_config.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (13ms)
+  ▶ read src/cli_config.rs:1..181 ✓ (1ms)
+  ▶ $ grep -n "disallowed_tools\|no_tools\|--no-tools\|--disallow" src/cli.rs | head -… ✓ (3ms)
+  ▶ read src/cli.rs:120..150 ✓ (1ms)
+  4 tools completed in 25.2s (4 ✓)
+
+Now let me see how parse_args constructs the Config and how disallowed_tools and no_tools are handled:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:780..900 ✓ (1ms)
+
+Now let me see how AgentConfig looks in `agent_builder.rs`:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub struct AgentConfig\|pub fn build_agent\|pub fn configure_agent\|dis… ✓ (3ms)
+  ▶ read src/agent_builder.rs:388..468 ✓ (1ms)
+  2 tools completed in 13.9s (2 ✓)
+
+Now let me see the help_text function:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn help_text\|fn cli_help_text" src/cli.rs src/help.rs ✓ (7ms)
+  ▶ read src/help.rs:40..140 ✓ (1ms)
+  ▶ read src/help.rs:139..189 ✓ (1ms)
+  ▶ read src/help.rs:188..228 ✓ (1ms)
+  4 tools completed in 9.2s (4 ✓)
+
+Now let me look at how main.rs builds AgentConfig from Config:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "AgentConfig" src/main.rs ✓ (7ms)
+  ▶ read src/main.rs:626..676 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good. Now I have a clear picture. Let me also check the test helper:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:896..931 ✓ (0ms)
+
+Now let me check the test for --no-tools parsing to understand the pattern for --lite:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2697..2747 ✓ (1ms)
+  ▶ read src/cli.rs:2746..2771 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me also check the BUILTIN_TOOL_NAMES:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:38..58 ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Good — I now have a complete understanding. Let me implement this step by step.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+### Step 1: Add constants and lite field to cli_config.rs
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (5 → 14 lines)
+    When the user asks you to do something, do it — don't just explain how.
+    Use tools proactively: read files to understand context, run commands to verify your work.
+    After making changes, run tests or verify the result when appropriate."#;
+  + 
+  + /// Minimal system prompt for --lite mode (small/local LLMs with limited context).
+  + pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).";
+  + 
+  + /// The 4 essential tools available in --lite mode.
+  + pub const LITE_TOOLS: &[&str] = &["bash", "read_file", "write_file", "edit_file"];
+  + 
+  + /// Default context window for --lite mode (suitable for 4B-8B parameter models).
+  + pub const LITE_DEFAULT_CONTEXT_WINDOW: u32 = 8_000;
+ ✓ (9.9s)
+
+Expected — the constants aren't used yet. Now add the lite field to `Config`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (3 → 4 lines)
+        pub disallowed_tools: Vec<String>,
+        pub no_tools: bool,
+  +     pub lite: bool,
+    }
+ ✓ (6.6s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 13.7s (3 ✓)
+
+### Step 2: Parse --lite in cli.rs
+
+First, add to KNOWN_FLAGS:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 4 lines)
+        "--disallowed-tools",
+        "--no-tools",
+  +     "--lite",
+        "--help",
+ ✓ (6.3s)
+
+Now let me add the --lite parsing in the Config constructor. I need to see the full disallowed_tools + no_tools block and then modify it to also handle lite:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:850..880 ✓ (1ms)
+
+Now I need to understand the system_prompt construction to override it for lite mode. Let me find where system_prompt is set:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "system_prompt" src/cli.rs | head -20 ✓ (3ms)
+  ▶ read src/cli.rs:730..780 ✓ (1ms)
+  2 tools completed in 7.5s (2 ✓)
+
+Now I have a complete picture. The key insight is: when --lite is set:
+1. Override system_prompt to `LITE_SYSTEM_PROMPT`
+2. Set context_window to LITE_DEFAULT_CONTEXT_WINDOW if not explicitly overridden
+3. Add non-lite tools to disallowed_tools
+
+Let me make the changes. I'll do the --lite flag parsing and all its effects:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (22 → 34 lines)
+            auto_watch: crate::config::parse_auto_watch_from_config(&file_config),
+            disallowed_tools: {
+                let no_tools = args.iter().any(|a| a == "--no-tools");
+  +             let lite = args.iter().any(|a| a == "--lite");
+                let mut tools: Vec<String> = collect_repeatable_flag(args, "--disallowed-tools")
+                    .iter()
+                    .flat_map(|v| v.split(','))
+  ···
+                        let s = (*name).to_string();
+                        if !tools.contains(&s) {
+                            tools.push(s);
+  +                     }
+  +                 }
+  +             } else if lite {
+  +                 // In lite mode, disallow everything NOT in LITE_TOOLS
+  +                 for name in crate::agent_builder::BUILTIN_TOOL_NAMES {
+  +                     if !LITE_TOOLS.contains(name) {
+  +                         let s = (*name).to_string();
+  +                         if !tools.contains(&s) {
+  +                             tools.push(s);
+  ... (9 more lines)
+ ✓ (6.2s)
+
+Now I need to also override system_prompt and context_window for lite mode. Let me update the system_prompt construction and context_window:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:735..745 ✓ (0ms)
+
+I need to override the system prompt when --lite is active. The cleanest approach: after the full system_prompt is constructed, if --lite is set, replace it entirely with the lite prompt (unless user explicitly provided --system or --system-file):
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:714..719 ✓ (0ms)
+  ▶ read src/cli.rs:718..726 ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+The best place to apply the lite override: after the full system prompt construction, check if --lite is set and the user didn't provide explicit --system or --system-file, then replace with `LITE_SYSTEM_PROMPT`. Actually, looking at the task description more carefully, it says to set system_prompt to LITE_SYSTEM_PROMPT when --lite is true. Let me do that cleanly — replace the system prompt if --lite is active:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:735..770 ✓ (1ms)
+
+I'll add the lite mode override right after the system prompt construction:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (7 → 14 lines)
+            system_prompt.push_str(&goal);
+            system_prompt
+                .push_str("\n\n(Set via /goal set. The user is working toward this. Keep it in mind.)");
+  +     }
+  + 
+  +     // --lite: replace system prompt with minimal version for small/local LLMs
+  +     // (skips project context, repo map, goal — they consume too much context)
+  +     let lite = args.iter().any(|a| a == "--lite");
+  +     if lite {
+  +         system_prompt = LITE_SYSTEM_PROMPT.to_string();
+        }
+ ✓ (6.3s)
+
+Good progress. Now let me handle the context_window override for lite mode:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:815..825 ✓ (0ms)
+  ▶ edit src/cli.rs (2 → 10 lines)
+        let context_window =
+            parse_numeric_flag::<u32>(args, "--context-window", &file_config, "context_window");
+  + 
+  +     // --lite: default context window to LITE_DEFAULT_CONTEXT_WINDOW unless user
+  +     // explicitly provided --context-window
+  +     let context_window = if lite && context_window.is_none() {
+  +         Some(LITE_DEFAULT_CONTEXT_WINDOW)
+  +     } else {
+  +         context_window
+  +     };
+ ✓ (6.4s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 25.4s (4 ✓)
+
+### Step 3: Wire up in agent_builder.rs and main.rs
+
+Add lite field to AgentConfig:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (3 → 4 lines)
+        pub disallowed_tools: Vec<String>,
+        pub no_tools: bool,
+  +     pub lite: bool,
+    }
+ ✓ (6.3s)
+
+There are many places creating AgentConfig. Let me fix them all. First let me find them all:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "no_tools:" src/agent_builder.rs src/main.rs src/commands_spawn.rs src/d… ✓ (7ms)
+
+I need to add lite: false (or appropriate value) after every no_tools: line. Let me do this systematically:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "no_tools:" src/agent_builder.rs ✓ (7ms)
+
+There are many. Let me use a more surgical approach — since every `AgentConfig construction has no_tools: false, (or true) as the last field, I can add lite: false,` right after each one. Let me use sed:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "no_tools:" src/agent_builder.rs ✓ (32ms)
+
+That's a lot. Let me handle this with a targeted replacement — replace all `no_tools: false,\n` patterns in AgentConfig structs. But first let me look at a few to make sure the pattern is consistent:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n -A 1 "no_tools:" src/agent_builder.rs | head -50 ✓ (3ms)
+  ▶ $ grep -n -A 1 "no_tools:" src/agent_builder.rs | tail -20 ✓ (3ms)
+  2 tools completed in 14.9s (2 ✓)
+
+I see that most of these are no_tools: false, followed by };. There are also some using ..test_agent_config(...) spread. Let me use sed to add lite: false, after every no_tools: false, and no_tools: true, in AgentConfig constructions:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '/^[[… (5 lines) ✓ (3ms)
+  ▶ $ grep -n -A 1 "no_tools: true," src/agent_builder.rs ✓ (33ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Those use ..test_agent_config() or have other fields after — the struct spread should handle lite automatically if test_agent_config has it set. Let me add lite: false to `test_agent_config. Wait, that function is in main.rs, not agent_builder.rs. Let me check if agent_builder.rs` has its own test helper:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_agent_config" src/agent_builder.rs ✓ (622ms)
+  ▶ read src/agent_builder.rs:789..814 ✓ (1ms)
+  ▶ read src/agent_builder.rs:813..817 ✓ (1ms)
+  3 tools completed in 14.2s (3 ✓)
+
+Good — the sed already added lite: false, to this one. Now let me check the no_tools: true, ones with struct update syntax. Those get lite from the base, so they should be fine. Let me check the one with disallowed_tools after:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1963..1971 ✓ (1ms)
+
+Good — the struct update syntax handles lite. Now fix the other files:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:644..654 ✓ (0ms)
+  ▶ edit src/main.rs (3 → 4 lines)
+            disallowed_tools: config.disallowed_tools,
+            no_tools: config.no_tools,
+  +         lite: config.lite,
+        };
+ ✓ (6.6s)
+  2 tools completed in 21.4s (2 ✓)
+
+Let me fix the remaining files:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "no_tools: false," src/commands_spawn.rs src/dispatch_sub.rs src/command… ✓ (7ms)
+  ▶ $ for file in src/commands_spawn.rs src/dispatch_sub.rs src/co… (7 lines) ✓ (8ms)
+  ▶ $ cargo build 2>&1 | head -30 ✓ (5.2s)
+  3 tools completed in 13.4s (3 ✓)
+
+Building but with a warning. Now I need to use self.lite in configure_agent to print the lite mode message. Let me look at the current message printing:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:452..472 ✓ (0ms)
+  ▶ edit src/agent_builder.rs (8 → 16 lines)
+  -             // Filter out disallowed tools (--disallowed-tools flag)
+  +             // Filter out disallowed tools (--disallowed-tools flag or --lite)
+                if !self.disallowed_tools.is_empty() {
+                    tools.retain(|t| !self.disallowed_tools.contains(&t.name().to_string()));
+  -                 eprintln!(
+  -                     "{DIM}  🔒 Disabled tools: {}{RESET}",
+  -                     self.disallowed_tools.join(", ")
+  -                 );
+  +                 if self.lite {
+  +                     eprintln!(
+  +                         "{DIM}  🪶 Lite mode: {} tools ({}){RESET}",
+  +                         cli::LITE_TOOLS.len(),
+  +                         cli::LITE_TOOLS.join(", ")
+  +                     );
+  +                 } else {
+  +                     eprintln!(
+  +                         "{DIM}  🔒 Disabled tools: {}{RESET}",
+  +                         self.disallowed_tools.join(", ")
+  +                     );
+  +                 }
+  ... (1 more lines)
+ ✓ (6.5s)
+  2 tools completed in 14.6s (2 ✓)
+
+One more place in tools.rs:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "no_tools:" src/tools.rs ✓ (64ms)
+  ▶ read src/tools.rs:1000..1005 ✓ (0ms)
+  ▶ edit src/tools.rs (3 → 4 lines)
+                disallowed_tools: vec![],
+                no_tools: false,
+  +             lite: false,
+            }
+ ✓ (42.9s)
+  ▶ $ cargo build 2>&1 ✓ (121ms)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | head -20 ✓ (10.1s)
+  5 tools completed in 1m 15s (5 ✓)
+
+Clean build and clippy! Let me also fix the test Config constructor in main.rs:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "no_tools:" src/main.rs ✓ (7ms)
+
+Let me verify the test Config has lite too:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "lite:" src/main.rs ✓ (407ms)
+
+Good — all 3 places have it. Let me also check the test Config (the one in main.rs used in tests):
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1310..1315 ✓ (0ms)
+  ▶ read src/main.rs:1345..1355 ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 25.1s (4 ✓)
+
+### Step 4: Add tests
+
+Now let me add tests. First in cli_config.rs:
+  ╭─ Turn 76 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:113..153 ✓ (1ms)
+  ▶ edit src/cli_config.rs (7 → 24 lines)
+            assert_eq!(OutputFormat::Text, OutputFormat::Text);
+            assert_ne!(OutputFormat::Text, OutputFormat::Json);
+            assert_ne!(OutputFormat::Json, OutputFormat::StreamJson);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_lite_constants() {
+  +         // LITE_SYSTEM_PROMPT should be minimal — much shorter than the default
+  +         assert!(LITE_SYSTEM_PROMPT.contains("coding assistant"));
+  +         assert!(LITE_SYSTEM_PROMPT.len() < SYSTEM_PROMPT.len());
+  + 
+  +         // LITE_TOOLS should have exactly the 4 essential tools
+  +         assert_eq!(LITE_TOOLS.len(), 4);
+  +         assert!(LITE_TOOLS.contains(&"bash"));
+  +         assert!(LITE_TOOLS.contains(&"read_file"));
+  +         assert!(LITE_TOOLS.contains(&"write_file"));
+  +         assert!(LITE_TOOLS.contains(&"edit_file"));
+  + 
+  +         // LITE_DEFAULT_CONTEXT_WINDOW should be reasonable for small models
+  +         assert_eq!(LITE_DEFAULT_CONTEXT_WINDOW, 8_000);
+  ... (2 more lines)
+ ✓ (42.6s)
+  2 tools completed in 52.2s (2 ✓)
+
+Now add tests for --lite in cli.rs:
+  ╭─ Turn 78 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2773..2783 ✓ (0ms)
+  ▶ read src/cli.rs:2782..2797 ✓ (1ms)
+  ▶ edit src/cli.rs (11 → 115 lines)
+                    .count(),
+                1,
+                "bash should appear exactly once even when specified both ways"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_lite_flag_sets_lite_true() {
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         let args = vec![
+  +             "yoyo".to_string(),
+  +             "--lite".to_string(),
+  +             "-p".to_string(),
+  +             "hello".to_string(),
+  +         ];
+  +         let config = parse_args(&args).expect("should parse");
+  +         assert!(config.lite);
+  +     }
+  + 
+  +     #[test]
+  ... (90 more lines)
+ ✓ (43.2s)
+  3 tools completed in 1m 2s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

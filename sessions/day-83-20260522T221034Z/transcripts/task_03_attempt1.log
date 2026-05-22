@@ -1,0 +1,234 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --with modifier for /retry. Let me start by understanding the current code.
+  ▶ read src/commands_retry.rs  ▶ read src/help_data.rs:1..51 ✓ (0ms)
+ ✓ (5ms)
+  2 tools completed in 933ms (2 ✓)
+
+Now let me find the retry help entry and the `command_short_description` for retry:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search '"retry"' in src/help_data.rs  ▶ search 'retry' in src/dispatch.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/help_data.rs:462..482  ▶ read src/dispatch.rs:795..820 ✓ (0ms)
+ ✓ (1ms)
+  4 tools completed in 6.7s (4 ✓)
+
+Now let me check how handle_retry is called — I see it takes last_input: &Option<String> but I need to see how the input parameter gets passed from dispatch:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub async fn handle_retry' in src/commands_retry.rs ✓ (13ms)
+
+I see that handle_retry doesn't currently receive the raw `/retry ... input string. It only gets last_input, last_error`, etc. I need to add the raw input so we can parse --with. Let me look at how other commands that need the input string receive it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:75..110 ✓ (0ms)
+
+Now I have a clear picture. Let me plan the implementation:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 9.5s (5 ✓)
+
+Let me first look at the existing test module in commands_retry.rs to understand patterns:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_retry.rs ✓ (2ms)
+  ▶ search '#\[test\]' in src/commands_retry.rs ✓ (2ms)
+  ▶ read src/commands_retry.rs:385..415 ✓ (0ms)
+  3 tools completed in 10.3s (3 ✓)
+
+Now let me implement. I'll start with the parsing function and tests, then modify handle_retry.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, add the parse_with_modifier function and update handle_retry to accept and use the `input` parameter:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (31 → 74 lines)
+  + /// Parse the `--with` modifier from a `/retry` command input.
+  + ///
+  + /// Accepts the full input string (e.g. `"/retry --with use async/await"`).
+  + /// Returns `Some(modifier)` if `--with` is present with a non-empty value,
+  + /// `None` otherwise.
+  + pub fn parse_with_modifier(input: &str) -> Option<String> {
+  +     let arg = input.strip_prefix("/retry").unwrap_or("").trim();
+  +     if let Some(rest) = arg.strip_prefix("--with") {
+  +         let modifier = rest.trim();
+  +         // Strip surrounding quotes if present
+  +         let modifier = modifier
+  +             .strip_prefix('"')
+  +             .and_then(|s| s.strip_suffix('"'))
+  +             .or_else(|| {
+  +                 modifier
+  +                     .strip_prefix('\'')
+  +                     .and_then(|s| s.strip_suffix('\''))
+  +             })
+  +             .unwrap_or(modifier);
+  +         if modifier.is_empty() {
+  ... (40 more lines)
+ ✓ (6.3s)
+
+Expected — I need to update dispatch.rs too. Let me do that now:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/dispatch.rs (11 → 12 lines)
+            CommandRoute::Retry => {
+                *ctx.last_error = commands::handle_retry(
+                    ctx.agent,
+  +                 ctx.input,
+                    ctx.last_input,
+                    ctx.last_error,
+                    ctx.session_total,
+ ✓ (44.5s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 50.9s (3 ✓)
+
+Now update the help data:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/help_data.rs (5 → 11 lines)
+            "retry" => Some(
+                "/retry — Re-send the last user input\n\n\
+                 Repeats the most recent user message to the AI. Useful when\n\
+  -              a response was interrupted or you want a different answer.",
+  +              a response was interrupted or you want a different answer.\n\n\
+  +              Modifiers:\n\
+  +              \x20 /retry --with \"...\"   Append additional instructions to the retry\n\n\
+  +              Examples:\n\
+  +              \x20 /retry                        Re-run as-is\n\
+  +              \x20 /retry --with \"use async\"     Re-run with extra guidance\n\
+  +              \x20 /retry --with \"make it shorter\"",
+            ),
+ ✓ (44.1s)
+  2 tools completed in 52.3s (2 ✓)
+
+Now update the short description:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1243..1248 ✓ (0ms)
+  ▶ search '"retry" => Some\("Re-send' in src/help_data.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search '"retry" => Some' in src/help_data.rs ✓ (2ms)
+  ▶ edit src/help_data.rs (1 → 1 lines)
+  -         "retry" => Some("Re-send the last input"),
+  +         "retry" => Some("Re-send the last input (--with \"...\" to refine)"),
+ ✓ (45.3s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 59.1s (5 ✓, 1 ✗)
+
+Now let me add the tests. Let me find the test module location:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:370..390 ✓ (1ms)
+  ▶ read src/commands_retry.rs:395..415 ✓ (0ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Let me find the existing test module:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_retry.rs ✓ (2ms)
+  ▶ read src/commands_retry.rs:420..450 ✓ (0ms)
+  2 tools completed in 10.2s (2 ✓)
+
+Now let me add the tests right after the use super::*; and before the existing tests. I'll insert them after the make_usage helper:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (8 → 66 lines)
+                output,
+                ..Usage::default()
+            }
+  +     }
+  + 
+  +     // ── parse_with_modifier tests ──────────────────────────────────────
+  + 
+  +     #[test]
+  +     fn test_parse_with_modifier_plain_retry() {
+  +         assert_eq!(parse_with_modifier("/retry"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_with_modifier_unquoted() {
+  +         assert_eq!(
+  +             parse_with_modifier("/retry --with use async"),
+  +             Some("use async".to_string())
+  +         );
+  +     }
+  + 
+  ... (42 more lines)
+ ✓ (43.8s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 46.8s (2 ✓)
+
+Now let's run the checks:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (131ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (22.0s)
+  4 tools completed in 43.6s (4 ✓)
+
+All 3355 tests pass, 0 failures. Let me verify my new tests are actually running:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_with_modifier 2… ✓ (110ms)
+
+All 8 new tests pass. Now let me check if any docs need updating. The task description mentions docs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ search 'retry' in docs/src/usage/commands.md ✓ (2ms)
+  ▶ read docs/src/usage/commands.md:50..55 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (1 → 2 lines)
+    | `/retry` | Re-send your last input — useful when a response gets cut off or you want to try again |
+  + | `/retry --with "..."` | Re-run with additional instructions appended (iterative refinement) |
+ ✓ (32.0s)
+  3 tools completed in 40.9s (3 ✓)
+
+Now check README.md for retry mentions:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ search 'retry' in README.md ✓ (2ms)
+  ▶ read README.md:361..364 ✓ (0ms)
+  ▶ edit README.md (1 → 1 lines)
+  - | `/retry` | Re-send the last user input |
+  + | `/retry` | Re-send the last input (`--with "..."` to refine) |
+ ✓ (32.2s)
+  3 tools completed in 47.2s (3 ✓)
+
+Let me also check CLAUDE.md — the architecture section mentions commands_retry.rs:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_retry' in CLAUDE.md ✓ (2ms)
+
+It's not mentioned in CLAUDE.md so no update needed there. Let me verify the final state of my changes looks right:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (12ms)
+
+There are other uncommitted changes from previous tasks. Let me verify my specific changes are correct by checking just the files I touched:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_retry.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/dispatch.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/help_data.rs ✓ (4ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Everything looks clean. Let me run the full check suite one more time to be sure:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (32.3s)
+
+All checks pass. Time to commit:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (9 lines) ✓ (15ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Done. Here's what I implemented:
+
+**`/retry --with "..."` modifier** — iterative refinement for retry commands.
+
+### Changes:
+1. `src/commands_retry.rs`: Added parse_with_modifier() function that extracts the --with value from retry input, handling unquoted, double-quoted, and single-quoted values. Modified handle_retry() to accept the raw input string, parse any --with modifier, and append it as `\n\nAdditional instruction: <modifier>` to the retry prompt. Shows (retrying with modifier: ...) in the status line.
+
+2. **`src/dispatch.rs**: Passes ctx.input to the updated handle_retry()` call.
+
+3. `src/help_data.rs`: Updated detailed help with modifier syntax, examples, and updated the short description.
+
+4. `docs/src/usage/commands.md` and `README.md`: Updated command tables to document the new --with flag.
+
+5. 8 new tests: Cover plain retry (no modifier), unquoted text, double-quoted text, single-quoted text, empty values, empty quoted values, inner quotes preservation, and non-matching flags.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

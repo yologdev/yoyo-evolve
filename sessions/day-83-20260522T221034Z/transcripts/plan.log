@@ -1,0 +1,197 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd src && grep -n "effective_context_tokens\|context_window\|system_prompt\|SYST…  ▶ $ cd src && grep -n "build_tools\|default_tools" tools.rs | head -20 ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd src && grep -n "lite\|small.model\|minimal.*tool\|reduced.*prompt" cli.rs cli…  ▶ $ cd src && grep -n "fn build_tools" tools.rs | head -5 ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd src && sed -n '730,760p' tools.rs ✓ (3ms)
+  ▶ $ cd src && grep -n "parse_args\|lite\|--lite\|--small\|--minimal" cli.rs | head -…  ▶ $ cd src && sed -n '69,100p' cli_config.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd src && sed -n '63,100p' cli_config.rs ✓ (3ms)
+  ▶ $ cd src && sed -n '63,98p' cli_config.rs ✓ (3ms)
+  ▶ $ cd src && grep -n "pub " cli_config.rs | head -50 ✓ (3ms)
+  ▶ $ cd src && grep -n "no_tools\|disallowed_tools" cli.rs | head -20  ▶ $ cd src && grep -n "model_context_window\|context_window" agent_builder.rs | head… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd src && sed -n '340,370p' agent_builder.rs ✓ (3ms)
+  ▶ $ cd src && grep -n "ModelConfig::local\|fn local" agent_builder.rs | head -5  ▶ $ grep -rn "fn local" ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null | head -5 ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ sed -n '255,280p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (3ms)
+  18 tools completed in 38.0s (18 ✓)
+
+Now I have a good picture. Let me look at what the `SYSTEM_PROMPT` looks like and check what would need to change for a lite mode:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && sed -n '35,62p' cli_config.rs ✓ (3ms)
+  ▶ $ cd src && grep -n "context_window\|set_effective_context_tokens" main.rs | head … ✓ (3ms)
+  ▶ $ cd src && sed -n '420,460p' agent_builder.rs ✓ (3ms)
+  3 tools completed in 8.9s (3 ✓)
+
+Good. Now I have enough context to plan. Let me think about the three tasks:
+
+1. **Issue #415 — Small LLM lite mode** (community issue, directly requested) — Add a --lite flag that reduces tools to just bash, read_file, write_file, edit_file (4 essential tools), uses a shorter system prompt, and sets a smaller default context window (8K). This is the most impactful single feature for small model usability.
+
+2. Self-driven: Context-window-aware tool reduction — When --context-window is set to a small value (≤16K), automatically reduce the tool set and shorten the system prompt. This complements `--lite` by making it automatic based on declared context size.
+
+Actually, let me rethink. The assessment says Issue #415 is the top community issue and also aligns with competitive gaps (vs Aider). I should give it a full task slot. Then I need at least 1 self-driven task.
+
+Let me plan 3 tasks:
+1. `--lite` flag — adds the flag, reduced tool set (4 tools), shorter system prompt, smaller default context window
+2. **Lite mode: auto-detection** — when context_window ≤ 16K (user-specified via --context-window), auto-enable lite behaviors (tool reduction, prompt shortening) even without --lite flag
+3. **Self-driven competitive improvement** — something that matters for real developers
+
+Let me think about what self-driven improvement would be most impactful. Looking at the assessment:
+• Per the trajectory, everything is running smoothly (10/10 sessions, 0 reverts)
+• The biggest gaps vs Claude Code that are actually buildable: plugin system, better error recovery
+• Something that would help real developers: maybe /explain improvements, or better /diff interaction
+
+Actually, I notice the assessment mentions "No adaptive tool schema" — the full tool definitions consume lots of tokens. For self-driven work, let me do something different but high-value: **tool schema compression for small contexts** — when lite mode is active, use shorter tool descriptions.
+
+Wait, that's really part of the lite mode work. Let me pick something orthogonal for self-driven.
+
+Looking at competitive gaps: one thing Claude Code does well is **automatic context gathering** — when you ask it to do something, it proactively reads relevant files. yoyo has this via the system prompt instruction "Use tools proactively" but doesn't have **automatic file inclusion based on the user's question**. That's a bigger feature though.
+
+Let me think smaller. A good self-driven task that helps real developers: **/retry --edit to re-run the last prompt with the user's edit** — like "redo that but differently." Actually we already have /retry.
+
+How about: **Improving the /health and /doctor commands to auto-detect project type and suggest setup. Or: Better streaming output for tool results** (showing partial output as it arrives).
+
+Actually, the most impactful self-driven task for competing with Claude Code: **automatic project context injection** — when starting a session, automatically include a compact repo map in the first system message so the model knows the project structure. Claude Code does this. yoyo has `/map` but doesn't auto-inject it. This would be a big UX win — the model immediately knows file structure without the user having to run /map or /add.
+
+But that touches the agent builder + context loading — potentially complex. Let me scope it carefully. The code in `context.rs` already loads project context (YOYO.md, CLAUDE.md etc). I could add repo map injection as part of that.
+
+Actually, let me look at what context.rs already does:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "fn " context.rs | head -20 ✓ (3ms)
+  ▶ $ cd src && sed -n '127,170p' context.rs ✓ (3ms)
+  2 tools completed in 5.4s (2 ✓)
+
+OK so the project context already includes file listing, recently changed files, and git status. That's actually pretty good already. Let me think about what would really make a difference.
+
+For the self-driven task, let me do something concrete that helps developers daily: **auto-inject a compact repo map (top-level symbols) into the system prompt for new sessions**. The /map command already builds this — I just need to hook it into the project context. But this might be too token-heavy for small models...
+
+Actually, let me pick a different self-driven task that's orthogonal and high-value: **`/undo confirmation with diff preview** — when the user types /undo`, show what will be reverted before doing it. This prevents accidental loss of work. It's a real UX safety improvement.
+
+Wait, let me check what /undo currently does:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "handle_undo" commands_git.rs | head -5  ▶ $ cd src && sed -n "$(grep -n 'fn handle_undo' commands_git.rs | cut -d: -f1),+40p… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd src && sed -n '580,625p' commands_git.rs ✓ (3ms)
+  3 tools completed in 16.1s (3 ✓)
+
+OK /undo already exists and works. Let me think of a better self-driven improvement.
+
+Actually, for the competitive gap, the most impactful self-driven work would be: **repo map auto-injection into project context** (limited to ~50 symbols to keep token count reasonable). This directly makes yoyo smarter about the codebase from the first prompt without the user needing to run /map first.
+
+But that's complex. Let me pick something simpler and more targeted: **--lite mode is the #1 priority** (addresses Issue #415 and competitive gap vs Aider). Then for self-driven, I'll add something that improves the core coding experience.
+
+Let me go with:
+
+1. Task 1: `--lite` flag — core lite mode implementation (reduced tools, shorter prompt, smaller context window default)
+2. Task 2: Auto-lite detection — when context_window ≤ 16K, auto-enable lite behaviors; also add lite = true config file support
+3. Task 3 (self-driven): Repo map snippet in project context — inject top-level file structure summary (just filenames grouped by directory, capped at 2KB) into the project context automatically, so the model knows the project layout from turn 1
+
+Wait, task 3 already exists somewhat — get_project_file_listing() already injects a file listing. Let me look at what it produces:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && sed -n '40,58p' context.rs ✓ (3ms)
+
+OK so project context already has file listing. The repo map (with symbols) would be more helpful but it's also much more expensive token-wise. Let me pick a different self-driven task.
+
+For self-driven competitive improvement, let me do: Tool output streaming indicator — when a bash command is running and producing output, show a live line count in the spinner (e.g., "⣾ bash (42 lines...)"). This is something Claude Code does well (showing you that work is happening) and yoyo's `StreamingBashTool` already captures output but the progress display could be better.
+
+Actually wait — looking at `format/tools.rs, there's already ToolProgressTimer with set_line_count`. So maybe that's already done. Let me check:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "set_line_count\|line_count" format/tools.rs | head -10 ✓ (3ms)
+
+That's already implemented. OK let me think of something else for self-driven.
+
+How about: **`/context --slim` for lite mode context** — when in lite mode, reduce the project context injection to just essential info (file listing only, no git status, no recently changed files). This saves tokens for small models.
+
+Actually, let me step back. The most impactful self-driven improvement that helps real developers:
+
+Smart auto-continue improvement: The looks_incomplete heuristic in repl.rs decides when to auto-continue after the model stops. If I improve this to be more accurate (fewer false positives, catch more real incompletes), it directly improves the experience. But that's subtle and hard to test.
+
+Let me go with something concrete and testable: `/compact --aggressive` mode — a more aggressive compaction that keeps only the last N turns (instead of the smart summary), useful when context is running low and the model is struggling. This helps with small models AND large ones.
+
+Actually, we already have compact with arguments. Let me check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "CompactArg\|parse_compact_arg" commands_session.rs | head -10 ✓ (3ms)
+
+OK compact already has keep-recent. Let me think of something truly novel.
+
+**Self-driven task: Streaming JSON output for programmatic integration** — already exists (--output-format stream-json).
+
+Let me go with: Context budget warning sound/notification — when context usage crosses 70%, 80%, 90% thresholds, emit a visual warning inline. This helps developers know when they're running out of runway.
+
+Wait, checking:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "context_budget_warning\|print_context_usage" format/mod.rs | … ✓ (3ms)
+
+OK that exists too. Let me think more carefully about what would be genuinely novel and high-impact for self-driven work.
+
+The most impactful self-driven improvement I can do today: Looking at my competitive gaps, one thing that stands out is that Claude Code has automatic context gathering — it reads files mentioned in the conversation, imports referenced in code, etc. without the user asking. yoyo already has `expand_file_mentions (which expands @file` references) but doesn't have automatic import/dependency resolution — when you're editing a file, it doesn't automatically pull in the types/interfaces from imported modules.
+
+But that's too big for one task. Let me pick something smaller but clearly useful:
+
+**Self-driven: `/retry --with "additional instruction"`** — let users retry the last prompt with additional context/constraints appended. Currently /retry just re-runs the same prompt. Being able to say /retry --with "but use async" or /retry --with "make it shorter" would be a real UX win that Claude Code doesn't have (you have to retype or copy-paste).
+
+Let me check what retry currently does:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && sed -n '1,50p' commands_retry.rs ✓ (3ms)
+  ▶ $ cd src && grep -n "fn handle_retry" commands_retry.rs  ▶ $ cd src && sed -n '78,140p' commands_retry.rs ✓ (3ms)
+ ✓ (3ms)
+  3 tools completed in 5.7s (3 ✓)
+
+Good. Currently /retry just re-runs the last input with error context. Adding `--with "..."` would be simple and useful. But actually, let me think about what's most competitive.
+
+You know what — let me pick a genuinely impactful self-driven task: **Persistent conversation memory across sessions via embeddings/search**. No wait, that's way too big.
+
+Let me be practical. The self-driven task should be:
+1. Clearly useful for real developers
+2. Achievable in one task (≤3 files, 20 minutes)
+3. Something Claude Code has that yoyo doesn't (or does better)
+
+**Answer: Auto-read referenced files.** When the user mentions a file path in their message (like "look at src/main.rs" or "fix the bug in tools.rs"), automatically read that file and include it in context. Claude Code does this seamlessly. yoyo has expand_file_mentions but it requires @ prefix.
+
+Let me check what expand_file_mentions does:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "expand_file_mentions" commands_file.rs | head -5  ▶ $ cd src && grep -n "expand_file_mentions" repl.rs | head -5 ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd src && sed -n '331,370p' commands_file.rs ✓ (4ms)
+  3 tools completed in 6.3s (3 ✓)
+
+OK so `expand_file_mentions only works with @` prefix. That's the current behavior. Making it work without @ would be tricky (false positives with any path-like text). This is probably not the right task.
+
+Let me settle on something clean and impactful for self-driven work:
+
+`/retry --with "..."` modifier — Append additional instructions when retrying the last prompt. This is a simple, testable feature that improves the iterative coding workflow. When you say "fix this bug" and the model does something wrong, instead of re-explaining the whole thing, you just /retry --with "use HashMap instead".
+
+OK, I have my plan. Let me write the task files:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (39 lines) ✓ (31.3s)
+  ▶ write session_plan/task_02.md (47 lines) ✓ (31.3s)
+  ▶ write session_plan/task_03.md (60 lines) ✓ (32.4s)
+  ▶ write session_plan/issue_responses.md (32 lines) ✓ (31.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 3m 2s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 83 (21:01) Session Plan
+
+### Task 1: `--lite` flag for small LLM usability (Issue #415)
+Core implementation — adds --lite flag that reduces tools to 4 essentials, uses a minimal system prompt, and defaults to 8K context window. Touches cli.rs, cli_config.rs, `agent_builder.rs`.
+
+### Task 2: Auto-lite detection + config file support (Issue #415)
+Complements Task 1 — when --context-window ≤16K, auto-enables lite behaviors. Also adds lite = true to .yoyo.toml support. Touches cli.rs, cli_config.rs, config.rs.
+
+### Task 3: `/retry --with "..."` modifier (self-driven)
+Adds the ability to append additional instructions when retrying the last prompt. Enables iterative refinement without re-typing — a common developer workflow. Touches commands_retry.rs, dispatch.rs, help_data.rs.
+
+Issue disposition:
+• #415 → Implementing (Tasks 1+2)
+• #407 → Ignored (spam)
+• #341, #307, #215, #156 → Deferred
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

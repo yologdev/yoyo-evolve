@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the implementation and what tests exist.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compute_lite_disallowed…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "validate_config_value\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lite\|auto_lite\|contex… ✓ (6ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  3 tools completed in 1.4s (3 ✓)
+
+Now let me see the existing tests in src/cli.rs to understand the test patterns:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2840,2945p' src/cli.rs ✓ (3ms)
+
+Now let me also check what the validate_config_value tests look like for the lite key:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lite" src/config.rs | h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '575,595p' src/config.rs ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Good. The implementation is all in place. Now I need to add the 4 specific tests the evaluator asked for. Let me look at the auto-lite detection code:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '910,945p' src/cli.rs ✓ (3ms)
+
+Now let me check what imports and constants are available for tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LITE_SYSTEM_PROMPT\|LIT… ✓ (3ms)
+
+Now I have all the context. Let me add the 4 required tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2935,2942p' src/cli.rs ✓ (2ms)
+  ▶ edit src/cli.rs (8 → 73 lines)
+                KNOWN_FLAGS.contains(&"--lite"),
+                "--lite should be in KNOWN_FLAGS"
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_auto_lite_context_window_8000() {
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         let args = vec![
+  +             "yoyo".to_string(),
+  +             "--context-window".to_string(),
+  +             "8000".to_string(),
+  +             "-p".to_string(),
+  +             "hello".to_string(),
+  +         ];
+  +         let config = parse_args(&args).expect("should parse");
+  +         // Auto-lite should activate: context window ≤16K
+  +         assert!(config.lite);
+  +         assert!(!config.disallowed_tools.is_empty());
+  +         // Should disallow the same tools as --lite
+  ... (50 more lines)
+ ✓ (43.4s)
+  2 tools completed in 59.2s (2 ✓)
+
+Now let's run the required checks:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (33.4s)
+  3 tools completed in 55.0s (3 ✓)
+
+All 88 tests pass. Let me specifically verify the new tests ran:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test auto_lite 2>&1; cargo… ✓ (716ms)
+
+All 4 required tests pass:
+
+1. `test_auto_lite_context_window_8000` — --context-window 8000 triggers auto-lite (sets `lite=true, disallowed_tools` populated)
+2. `test_no_auto_lite_context_window_32000` — `--context-window 32000` does NOT trigger auto-lite
+3. `test_auto_lite_preserves_explicit_disallowed_tools` — `--context-window 8000 --disallowed-tools bash` does NOT override the user's explicit disallowed_tools
+4. `test_validate_config_value_lite` — validate_config_value("lite", "true") passes and `validate_config_value("lite", "banana")` fails
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
