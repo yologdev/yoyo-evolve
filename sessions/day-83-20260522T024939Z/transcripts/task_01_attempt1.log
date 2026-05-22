@@ -1,0 +1,210 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: injecting the persistent goal into the agent's system prompt.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 24.0s (7 ✓)
+
+Let me start by understanding the current code.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cat src/commands_goal.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (43ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Good — load_goal() is already `pub` and well-tested. Now let me look at the system prompt assembly in cli.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ grep -n "repo_map\|system_prompt\|push_str\|SYSTEM_PROMPT\|repo map" src/cli.rs … ✓ (4ms)
+  ▶ read src/cli.rs:730..820 ✓ (1ms)
+  4 tools completed in 14.6s (4 ✓)
+
+I can see the pattern. The goal injection should go right after the repo map block (after line 752). Let me also check where recently_changed_files or similar context might be appended:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "recently_changed\|git_status\|push_str.*context\|system_prompt.*push" s… ✓ (3ms)
+
+Good — the system prompt assembly is simple: project context, then repo map. I'll add the goal injection right after.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me look at the help_data.rs for the goal command:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n -A 30 '"goal"' src/help_data.rs ✓ (39ms)
+
+Now I have the full picture. Let me implement the changes:
+
+1. First, inject the goal into the system prompt in cli.rs
+2. Update the help text in `help_data.rs`
+3. The tests in `commands_goal.rs already cover load_goal()` thoroughly
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli.rs (7 → 16 lines)
+        if let Some(repo_map) = crate::commands_map::generate_repo_map_for_prompt() {
+            system_prompt.push_str("\n\n# Repository Structure\n\n");
+            system_prompt.push_str(&repo_map);
+  +     }
+  + 
+  +     // Append current goal for persistent awareness
+  +     if let Some(goal) = crate::commands_goal::load_goal() {
+  +         system_prompt.push_str("\n\n# Current Goal\n\n");
+  +         system_prompt.push_str(&goal);
+  +         system_prompt.push_str(
+  +             "\n\n(Set via /goal set. The user is working toward this. Keep it in mind.)",
+  +         );
+        }
+    
+        // --thinking <level> enables extended thinking (CLI overrides config file)
+ ✓ (52.8s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 10s (3 ✓)
+
+Now update the help text:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/help_data.rs (17 → 19 lines)
+                 \x20 /goal check        Ask AI to evaluate progress\n\n\
+                 Goals are stored in .yoyo/goal.md — human-readable, version-controllable.\n\
+                 Persists across sessions so you can pick up where you left off.\n\n\
+  +              Your goal is automatically included in the AI's context, so it stays aware\n\
+  +              of what you're working toward across the entire conversation.\n\n\
+                 /goal check sends the goal to the AI, which reviews conversation history\n\
+                 and project state to evaluate progress, remaining work, and next steps.\n\n\
+                 Examples:\n\
+ ✓ (52.4s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 10s (3 ✓)
+
+Now let me add a test that verifies the goal injection into the system prompt. Let me look at how the existing tests in `cli.rs` test the system prompt:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_config_system\|fn test.*system_prompt\|fn test.*goal" src/cli.rs |… ✓ (3ms)
+
+The system prompt tests in cli.rs test resolve_system_prompt directly. The goal injection happens in parse_args which is harder to test in isolation. Let me add a test for the goal injection more directly. Since load_goal() is already well-tested in commands_goal.rs, I should add a test that verifies the system prompt gets the goal appended. Let me look at how to best test this:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+The most meaningful test I can add is to verify the integration in `commands_goal.rs — that load_goal()` returns the right content that would be injected. The existing tests already cover the `None` case and content case. Let me add a test that verifies the format of the injected block, which is what we'd use in the system prompt:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:215.. ✓ (1ms)
+
+I'll add a test that simulates the system prompt injection logic — building the prompt fragment the same way parse_args does:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (6 → 42 lines)
+        fn test_goal_short_description() {
+            let desc = crate::help::command_short_description("goal");
+            assert!(desc.is_some(), "goal should have a short description");
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_goal_system_prompt_injection() {
+  +         with_temp_dir(|| {
+  +             // No goal → no injection
+  +             let mut prompt = String::from("base prompt");
+  +             if let Some(goal) = load_goal() {
+  +                 prompt.push_str("\n\n# Current Goal\n\n");
+  +                 prompt.push_str(&goal);
+  +                 prompt.push_str("\n\n(Set via /goal set. The user is working toward this. Keep it in mind.)");
+  +             }
+  +             assert_eq!(prompt, "base prompt");
+  + 
+  +             // With goal → injection present
+  +             save_goal("Refactor auth module").unwrap();
+  ... (21 more lines)
+ ✓ (52.2s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 59.5s (2 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (657ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (39.1s)
+  5 tools completed in 1m 10s (5 ✓)
+
+All 88 tests pass. Let me specifically check my new tests ran:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test goal 2>&1 ✓ (136ms)
+
+All 25 goal-related tests pass, including my two new ones (`test_goal_system_prompt_injection and test_goal_help_mentions_auto_context`).
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now let me verify the injection looks right by reviewing the changed code:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:748..768 ✓ (1ms)
+
+Clean. Now let me commit:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (16ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 12.1s (4 ✓)
+
+Now let me check if any docs need updating. The CLAUDE.md mentions .yoyo/goal.md in the State files section:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "goal" CLAUDE.md ✓ (8ms)
+  ▶ read CLAUDE.md:144..145 ✓ (0ms)
+  2 tools completed in 10.3s (2 ✓)
+
+That description should mention it's injected into the system prompt now:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `.yoyo/goal.md` — persistent session/project goal (plain text, set via `/goal set`)
+  + - `.yoyo/goal.md` — persistent session/project goal (plain text, set via `/goal set`; automatically injected into system prompt)
+ ✓ (37.9s)
+
+Let me also check the docs for user-facing pages:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "goal" docs/src/ 2>/dev/null ✓ (4ms)
+
+No mention of /goal in the docs — no update needed there. Let me check the README:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "goal" README.md ✓ (10ms)
+  ▶ read README.md:349..354 ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+The README description could note the auto-injection too:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ edit README.md (1 → 1 lines)
+  - | `/goal [subcmd]` | Set, view, or check progress on a session goal (set/show/clear/check) |
+  + | `/goal [subcmd]` | Persistent goal — auto-injected into AI context (set/show/clear/check) |
+ ✓ (38.4s)
+
+Now amend the commit with these doc updates:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit --amend… ✓ (13ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.8s (2 ✓)
+
+All done. Here's what I implemented:
+
+Summary of changes:
+
+1. **`src/cli.rs`** — Added goal injection block after the repo map section in parse_args. When .yoyo/goal.md exists, its content is appended to the system prompt as a # Current Goal section with a note that it was set via /goal set.
+
+2. `src/commands_goal.rs` — Added 2 new tests:
+   • test_goal_system_prompt_injection: Verifies the injection pattern works correctly (no goal → no injection, with goal → correct prompt fragment)
+   • test_goal_help_mentions_auto_context: Verifies the help text documents the auto-injection
+
+3. `src/help_data.rs` — Updated /goal help text to mention: "Your goal is automatically included in the AI's context, so it stays aware of what you're working toward across the entire conversation."
+
+4. **`CLAUDE.md** — Updated state file description for .yoyo/goal.md` to note auto-injection into system prompt.
+
+5. `README.md` — Updated /goal command table description to mention auto-injection.
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test (88 passed, 0 failed).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

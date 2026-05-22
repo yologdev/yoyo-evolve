@@ -1,0 +1,393 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current PR review code structure, then implement the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/commands_git_review.rs 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Review" src/commands_gi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PrSubcommand" src/comma… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (7ms)
+  3 tools completed in 2.1s (3 ✓)
+
+Let me read the key sections in detail:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1030..1105  ▶ read src/commands_git_review.rs (50 lines) ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/commands_git.rs:1100..1220  ▶ read src/commands_git_review.rs ✓ (4ms)
+ ✓ (5ms)
+  4 tools completed in 4.6s (4 ✓)
+
+Now let me see the PR Review section in handle_pr and the help data:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1209..1309  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pr" src/help_data.rs | … ✓ (1ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/pr' src/help_data.rs ✓ (3ms)
+  ▶ read src/help_data.rs:712..772 ✓ (0ms)
+  4 tools completed in 7.3s (4 ✓)
+
+Now I have a clear picture. Let me also check the PR help line in command_short_description:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"pr"' src/help_data.rs ✓ (2ms)
+
+Now let me check how the parse_pr_args works with 3-part splitting to plan my change properly. The current splitn(3, ...) means for `"42 review --post", parts will be ["42", "review", "--post"]`. Good.
+
+Now let me also check the existing tests area at the bottom of the file:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1600..1780 ✓ (2ms)
+
+Let me also check the rest of the tests to see the duplicate pr test section:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1890..2010 ✓ (1ms)
+
+Now let me also check how PR_SUBCOMMANDS is defined in commands.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PR_SUBCOMMANDS" src/com… ✓ (3ms)
+  ▶ read src/commands.rs:185..195 ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Good. Now let me check how the review handler deals with the "review" match in the second section (splitn with 3 parts). The problem is that `splitn(3, ...) for "42 review --post" produces ["42", "review", "--post"]. But the current match only matches on parts[1] being "review" — it ignores parts[2]`. I need to detect --post there.
+
+Also for the `"review 42 --post"` format (when review comes first), I need to handle that too. Let me trace through:
+• "review 42 --post" → splitn(3) → ["review", "42", "--post"]. The first branch checks parts[0].eq_ignore_ascii_case("review"), then gets parts[1] which is "42", parses to 42. Returns `Review(42). But we never check parts[2] for --post`!
+
+I need to handle both orderings. Let me plan and implement:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.0s (7 ✓)
+
+Let me start implementing. First, the enum change and all its usages:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git.rs (1 → 1 lines)
+  -     Review(u32),
+  +     Review(u32, bool), // (PR number, post_to_github)
+ ✓ (7.2s)
+  2 tools completed in 13.0s (2 ✓)
+
+Good, expected. Now I need to update all the usages. Let me do them all at once:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now update parse_pr_args. The tricky part: for "review 42 --post", splitn(3) gives `["review", "42", "--post"]. For "42 review --post", splitn(3) gives ["42", "review", "--post"]`. I need to handle both. But the current splitn(3) only gives 3 parts max, so we need to check `parts[2]` when it exists.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (9 → 13 lines)
+        if parts[0].eq_ignore_ascii_case("review") {
+            if let Some(num_str) = parts.get(1) {
+                if let Ok(n) = num_str.parse::<u32>() {
+  -                 return PrSubcommand::Review(n);
+  +                 let post = parts
+  +                     .get(2)
+  +                     .map(|s| s.eq_ignore_ascii_case("--post"))
+  +                     .unwrap_or(false);
+  +                 return PrSubcommand::Review(n, post);
+                }
+            }
+            return PrSubcommand::Help;
+ ✓ (7.1s)
+
+Now update the second match arm for "42 review" and `"42 review --post"`:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 8 lines)
+  -         "review" => PrSubcommand::Review(number),
+  +         "review" => {
+  +             let post = if parts.len() == 3 {
+  +                 parts[2].eq_ignore_ascii_case("--post")
+  +             } else {
+  +                 false
+  +             };
+  +             PrSubcommand::Review(number, post)
+  +         }
+ ✓ (7.1s)
+
+Now update the `handle_pr` match arm:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 1 lines)
+  -         PrSubcommand::Review(number) => {
+  +         PrSubcommand::Review(number, post) => {
+ ✓ (7.1s)
+
+Good progress. Now I need to fix all the test assertions. Let me find all occurrences:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PrSubcommand::Review(" … ✓ (3ms)
+
+Now let me also find the duplicate tests lower in the file:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Review" src/commands_gi… ✓ (3ms)
+
+Now fix all four test assertions — these all expect the old Review(u32) format, need Review(u32, false):
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 1 lines)
+  -         assert_eq!(parse_pr_args("42 review"), PrSubcommand::Review(42));
+  +         assert_eq!(parse_pr_args("42 review"), PrSubcommand::Review(42, false));
+ ✓ (7.2s)
+  ▶ edit src/commands_git.rs (1 → 1 lines)
+  -         assert_eq!(parse_pr_args("review 42"), PrSubcommand::Review(42));
+  +         assert_eq!(parse_pr_args("review 42"), PrSubcommand::Review(42, false));
+ ✓ (7.3s)
+  ▶ edit src/commands_git.rs (2 → 2 lines)
+  -         assert_eq!(parse_pr_args("Review 10"), PrSubcommand::Review(10));
+  -         assert_eq!(parse_pr_args("REVIEW 10"), PrSubcommand::Review(10));
+  +         assert_eq!(parse_pr_args("Review 10"), PrSubcommand::Review(10, false));
+  +         assert_eq!(parse_pr_args("REVIEW 10"), PrSubcommand::Review(10, false));
+ ✓ (12.2s)
+  3 tools completed in 34.8s (3 ✓)
+
+Now just the unused variable. I'll use _post temporarily since I haven't implemented the handler yet, but actually let me implement the handler now so post gets used. Let me first work on the review module, then come back to integrate.
+
+For now, let me prefix with underscore temporarily to get things compiling, then replace it when I add the logic:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 1 lines)
+  -         PrSubcommand::Review(number, post) => {
+  +         PrSubcommand::Review(number, _post) => {
+ ✓ (51.7s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 55.4s (2 ✓)
+
+Now let me add the functions to commands_git_review.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me check what's at the end of the file (before the tests module):
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:580..660 ✓ (1ms)
+  ▶ read src/commands_git_review.rs:660..740 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me see where to add the new functions — I want to add them just before the #[cfg(test)] block. Let me find that:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/com… ✓ (4ms)
+  ▶ read src/commands_git_review.rs:425..445 ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me also check what `detect_repo_owner_name` or similar helper exists — I need to get the owner/repo for the gh api call:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "repos/" src/commands_g… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "gh api" src/ | head -1… ✓ (7ms)
+  2 tools completed in 4.4s (2 ✓)
+
+No existing gh api usage. The GitHub API endpoint for creating a review needs `{owner}/{repo}. I can use gh api with relative URLs since gh resolves {owner}/{repo} automatically. Actually, even better: gh api` supports the format repos/{owner}/{repo}/pulls/{pr}/reviews but I can use the shorthand — let me check:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ gh api --help 2>&1 | head -20 ✓ (31ms)
+
+`gh api will replace {owner} and {repo}` from the current directory. That's exactly what I need.
+
+Now let me write the new functions. I'll add them to commands_git_review.rs just before the test module:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:430..440 ✓ (1ms)
+  ▶ edit src/commands_git_review.rs (7 → 302 lines)
+                    println!("  {RED}✗{RESET} {msg}");
+  +             }
+  +         }
+  +     }
+  + }
+  + 
+  + /// A single inline review comment for a PR.
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub struct ReviewComment {
+  +     pub path: String,
+  +     pub line: u64,
+  +     pub body: String,
+  + }
+  + 
+  + /// Parse a structured review JSON string into a list of review comments.
+  + ///
+  + /// Expects a JSON array of objects with `path`, `line`, and `body` fields:
+  + /// ```json
+  + /// [
+  + ///   {"path": "src/main.rs", "line": 42, "body": "Consider error handling here"},
+  ... (282 more lines)
+ ✓ (12.1s)
+  2 tools completed in 58.4s (2 ✓)
+
+Dead code warnings because nothing uses these functions yet. Let me now integrate them into `handle_pr in commands_git.rs`. First let me add the tests for the new functions (which will use them and eliminate the dead-code warnings), then wire up the handler.
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now add tests in commands_git_review.rs tests module:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:725..733 ✓ (1ms)
+  ▶ read src/commands_git_review.rs:1022..1027 ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Add tests before the closing } of the test module:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (5 → 103 lines)
+        fn build_review_prompt_with_pr_label() {
+            let prompt = build_review_prompt("PR #42", "diff --git a/foo b/foo");
+  +         assert!(prompt.contains("PR #42"));
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_review_comments_basic() {
+  +         let json = r#"[
+  +             {"path": "src/main.rs", "line": 42, "body": "Add error handling"},
+  +             {"path": "src/lib.rs", "line": 10, "body": "Nice refactor!"}
+  +         ]"#;
+  +         let comments = parse_review_comments(json).unwrap();
+  +         assert_eq!(comments.len(), 2);
+  +         assert_eq!(comments[0].path, "src/main.rs");
+  +         assert_eq!(comments[0].line, 42);
+  +         assert_eq!(comments[0].body, "Add error handling");
+  +         assert_eq!(comments[1].path, "src/lib.rs");
+  +         assert_eq!(comments[1].line, 10);
+  +     }
+  + 
+  ... (83 more lines)
+ ✓ (12.0s)
+
+The dead code warnings persist because tests in the same crate still need the functions to be "used" from non-test code, OR the #[cfg(test)] usage counts as dead. Wait, actually tests should count. Let me check — these are pub items and the test uses use super::*. Maybe clippy is only checking the binary target. The tests use them, but the -D dead-code is from the binary compilation. Let me now wire up the handler so everything's used.
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now update handle_pr to use the new functions when post=true. Let me check what imports exist:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_git_review" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_git.rs ✓ (2ms)
+  ▶ read src/commands_git.rs:1..11 ✓ (1ms)
+  3 tools completed in 6.7s (3 ✓)
+
+I need to add an import for the new review functions. Let me also look at how `run_prompt` works to understand the response flow. The review needs to get the AI's response text so we can parse the JSON from it.
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub.*fn run_prompt" src… ✓ (3ms)
+  ▶ read src/prompt.rs:1105..1125 ✓ (0ms)
+  ▶ read src/prompt.rs:1133..1163 ✓ (1ms)
+  3 tools completed in 6.9s (3 ✓)
+
+Let me check what PromptOutcome is and what it contains:
+  ╭─ Turn 56 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct PromptOutcom… ✓ (3ms)
+  ▶ read src/prompt.rs:63..83 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+`PromptOutcome.text contains the response text. Now I need to look at what run_prompt` returns:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:689..704 ✓ (0ms)
+
+So run_prompt returns a PromptOutcome which has .text. For the --post flow, I can:
+1. Run the prompt with the structured review prompt
+2. Extract the JSON from the response text
+3. Parse and post it
+
+Now let me update the handle_pr review arm. Let me read the full current review handler:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1220..1300 ✓ (1ms)
+
+Now I'll replace the review handler to support both modes:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (77 → 127 lines)
+  -         PrSubcommand::Review(number, _post) => {
+  +         PrSubcommand::Review(number, post) => {
+                let num_str = number.to_string();
+    
+                // Fetch PR diff
+  ···
+                    ""
+                };
+    
+  -             // Build review prompt
+  -             let pr_section = if pr_info.trim().is_empty() {
+  -                 String::new()
+  +             let diff_with_note = format!("{diff_content}{truncated_note}");
+  + 
+  +             if post {
+  +                 // --post mode: generate structured review and post to GitHub
+  +                 use crate::commands_git_review::{
+  +                     build_review_prompt_structured, extract_review_json, parse_review_comments,
+  +                     post_pr_review,
+  +                 };
+  ... (83 more lines)
+ ✓ (52.0s)
+
+Now add the --post flag tests to commands_git.rs:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1665..1680 ✓ (1ms)
+
+Let me find the review tests section:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1698..1728 ✓ (1ms)
+
+Good. Now I need to add tests for --post. Let me find the right place — after the review tests, before the comment tests:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (5 → 38 lines)
+        fn parse_pr_args_review_no_number_is_help() {
+            assert_eq!(parse_pr_args("review"), PrSubcommand::Help);
+            assert_eq!(parse_pr_args("review abc"), PrSubcommand::Help);
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_pr_args_review_post() {
+  +         assert_eq!(
+  +             parse_pr_args("42 review --post"),
+  +             PrSubcommand::Review(42, true)
+  +         );
+  +         assert_eq!(
+  +             parse_pr_args("review 42 --post"),
+  +             PrSubcommand::Review(42, true)
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_pr_args_review_post_case_insensitive() {
+  +         assert_eq!(
+  ... (17 more lines)
+ ✓ (53.0s)
+
+Now let me try building:
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (119ms)
+
+Build passes. Now let's run clippy:
+  ╭─ Turn 65 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.1s)
+
+Clippy clean. Now tests:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.4s)
+
+All 3225+88 tests pass. Let me also run fmt:
+  ╭─ Turn 67 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (671ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (656ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Now update the help text:
+  ╭─ Turn 70 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/help_data.rs (18 → 23 lines)
+                 \x20 /pr view <n>            View PR details\n\
+                 \x20 /pr diff <n>            Show PR diff\n\
+                 \x20 /pr review <n>          AI-powered code review of a PR\n\
+  +              \x20 /pr review <n> --post   Review and post inline comments to GitHub\n\
+                 \x20 /pr comment <n> <text>  Comment on a PR\n\
+                 \x20 /pr create [--draft]    Create a PR from current branch\n\
+                 \x20 /pr checkout <n>        Checkout a PR's branch\n\n\
+                 The review subcommand fetches the PR diff and description,\n\
+                 then sends them to the AI for a detailed code review.\n\n\
+  +              With --post, the review is also posted to GitHub as an inline\n\
+  +              PR review with file-specific comments. Without --post, the\n\
+  +              review is only displayed in the terminal.\n\n\
+                 Requires the `gh` CLI to be installed and authenticated.\n\n\
+                 Examples:\n\
+                 \x20 /pr\n\
+                 \x20 /pr create --draft\n\
+                 \x20 /pr review 42\n\
+  +              \x20 /pr review 42 --post\n\
+                 \x20 /pr diff 42",
+ ✓ (52.5s)
+  2 tools completed in 1m 4s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
