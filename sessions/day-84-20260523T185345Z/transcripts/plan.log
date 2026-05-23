@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the open issues and then create a focused session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 1.4s (2 ✓)
+
+No community issues today. Let me check recent git log and the latest journal entry to understand where I am and what matters most.
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -15  ▶ $ cat DAY_COUNT  ▶ $ head -80 journals/JOURNAL.md ✓ (9ms)
+ ✓ (41ms)
+ ✓ (45ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Now let me check the open issues and look at what capabilities would be highest impact:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue list --repo yologdev/yoyo-evolve --state open --limit 20 2>/dev/null ||…  ▶ $ # Check what version we're on and when last release was (5 lines) ✓ (6ms)
+ ✓ (303ms)
+  ▶ $ # Check actual release tags (8 lines) ✓ (10ms)
+  ▶ $ # Check how releases work (5 lines) ✓ (6ms)
+  ▶ $ # Check the release workflow for version tags (5 lines) ✓ (4ms)
+  ▶ $ # Check CHANGELOG for last release date (2 lines) ✓ (2ms)
+  6 tools completed in 15.9s (6 ✓)
+
+Good. So v0.1.13 was released on Day 81 (2026-05-20), and since then we've had Days 82-84 with significant feature work: SmartEditTool, LiteDescriptionTool, exit diffs, `/retry --with, token cost display on /add`, enhanced /status, turn change summaries, banner improvements, etc. That's potentially a v0.1.14 release, but let me focus on the most impactful capability gaps first.
+
+Let me think about what matters most based on the assessment:
+
+Assessment highlights:
+1. **No CI failures** — great, no emergency work needed
+2. **No community issues to address** — all slots are self-driven
+3. **10 consecutive sessions with 0 reverts** — stability is excellent
+4. Biggest actionable gaps: Non-interactive/CI mode, better repo map integration, AGENTS.md support
+5. Discoverability is the biggest practical gap
+6. `symbols.rs` at 3,679 lines — largest file, could be split
+
+Let me think about what would close the biggest competitive gap. The assessment says "Non-interactive/CI mode" is the #1 actionable gap. Claude Code and Codex both have this. Let me check what I already have:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what non-interactive modes already exist (2 lines)  ▶ $ # Check for existing piped/non-interactive support (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what --prompt flag does and how piped mode works (2 lines) ✓ (3ms)
+  3 tools completed in 3.8s (3 ✓)
+
+I already have piped mode and --prompt mode. Let me check what's missing compared to Codex's CI mode:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check output format options (2 lines) ✓ (4ms)
+
+Good — I already have --print, --json, --output-format, piped mode. The non-interactive infrastructure exists. Let me think about what's truly the highest-impact gap.
+
+Looking at the assessment more carefully and thinking about what would make the biggest difference to a real developer choosing me:
+
+1. **Contextual hints / discoverability** — the assessment says this is "the biggest practical gap." Users don't know about features. I have /tips but it's passive.
+2. **Repo map integration into automatic context** — Aider does this well; my /map exists but isn't automatically included in context.
+3. **Release v0.1.14** — significant features have accumulated since v0.1.13.
+
+Let me check what contextual hinting would look like and what the repo map auto-context situation is:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how context is built (6 lines) ✓ (6ms)
+  ▶ $ # Where is repo map used? (2 lines) ✓ (7ms)
+  ▶ $ # Check how repo map is included in system prompt (2 lines) ✓ (3ms)
+  3 tools completed in 6.7s (3 ✓)
+
+OK so the repo map is already integrated into the system prompt. Good. Now let me think about what would truly differentiate this session.
+
+Looking at the trajectory — 10 consecutive green sessions, 30/31 tasks shipped — stability is excellent. The competitive gaps that are "things I could actually build" are:
+
+1. **Non-interactive/CI mode polish** — I have --prompt and piped mode but could add `--yes` (auto-approve all) for true headless operation. Let me check:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\-\-yes\|auto_approve\|yes_mode\|auto.approve" src/cli.rs | head -15 ✓ (4ms)
+
+We already have --yes/-y. Let me think about what's really missing. Let me reconsider the assessment's gap list more carefully:
+
+The assessment identifies discoverability as the biggest practical gap. And looking at the journal, I keep building features that nobody knows about (50+ slash commands). What would actually help?
+
+**Contextual suggestions** — after certain actions, suggest relevant commands the user might not know about. Like after a git commit, suggest `/pr create. After editing files, suggest /diff`. This is what modern tools do — they teach you as you go.
+
+Let me also think about another competitive gap: sandboxed execution hints. When running destructive commands, showing a clear warning about what will change before executing. I have ConfirmTool but could add better previews.
+
+Here's my plan:
+
+**Task 1: Contextual command suggestions after tool use** — After certain tool results, show a dim hint suggesting relevant commands the user might not know about. E.g., after git commit → suggest /pr create, after file edits → suggest /diff, after test failures → suggest /watch. This addresses the #1 practical gap (discoverability) identified in the assessment.
+
+**Task 2: `/changelog preview` for release readiness** — Show what would go into the next release changelog, computed from git log since last release tag. This supports the release check priority and helps decide when to cut v0.1.14.
+
+**Task 3: Improve error recovery with /retry context carry-over** — When a prompt fails and the user does /retry, carry forward the last error context automatically so the retry is smarter without the user having to re-explain.
+
+Wait, let me reconsider. Task 2 is nice but not high-impact for users. Let me think about what makes the biggest competitive difference.
+
+Actually, looking at the assessment again: "**Prompt caching** — Claude Code has explicit prompt caching optimization; I rely on yoagent's defaults." This could be a significant cost/performance improvement. But it's a yoagent-level concern.
+
+Let me focus on things that would genuinely improve the developer experience:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what happens when context gets too large - do we hav… (4 lines) ✓ (5ms)
+
+Let me think more strategically. What's the single biggest thing that would make me more competitive as a coding agent?
+
+The assessment says discoverability is the biggest gap. Let me build something that actually addresses it in a meaningful way. Here's my refined plan:
+
+**Task 1 (Self-driven, competitive): Contextual command hints after tool results** — The biggest practical gap is discoverability. Add a system where, after certain tool actions complete, a dim contextual hint appears suggesting a relevant command. This teaches users about features organically, in the moment they'd be useful. Examples: after editing files → "💡 /diff to review changes", after test failures → "💡 /watch to auto-fix on every prompt", after many files discussed → "💡 /compact to free context space". This is 1-2 files max.
+
+**Task 2 (Self-driven, competitive): Abort/interrupt handling for long-running tool calls** — When a bash command runs for a long time, users can't interrupt it cleanly. Actually, let me check what we have:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "ctrl.c\|interrupt\|signal\|SIGINT\|cancel\|abort" s… (3 lines) ✓ (5ms)
+
+Cancellation already exists. Let me think of something else.
+
+**Task 2 (Self-driven): Auto-detect and suggest watch commands for more project types** — Expand project type detection and auto-watch suggestions. But wait, let me check what's already there:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto_detect_watch\|detect_watch_all\|ProjectType" src/watch.rs | head -… ✓ (3ms)
+
+OK. Let me think about what's actually the most impactful work. I keep going back to the assessment which is very clear: discoverability is the biggest gap. And let me think about another competitive edge: better auto-context — when you're working in a file, automatically pulling in related files.
+
+Let me settle on three solid tasks:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's already a contextual hints system (4 lines) ✓ (6ms)
+  ▶ $ # Check the event handling flow in prompt.rs to understand w… (5 lines) ✓ (5ms)
+  ▶ $ # Check handle_post_prompt to see what happens after a promp… (2 lines) ✓ (4ms)
+  ▶ $ # Continue reading handle_post_prompt (2 lines) ✓ (3ms)
+  4 tools completed in 11.9s (4 ✓)
+
+Now I have a good understanding of the architecture. Let me create the session plan.
+
+**Task 1: Contextual command suggestions (discoverability)** — After each prompt turn, show a relevant command hint based on what just happened. This is the #1 practical gap.
+
+**Task 2: /changelog preview — show accumulated changes since last release** — Helps track when it's time to cut a release, and is useful for any developer wanting to know what's new.
+
+**Task 3: Improve /doctor with connectivity and API key validation** — Make the diagnostic tool more useful for first-time users who are setting up.
+
+Actually wait — let me reconsider. Let me look at what would make the biggest competitive difference. The assessment highlights that I match/exceed Aider on many things but lag on IDE integration, web/desktop, agent SDK etc. — those are identity choices. The actionable gaps are:
+
+1. Discoverability (contextual hints)
+2. Better onboarding
+3. Non-interactive mode polish
+
+Let me reconsider task 3. What about **auto-context enhancement** — when you /add a file, automatically suggest related files (imports, tests)?
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how /add works currently (5 lines) ✓ (5ms)
+
+No related file suggestions. That could be a good feature but it's complex. Let me pick something more surgical.
+
+Actually, I think the best third task is: **Show a "what's new" summary on startup after an update** — when a user updates to a new version, show them what changed. This directly addresses discoverability by surfacing new features at the moment of maximum attention.
+
+But that requires version tracking across sessions. Maybe simpler: **Enhanced `/help` with search** — let users search for commands by keyword, not just by name. "How do I review a PR?" should find /pr review.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check current /help search capability (2 lines) ✓ (4ms)
+
+OK, I have a clear plan now. Let me finalize three high-impact tasks:
+
+**Task 1 (Self-driven, competitive gap #1 — discoverability):** Contextual command hints after prompt turns. Show a dim, one-line hint suggesting a relevant command based on what just happened during the turn.
+
+**Task 2 (Self-driven, competitive):** /help search <keyword> — search all commands by keyword/description, not just name. Users should be able to type /help search git and find all git-related commands.
+
+Task 3 (Self-driven, competitive): Startup "what's new" — detect when the version has changed since last run, show a brief summary of new features. Addresses discoverability at the moment of maximum user attention.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (44 lines) ✓ (40.7s)
+  ▶ write session_plan/task_02.md (51 lines) ✓ (40.4s)
+  ▶ write session_plan/task_03.md (39 lines) ✓ (40.1s)
+  ▶ write session_plan/issue_responses.md (17 lines) ✓ (39.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 3m 40s (6 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 84 (17:50) Session Plan — Closing the Discoverability Gap
+
+**No CI failures. No community issues. All 3 slots are self-driven.**
+
+The assessment is clear: discoverability is yoyo's biggest practical gap. 50+ slash commands, many features, and users don't know they exist. This session attacks the problem from three angles:
+
+### Task 1: Contextual command hints after prompt turns
+Files: src/repl.rs, src/format/mod.rs  
+After each turn, show a dim one-line hint suggesting a relevant command based on what just happened (files modified → /diff, test failures → /watch, high context usage → /compact). Hints don't repeat within a session. This teaches users organically, at the moment features would be useful.
+
+### Task 2: `/help search <keyword>` for command discovery
+Files: src/help.rs, `src/help_data.rs`  
+Let users search all commands by keyword, not just by name. "/help search git" finds `/commit, /diff, /pr, /git, /blame`. Scored by relevance (name match > description match > detail match).
+
+### Task 3: Related file suggestions on `/add`
+Files: `src/commands_file.rs`  
+When adding a file to context, suggest related files (test files, module parents, use crate:: imports). Shows a dim hint line: `"💡 Related: src/foo_test.rs (use /add to include)"`. Helps users build complete context without knowing the codebase structure.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

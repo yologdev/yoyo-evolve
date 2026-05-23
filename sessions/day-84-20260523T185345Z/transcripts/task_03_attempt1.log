@@ -1,0 +1,272 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the auto-detect related files feature for /add. Let me start by understanding the current code.
+  ▶ read src/commands_file.rs ✓ (12ms)
+
+Let me see the handle_add function and the AddResult enum more closely:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:120..420 ✓ (2ms)
+
+Now let me see where handle_add is called from to understand the flow:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_add\(' (*.rs) ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'handle_add' (*.rs) ✓ (20ms)
+  ▶ read src/dispatch.rs:710..770 ✓ (1ms)
+  3 tools completed in 12.4s (2 ✓, 1 ✗)
+
+Now I understand the flow. The handle_add function returns Vec<AddResult>, and the dispatch code prints summaries and injects content. I need to:
+
+1. Add suggest_related_files function
+2. Call it from the dispatch code after processing /add results, printing suggestions as a dim hint
+
+Let me also check what's exported from commands_file.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_file' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:543..553 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me check the is_source_file helper or if there's something similar, and look at the format module for DIM:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub const DIM' in src/format/mod.rs ✓ (2ms)
+  ▶ search 'DIM' in src/format/mod.rs ✓ (3ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Good, DIM and RESET are available. Now let me plan and implement this. I'll write tests first.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 13.2s (6 ✓)
+
+Let me look at the test section at the end of commands_file.rs to understand the test patterns:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:1980..2080 ✓ (2ms)
+
+Now I have a clear picture. Let me implement the `suggest_related_files` function and tests. I'll write the tests first, then the implementation.
+
+Let me first check if there's an is_source_file helper anywhere:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_source_file' (*.rs) ✓ (19ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me implement the function and tests together. I'll add the function right before the test module, and the tests inside the test module.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:1880..1885 ✓ (1ms)
+
+Let me find the test module boundary and a good place to insert the function:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg.test.\]' in src/commands_file.rs ✓ (3ms)
+  ▶ read src/commands_file.rs:853..863 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Good. Now I'll add the function before the test module. Let me also check what the file looks like around line 855:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:835..855 ✓ (1ms)
+
+Now I'll add the `suggest_related_files` function. Let me write it:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (2 → 155 lines)
+  + /// Source file extensions eligible for related-file suggestions.
+  + const SOURCE_EXTENSIONS: &[&str] = &[
+  +     "rs", "py", "ts", "js", "go", "java", "rb", "cpp", "c", "h",
+  + ];
+  + 
+  + /// Check if a file path has a source-code extension eligible for suggestions.
+  + fn is_source_extension(path: &str) -> bool {
+  +     let lower = path.to_lowercase();
+  +     if let Some(ext) = lower.rsplit('.').next() {
+  +         SOURCE_EXTENSIONS.contains(&ext)
+  +     } else {
+  +         false
+  +     }
+  + }
+  + 
+  + /// Suggest related files the user might want to add alongside the given file.
+  + ///
+  + /// Returns up to 3 related file paths, detected via:
+  + /// 1. Test file patterns (e.g. `tests/foo.rs`, `src/foo_test.rs`)
+  + /// 2. Module parent (`src/foo/bar.rs` → `src/foo/mod.rs`)
+  ... (135 more lines)
+ ✓ (7.6s)
+
+The closure borrows issue. I need to restructure — can't use the try_add closure for the Rust parsing section since it borrows suggestions mutably while we also need to check suggestions.len(). Let me refactor to use a helper function approach:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (125 → 121 lines)
+        }
+    
+        let p = std::path::Path::new(path);
+  +     let canon_path = path.replace('\\', "/");
+        let mut suggestions: Vec<String> = Vec::new();
+    
+  -     // Helper: add if exists & not already added & not the file itself
+  -     let mut try_add = |candidate: String| {
+  -         if suggestions.len() >= 3 {
+  -             return;
+  -         }
+  -         let canon_candidate = candidate.replace('\\', "/");
+  -         let canon_path = path.replace('\\', "/");
+  -         if canon_candidate == canon_path {
+  -             return;
+  -         }
+  -         if already_added.iter().any(|a| a.replace('\\', "/") == canon_candidate) {
+  -             return;
+  -         }
+  -         if suggestions.iter().any(|s| *s == canon_candidate) {
+  ... (134 more lines)
+ ✓ (12.6s)
+
+Good progress — the borrow issue is fixed. Now I need to:
+1. Fix clippy warnings (use contains instead of iter().any())
+2. Export the function from commands.rs so it's used
+3. Wire it up in dispatch.rs
+
+Let me fix the clippy issue first:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (1 → 1 lines)
+  -         if suggestions.iter().any(|s| *s == canon) {
+  +         if suggestions.contains(&canon) {
+ ✓ (12.6s)
+
+Now let me export from commands.rs and wire up in dispatch.rs, then the dead-code errors will resolve. Let me also add tests.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands.rs (3 → 4 lines)
+    pub use crate::commands_file::{
+  -     build_explain_prompt, expand_file_mentions, handle_add, handle_apply, handle_open, AddResult,
+  +     build_explain_prompt, expand_file_mentions, handle_add, handle_apply, handle_open,
+  +     suggest_related_files, AddResult,
+    };
+ ✓ (12.5s)
+  2 tools completed in 19.2s (2 ✓)
+
+Need to wire it up in dispatch.rs too. Let me update the `/add` handler in dispatch.rs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:720..760 ✓ (1ms)
+
+Now I need to modify this block to call suggest_related_files after the add processing. I need to extract file paths from the /add input and check suggestions for each:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (28 → 58 lines)
+            CommandRoute::Add => {
+                let results = commands::handle_add(ctx.input);
+                if !results.is_empty() {
+  +                 // Collect paths that were added for related-file suggestions
+  +                 let added_paths: Vec<String> = {
+  +                     let args = ctx.input.strip_prefix("/add").unwrap_or("").trim();
+  +                     args.split_whitespace()
+  +                         .flat_map(|arg| {
+  +                             let (raw_path, _) = crate::commands_file::parse_add_arg(arg);
+  +                             crate::commands_file::expand_add_paths(raw_path)
+  +                         })
+  +                         .collect()
+  +                 };
+  + 
+                    // Print summaries
+                    for result in &results {
+                        match result {
+                            commands::AddResult::Text { summary, .. } => println!("{summary}"),
+                            commands::AddResult::Image { summary, .. } => println!("{summary}"),
+  +                     }
+  ... (23 more lines)
+ ✓ (55.3s)
+
+Now let me run a quick build check to see where we stand:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (124ms)
+
+Build passes. Now let me check clippy:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.5s)
+
+Now let me add the tests. Let me first check the end of the test module:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:2224..2229 ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now add tests before the closing } of the test module:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (4 → 165 lines)
+            // 9 bytes / 4 = 2 — doesn't panic, gives reasonable result
+            assert_eq!(est, 2);
+  +     }
+  + 
+  +     // --- suggest_related_files tests ---
+  + 
+  +     #[test]
+  +     fn test_suggest_related_non_source_returns_empty() {
+  +         // Non-source files should return no suggestions
+  +         let result = suggest_related_files("README.md", &[]);
+  +         assert!(result.is_empty(), "non-source file should have no suggestions");
+  + 
+  +         let result = suggest_related_files("data.json", &[]);
+  +         assert!(result.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_suggest_related_test_file_detection() {
+  +         let dir = tempfile::tempdir().unwrap();
+  +         let src = dir.path().join("src");
+  ... (145 more lines)
+ ✓ (55.3s)
+
+Now let me check if tempfile is available as a dependency:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ search 'tempfile' in Cargo.toml ✓ (2ms)
+
+Good. Now let me run the full check:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (42.8s)
+  2 tools completed in 1m 7s (2 ✓)
+
+All 88 tests pass. Let me verify the new tests specifically ran:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test suggest_related 2>&1 ✓ (130ms)
+
+Two test failures. Let me fix them:
+
+1. Module parent test: The issue is that `mod.rs is the same file — wait no, bar.rs's parent dir has mod.rs`. Let me debug: when we have src/foo/bar.rs, the module parent rule (rule 2) creates src/foo/mod.rs. But that path IS the parent... Let me check my logic again.
+
+The issue is the set_current_dir racing with serial tests. But more importantly, the mod.rs candidate from rule 2 is src/foo/mod.rs which exists in the temp dir. Let me check what's happening:
+
+Rule 2: `p.parent() for src/foo/bar.rs is src/foo, then src/foo/mod.rs` — that should work. But wait, after `set_current_dir, the relative path src/foo/mod.rs` should resolve. Let me check if the test has a race condition from set_current_dir.
+
+These tests use set_current_dir which is shared global state and tests run in parallel. Let me add `#[serial]` to these tests:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use serial_test::serial"' in src/commands_file.rs ✓ (3ms)
+  ▶ search 'serial_test' in src/commands_file.rs ✓ (2ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Good, serial_test is already imported. The problem is:
+1. Tests run in parallel and stomp on each other's `current_dir`
+2. The cap test panics on `unwrap()` — probably a dir creation issue
+
+Let me fix both tests. First, add #[serial] to all tests that use set_current_dir, and fix the cap test:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_test_file_detection() {
+ ✓ (55.6s)
+  ▶ edit src/commands_file.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_module_parent() {
+ ✓ (56.3s)
+  ▶ edit src/commands_file.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_suggest_related_use_crate_parsing() {
+ ✓ (55.1s)
+  3 tools completed in 2m 57s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

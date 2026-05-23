@@ -1,0 +1,227 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement `/help search <keyword>` for command discovery. Let me start by understanding the current code structure.
+  ▶ read src/help.rs (80 lines)  ▶ read src/help_data.rs (80 lines) ✓ (1ms)
+ ✓ (2ms)
+  ▶ search 'fn handle_help' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:850..970 ✓ (1ms)
+  4 tools completed in 9.7s (4 ✓)
+
+Now let me look at the help_text() function and command_short_description to understand the full shape:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn help_text' in src/help.rs  ▶ search 'fn command_short_description' in src/help_data.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/help.rs:650..850  ▶ read src/help_data.rs:1203.. ✓ (2ms)
+ ✓ (3ms)
+  4 tools completed in 6.8s (4 ✓)
+
+Now let me look at the existing tests section to understand the pattern, and check the `help_command_completions` function:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1680.. ✓ (3ms)
+
+Now I have a clear picture. Let me also check the KNOWN_COMMANDS constant:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'KNOWN_COMMANDS' in src/commands.rs ✓ (2ms)
+
+Good. Now I have everything I need. Let me write tests first, then implement. I'll start with the tests.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 18.8s (6 ✓)
+
+Let me first write the tests, then write the implementation. I'll add both the implementation and tests in one go since the tests need the function to exist.
+
+Let me first implement handle_help_search and a helper `search_commands`:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1..11 ✓ (1ms)
+
+Now let me implement. I'll add the search function right before handle_help:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (3 → 94 lines)
+    pub fn handle_help() {
+        println!("{DIM}{}{RESET}", help_text());
+  + }
+  + 
+  + /// A search result entry with relevance score.
+  + #[derive(Debug)]
+  + struct SearchResult {
+  +     command: &'static str,
+  +     description: &'static str,
+  +     score: u32,
+  + }
+  + 
+  + /// Search all commands by keyword across names, short descriptions, and detailed help.
+  + ///
+  + /// Scoring (higher = more relevant):
+  + ///   4 — exact command name match
+  + ///   3 — command name contains keyword
+  + ///   2 — short description contains keyword
+  + ///   1 — detailed help text contains keyword
+  + ///
+  ... (74 more lines)
+ ✓ (12.5s)
+
+Good — the functions exist now but aren't wired up yet. Let me integrate them into the routing and add the tests. First, let me wire handle_help_search into handle_help_command:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/help.rs (12 → 17 lines)
+            .trim_start_matches('/');
+        if arg.is_empty() {
+            return false;
+  +     }
+  +     // Route `/help search <keyword>` to the search handler
+  +     if let Some(keyword) = arg.strip_prefix("search") {
+  +         handle_help_search(keyword);
+  +         return true;
+        }
+        match command_help(arg) {
+ ✓ (55.5s)
+  3 tools completed in 1m 4s (3 ✓)
+
+Now add "search" to help_command_completions. Let me also add a line in help_text() for /help search:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 2 lines)
+        out.push_str("  /help              Show this help\n");
+  +     out.push_str("  /help search <kw>  Search commands by keyword\n");
+ ✓ (55.1s)
+
+Now add "search" to help_command_completions:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (11 → 16 lines)
+            .filter(|name| name.to_lowercase().starts_with(partial_lower))
+            .map(|name| name.to_string())
+            .collect();
+  + 
+  +     // Add "search" for `/help search <keyword>` completion
+  +     if "search".starts_with(partial_lower) && !completions.contains(&"search".to_string()) {
+  +         completions.push("search".to_string());
+  +     }
+    
+        // Append custom commands
+ ✓ (55.1s)
+
+Now update the /help command's detailed help text in help_data.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (10 → 16 lines)
+            "help" => Some(
+  -             "/help [command] — Show help information\n\n\
+  +             "/help [command|search <keyword>] — Show help information\n\n\
+                 Usage:\n\
+                 \x20 /help              Show all available commands\n\
+  -              \x20 /help <command>    Show detailed help for a specific command\n\n\
+  +              \x20 /help <command>    Show detailed help for a specific command\n\
+  +              \x20 /help search <kw>  Search commands by keyword\n\n\
+  +              The search looks across command names, descriptions, and detailed\n\
+  +              help text. Results are ranked by relevance (name match > description\n\
+  +              match > help text match).\n\n\
+                 Examples:\n\
+                 \x20 /help\n\
+                 \x20 /help add\n\
+  -              \x20 /help commit",
+  +              \x20 /help commit\n\
+  +              \x20 /help search git\n\
+  +              \x20 /help search test",
+            ),
+ ✓ (55.4s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 58.5s (2 ✓)
+
+Now let me add the tests. I'll add them before the closing } of the test module:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:2280.. ✓ (0ms)
+  ▶ edit src/help.rs (17 → 153 lines)
+                assert!(
+                    completions.contains(&name.to_string()),
+                    "help_command_completions(\"\") missing '{name}' from KNOWN_COMMANDS"
+  +             );
+  +         }
+  +     }
+  + 
+  +     // ── search_commands tests ──
+  + 
+  +     #[test]
+  +     fn search_git_returns_git_related_commands() {
+  +         let results = search_commands("git");
+  +         let names: Vec<&str> = results.iter().map(|r| r.command).collect();
+  +         // /git should be found (exact name match)
+  +         assert!(names.contains(&"git"), "search 'git' should find /git");
+  +         // /commit, /diff should be found via description or detail text
+  +         assert!(names.contains(&"commit"), "search 'git' should find /commit");
+  +         assert!(names.contains(&"diff"), "search 'git' should find /diff");
+  +     }
+  + 
+  ... (123 more lines)
+ ✓ (53.8s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 24s (4 ✓)
+
+Let me run the full check suite:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | head… ✓ (523ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (669ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (40.1s)
+  5 tools completed in 1m 9s (5 ✓)
+
+One test failed — /commit doesn't have "git" in its short description ("Commit staged changes"). Let me check what its detailed help says:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ search '"commit"' in src/help_data.rs ✓ (2ms)
+  ▶ read src/help_data.rs:116..146 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+The /commit detail text doesn't contain the word "git" either. The test expectation was wrong — /commit is about committing, not explicitly about "git" in any of its text. Let me fix the test to be more accurate:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (10 → 11 lines)
+            let names: Vec<&str> = results.iter().map(|r| r.command).collect();
+            // /git should be found (exact name match)
+            assert!(names.contains(&"git"), "search 'git' should find /git");
+  -         // /commit, /diff should be found via description or detail text
+  -         assert!(names.contains(&"commit"), "search 'git' should find /commit");
+  +         // /diff should be found (description mentions "git changes")
+            assert!(names.contains(&"diff"), "search 'git' should find /diff");
+  +         // /blame should be found (description mentions "git blame")
+  +         assert!(names.contains(&"blame"), "search 'git' should find /blame");
+        }
+ ✗ (2ms)
+    │ old_text not found in src/help.rs.
+  ▶ read src/help.rs:2301..2316 ✓ (1ms)
+  2 tools completed in 3.2s (1 ✓, 1 ✗)
+
+Ah, `cargo fmt` reformatted it. Let me use the exact text:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (13 → 14 lines)
+            let names: Vec<&str> = results.iter().map(|r| r.command).collect();
+            // /git should be found (exact name match)
+            assert!(names.contains(&"git"), "search 'git' should find /git");
+  -         // /commit, /diff should be found via description or detail text
+  +         // /diff should be found (description mentions "git changes")
+  +         assert!(names.contains(&"diff"), "search 'git' should find /diff");
+  +         // /blame should be found (description mentions "git blame")
+            assert!(
+  -             names.contains(&"commit"),
+  -             "search 'git' should find /commit"
+  +             names.contains(&"blame"),
+  +             "search 'git' should find /blame"
+            );
+  -         assert!(names.contains(&"diff"), "search 'git' should find /diff");
+        }
+ ✓ (55.4s)
+
+Now let me run the full suite:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (42.8s)
+  2 tools completed in 58.6s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

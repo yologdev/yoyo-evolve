@@ -1,0 +1,381 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement contextual command hints that appear after prompt turns to help users discover features. Let me start by understanding the codebase.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 11.6s (6 ✓)
+
+Let me study the relevant code:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_post_prompt' in src/repl.rs ✓ (3ms)
+  ▶ read src/repl.rs:440..600 ✓ (2ms)
+  ▶ search 'struct PromptOutcome' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:63..93 ✓ (1ms)
+  4 tools completed in 7.9s (4 ✓)
+
+Now let me look at the session usage tracking and `is_quiet/is_piped`:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'session_total' in src/repl.rs ✓ (2ms)
+  ▶ search 'turn_count' in src/repl.rs ✓ (3ms)
+  ▶ read src/repl.rs:685..765 ✓ (1ms)
+  ▶ read src/repl.rs:764..884 ✓ (1ms)
+  ▶ read src/repl.rs:883..973 ✓ (1ms)
+  5 tools completed in 12.1s (5 ✓)
+
+Now let me look at the watch command tracking and effective context tokens:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn get_watch_command' in src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs:55..75 ✓ (1ms)
+  2 tools completed in 3.1s (2 ✓)
+
+Now let me check effective_context_tokens and the is_quiet/piped mode functions:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn effective_context_tokens' in src/cli_config.rs ✓ (2ms)
+  ▶ read src/cli_config.rs:28..43 ✓ (0ms)
+  ▶ search 'fn is_quiet' in src/format/mod.rs ✓ (2ms)
+  ▶ read src/format/mod.rs:15..35 ✓ (1ms)
+  4 tools completed in 7.6s (4 ✓)
+
+Now let me check if there's a piped mode detection:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ search 'piped|is_piped' in src (*.rs) ✓ (4ms)
+  ▶ search 'stdin.*tty\|atty\|isatty\|piped\|pipe' in src/main.rs ✓ (3ms)
+  2 tools completed in 5.8s (2 ✓)
+
+OK so piped mode is handled separately from the REPL — it doesn't go through `run_repl`, so hints naturally won't show in piped mode. The REPL handles the hint integration. Let me also check how Usage works:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search 'total_tokens|input_tokens|output_tokens"' in src/prompt.rs ✓ (3ms)
+  ▶ $ grep -n "Usage" src/repl.rs | head -20 ✓ (5ms)
+  ▶ $ grep -rn "pub struct Usage" ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null |… ✓ (4ms)
+  ▶ $ grep -A10 "pub struct Usage" ~/.cargo/registry/src/*/yoagent-0.8.0/src/types.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (39ms)
+  4 tools completed in 11.8s (4 ✓)
+
+Good. Now let me look at how `context_budget_warning` pattern works for tracking state:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search 'context_budget_warning' in src/format/mod.rs ✓ (2ms)
+
+Now I have a solid understanding of the architecture. Let me implement the feature.
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 2.8s (2 ✓)
+
+Now let me look at what's at the end of format/mod.rs to find a good place to add the hint function:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1650..1680 ✓ (1ms)
+
+Let me look at the format/mod.rs exports to see what's publicly re-exported:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1..16 ✓ (1ms)
+
+Now, let me look at where all the imports come in from for the repl:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1..31 ✓ (1ms)
+
+Now I have full context. Let me implement the contextual hints. I'll add the function in format/mod.rs since it's a formatting concern, and integrate it in repl.rs. Let me write the hint system:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:575..595 ✓ (1ms)
+
+Good. Now I understand the patterns. Let me implement the contextual hint system. I'll put it in format/mod.rs since it's a formatting/display concern, and the tracking state (shown hints) will use a `Mutex<HashSet>` pattern.
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:630..650 ✓ (1ms)
+
+Now let me add the contextual hint system. I'll add it right before the #[cfg(test)] block:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1..4 ✓ (0ms)
+
+I need to add Mutex and HashSet imports. Let me check what's already imported:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ search '^use std::' in src/format/mod.rs ✓ (2ms)
+
+Now let me add the contextual hint system. I'll add the necessary types and function:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (4 → 5 lines)
+  + use std::collections::HashSet;
+    use std::io::{self, Write};
+    use std::sync::atomic::{AtomicU32, Ordering};
+  - use std::sync::OnceLock;
+  + use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+ ✓ (12.4s)
+
+Good, imports will be needed once I add the code. Let me add the actual contextual hint function and its state management now:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (6 → 95 lines)
+    /// Reset the context budget warning tracker so warnings re-arm after `/clear`.
+    pub fn reset_context_budget_warning() {
+        LAST_WARNED_THRESHOLD.store(0, Ordering::Relaxed);
+  + }
+  + 
+  + // ── Contextual command hints (discoverability) ─────────────────────────
+  + 
+  + /// Tracks which hint categories have already been shown this session.
+  + /// Once a category fires, it won't repeat.
+  + static SHOWN_HINTS: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+  + 
+  + fn shown_hints() -> &'static Mutex<HashSet<&'static str>> {
+  +     SHOWN_HINTS.get_or_init(|| Mutex::new(HashSet::new()))
+  + }
+  + 
+  + /// Reset shown hints (for testing or session clear).
+  + pub fn reset_shown_hints() {
+  +     if let Ok(mut guard) = shown_hints().lock() {
+  +         guard.clear();
+  +     }
+  ... (75 more lines)
+ ✓ (12.5s)
+
+These are dead code warnings because nothing uses them yet. Let me also remove the now-unused truncate function that was before the test block, and add the integration in repl.rs and tests. Let me first add the tests, then integrate:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:725..735 ✓ (1ms)
+
+Good, truncate is test-only. Now let me add the tests for contextual hints. Let me find the end of the test module:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1760..1770 ✓ (1ms)
+
+Now let me add the contextual hint tests at the end of the test module:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (8 → 170 lines)
+            enable_quiet();
+            // This should be a no-op (early return) when quiet.
+            print_context_usage(5000, 200_000);
+  +     }
+  + 
+  +     // ── Contextual hint tests ──────────────────────────────────────────
+  + 
+  +     fn make_hint_ctx() -> HintContext {
+  +         HintContext {
+  +             turn_count: 5,
+  +             files_modified: false,
+  +             has_watch: false,
+  +             had_tool_error: false,
+  +             context_usage_ratio: 0.1,
+  +             turns_since_slash_command: 0,
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_hint_first_turn() {
+  ... (147 more lines)
+ ✓ (12.6s)
+
+The dead code warnings persist because nothing in the main (non-test) binary uses them yet. Let me integrate into `repl.rs` now, which will resolve that:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:544..554 ✓ (1ms)
+
+I need to add the hint display after the turn-change summary and before the watch/auto-commit logic. But I also need to pass in the HintContext signals. The handle_post_prompt function needs to know `turn_count and turns_since_slash_command. Let me add those to PostPromptContext`:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:446..466 ✓ (1ms)
+
+I'll add turn_count and turns_since_slash_command to PostPromptContext:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (13 → 15 lines)
+        last_error: &'a mut Option<String>,
+        prompt_start: Instant,
+        effective_input: &'a str,
+  +     turn_count: usize,
+  +     turns_since_slash_command: usize,
+    }
+ ✓ (7.5s)
+
+Good, expected errors. I need to add the fields at both call sites. Let me also need to add state tracking. First, let me add the turns_since_slash_command counter and the contextual hint call to the post-prompt. Let me also look at how to track turns_since_slash_command:
+
+Looking at the REPL flow:
+• When dispatch_command returns Continue, the user used a slash command
+• When it returns NotACommand, it falls through to the agent prompt
+• When it returns SendToAgent, a slash command was processed but wants agent work
+
+So I need to track a counter that resets on slash command use (Continue or SendToAgent) and increments on NotACommand.
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:695..715 ✓ (1ms)
+  ▶ edit src/repl.rs (4 → 5 lines)
+        let mut session_total = Usage::default();
+        let session_start = Instant::now();
+        let mut turn_count: usize = 0;
+  +     let mut turns_since_slash_command: usize = 0;
+        let mut last_input: Option<String> = None;
+ ✓ (7.5s)
+  2 tools completed in 13.5s (2 ✓)
+
+Now let me update the match on cmd_result to track `turns_since_slash_command`:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:786..806 ✓ (1ms)
+  ▶ edit src/repl.rs (13 → 18 lines)
+            let cmd_result = crate::dispatch::dispatch_command(&mut dispatch_ctx).await;
+            match cmd_result {
+                CommandResult::Quit => break,
+  -             CommandResult::Continue => continue,
+  +             CommandResult::Continue => {
+  +                 turns_since_slash_command = 0;
+  +                 continue;
+  +             }
+                CommandResult::SendToAgent(prompt) => {
+  +                 turns_since_slash_command = 0;
+                    last_input = Some(prompt);
+                    // fall through to agent prompt handling
+                }
+                CommandResult::NotACommand => {
+  +                 turns_since_slash_command += 1;
+                    last_input = Some(input.to_string());
+                    // fall through to agent prompt handling
+                }
+ ✓ (7.5s)
+  2 tools completed in 13.0s (2 ✓)
+
+Now let me add the missing fields to both call sites:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:905..925 ✓ (1ms)
+  ▶ edit src/repl.rs (13 → 15 lines)
+                last_error: &mut last_error,
+                prompt_start,
+                effective_input: &effective_input,
+  +             turn_count,
+  +             turns_since_slash_command,
+            })
+ ✓ (7.4s)
+  2 tools completed in 17.3s (2 ✓)
+
+One more call site. Let me find and fix it:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:975..995 ✓ (1ms)
+  ▶ edit src/repl.rs (13 → 15 lines)
+                        last_error: &mut last_error,
+                        prompt_start: cont_start,
+                        effective_input: cont_prompt,
+  +                     turn_count,
+  +                     turns_since_slash_command,
+                    })
+ ✓ (12.5s)
+  2 tools completed in 18.4s (2 ✓)
+
+Good progress. Now I need to actually call contextual_hint inside handle_post_prompt. Let me add the hint display after the turn-change summary:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:546..576 ✓ (0ms)
+
+I need to compute the context usage ratio. Let me check how it's computed elsewhere:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ search 'effective_context_tokens"' in src ✓ (8ms)
+  ▶ search 'effective_context_tokens\b' in src ✓ (8ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Good. The session_total.total_tokens gives total used, and effective_context_tokens() gives the max. Now let me add the hint logic into handle_post_prompt:
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (7 → 28 lines)
+            let summary = format_turn_changes(ctx.changes_before, ctx.session_changes);
+            if !summary.is_empty() {
+                eprintln!("{DIM}{summary}{RESET}");
+  +         }
+  +     }
+  + 
+  +     // ── Contextual hint: teach users about relevant commands ─────────
+  +     if !is_quiet() {
+  +         let ctx_max = crate::cli_config::effective_context_tokens();
+  +         let usage_ratio = if ctx_max > 0 {
+  +             ctx.session_total.total_tokens as f64 / ctx_max as f64
+  +         } else {
+  +             0.0
+  +         };
+  +         let hint_ctx = crate::format::HintContext {
+  +             turn_count: ctx.turn_count,
+  +             files_modified,
+  +             has_watch: get_watch_command().is_some(),
+  +             had_tool_error: ctx.outcome.last_tool_error.is_some(),
+  +             context_usage_ratio: usage_ratio,
+  ... (6 more lines)
+ ✓ (12.6s)
+
+`reset_shown_hints` is only used in tests. I need to mark it properly:
+  ╭─ Turn 58 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (2 → 3 lines)
+    /// Reset shown hints (for testing or session clear).
+  + #[cfg(test)]
+    pub fn reset_shown_hints() {
+ ✓ (53.0s)
+
+The build passed! Let me check the full test output:
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (14.2s)
+
+Tests are failing because is_quiet() returns true (some other test called enable_quiet() and it's stored in a OnceLock). The static `QUIET` mode is set by earlier tests and persists since tests run in the same process. I need to handle this — since is_quiet() uses OnceLock, once any test enables quiet mode, all subsequent tests in the same process see it as quiet.
+
+The fix: in `contextual_hint, I should not gate on is_quiet()` internally — let the caller decide. The caller in repl.rs already checks `!is_quiet()`. Let me remove the quiet check from the function:
+  ╭─ Turn 60 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (11 → 8 lines)
+    /// Return at most one contextual hint based on what just happened.
+    ///
+    /// Rules are evaluated in priority order. Each hint category fires at most
+  - /// once per session. Returns `None` when quiet mode is active, no rules
+  - /// match, or the matching category was already shown.
+  + /// once per session. Returns `None` when no rules match or the matching
+  + /// category was already shown. Callers should gate on `is_quiet()` before
+  + /// printing.
+    pub fn contextual_hint(ctx: &HintContext) -> Option<String> {
+  -     if is_quiet() {
+  -         return None;
+  -     }
+  - 
+        let mut guard = shown_hints().lock().ok()?;
+ ✓ (55.5s)
+
+Now the tests won't be affected by quiet mode. But there's still the issue with `SHOWN_HINTS` being shared across test threads. Since tests run in parallel and share the same OnceLock<Mutex<HashSet>>, reset_shown_hints might not fully isolate tests from each other. Let me check if the tests are going to conflict:
+
+The issue is that reset_shown_hints clears the set, but if tests run concurrently, one test could reset while another is mid-check. But more importantly — `OnceLock is only for initialization; the Mutex<HashSet>` inside is properly shared. The reset_shown_hints() clears the set, so each test should call it first.
+
+Let me run the tests:
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format::tests::test_h… ✓ (130ms)
+
+All 10 hint tests pass. But parallel test execution could cause issues. Let me run the full test suite:
+  ╭─ Turn 62 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (16.6s)
+
+All tests pass. Now let me run the full CI check:
+  ╭─ Turn 63 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (678ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (150ms)
+  3 tools completed in 19.5s (3 ✓)
+
+All checks pass. Let me verify the implementation is clean:
+  ╭─ Turn 66 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 6.4s (3 ✓)
+
+Let me review the final state of what I added:
+  ╭─ Turn 69 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (7ms)
+  2 tools completed in 3.6s (2 ✓)
+
+The diff looks clean. Let me also check: do I need to update CLAUDE.md or docs? The task says to update docs if behavior changed. Let me check if contextual_hint or HintContext should be documented in the Architecture section of CLAUDE.md:
+  ╭─ Turn 71 ────────────────────────────────────────────────────────────╮
+  ▶ search 'format/mod.rs' in CLAUDE.md ✓ (2ms)
+
+The architecture section for format/mod.rs just lists general functions. Let me add a mention of the contextual hints there:
+  ╭─ Turn 72 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `format/mod.rs` — Color, constants, utility functions, re-exports
+  + - `format/mod.rs` — Color, constants, utility functions, re-exports, contextual command hints (`HintContext`, `contextual_hint`)
+ ✓ (28.5s)
+
+Let me also check if repl.rs description mentions the right things:
+  ╭─ Turn 73 ────────────────────────────────────────────────────────────╮
+  ▶ search 'repl.rs' in CLAUDE.md ✓ (2ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn)
+  + - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+ ✓ (40.8s)
+  2 tools completed in 44.4s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
