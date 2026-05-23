@@ -115,7 +115,7 @@ See [Session Persistence](../features/sessions.md) for details.
 
 | Command | Description |
 |---------|-------------|
-| `/status` | Show current model, git branch, working directory, and session token totals |
+| `/status` | Show session dashboard: model, git branch, active modes, goal, watch command, file changes, tokens, and context usage |
 | `/tokens` | Show detailed token usage: context window fill level, per-category breakdown, session totals, and estimated cost |
 | `/cost` | Show estimated session cost |
 | `/changelog [N]` | Show recent git commit history (default: 15, max: 100) |

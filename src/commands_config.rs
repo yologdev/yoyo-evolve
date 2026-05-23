@@ -39,6 +39,64 @@ pub const TEACH_MODE_PROMPT: &str = "\
 4. After completing a task, summarize what the user should learn from it
 Keep explanations concise but educational.";
 
+// ── Read mode ──
+//
+// Read-only oracle mode: the agent can read, search, list, and analyze code
+// but must not write, edit, or run destructive commands. Competitive with
+// Amp's "Oracle mode."
+
+static READ_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Enable or disable read-only mode.
+pub fn set_read_mode(enabled: bool) {
+    READ_MODE.store(enabled, Ordering::Relaxed);
+}
+
+/// Check whether read-only mode is currently active.
+pub fn is_read_mode() -> bool {
+    READ_MODE.load(Ordering::Relaxed)
+}
+
+/// Instruction prepended to user messages when read mode is on.
+pub const READ_MODE_PROMPT: &str = "\
+READ-ONLY MODE ACTIVE. You may ONLY:\n\
+- Read files (read_file)\n\
+- Search code (search, bash with grep/find/cat/head/wc/rg)\n\
+- List files (list_files)\n\
+- Run non-destructive bash commands for analysis\n\n\
+You MUST NOT:\n\
+- Use write_file or edit_file\n\
+- Run bash commands that modify files (rm, mv, cp, tee, sed -i, git commit, etc.)\n\
+- Create, delete, or modify any file\n\n\
+Focus on understanding the code and answering the user's question.";
+
+/// Toggle or set read-only mode.
+pub fn handle_read(input: &str) {
+    let arg = input.trim();
+    match arg {
+        "on" => {
+            set_read_mode(true);
+            println!("{BOLD}  🔍 Read-only mode ON{RESET} — analyze but not modify\n");
+        }
+        "off" => {
+            set_read_mode(false);
+            println!("  🔍 Read-only mode OFF — full access restored\n");
+        }
+        "" => {
+            let new_state = !is_read_mode();
+            set_read_mode(new_state);
+            if new_state {
+                println!("{BOLD}  🔍 Read-only mode ON{RESET} — analyze but not modify\n");
+            } else {
+                println!("  🔍 Read-only mode OFF — full access restored\n");
+            }
+        }
+        _ => {
+            println!("  Usage: /read [on|off]\n");
+        }
+    }
+}
+
 // ── Architect mode ──
 //
 // Dual-model workflow: a strong reasoning model plans the changes (text-only,
@@ -1493,5 +1551,23 @@ mod tests {
 
         // Clean up
         set_architect_mode(false, None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_mode_default_off() {
+        set_read_mode(false);
+        assert!(!is_read_mode());
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_mode_set_and_check() {
+        set_read_mode(false);
+        assert!(!is_read_mode());
+        set_read_mode(true);
+        assert!(is_read_mode());
+        set_read_mode(false);
+        assert!(!is_read_mode());
     }
 }

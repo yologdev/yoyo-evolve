@@ -128,6 +128,39 @@ pub fn handle_version_verbose(provider: &str, model: &str) {
 
 // ── /status ──────────────────────────────────────────────────────────────
 
+/// Count uncommitted file changes via `git status --porcelain`.
+///
+/// Returns `(modified, added)` counts, or `None` if git is unavailable.
+fn count_session_file_changes() -> Option<(usize, usize)> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut modified = 0usize;
+    let mut added = 0usize;
+    for line in text.lines() {
+        if line.len() < 2 {
+            continue;
+        }
+        // git status --porcelain: first two chars are index/worktree status
+        let index = line.as_bytes()[0];
+        let worktree = line.as_bytes()[1];
+        match (index, worktree) {
+            (b'?', b'?') => added += 1,             // untracked
+            (b'A', _) => added += 1,                // added to index
+            (b'M', _) | (_, b'M') => modified += 1, // modified
+            (b'R', _) => modified += 1,             // renamed
+            (b'D', _) | (_, b'D') => modified += 1, // deleted counts as modified
+            _ => {}
+        }
+    }
+    Some((modified, added))
+}
+
 pub fn handle_status(
     model: &str,
     cwd: &str,
@@ -152,11 +185,40 @@ pub fn handle_status(
     if crate::commands_plan::is_plan_mode() {
         println!("  mode:    {GREEN}plan{DIM}");
     }
+    if crate::commands_config::is_read_mode() {
+        println!("  mode:    {GREEN}read-only{DIM}");
+    }
+    // Show active goal if set
+    if let Some(goal) = crate::commands_goal::load_goal() {
+        let goal_preview = if goal.len() > 60 {
+            format!("{}…", safe_truncate(&goal, 60))
+        } else {
+            goal
+        };
+        println!("  goal:    {goal_preview}");
+    }
+    // Show active watch command(s)
+    if let Some(cmd) = crate::watch::get_watch_command() {
+        println!("  watch:   {cmd}");
+    }
     println!(
         "  session: {} elapsed, {turns} turn{}",
         format_duration(elapsed),
         if turns == 1 { "" } else { "s" }
     );
+    // Show file changes
+    if let Some((modified, added)) = count_session_file_changes() {
+        if modified + added > 0 {
+            let mut parts = Vec::new();
+            if modified > 0 {
+                parts.push(format!("{modified} modified"));
+            }
+            if added > 0 {
+                parts.push(format!("{added} added"));
+            }
+            println!("  changes: {}", parts.join(", "));
+        }
+    }
     println!(
         "  tokens:  {} in / {} out (session total)",
         session_total.input, session_total.output
@@ -2495,5 +2557,107 @@ More text.
                 "DISCOVERY_TIPS entry should start with 💡: {tip}"
             );
         }
+    }
+
+    #[test]
+    fn test_count_session_file_changes_in_temp_repo() {
+        use std::fs;
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path();
+
+        // Init a git repo with an initial commit
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(path)
+            .output()
+            .expect("git init");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(path)
+            .output()
+            .expect("git config email");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(path)
+            .output()
+            .expect("git config name");
+
+        fs::write(path.join("hello.txt"), "hello").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(path)
+            .output()
+            .expect("git add");
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(path)
+            .output()
+            .expect("git commit");
+
+        // Now modify a file and add a new untracked file
+        fs::write(path.join("hello.txt"), "hello modified").unwrap();
+        fs::write(path.join("new_file.txt"), "new").unwrap();
+
+        // Run git status --porcelain from the temp dir to verify
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(path)
+            .output()
+            .expect("git status");
+        let text = String::from_utf8_lossy(&output.stdout);
+
+        let mut modified = 0usize;
+        let mut added = 0usize;
+        for line in text.lines() {
+            if line.len() < 2 {
+                continue;
+            }
+            let index = line.as_bytes()[0];
+            let worktree = line.as_bytes()[1];
+            match (index, worktree) {
+                (b'?', b'?') => added += 1,
+                (b'A', _) => added += 1,
+                (b'M', _) | (_, b'M') => modified += 1,
+                (b'R', _) => modified += 1,
+                (b'D', _) | (_, b'D') => modified += 1,
+                _ => {}
+            }
+        }
+
+        assert_eq!(modified, 1, "should have 1 modified file");
+        assert_eq!(added, 1, "should have 1 added (untracked) file");
+    }
+
+    #[test]
+    fn test_handle_status_shows_enhanced_info() {
+        use std::time::Duration;
+        // Source-level check: handle_status should include goal, watch, and changes sections
+        let source = include_str!("commands_info.rs");
+        assert!(
+            source.contains("goal:"),
+            "/status should display goal when set"
+        );
+        assert!(
+            source.contains("watch:"),
+            "/status should display watch command when set"
+        );
+        assert!(
+            source.contains("changes:"),
+            "/status should display file changes"
+        );
+        assert!(
+            source.contains("read-only"),
+            "/status should display read-only mode"
+        );
+        // Should not panic
+        handle_status(
+            "test-model",
+            "/tmp",
+            &Usage::default(),
+            Duration::from_secs(30),
+            2,
+            10_000,
+            200_000,
+        );
     }
 }

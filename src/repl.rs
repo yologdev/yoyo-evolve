@@ -713,6 +713,9 @@ pub async fn run_repl(
             if commands::is_plan_mode() {
                 indicators.push_str(&format!("{BOLD}{YELLOW}📋{RESET} "));
             }
+            if commands::is_read_mode() {
+                indicators.push_str(&format!("{BOLD}{YELLOW}🔍{RESET} "));
+            }
             if commands::is_architect_mode() {
                 indicators.push_str(&format!("{BOLD}{YELLOW}🏗️{RESET} "));
             }
@@ -821,6 +824,13 @@ pub async fn run_repl(
         // If plan mode is active, prepend the planning constraint to the user message
         let effective_input = if commands::is_plan_mode() {
             format!("{}\n\n{}", commands::PLAN_MODE_PROMPT, effective_input)
+        } else {
+            effective_input
+        };
+
+        // If read mode is active, prepend the read-only constraint to the user message
+        let effective_input = if commands::is_read_mode() {
+            format!("{}\n\n{}", commands::READ_MODE_PROMPT, effective_input)
         } else {
             effective_input
         };

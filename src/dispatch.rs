@@ -98,6 +98,7 @@ pub(crate) enum CommandRoute {
     Loop,
     Todo,
     Teach,
+    Read,
     Architect,
     Mcp,
     Ast,
@@ -239,6 +240,7 @@ fn route_command_prefix(input: &str) -> CommandRoute {
             "loop" => CommandRoute::Loop,
             "todo" => CommandRoute::Todo,
             "teach" => CommandRoute::Teach,
+            "read" => CommandRoute::Read,
             "architect" => CommandRoute::Architect,
             "mcp" => CommandRoute::Mcp,
             "compact" => CommandRoute::Compact,
@@ -849,6 +851,10 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         }
         CommandRoute::Teach => {
             commands::handle_teach(ctx.input);
+            CommandResult::Continue
+        }
+        CommandRoute::Read => {
+            commands::handle_read(ctx.input);
             CommandResult::Continue
         }
         CommandRoute::Architect => {
@@ -1506,6 +1512,13 @@ mod tests {
     }
 
     #[test]
+    fn test_route_read() {
+        assert_eq!(route_command("/read"), CommandRoute::Read);
+        assert_eq!(route_command("/read on"), CommandRoute::Read);
+        assert_eq!(route_command("/read off"), CommandRoute::Read);
+    }
+
+    #[test]
     fn test_route_slash_only() {
         // A bare "/" has no command after it — splits to empty, falls to UnknownSlash
         assert_eq!(route_command("/"), CommandRoute::UnknownSlash);
@@ -1706,6 +1719,7 @@ mod tests {
             ("/grep", CommandRoute::Grep),
             ("/search", CommandRoute::Search),
             ("/tips", CommandRoute::Tips),
+            ("/read", CommandRoute::Read),
         ];
         for (input, expected) in exact_matches {
             assert_eq!(

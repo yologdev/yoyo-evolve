@@ -566,6 +566,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "    /read [on|off]     Toggle read-only oracle mode (analyze only)"
+    );
+    let _ = writeln!(
+        s,
         "    /side <question>   Quick question (no tools, no context impact)"
     );
     let _ = writeln!(
@@ -805,6 +809,7 @@ pub fn help_text() -> String {
         "  /extended <task>   Run the agent autonomously on a long task (--turns N, --budget N)\n",
     );
     out.push_str("  /teach [on|off]    Toggle teach mode — explains reasoning as it works\n");
+    out.push_str("  /read [on|off]     Toggle read-only oracle mode — analyze but not modify\n");
     out.push_str(
         "  /side <question>   Quick question without affecting main conversation (no tools)\n",
     );

@@ -365,7 +365,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/save [path]` | Save session to file |
 | `/search <query>` | Search conversation history |
 | `/spawn <task>` | Spawn a subagent for a focused task |
-| `/status` | Show session info |
+| `/status` | Show session dashboard (model, modes, goal, watch, changes) |
 | `/teach [on\|off]` | Toggle teach mode — explains reasoning as it works |
 | `/test` | Auto-detect and run project tests |
 | `/think [level]` | Show or change thinking level |

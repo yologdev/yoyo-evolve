@@ -362,10 +362,12 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Uses the same symbol extraction as /map (regex or ast-grep).",
         ),
         "status" => Some(
-            "/status — Show session info\n\n\
-             Displays current session information including: working directory,\n\
-             active model, message count, git branch (if in a repo), and\n\
-             context window usage percentage.",
+            "/status — Show session dashboard\n\n\
+             Displays a comprehensive session overview: model, git branch,\n\
+             working directory, active modes (teach, architect, plan, read-only),\n\
+             project goal (if set), watch command (if active), session duration\n\
+             and turns, uncommitted file changes, token usage, and context\n\
+             window usage percentage.",
         ),
         "profile" => Some(
             "/profile — Show unified session statistics\n\n\
@@ -1156,6 +1158,21 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 • Summarizes what you should learn after each task\n\n\
              Great for learning while the agent codes. Session-only — resets when you exit.",
         ),
+        "read" => Some(
+            "/read — Toggle read-only oracle mode\n\n\
+             Usage:\n\
+             \x20 /read       Toggle read-only mode on/off\n\
+             \x20 /read on    Enable read-only mode\n\
+             \x20 /read off   Disable read-only mode\n\n\
+             When read-only mode is active, the agent can only:\n\
+             \x20 • Read files (read_file)\n\
+             \x20 • Search code (search, grep, find)\n\
+             \x20 • List files (list_files)\n\
+             \x20 • Run non-destructive bash commands for analysis\n\n\
+             The agent will NOT write, edit, or run destructive commands.\n\
+             Use for code understanding, architecture exploration, and Q&A.\n\
+             Session-only — resets when you exit.",
+        ),
         "tips" => Some(
             "/tips — Context-sensitive feature suggestions\n\n\
              Shows helpful tips based on your current session and project:\n\
@@ -1245,6 +1262,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "provider" => Some("Switch or show current provider"),
         "quick" => Some("Fast answer without tools (single-turn, no agent loop)"),
         "quit" => Some("Exit yoyo"),
+        "read" => Some("Toggle read-only oracle mode — analyze but not modify"),
         "refactor" => Some("Refactoring tools (extract, rename, move)"),
         "remember" => Some("Save a memory note"),
         "rename" => Some("Rename a symbol across the project"),
@@ -1259,7 +1277,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "skill" => Some("List, inspect, install, and search for skills"),
         "spawn" => Some("Run a task in a sub-agent"),
         "stash" => Some("Stash conversation and start fresh"),
-        "status" => Some("Show session info"),
+        "status" => Some("Show session dashboard"),
         "teach" => Some("Toggle teach mode — explains reasoning as it works"),
         "test" => Some("Run project tests"),
         "think" => Some("Set thinking level"),
