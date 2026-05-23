@@ -18,8 +18,8 @@ use crate::format::*;
 use crate::hooks::{self, maybe_hook, AuditHook, HookRegistry};
 use crate::safety::analyze_bash_command;
 use crate::tool_wrappers::{
-    maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_recovery_hints,
-    with_smart_edit, with_truncation, ToolFailureTracker,
+    maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+    with_recovery_hints, with_smart_edit, with_truncation, ToolFailureTracker,
 };
 use crate::AgentConfig;
 
@@ -908,6 +908,12 @@ pub fn build_tools(
 
     // TodoTool is always available — it only modifies in-memory state, not filesystem
     tools.push(maybe_hook(Box::new(TodoTool), &hooks));
+
+    // In lite mode (small context window), augment tool descriptions with
+    // JSON format examples so small/local LLMs can produce valid tool calls.
+    if crate::cli_config::effective_context_tokens() <= 16_000 {
+        tools = tools.into_iter().map(with_lite_description).collect();
+    }
 
     tools
 }

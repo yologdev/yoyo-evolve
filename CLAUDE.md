@@ -55,7 +55,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `banner.rs` — startup banner, welcome text, git status summary display (extracted from `cli.rs`)
 - `hooks.rs` — Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper
 - `tools.rs` — StreamingBashTool, RenameSymbolTool, AskUserTool, TodoTool, tool builders, SharedState wiring for sub-agents
-- `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, SmartEditTool, RecoveryHintTool, ToolFailureTracker) and helper wrappers
+- `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, SmartEditTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool) and helper wrappers
 - `rtk.rs` — RTK (Rust Token Killer) detection, proxy integration, output compression
 - `update.rs` — version comparison (`version_is_newer`) and update checking (`check_for_update`) against GitHub releases
 - `safety.rs` — bash command safety analysis, destructive pattern detection

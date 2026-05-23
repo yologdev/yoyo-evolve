@@ -950,6 +950,79 @@ pub(crate) fn with_recovery_hints(
 }
 
 // ---------------------------------------------------------------------------
+// LiteDescriptionTool — augments tool descriptions with JSON format examples
+// ---------------------------------------------------------------------------
+
+/// A wrapper tool that appends a JSON input example to the tool's description.
+///
+/// Small/local LLMs (llama3, mistral, codellama, phi) struggle with tool-call
+/// formatting because they haven't been heavily fine-tuned on Anthropic's
+/// tool-use schema. Adding explicit JSON input examples to each tool's
+/// description dramatically improves tool-call accuracy for these models.
+pub(crate) struct LiteDescriptionTool {
+    inner: Box<dyn AgentTool>,
+    augmented_description: String,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for LiteDescriptionTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn description(&self) -> &str {
+        &self.augmented_description
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        self.inner.execute(params, ctx).await
+    }
+}
+
+/// Return a JSON example string for a given tool name, or `None` if no
+/// example is defined (unknown tools pass through without augmentation).
+fn lite_example_for_tool(name: &str) -> Option<&'static str> {
+    match name {
+        "bash" => Some(r#"{"command": "ls -la src/"}"#),
+        "read_file" => Some(r#"{"path": "src/main.rs"}"#),
+        "write_file" => Some(r#"{"path": "hello.txt", "content": "Hello world"}"#),
+        "edit_file" => {
+            Some(r#"{"path": "src/main.rs", "old_text": "let x = 1;", "new_text": "let x = 2;"}"#)
+        }
+        "list_files" => Some(r#"{"path": "src/"}"#),
+        "search" => Some(r#"{"pattern": "fn main", "path": "src/"}"#),
+        _ => None,
+    }
+}
+
+/// Wrap a tool with an augmented description that includes a JSON format
+/// example. For unknown tool names, the tool is returned as-is (no wrapper).
+pub(crate) fn with_lite_description(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+    match lite_example_for_tool(tool.name()) {
+        Some(example) => {
+            let augmented_description = format!("{}\n\nExample: {}", tool.description(), example);
+            Box::new(LiteDescriptionTool {
+                inner: tool,
+                augmented_description,
+            })
+        }
+        None => tool,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2934,5 +3007,88 @@ mod tests {
             err.contains("old_text not found"),
             "Should contain original error: {err}"
         );
+    }
+
+    // === LiteDescriptionTool tests ===
+
+    #[test]
+    fn test_lite_description_bash_has_example() {
+        let tool = with_lite_description(Box::new(MockTool {
+            tool_name: "bash",
+            result_text: "ok".to_string(),
+        }));
+        let desc = tool.description();
+        assert!(
+            desc.contains(r#"{"command": "ls -la src/"}"#),
+            "bash description should include JSON example, got: {desc}"
+        );
+        assert!(
+            desc.contains("Example:"),
+            "Should have 'Example:' label, got: {desc}"
+        );
+        // Original description should still be present
+        assert!(
+            desc.contains("mock tool"),
+            "Should preserve original description, got: {desc}"
+        );
+    }
+
+    #[test]
+    fn test_lite_description_unknown_tool_passthrough() {
+        let tool = with_lite_description(Box::new(MockTool {
+            tool_name: "unknown_tool_xyz",
+            result_text: "ok".to_string(),
+        }));
+        // Unknown tools should pass through without modification
+        assert_eq!(tool.description(), "mock tool");
+        assert_eq!(tool.name(), "unknown_tool_xyz");
+    }
+
+    #[tokio::test]
+    async fn test_lite_description_delegates_call() {
+        let tool = with_lite_description(Box::new(MockTool {
+            tool_name: "bash",
+            result_text: "hello from bash".to_string(),
+        }));
+        let result = tool
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .unwrap();
+        let text = match &result.content[0] {
+            yoagent::Content::Text { text } => text.clone(),
+            _ => panic!("Expected text content"),
+        };
+        assert_eq!(text, "hello from bash");
+    }
+
+    #[test]
+    fn test_lite_description_delegates_name() {
+        let tool = with_lite_description(Box::new(MockTool {
+            tool_name: "read_file",
+            result_text: "content".to_string(),
+        }));
+        assert_eq!(tool.name(), "read_file");
+    }
+
+    #[test]
+    fn test_lite_description_all_known_tools() {
+        // Verify examples exist for all the essential lite tools
+        for tool_name in &[
+            "bash",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_files",
+            "search",
+        ] {
+            let tool = with_lite_description(Box::new(MockTool {
+                tool_name,
+                result_text: "ok".to_string(),
+            }));
+            assert!(
+                tool.description().contains("Example:"),
+                "{tool_name} should have an example in lite mode"
+            );
+        }
     }
 }
