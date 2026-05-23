@@ -1,0 +1,255 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /read command for read-only oracle mode. Let me start by understanding the existing patterns.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 26s)
+
+Now I have a clear picture of the patterns. Let me also check the exact line numbers I need to edit:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "set_architect_mode\|is_architect_mode\|ARCHITECT_PROMPT\|handle_archite… ✓ (7ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 19.4s (7 ✓)
+
+Now let me implement. First, the state and handler in commands_config.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_config.rs:1..56 ✓ (1ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Good. Now let me find where the teach mode test is to understand the test pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test_teach\|test_architect\|#\[cfg(test)\]" src/commands_config.rs | he… ✓ (4ms)
+  ▶ read src/commands_config.rs:1127..1177 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me add the read mode state and handler. I'll place it right after the teach mode section:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (6 → 64 lines)
+  + // ── Read mode ──
+  + //
+  + // Read-only oracle mode: the agent can read, search, list, and analyze code
+  + // but must not write, edit, or run destructive commands. Competitive with
+  + // Amp's "Oracle mode."
+  + 
+  + static READ_MODE: AtomicBool = AtomicBool::new(false);
+  + 
+  + /// Enable or disable read-only mode.
+  + pub fn set_read_mode(enabled: bool) {
+  +     READ_MODE.store(enabled, Ordering::Relaxed);
+  + }
+  + 
+  + /// Check whether read-only mode is currently active.
+  + pub fn is_read_mode() -> bool {
+  +     READ_MODE.load(Ordering::Relaxed)
+  + }
+  + 
+  + /// Instruction prepended to user messages when read mode is on.
+  + pub const READ_MODE_PROMPT: &str = "\
+  ... (41 more lines)
+ ✓ (13.1s)
+
+Expected — the functions aren't wired up yet. Let me continue with the dispatch changes.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now wire up the dispatch. First, add Read to the CommandRoute enum:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:97..132 ✓ (1ms)
+  ▶ edit src/dispatch.rs (2 → 3 lines)
+        Teach,
+  +     Read,
+        Architect,
+ ✓ (8.2s)
+  2 tools completed in 11.5s (2 ✓)
+
+Good, now add the routing and dispatch. Let me find where "teach" is routed:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"teach"' src/dispatch.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+  ▶ read src/dispatch.rs:240..245 ✓ (1ms)
+  ▶ edit src/dispatch.rs (2 → 3 lines)
+                "teach" => CommandRoute::Teach,
+  +             "read" => CommandRoute::Read,
+                "architect" => CommandRoute::Architect,
+ ✓ (8.2s)
+  3 tools completed in 14.3s (3 ✓)
+
+Now add the dispatch handler. Let me find where Teach is dispatched:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CommandRoute::Teach" src/dispatch.rs ✓ (8ms)
+  ▶ read src/dispatch.rs:852..860 ✓ (1ms)
+  ▶ edit src/dispatch.rs (5 → 9 lines)
+            CommandRoute::Teach => {
+                commands::handle_teach(ctx.input);
+  +             CommandResult::Continue
+  +         }
+  +         CommandRoute::Read => {
+  +             commands::handle_read(ctx.input);
+                CommandResult::Continue
+            }
+            CommandRoute::Architect => {
+ ✓ (8.2s)
+  3 tools completed in 14.3s (3 ✓)
+
+I need to check how handle_teach is re-exported through the commands module:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_teach\|handle_architect\|is_teach\|set_teach\|TEACH_MODE_PROMPT\… ✓ (4ms)
+  ▶ read src/commands.rs:38..48 ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+I need to add the read mode exports:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (6 → 6 lines)
+    pub use crate::commands_config::{
+        architect_model, default_editor_model, handle_architect, handle_config, handle_config_edit,
+        handle_config_get, handle_config_set, handle_config_show, handle_hooks, handle_mcp,
+  -     handle_permissions, handle_teach, is_architect_mode, is_teach_mode, ConfigDisplay,
+  -     ARCHITECT_PROMPT, TEACH_MODE_PROMPT,
+  +     handle_permissions, handle_read, handle_teach, is_architect_mode, is_read_mode, is_teach_mode,
+  +     ConfigDisplay, ARCHITECT_PROMPT, READ_MODE_PROMPT, TEACH_MODE_PROMPT,
+    };
+ ✓ (13.0s)
+
+Good progress — those errors are just because is_read_mode and `READ_MODE_PROMPT` aren't used by repl.rs yet. Let me continue with the repl.rs changes to wire everything up.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Now let me add the mode indicator and prompt injection in repl.rs:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "is_plan_mode\|is_architect_mode\|indicators" src/repl.rs | head -20 ✓ (4ms)
+  ▶ read src/repl.rs:710..730 ✓ (1ms)
+  ▶ edit src/repl.rs (11 → 14 lines)
+                let mut indicators = String::new();
+                if commands::is_plan_mode() {
+                    indicators.push_str(&format!("{BOLD}{YELLOW}📋{RESET} "));
+  +             }
+  +             if commands::is_read_mode() {
+  +                 indicators.push_str(&format!("{BOLD}{YELLOW}🔍{RESET} "));
+                }
+                if commands::is_architect_mode() {
+                    indicators.push_str(&format!("{BOLD}{YELLOW}🏗️{RESET} "));
+ ✓ (13.0s)
+  3 tools completed in 22.9s (3 ✓)
+
+Good, still just the unused READ_MODE_PROMPT. Now add the prompt injection. Let me see the effective_input area:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:815..845 ✓ (0ms)
+  ▶ edit src/repl.rs (8 → 15 lines)
+            // If plan mode is active, prepend the planning constraint to the user message
+            let effective_input = if commands::is_plan_mode() {
+                format!("{}\n\n{}", commands::PLAN_MODE_PROMPT, effective_input)
+  +         } else {
+  +             effective_input
+  +         };
+  + 
+  +         // If read mode is active, prepend the read-only constraint to the user message
+  +         let effective_input = if commands::is_read_mode() {
+  +             format!("{}\n\n{}", commands::READ_MODE_PROMPT, effective_input)
+            } else {
+                effective_input
+            };
+ ✓ (56.2s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 7s (4 ✓)
+
+Now add /read to KNOWN_COMMANDS:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:112..122 ✓ (0ms)
+
+I'll add /read near the other mode toggles:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (2 → 3 lines)
+        "/plan",
+  +     "/read",
+        "/remember",
+ ✓ (52.6s)
+
+Now let me add help text. First check help_data.rs:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"teach"' src/help_data.rs ✓ (8ms)
+  ▶ read src/help_data.rs:1143..1163 ✓ (1ms)
+  ▶ edit src/help_data.rs (13 → 28 lines)
+                 \x20 • Adds comments on non-obvious lines\n\
+                 \x20 • Summarizes what you should learn after each task\n\n\
+                 Great for learning while the agent codes. Session-only — resets when you exit.",
+  +         ),
+  +         "read" => Some(
+  +             "/read — Toggle read-only oracle mode\n\n\
+  +              Usage:\n\
+  +              \x20 /read       Toggle read-only mode on/off\n\
+  +              \x20 /read on    Enable read-only mode\n\
+  +              \x20 /read off   Disable read-only mode\n\n\
+  +              When read-only mode is active, the agent can only:\n\
+  +              \x20 • Read files (read_file)\n\
+  +              \x20 • Search code (search, grep, find)\n\
+  +              \x20 • List files (list_files)\n\
+  +              \x20 • Run non-destructive bash commands for analysis\n\n\
+  +              The agent will NOT write, edit, or run destructive commands.\n\
+  +              Use for code understanding, architecture exploration, and Q&A.\n\
+  +              Session-only — resets when you exit.",
+            ),
+ ✓ (53.0s)
+  3 tools completed in 1m 8s (3 ✓)
+
+Now add the short description:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1275..1285 ✓ (0ms)
+  ▶ $ grep -n '"rename"\|"review"\|"revisit"\|"run"' src/help_data.rs | tail -10 ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+I need to add "read" in the alphabetically correct position in command_short_description:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1261..1271 ✓ (1ms)
+  ▶ edit src/help_data.rs (3 → 4 lines)
+            "quick" => Some("Fast answer without tools (single-turn, no agent loop)"),
+            "quit" => Some("Exit yoyo"),
+  +         "read" => Some("Toggle read-only oracle mode — analyze but not modify"),
+            "refactor" => Some("Refactoring tools (extract, rename, move)"),
+ ✓ (53.1s)
+  2 tools completed in 59.3s (2 ✓)
+
+Now let me also add /read to the help text. Let me check where mode commands are listed in help.rs:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "/teach\|/plan\|/architect\|Mode" src/help.rs | head -20 ✓ (4ms)
+  ▶ read src/help.rs:545..565 ✓ (1ms)
+  ▶ read src/help.rs:563..573 ✓ (1ms)
+  ▶ edit src/help.rs (8 → 12 lines)
+        let _ = writeln!(
+            s,
+            "    /teach [on|off]    Toggle teach mode (explains reasoning)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /read [on|off]     Toggle read-only oracle mode (analyze only)"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (53.8s)
+  4 tools completed in 1m 2s (4 ✓)
+
+Now add it to the other help text section too:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:805..820 ✓ (0ms)
+  ▶ edit src/help.rs (2 → 3 lines)
+        out.push_str("  /teach [on|off]    Toggle teach mode — explains reasoning as it works\n");
+  +     out.push_str("  /read [on|off]     Toggle read-only oracle mode — analyze but not modify\n");
+        out.push_str(
+ ✓ (56.5s)
+  2 tools completed in 1m 0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

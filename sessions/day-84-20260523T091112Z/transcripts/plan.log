@@ -1,0 +1,253 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag --sort=-creatordate | he… ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log v0.1.13..HEAD --oneline …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag -l 'v*' --sort=-creatord… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag --sort=-creatordate | he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lite" src/cli_config.rs… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lite\|LITE" src/cli.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "oracle\|read.only\|read… ✓ (4ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -50 src/commands_plan.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_plan.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_plan\|fn pars… ✓ (3ms)
+ ✓ (3ms)
+  13 tools completed in 36.7s (13 ✓)
+
+Good — plan mode already exists. Now let me think about what to prioritize. Let me check a few more things:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "malformed\|tool.call\|r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "malformed\|tool.call\|r… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RecoveryHintTool\|ToolF… ✓ (4ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Now let me look at what would make a big impact. Let me check what the lite mode prompt looks like and what tools are available:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 20 "LITE_SYSTEM_PROMPT" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto.lite\|auto_lite\|1… ✓ (4ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me think about what to build. Let me check the competitive landscape a bit more — what would be highest impact:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_teach\|teach_… ✓ (4ms)
+
+Let me look at what would be most impactful. The assessment identifies a few strong opportunities:
+
+1. **Small LLM support** (#415) — community-requested, partially started
+2. **Competitive feature: better tool-call error recovery for small models** — this would help #415 too
+3. **Self-driven: something that makes yoyo genuinely better as a coding tool**
+
+Let me check what error recovery exists for malformed tool calls:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error\|dia… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_context\|fn c… ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me think about what three tasks would move the needle most. Here's my analysis:
+
+**Task 1 (Self-driven, competitive):** Improve --lite mode with structured tool-call repair for small LLMs. Small models often produce malformed JSON for tool calls. Adding a repair layer that can fix common JSON issues (missing quotes, trailing commas, unescaped strings) would be a major differentiator. This also addresses #415.
+
+**Task 2 (Self-driven, competitive):** Add /context show — show what context the agent currently has loaded (system prompt size, conversation tokens, tool definitions, etc.) in a human-readable breakdown. This is a quality-of-life feature that Claude Code has via its token display.
+
+Wait, let me check — we already have /tokens:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_tokens" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn handle_tokens/,/^pub… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+OK, /tokens already exists and shows a good breakdown. Let me think about what self-driven work would be most impactful for Day 84.
+
+Let me look at what areas could use improvement:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn looks_incomplete" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn auto_compact\|fn pr… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "provider\|Provider\|--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ollama\|Ollama\|OLLAMA\… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SmartEditTool\|smart_ed…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub struct SmartEditToo… ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 10.5s (6 ✓)
+
+Now I have a good picture. Let me plan three high-impact tasks:
+
+Task 1 (Self-driven, competitive): Improve --lite mode with a tool-call repair layer for small LLMs. This addresses #415 and is a genuine differentiator — no other coding agent focuses on small LLM usability. The key feature: detect common malformed tool-call patterns (missing closing braces, unquoted keys, trailing text after JSON) and repair them before they hit the tool executor.
+
+**Task 2 (Self-driven, competitive):** Add /read (oracle/read-only mode) — a mode where the agent can read and analyze code but cannot modify anything. Competitive with Amp's Oracle mode. This is simpler than plan mode — it just restricts tools to read-only ones.
+
+**Task 3 (Self-driven):** Release check — the assessment shows 3 evolution tags since the last one. Let me check...
+
+Actually, looking more carefully, these are `dayNN-HH-MM` tags, not version tags. Let me check for actual version releases:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "version" Cargo.toml | head…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CHANGELOG\|changelog\|v… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 CHANGELOG.md ✓ (3ms)
+  3 tools completed in 4.2s (3 ✓)
+
+OK, so v0.1.13 was released on Day 81 (2026-05-20). We're now on Day 84 with 6 sessions since then. That's a decent amount of change but maybe not enough for a full release yet. Let me focus on feature work.
+
+Let me pick three impactful tasks:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (4ms)
+  ▶ write session_plan/task_01.md (133 lines) ✓ (40.3s)
+  2 tools completed in 1m 41s (2 ✓)
+
+That task description got way too long with my working-through-it process. Let me rewrite it cleanly:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (67 lines)
+  - Title: Add tool-call repair layer for small/local LLMs in --lite mode
+  - Files: src/tool_wrappers.rs, src/cli_config.rs
+  + Title: Add tool description examples for small LLMs in --lite mode
+  + Files: src/tool_wrappers.rs, src/tools.rs
+    Issue: #415
+    
+    ## What
+  - 
+  - Small/local LLMs (llama3, mistral, codellama, phi, etc.) frequently produce malformed tool calls —
+  - invalid JSON with common patterns like:
+  - - Missing closing braces/brackets
+  - - Unquoted property names (`{path: "foo.rs"}` instead of `{"path": "foo.rs"}`)
+  - - Trailing text after valid JSON (`{"path": "foo.rs"} Let me read that file`)
+  - - Single quotes instead of double quotes
+  - - Trailing commas in objects/arrays
+  - 
+  - Add a `ToolCallRepairTool` wrapper in `tool_wrappers.rs` that intercepts tool input,
+  - detects and repairs common JSON malformations before passing to the inner tool.
+  - This should only activate in `--lite` mode (check a static flag or pass through config).
+  - 
+  ... (161 more lines)
+ ✓ (40.7s)
+  ▶ write session_plan/task_02.md (98 lines) ✓ (41.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_COMMANDS" src/com…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^pub const KNOWN_COMMAN… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^pub const KNOWN_COMMAN… ✓ (4ms)
+  5 tools completed in 2m 3s (5 ✓)
+
+I see — KNOWN_COMMANDS is in commands.rs. The `/read` command would need to be added there too. Let me revise task 2 to use commands.rs instead of help_data.rs (which can be a follow-up), since the command routing + KNOWN_COMMANDS + actual handler are more important:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "plan.*mode\|is_plan_mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "plan.*mode\|is_plan_mod… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_plan_mode\|plan_mod… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '710,730p' src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '818,840p' src/repl.rs ✓ (3ms)
+  5 tools completed in 11.8s (5 ✓)
+
+Good — plan mode works by prepending a prompt constraint to the user message in repl.rs. Read mode can follow the same pattern. But that's 4 files (commands_config.rs, dispatch.rs, commands.rs, repl.rs). Let me reconsider...
+
+Actually, the simplest approach: put the read mode handler in its own section of commands_config.rs (where teach mode already lives), route it in dispatch.rs, and add to KNOWN_COMMANDS in commands.rs. That's 3 files. The repl.rs prompt injection can be a follow-up — the core enforcement can be done via the tool wrapping system (GuardedTool) that already exists.
+
+Let me check how tool restrictions are enforced:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GuardedTool\|maybe_guar…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B5 -A10 "fn maybe_guard\b"… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.9s (2 ✓)
+
+OK, the restriction enforcement is architectural — it happens at tool build time, not dynamically. Since read mode is a runtime toggle (like plan mode), it can't work through GuardedTool (which is static). Plan mode works by prepending a prompt constraint in repl.rs. Read mode should follow the same pattern.
+
+Let me revise task 2 to be more focused:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_02.md (98 lines)
+    Title: Add /read command — read-only oracle mode for code understanding
+  - Files: src/dispatch.rs, src/commands_config.rs, src/help_data.rs
+  + Files: src/commands_config.rs, src/dispatch.rs, src/commands.rs
+    Issue: none
+    
+    ## What
+    
+  - Add a `/read` command that toggles "read-only oracle mode" — the agent can read files,
+  - search, list, run non-destructive commands, and analyze code, but cannot write, edit,
+  - or execute destructive operations. This is competitive with Amp's "Oracle mode" and
+  - a natural complement to yoyo's existing `/plan` mode.
+  + Add a `/read` command that toggles "read-only oracle mode." The agent can read, search,
+  + list, and analyze code but should not write, edit, or run destructive commands. This is
+  + competitive with Amp's "Oracle mode" — a read-only understanding mode.
+    
+  - Difference from `/plan`:
+  - - `/plan` is about *planning* — it restricts to read-only AND focuses the agent on
+  -   creating a structured plan
+  - - `/read` is about *understanding* — it restricts to read-only but lets the agent
+  -   answer any question about the codebase. No plan structure imposed.
+  ... (147 more lines)
+ ✓ (41.2s)
+
+Hmm, actually a mode command without enforcement isn't useful. Let me reconsider — can I combine the repl.rs change into this task? The constraint is 3 source files. Let me check if I can put the handler directly in dispatch.rs instead of commands_config.rs, then use the 3rd slot for repl.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_teach\|handle_ar…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "teach\|architect" src/d… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 3.7s (2 ✓)
+
+The pattern is: state + handler in commands_config.rs, route in dispatch.rs, KNOWN_COMMANDS in commands.rs, enforcement in repl.rs. That's 4 files. Let me think about what I can collapse.
+
+I could put the `read_mode state directly in commands_plan.rs` since it's conceptually similar, but that's still 4 files. OR I could skip adding to KNOWN_COMMANDS (it'll work, just won't autocomplete) and do: commands_config.rs + dispatch.rs + repl.rs = 3 files with full enforcement.
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_02.md (112 lines)
+  - Title: Add /read command — read-only oracle mode for code understanding
+  - Files: src/commands_config.rs, src/dispatch.rs, src/commands.rs
+  + Title: Add /read command — read-only oracle mode for code understanding  
+  + Files: src/commands_config.rs, src/dispatch.rs, src/repl.rs
+    Issue: none
+    
+    ## What
+    
+    Add a `/read` command that toggles "read-only oracle mode." The agent can read, search,
+  - list, and analyze code but should not write, edit, or run destructive commands. This is
+  - competitive with Amp's "Oracle mode" — a read-only understanding mode.
+  - 
+  - Difference from `/plan`: plan mode creates structured plans; read mode is free-form Q&A
+  - about the codebase with a read-only constraint.
+  + list, and analyze code but should not write, edit, or run destructive commands. Competitive
+  + with Amp's "Oracle mode."
+    
+    ## Implementation
+    
+  - ### 1. `src/commands_config.rs` — Add read mode state and handler (~50 lines)
+  ... (136 more lines)
+ ✓ (40.6s)
+
+Now for task 3 — let me pick something self-driven and high-impact:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_status" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/pub fn handle_status/,/… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.5s (2 ✓)
+
+I notice /status doesn't show read mode yet (obviously since we're adding it). But more importantly, let me think about what would be most impactful for task 3.
+
+Options:
+1. **Wire read mode into repl.rs + help text** — but that's what task 2 already partially does
+2. **Better error messages for common user mistakes** — e.g., when someone types a command wrong
+3. **Smarter /compact** — show what was removed during compaction
+4. **Session resumability improvement**
+5. **Auto-detect project test command** — enhance auto-watch
+
+Let me look at what competitive features are still missing that would be quick wins:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_explain\|fn b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "summarize\|summary.*co… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Let me think about a good third task. Since task 1 addresses #415 and task 2 adds a competitive feature, task 3 should be something that improves the core experience. Let me look at what's commonly needed:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_changes\|fn h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn run_prompt_stream\|… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+For task 3, I'll do something that improves day-to-day usability: add read mode to status display and wire the enforcement in repl.rs. Wait, that's already in task 2's repl.rs changes.
+
+Let me pick a different task 3. How about improving the /status command to show more useful information — like the watch command, active goal, session file changes count? This makes the command more useful for understanding session state at a glance.
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "get_watch_command\|goal…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn get_goal\|fn load_go… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Actually, let me think about what would genuinely be most impactful. Looking at the assessment:
+
+│ **Lite mode implementation incomplete** — Day 83 tried and failed twice to build auto-context-window and prompt tuning for small models.
+
+Task 1 already addresses the small LLM gap. Task 2 adds a competitive feature. For task 3, I should pick something that strengthens the core product. 
+
+Let me look at something practical: enhancing /status to be a comprehensive dashboard showing all active modes, watch commands, goals, and session metrics. This makes yoyo feel more professional and self-aware.
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_03.md (117 lines)

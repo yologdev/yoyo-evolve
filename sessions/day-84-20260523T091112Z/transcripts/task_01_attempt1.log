@@ -1,0 +1,238 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the `LiteDescriptionTool` wrapper that augments tool descriptions with JSON format examples for small LLMs in lite mode.
+
+Let me start by understanding the existing code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -50 src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub(crate) struct\|pub …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use \|AgentTool" src/to… ✓ (7ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,230p' src/tool_wrapp…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn with_\|pub(crate) fn… ✓ (5ms)
+ ✓ (4ms)
+  5 tools completed in 6.3s (5 ✓)
+
+Now let me look at the existing test patterns and the end of the file:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/to…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -80 src/tool_wrappers.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Let me look at the MockTool and test setup used in the tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '956,1000p' src/tool_wrap…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1380,1450p' src/tool_wra… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me look at the RecoveryHintTool wrapper to see the pattern for the most recent wrapper:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '850,955p' src/tool_wrapp… ✓ (5ms)
+
+Now let me check the build_tools function in tools.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub.*fn build_tools\|fn…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^pub.*fn build_tools/,/… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '730,950p' src/tools.rs ✓ (5ms)
+  3 tools completed in 4.7s (3 ✓)
+
+Now let me check the effective_context_tokens function and how lite mode is detected:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effective_context_token…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effective_context_token… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Good. Now I have a clear picture. Let me check the imports used in tool_wrappers:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,22p' src/tool_wrappers… ✓ (4ms)
+
+Let me see the full module doc comment:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,12p' src/tool_wrappers… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -12 src/tool_wrappers.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/tool_wrappers.rs | he… ✓ (4ms)
+  3 tools completed in 10.5s (3 ✓)
+
+Now I have all the context I need. Let me implement this step by step.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 14.3s (6 ✓)
+
+Let me start by adding the LiteDescriptionTool wrapper and its tests. I'll add it right before the test module:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/tool_wrappers.rs (3 → 77 lines)
+  + // ---------------------------------------------------------------------------
+  + // LiteDescriptionTool — augments tool descriptions with JSON format examples
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// A wrapper tool that appends a JSON input example to the tool's description.
+  + ///
+  + /// Small/local LLMs (llama3, mistral, codellama, phi) struggle with tool-call
+  + /// formatting because they haven't been heavily fine-tuned on Anthropic's
+  + /// tool-use schema. Adding explicit JSON input examples to each tool's
+  + /// description dramatically improves tool-call accuracy for these models.
+  + pub(crate) struct LiteDescriptionTool {
+  +     inner: Box<dyn AgentTool>,
+  +     augmented_description: String,
+  + }
+  + 
+  + #[async_trait::async_trait]
+  + impl AgentTool for LiteDescriptionTool {
+  +     fn name(&self) -> &str {
+  +         self.inner.name()
+  +     }
+  ... (57 more lines)
+ ✓ (12.9s)
+  2 tools completed in 31.1s (2 ✓)
+
+Good — dead code warnings because I haven't wired it in yet. Let me add the tests first and wire it into build_tools. Let me do both:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 8.3s (2 ✓)
+
+Now add tests. Let me find the end of the test module:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/tool_wrappers.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ edit src/tool_wrappers.rs (5 → 82 lines)
+                err.contains("old_text not found"),
+                "Should contain original error: {err}"
+  +         );
+  +     }
+  + 
+  +     // === LiteDescriptionTool tests ===
+  + 
+  +     #[test]
+  +     fn test_lite_description_bash_has_example() {
+  +         let tool = with_lite_description(Box::new(MockTool {
+  +             tool_name: "bash",
+  +             result_text: "ok".to_string(),
+  +         }));
+  +         let desc = tool.description();
+  +         assert!(
+  +             desc.contains(r#"{"command": "ls -la src/"}"#),
+  +             "bash description should include JSON example, got: {desc}"
+  +         );
+  +         assert!(
+  +             desc.contains("Example:"),
+  ... (62 more lines)
+ ✓ (12.9s)
+  3 tools completed in 27.7s (3 ✓)
+
+The dead code warnings are expected since tests use super::* which counts as usage in tests but clippy requires non-test usage. Let me wire it into build_tools now:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Let me find the exact end of build_tools where I need to add the lite description pass:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '895,930p' src/tools.rs ✓ (3ms)
+
+I'll add the lite description pass right before the tools return:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (5 → 14 lines)
+        // TodoTool is always available — it only modifies in-memory state, not filesystem
+        tools.push(maybe_hook(Box::new(TodoTool), &hooks));
+  + 
+  +     // In lite mode (small context window), augment tool descriptions with
+  +     // JSON format examples so small/local LLMs can produce valid tool calls.
+  +     if crate::cli_config::effective_context_tokens() <= 16_000 {
+  +         tools = tools
+  +             .into_iter()
+  +             .map(with_lite_description)
+  +             .collect();
+  +     }
+    
+        tools
+    }
+ ✓ (8.4s)
+
+Need to add the import. Let me find the imports section:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::tool_wrapper… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,26p' src/tools.rs ✓ (3ms)
+  ▶ edit src/tools.rs (4 → 4 lines)
+    use crate::tool_wrappers::{
+  -     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_recovery_hints,
+  -     with_smart_edit, with_truncation, ToolFailureTracker,
+  +     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+  +     with_recovery_hints, with_smart_edit, with_truncation, ToolFailureTracker,
+    };
+ ✓ (56.1s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | head… ✓ (667ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (682ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (43.8s)
+  10 tools completed in 2m 31s (10 ✓)
+
+All 88 tests pass! Let me verify my new tests ran specifically:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test lite_description 2>&1 ✓ (142ms)
+
+All 5 tests pass. Let me mark task 4 done:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now update the docs:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "tool_wrappers.rs" CLAUDE.m… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, SmartEditTool, RecoveryHintTool, ToolFailureTracker) and helper wrappers
+  + - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, SmartEditTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool) and helper wrappers
+ ✓ (41.2s)
+  3 tools completed in 51.5s (3 ✓)
+
+Let me check if there are any docs pages that discuss lite mode or tool wrappers:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "lite\|--lite\|LITE" do… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "lite" docs/src/ README… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\-\-lite\|lite mode" d… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "lite" README.md | head… ✓ (5ms)
+  4 tools completed in 10.6s (4 ✓)
+
+Lite mode isn't documented in README or docs yet, so no docs to update there. The CLAUDE.md update is sufficient.
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.4s (2 ✓)
+
+One final verification before committing:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (42.1s)
+
+All checks pass. Let me commit:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (18ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.3s (3 ✓)
+
+Done! Here's what I implemented:
+
+LiteDescriptionTool — a new tool wrapper in src/tool_wrappers.rs that augments tool descriptions with JSON format examples for small/local LLMs in lite mode.
+
+What it does:
+• When `effective_context_tokens() ≤ 16_000` (lite mode), each tool's description gets an appended example like `\n\nExample: {"command": "ls -la src/"}`
+• Examples defined for 6 tools: bash, read_file, write_file, edit_file, list_files, search
+• Unknown tool names pass through without wrapping — zero overhead for tools without examples
+• The augmented description string is pre-computed at construction time (no per-call allocation)
+
+Files changed:
+• src/tool_wrappers.rs — Added LiteDescriptionTool struct, lite_example_for_tool(), with_lite_description(), and 5 tests
+• src/tools.rs — Wired the wrapper into build_tools() as a final map pass in lite mode
+• CLAUDE.md — Updated architecture section to list LiteDescriptionTool
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

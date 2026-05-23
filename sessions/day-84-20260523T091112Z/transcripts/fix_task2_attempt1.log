@@ -1,0 +1,115 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the current state of the code to understand what's already implemented, then add the missing tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_mode\|is_read_mode…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Read\|read" src/dispatc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_read_mode\|READ_MODE… ✓ (5ms)
+ ✓ (8ms)
+ ✓ (5ms)
+  3 tools completed in 1.8s (3 ✓)
+
+Good - the functional implementation is all in place. Now I need to add the three required tests. Let me check the existing test patterns in these files.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_teach_mode" src/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1180,1220p' src/commands… ✓ (3ms)
+  4 tools completed in 5.1s (4 ✓)
+
+Now let me see the end of the test module in `commands_config.rs` to know where to add the new tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/commands_config.rs ✓ (3ms)
+
+Now let me check the dispatch.rs test module for the routing test pattern:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "route_command\|test.*ro… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1063,1090p' src/dispatch… ✓ (4ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Now I have all the context I need. Let me add the tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (18 → 36 lines)
+    
+            // Clean up
+            set_architect_mode(false, None);
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_read_mode_default_off() {
+  +         set_read_mode(false);
+  +         assert!(!is_read_mode());
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_read_mode_set_and_check() {
+  +         set_read_mode(false);
+  +         assert!(!is_read_mode());
+  +         set_read_mode(true);
+  +         assert!(is_read_mode());
+  +         set_read_mode(false);
+  ... (3 more lines)
+ ✓ (56.3s)
+
+Now add the routing test in dispatch.rs. Let me find a good spot:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_route_" src/dispat… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1489,1520p' src/dispatch… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/dispatch.rs ✓ (3ms)
+  3 tools completed in 5.3s (3 ✓)
+
+I need to check if /read is already in the exhaustive matches test, and also check what CommandRoute::Read looks like:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Read' src/dispatch.rs |… ✓ (4ms)
+
+Good. Now let me add the routing test and also add /read to the exhaustive matches:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (3 → 4 lines)
+                ("/tips", CommandRoute::Tips),
+  +             ("/read", CommandRoute::Read),
+            ];
+            for (input, expected) in exact_matches {
+ ✓ (56.4s)
+
+Now add a dedicated routing test for /read:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_route_spawn_and_bg… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1512,1520p' src/dispatch… ✓ (3ms)
+  ▶ edit src/dispatch.rs (2 → 9 lines)
+  +     #[test]
+  +     fn test_route_read() {
+  +         assert_eq!(route_command("/read"), CommandRoute::Read);
+  +         assert_eq!(route_command("/read on"), CommandRoute::Read);
+  +         assert_eq!(route_command("/read off"), CommandRoute::Read);
+  +     }
+  + 
+        #[test]
+        fn test_route_slash_only() {
+ ✓ (56.5s)
+  3 tools completed in 1m 4s (3 ✓)
+
+Now run the formatting, linting, build, and tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (161ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (26.8s)
+  3 tools completed in 46.6s (3 ✓)
+
+All 88 tests pass. Let me verify the specific new tests ran:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "read" ✓ (16.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "read_mod… ✓ (15.9s)
+  2 tools completed in 35.8s (2 ✓)
+
+All three required tests pass:
+
+1. `test_read_mode_default_off` in src/commands_config.rs — verifies read mode starts as `false`
+2. `test_read_mode_set_and_check` in src/commands_config.rs — verifies toggling read mode on and off
+3. **`test_route_read** in src/dispatch.rs — verifies /read, /read on, and /read off all route to CommandRoute::Read`
+
+I also added /read to the exhaustive exact-match routing test (test_route_exhaustive_exact_matches) for completeness.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
