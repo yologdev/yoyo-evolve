@@ -1,0 +1,214 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current SmartEditTool implementation and the find_nearest_match function.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SmartEditTool\|find_nea… ✓ (6ms)
+  ▶ read src/tool_wrappers.rs:646..846 ✓ (2ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Now let me see the existing tests for SmartEditTool:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:2769..2969 ✓ (2ms)
+  ▶ read src/tool_wrappers.rs:2968..3068 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I have a clear picture. The key challenge is that the current SmartEditTool wraps a single inner tool, and when a whitespace-only mismatch is detected, I need to retry with corrected old_text. But I need a mock tool that can fail on the first call (wrong whitespace) and succeed on the second call (corrected whitespace). Let me look at how the mock tool works and think about the approach.
+
+The real `edit_file tool would naturally succeed on the retry because the corrected old_text` now matches the file. For the mock, I need to make it stateful. Let me plan this out:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 19.7s (5 ✓)
+
+Let me start with the helper function and the core logic change.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, add the extract_matched_text helper right after find_nearest_match:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (2 → 14 lines)
+  + /// Extract exact text from file content starting at `match_line_0indexed` for `line_count` lines.
+  + /// Returns the joined text (with newlines between lines). If the file doesn't have enough lines,
+  + /// returns as many as are available.
+  + fn extract_matched_text(file_content: &str, match_line_0indexed: usize, line_count: usize) -> String {
+  +     let file_lines: Vec<&str> = file_content.lines().collect();
+  +     let end = (match_line_0indexed + line_count).min(file_lines.len());
+  +     if match_line_0indexed >= file_lines.len() {
+  +         return String::new();
+  +     }
+  +     file_lines[match_line_0indexed..end].join("\n")
+  + }
+  + 
+    /// Wrap an edit_file tool with smart error augmentation.
+    pub(crate) fn with_smart_edit(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
+ ✓ (12.3s)
+
+That's expected — the function will be used once I modify `execute(). Let me now modify the execute()` method and the augment_not_found_error to implement the auto-fix:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Now I need to modify the execute() method. The key insight: I should attempt the whitespace auto-fix before falling through to augment_not_found_error. Let me rewrite the execute method:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (15 → 20 lines)
+            params: serde_json::Value,
+            ctx: yoagent::types::ToolContext,
+        ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+  -         match self.inner.execute(params.clone(), ctx).await {
+  +         match self.inner.execute(params.clone(), ctx.clone()).await {
+                Ok(result) => Ok(result),
+                Err(yoagent::types::ToolError::Failed(msg)) if msg.contains("not found") => {
+  -                 // Try to augment the error with location information
+  +                 // Try whitespace auto-fix before falling back to augmented error
+  +                 if let Some(retry_result) = self.try_whitespace_autofix(&msg, &params, &ctx).await
+  +                 {
+  +                     return retry_result;
+  +                 }
+  +                 // No auto-fix possible — augment the error with location info
+                    let augmented = self.augment_not_found_error(&msg, &params);
+                    Err(yoagent::types::ToolError::Failed(augmented))
+                }
+ ✓ (7.3s)
+
+Expected — need to add the try_whitespace_autofix method. Let me add it in the `impl SmartEditTool` block:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (2 → 60 lines)
+    impl SmartEditTool {
+  +     /// Attempt to auto-fix a whitespace-only mismatch by extracting the actual text
+  +     /// from the file and retrying with corrected `old_text`.
+  +     ///
+  +     /// Returns `Some(Ok(..))` if the retry succeeded, `Some(Err(..))` if the retry
+  +     /// also failed (falls through to normal augmented error), or `None` if the mismatch
+  +     /// is not whitespace-only (so caller should use the normal augmentation path).
+  +     async fn try_whitespace_autofix(
+  +         &self,
+  +         _original_msg: &str,
+  +         params: &serde_json::Value,
+  +         ctx: &yoagent::types::ToolContext,
+  +     ) -> Option<Result<yoagent::types::ToolResult, yoagent::types::ToolError>> {
+  +         let path = params.get("path").and_then(|v| v.as_str())?;
+  +         let old_text = params.get("old_text").and_then(|v| v.as_str())?;
+  + 
+  +         // Check file size
+  +         let metadata = std::fs::metadata(path).ok()?;
+  +         if metadata.len() > SMART_EDIT_MAX_FILE_SIZE {
+  +             return None;
+  ... (40 more lines)
+ ✓ (54.4s)
+
+Now let me check if it compiles:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (119ms)
+
+It compiles. Now let me add the tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.7s (2 ✓)
+
+For the auto-fix tests, I need a mock tool that can track calls. The current SmartEditMockTool always returns the same thing. I need a stateful mock that fails on the first call (simulating the original bad old_text) but succeeds on the second call (simulating the corrected old_text). Let me look at the existing mock more carefully and create a new one:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:2844..2884 ✓ (0ms)
+
+Now let me find where to add the new tests. I'll add them after the existing SmartEditTool integration tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:2917..2947 ✓ (1ms)
+
+I need a stateful mock for the auto-fix tests. Let me add it and the tests. First, find the right insertion point — right before the LiteDescriptionTool tests section:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LiteDescriptionTool tes… ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:3082..3090 ✓ (1ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I'll add the new tests and the stateful mock right before the LiteDescriptionTool tests section:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (3 → 233 lines)
+  +     }
+  + 
+  +     // === extract_matched_text tests ===
+  + 
+  +     #[test]
+  +     fn test_extract_matched_text_basic() {
+  +         let content = "line 0\nline 1\nline 2\nline 3\nline 4\n";
+  +         let result = extract_matched_text(content, 1, 2);
+  +         assert_eq!(result, "line 1\nline 2");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_extract_matched_text_from_start() {
+  +         let content = "fn main() {\n    hello();\n}\n";
+  +         let result = extract_matched_text(content, 0, 3);
+  +         assert_eq!(result, "fn main() {\n    hello();\n}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_extract_matched_text_beyond_end() {
+  ... (213 more lines)
+ ✓ (55.1s)
+
+Now let's run the checks:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.1s)
+  3 tools completed in 28.1s (3 ✓)
+
+Clean. Let's run the tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (43.1s)
+
+All 88 tests pass. Let me verify the new tests ran specifically:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "extra… ✓ (17.0s)
+
+All 7 new tests pass (4 for extract_matched_text, 3 for the auto-fix behavior). Let me also run fmt check:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (682ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 11.9s (2 ✓)
+
+All checks pass. Let me do a quick review of the full diff to make sure everything looks clean:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tool_wrappers.rs ✓ (6ms)
+
+Everything looks good. Let me now also verify the architecture doc mentions are accurate — checking if SmartEditTool is documented in CLAUDE.md:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SmartEditTool" CLAUDE.m… ✓ (2ms)
+
+The existing description says "SmartEditTool" — this is the same component, just with enhanced behavior. No doc changes needed since SmartEditTool is already listed and its behavior enhancement (auto-fixing whitespace mismatches instead of just hinting) doesn't change its role or how other components reference it.
+
+Let me commit:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (15 lines) ✓ (13ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.4s (3 ✓)
+
+Done. Here's what I implemented:
+
+SmartEditTool whitespace auto-fix — when edit_file fails because the old_text has the right content but wrong indentation, the tool now fixes it automatically instead of just hinting the AI to re-read the file.
+
+**What changed in src/tool_wrappers.rs:**
+
+1. `extract_matched_text()` — new helper that pulls exact lines from file content at a given 0-indexed line position for a given line count.
+
+2. **`try_whitespace_autofix()** — new method on SmartEditTool` that:
+   • Reads the file and runs `find_nearest_match`
+   • If is_ws_only is false, returns None (not our problem)
+   • Extracts the actual text from the file at the match position
+   • Builds corrected params with the file's real whitespace
+   • Retries the inner tool — on success, appends "⚡ Auto-fixed whitespace mismatch at line N"
+   • On retry failure, returns None to fall through to the existing augmented error path
+
+3. `execute()` — now calls try_whitespace_autofix() before `augment_not_found_error()`, so whitespace mismatches get fixed in one tool call instead of wasting a round-trip.
+
+4. 7 new tests: 4 for `extract_matched_text` (basic, from-start, beyond-end, out-of-bounds) and 3 for auto-fix behavior (success, non-whitespace fallback, retry-failure fallback).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

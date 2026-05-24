@@ -1,0 +1,224 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant files to understand the current timestamp format and display code.
+  ▶ read src/memory.rs  ▶ read src/commands_memory.rs ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me check the current_timestamp function and see the full memory.rs to understand the timestamp format:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:100..200 ✓ (1ms)
+
+Good. The timestamp format is %Y-%m-%d %H:%M (e.g., "2026-03-15 08:32"). Now I have everything I need. Let me check if chrono is already a dependency:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -i chrono Cargo.toml📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (47ms)
+
+No chrono. I need to parse manually. Let me implement this step by step.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 11.6s (4 ✓)
+
+Now let me implement. First, I'll add the format_relative_time function and its tests in memory.rs. The timestamps are in format %Y-%m-%d %H:%M and are **local time** (from date command). I need to parse them and compare to now.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/memory.rs (2 → 152 lines)
+  + /// Format an ISO-like timestamp as a human-readable relative time.
+  + ///
+  + /// Accepts timestamps in the `YYYY-MM-DD HH:MM` format (as stored by
+  + /// `current_timestamp()`). Returns strings like "just now", "5m ago",
+  + /// "2h ago", "3d ago", "2w ago", "3mo ago".
+  + ///
+  + /// On parse failure, returns the original timestamp unchanged.
+  + pub fn format_relative_time(iso_timestamp: &str) -> String {
+  +     format_relative_time_from(iso_timestamp, now_epoch_secs())
+  + }
+  + 
+  + /// Testable inner implementation — takes an explicit "now" epoch.
+  + fn format_relative_time_from(iso_timestamp: &str, now_secs: i64) -> String {
+  +     let ts_secs = match parse_timestamp_to_epoch(iso_timestamp.trim()) {
+  +         Some(s) => s,
+  +         None => return iso_timestamp.to_string(),
+  +     };
+  +     let diff = now_secs.saturating_sub(ts_secs);
+  +     if diff < 0 {
+  +         return iso_timestamp.to_string();
+  ... (132 more lines)
+ ✓ (12.6s)
+  2 tools completed in 46.4s (2 ✓)
+
+Expected — the function isn't used yet and tests aren't added. Let me add the tests and then update commands_memory.rs. Let me do both in parallel:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:280..290 ✓ (0ms)
+
+First let me fix the clippy warning about loop variable indexing:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (7 → 7 lines)
+        // Add months
+  -     for m in 0..(month - 1) as usize {
+  -         days += MONTH_DAYS[m] as i64;
+  +     for (m, &md) in MONTH_DAYS.iter().enumerate().take((month - 1) as usize) {
+  +         days += md as i64;
+            if m == 1 && is_leap(year) {
+                days += 1; // Feb in leap year
+            }
+ ✓ (12.5s)
+
+Dead code warnings are expected until I wire the function into commands_memory.rs. Let me do both steps now — add tests and update the display code:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:595.. ✓ (1ms)
+
+Now let me add the tests and update commands_memory.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (6 → 103 lines)
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].0, 0);
+            assert_eq!(results[1].0, 2);
+  +     }
+  + 
+  +     // --- format_relative_time tests ---
+  + 
+  +     /// Helper: build a `YYYY-MM-DD HH:MM` timestamp from an epoch offset.
+  +     fn epoch_to_timestamp(epoch: i64) -> String {
+  +         // Reverse of simple_local_epoch — not perfect but good enough for tests.
+  +         // We'll just build timestamps by subtracting from a known "now" epoch.
+  +         // Instead, let's build directly from known dates.
+  +         // Actually, easier: use format_relative_time_from with a fixed "now".
+  +         let _ = epoch;
+  +         String::new() // unused — tests below use explicit strings
+  +     }
+  + 
+  +     fn fixed_now() -> i64 {
+  +         // 2026-05-24 12:00 as local epoch
+  +         simple_local_epoch(2026, 5, 24, 12, 0)
+  ... (82 more lines)
+ ✓ (12.4s)
+
+Still failing because the public function isn't used yet. Let me update commands_memory.rs now and also clean up the unused variable in tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (2 → 4 lines)
+    use crate::format::*;
+  - use crate::memory::{add_memory, load_memories, remove_memory, save_memories, search_memories};
+  + use crate::memory::{
+  +     add_memory, format_relative_time, load_memories, remove_memory, save_memories, search_memories,
+  + };
+ ✓ (12.4s)
+
+The issue is that format_relative_time calls internal functions but they're only reachable through format_relative_time which isn't called from the binary yet (only from tests). I need to actually use it in the display code. Let me update the println statements:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (4 → 8 lines)
+            println!("{DIM}  Project memories ({}):", memory.entries.len());
+            for (i, entry) in memory.entries.iter().enumerate() {
+  -             println!("    [{i}] {} ({})", entry.note, entry.timestamp);
+  +             println!(
+  +                 "    [{i}] {} ({})",
+  +                 entry.note,
+  +                 format_relative_time(&entry.timestamp)
+  +             );
+            }
+ ✓ (12.5s)
+
+Good progress — the main code compiles! Just test code issues. Let me fix the test helper and unused variable:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (16 → 6 lines)
+        // --- format_relative_time tests ---
+  - 
+  -     /// Helper: build a `YYYY-MM-DD HH:MM` timestamp from an epoch offset.
+  -     fn epoch_to_timestamp(epoch: i64) -> String {
+  -         // Reverse of simple_local_epoch — not perfect but good enough for tests.
+  -         // We'll just build timestamps by subtracting from a known "now" epoch.
+  -         // Instead, let's build directly from known dates.
+  -         // Actually, easier: use format_relative_time_from with a fixed "now".
+  -         let _ = epoch;
+  -         String::new() // unused — tests below use explicit strings
+  -     }
+    
+        fn fixed_now() -> i64 {
+            // 2026-05-24 12:00 as local epoch
+ ✓ (12.4s)
+  ▶ edit src/memory.rs (7 → 5 lines)
+        #[test]
+        fn test_relative_time_minutes_ago() {
+            let now = fixed_now();
+  -         // 5 minutes ago
+  -         let ts_epoch = now - 5 * 60;
+  -         // 2026-05-24 11:55
+  +         // 5 minutes ago → 2026-05-24 11:55
+            let ts = "2026-05-24 11:55";
+ ✓ (55.7s)
+  2 tools completed in 1m 14s (2 ✓)
+
+Now let me also update the search results display in commands_memory.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (3 → 7 lines)
+                for (i, entry) in &results {
+  -                 println!("    [{i}] {} ({})", entry.note, entry.timestamp);
+  +                 println!(
+  +                     "    [{i}] {} ({})",
+  +                     entry.note,
+  +                     format_relative_time(&entry.timestamp)
+  +                 );
+                }
+ ✓ (54.9s)
+
+Now let me run the full check:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.1s)
+
+Clippy is clean! Let me run the tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (27.8s)
+
+All 3351 tests pass, including my new ones. Let me verify my specific tests ran:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test relative_time 2>&1 ✓ (125ms)
+
+All 8 relative time tests pass. Let me also run the parse_timestamp tests:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_timestamp 2>&1 ✓ (126ms)
+
+All passing. Let me mark tasks done and commit:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 6.9s (4 ✓)
+
+Let me verify the final state of my changes before committing:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (4ms)
+
+Good — only the two files I intended to change. Let me do a final build verification:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (40.9s)
+
+All four checks pass. Now commit:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (11ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Done. Here's what I did:
+
+In `src/memory.rs`:
+• Added format_relative_time(iso_timestamp: &str) -> String — the public entry point that parses YYYY-MM-DD HH:MM timestamps and returns human-readable relative times
+• Added format_relative_time_from() — testable inner function that takes an explicit "now" epoch
+• Added `parse_timestamp_to_epoch()` — manual parser for the stored timestamp format with full validation
+• Added simple_local_epoch() — lightweight date-to-epoch conversion (no crate deps). Both stored timestamps and "now" share the same local-time offset, so the difference is always correct
+• Added now_epoch_secs() — gets current time using the same date command as `current_timestamp()` for consistency
+• 10 new tests: just now, minutes, hours, days, weeks, months, malformed fallback, exactly-1-hour edge case, and parse validation
+
+In `src/commands_memory.rs`:
+• Imported format_relative_time
+• Updated both the full listing loop and the search results loop to display `format_relative_time(&entry.timestamp) instead of raw entry.timestamp`
+• Left format_memories_for_prompt unchanged (prompt injection keeps raw timestamps for precision)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
