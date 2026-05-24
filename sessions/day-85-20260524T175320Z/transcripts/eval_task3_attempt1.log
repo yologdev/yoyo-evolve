@@ -1,0 +1,68 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate this task quickly. The key observation is that the diff is empty, meaning no changes were made.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD --stat ✓ (9ms)
+
+The diff wasn't provided in the evaluation prompt, but there are changes. Let me review them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/prompt_util… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/prompt_util… ✓ (7ms)
+  2 tools completed in 3.5s (2 ✓)
+
+The diff is being truncated. Let me read the actual files directly.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/prompt_util… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/prompt_util… ✓ (7ms)
+  2 tools completed in 3.7s (2 ✓)
+
+The diff output is being collapsed. Let me read the files directly.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'summarize_context_topic… ✓ (4ms)
+
+Good, the functions are implemented. Now let me check the integration in `commands_session.rs`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_se… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && read_file() { sed -n "${2},${3}p… ✓ (4ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Good. Now let me read the full implementation of the core functions:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:140..285 ✓ (2ms)
+
+Now let me check the tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:590.. ✓ (1ms)
+
+Now let me run the tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test prompt_utils 2>&1 | t… ✓ (178ms)
+
+All tests pass. Let me also verify clippy:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.2s)
+
+Let me also verify the extract_topic_phrase function for a potential string slicing issue on line 239:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:224..244 ✓ (0ms)
+
+Good - line 230 uses is_char_boundary() before slicing, following the safety rules. The slice on line 234 (first_line[..end]) is safe because end is already at a char boundary. The slice on line 239 is safe for the same reason.
+
+Now let me write the verdict:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (27.9s)
+
+Verdict: PASS
+
+The implementation correctly delivers all three components specified in the task:
+
+1. `summarize_context_topics` in src/prompt_utils.rs — scans assistant tool calls for file paths (from read_file, write_file, edit_file, `list_files, search`), extracts topic phrases from the first 5 user messages, deduplicates, and caps at 10 files + 5 topics.
+
+2. **Integration in handle_compact** in src/commands_session.rs — calls summarize_context_topics on the compacted messages and displays the formatted summary via format_context_summary, only when topics are found.
+
+3. Tests — 13 new tests covering file path extraction, deduplication, empty messages, non-file tools, user topics, max cap, slash command skipping, format output (empty/files-only/mixed), and topic phrase extraction (short/long/empty). All pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

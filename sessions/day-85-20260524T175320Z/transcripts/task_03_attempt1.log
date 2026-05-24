@@ -1,0 +1,330 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: showing a summary of retained context after /compact runs.
+
+Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_compact\|compact…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "summarize_context\|summ… ✓ (6ms)
+ ✓ (4ms)
+  ▶ read src/commands_session.rs:178..228  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/prompt_utils.rs ✓ (2ms)
+ ✓ (3ms)
+  4 tools completed in 5.6s (4 ✓)
+
+Now let me understand the message types to figure out how to extract file paths and topics:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentMessage\|ToolUse\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo/registry/src -path… ✓ (5ms)
+ ✓ (55ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolCall\|ToolUse\|tool…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Content" ~/.cargo/regis… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '6,45p' ~/.cargo/registry… ✓ (4ms)
+  5 tools completed in 8.6s (5 ✓)
+
+Now I understand the data model. Let me look at the existing prompt_utils.rs fully to understand exports:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs ✓ (3ms)
+
+Now let me look at Message::ToolResult and `ToolCall` more carefully, and see how file paths appear in tool call arguments:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,75p' ~/.cargo/registr… ✓ (4ms)
+
+Good. Now I have the full picture. The `Content::ToolCall has name and arguments (a serde_json::Value). File-related tools like read_file, write_file, edit_file have a path` argument. Let me now write the implementation.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.9s (4 ✓)
+
+Let me look at the existing test module in prompt_utils.rs to understand the test structure:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:283.. ✓ (1ms)
+
+Now let me look at what the summarize_message function looks like - it shows how to pattern match on assistant messages with tool calls:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:142..202 ✓ (1ms)
+
+Now I have all the context I need. Let me write the function and tests. The key approach:
+
+1. Scan `Content::ToolCall in assistant messages for file-related tools (read_file, write_file`, edit_file, list_files, search) and extract paths from arguments.path
+2. Scan user text messages for topic keywords (first meaningful words)
+3. Deduplicate, cap at 10 files and 5 topics
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:100..145 ✓ (1ms)
+
+Now let me implement. I'll add the summarize_context_topics function and its tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (2 → 147 lines)
+  + /// File-tool names whose `path` argument references a file.
+  + const FILE_TOOLS: &[&str] = &[
+  +     "read_file",
+  +     "write_file",
+  +     "edit_file",
+  +     "list_files",
+  +     "search",
+  + ];
+  + 
+  + /// Max number of file paths to include in the context summary.
+  + const MAX_FILES: usize = 10;
+  + /// Max number of topic strings to include in the context summary.
+  + const MAX_TOPICS: usize = 5;
+  + 
+  + /// Summarize what topics and files are present in a set of messages.
+  + ///
+  + /// Scans tool calls for file paths and user messages for topic keywords.
+  + /// Returns a vec of short strings like `["src/main.rs", "auth refactor"]`.
+  + pub fn summarize_context_topics(messages: &[AgentMessage]) -> Vec<String> {
+  +     use std::collections::LinkedHashSet;
+  ... (127 more lines)
+ ✓ (8.1s)
+
+Right, Rust doesn't have LinkedHashSet in std. I'll use `IndexSet from the indexmap crate if available, or just use a Vec` with dedup logic:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -i "indexmap" Cargo.toml ✓ (3ms)
+
+No indexmap. I'll use a simple Vec with contains check to maintain insertion order and dedup:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (25 → 26 lines)
+  -     use std::collections::LinkedHashSet;
+  - 
+  -     let mut files: LinkedHashSet<String> = LinkedHashSet::new();
+  +     let mut files: Vec<String> = Vec::new();
+        let mut topics: Vec<String> = Vec::new();
+        let mut user_count = 0;
+    
+  ···
+                        {
+                            if FILE_TOOLS.contains(&name.as_str()) {
+                                if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
+  -                                 if !path.is_empty() && files.len() < MAX_FILES {
+  -                                     files.insert(path.to_string());
+  +                                 if !path.is_empty()
+  +                                     && files.len() < MAX_FILES
+  +                                     && !files.iter().any(|f| f == path)
+  +                                 {
+  +                                     files.push(path.to_string());
+                                    }
+                                }
+  ... (1 more lines)
+ ✓ (13.0s)
+
+The functions are never used yet (I need to wire them into `commands_session.rs` and add tests). Let me first add the tests, then integrate. The warnings are because the code isn't used yet — that will fix once I integrate. Let me add the tests now:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:576..596 ✓ (1ms)
+  ▶ read src/prompt_utils.rs:594..599 ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now I need to understand the Message::Assistant constructor to create test data:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 15 "fn assistant\b\|pub … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Message::Assistant" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StopReason\|Usage" ~/.c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '88,115p' ~/.cargo/regist… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '164,200p' ~/.cargo/regis… ✓ (3ms)
+  5 tools completed in 15.6s (5 ✓)
+
+Good. Now I can construct test data. Let me add the tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (3 → 154 lines)
+            assert!(results[0].2.contains(&format!("{BOLD}hello{RESET}")));
+  +     }
+  + 
+  +     // --- summarize_context_topics tests ---
+  + 
+  +     /// Helper: build an assistant message with a single tool call.
+  +     fn assistant_with_tool(name: &str, path: &str) -> AgentMessage {
+  +         AgentMessage::Llm(Message::Assistant {
+  +             content: vec![Content::ToolCall {
+  +                 id: "tc_1".into(),
+  +                 name: name.into(),
+  +                 arguments: serde_json::json!({ "path": path }),
+  +                 provider_metadata: None,
+  +             }],
+  +             stop_reason: StopReason::ToolUse,
+  +             model: "test".into(),
+  +             provider: "test".into(),
+  +             usage: Usage::default(),
+  +             timestamp: 0,
+  +             error_message: None,
+  ... (134 more lines)
+ ✓ (13.3s)
+
+The functions are unused outside of tests. I need to integrate them first. Let me do both at once — wire into `commands_session.rs` to fix the dead code warnings:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now let me integrate into handle_compact:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:1..6 ✓ (0ms)
+  ▶ edit src/commands_session.rs (1 → 3 lines)
+  - use crate::prompt_utils::{search_messages, summarize_message};
+  + use crate::prompt_utils::{
+  +     format_context_summary, search_messages, summarize_context_topics, summarize_message,
+  + };
+ ✓ (13.9s)
+  2 tools completed in 18.3s (2 ✓)
+
+The issue is that the functions are pub but are only used from `#[cfg(test)]` module and from another module's import (which technically counts). But clippy is treating the private constants and functions as dead code. Let me check — the issue is that pub fn should be visible, but the non-pub helpers (`extract_topic_phrase, looks_like_path, FILE_TOOLS, MAX_FILES, MAX_TOPICS`) are only used from within the pub fn which itself isn't called from non-test code yet. 
+
+Wait, I imported them but haven't actually _called_ them in handle_compact yet. Let me do that:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:196..221 ✓ (1ms)
+
+Now I need to add the context summary after successful compaction. After compact_agent_with_keep returns `Some, I call summarize_context_topics` on the compacted messages:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (12 → 18 lines)
+                    None => String::new(),
+                };
+                println!(
+  -                 "{DIM}  compacted{keep_label}: {before_count} → {after_count} messages, ~{} → ~{} tokens{RESET}\n",
+  +                 "{DIM}  compacted{keep_label}: {before_count} → {after_count} messages, ~{} → ~{} tokens{RESET}",
+                    format_token_count(before_tokens),
+                    format_token_count(after_tokens)
+                );
+  +             // Show what topics/files survived compaction
+  +             let topics = summarize_context_topics(agent.messages());
+  +             if let Some(summary) = format_context_summary(&topics) {
+  +                 println!("{DIM}  {summary}{RESET}");
+  +             }
+  +             println!();
+            }
+ ✓ (13.3s)
+
+Good — just a clippy lint about collapsible match. Let me fix that:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (25 → 23 lines)
+                // Extract topics from user messages (first few meaningful messages)
+  -             AgentMessage::Llm(Message::User { content, .. }) => {
+  -                 if user_count < MAX_TOPICS {
+  -                     let text: String = content
+  -                         .iter()
+  -                         .filter_map(|c| match c {
+  -                             Content::Text { text } => Some(text.as_str()),
+  -                             _ => None,
+  -                         })
+  -                         .collect::<Vec<_>>()
+  -                         .join(" ");
+  -                     let text = text.trim();
+  -                     // Skip empty, slash-commands, and very short messages
+  -                     if !text.is_empty() && !text.starts_with('/') && text.len() > 3 {
+  -                         let topic = extract_topic_phrase(text);
+  -                         if !topic.is_empty()
+  -                             && !topics.contains(&topic)
+  -                             && !files.iter().any(|f| f == &topic)
+  -                         {
+  -                             topics.push(topic);
+  ... (24 more lines)
+ ✗ (2ms)
+    │ old_text not found in src/prompt_utils.rs.
+  ▶ read src/prompt_utils.rs:186..221 ✓ (1ms)
+  ▶ edit src/prompt_utils.rs (26 → 24 lines)
+                // Extract topics from user messages (first few meaningful messages)
+  -             AgentMessage::Llm(Message::User { content, .. }) => {
+  -                 if user_count < MAX_TOPICS {
+  -                     let text: String = content
+  -                         .iter()
+  -                         .filter_map(|c| match c {
+  -                             Content::Text { text } => Some(text.as_str()),
+  -                             _ => None,
+  -                         })
+  -                         .collect::<Vec<_>>()
+  -                         .join(" ");
+  -                     let text = text.trim();
+  -                     // Skip empty, slash-commands, and very short messages
+  -                     if !text.is_empty() && !text.starts_with('/') && text.len() > 3 {
+  -                         let topic = extract_topic_phrase(text);
+  -                         if !topic.is_empty()
+  -                             && !topics.contains(&topic)
+  -                             && !files.contains(&topic)
+  -                         {
+  -                             topics.push(topic);
+  ... (25 more lines)
+ ✓ (57.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.2s)
+  4 tools completed in 1m 37s (3 ✓, 1 ✗)
+
+Clean. Now let's run the tests:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (28.9s)
+
+All 88 tests pass. Let me also run fmt:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (707ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (698ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me run the full check suite:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 2s)
+
+All checks pass. Let me also verify the auto-compact path does NOT show the summary (to avoid noise during auto-compact):
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:135..165 ✓ (1ms)
+
+Good — the auto-compact paths (auto_compact_if_needed and `proactive_compact_if_needed`) don't show the context summary, which is the right behavior. The summary only appears in the explicit /compact command path, which is what we want.
+
+Let me review what I've built to make sure everything is correct:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:140..260 ✓ (1ms)
+  ▶ read src/prompt_utils.rs:259..284 ✓ (1ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Wait, there's a potential operator precedence bug in `looks_like_path. The || and && have different precedence — && binds tighter than ||`, so s.contains('/') || s.contains('.') && !s.contains(' ') is parsed as `s.contains('/') || (s.contains('.') && !s.contains(' ')) which is actually what I want: it's a path if it contains /, or if it contains .` but no spaces. Let me add parens to make it explicit:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (3 → 3 lines)
+    fn looks_like_path(s: &str) -> bool {
+  -     s.contains('/') || s.contains('.') && !s.contains(' ')
+  +     s.contains('/') || (s.contains('.') && !s.contains(' '))
+    }
+ ✓ (56.7s)
+
+Now let me also verify the integration point in handle_compact:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:198..228 ✓ (1ms)
+
+Let me run the full check suite one more time to be sure:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (41.8s)
+
+All checks pass. Let me run just the context-topic tests to verify they all pass specifically:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test summarize_context 2>&… ✓ (138ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_context 2>&1 ✓ (136ms)
+  2 tools completed in 4.4s (2 ✓)
+
+All 13 new tests pass. Now let me mark tasks and commit:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Now let me check if any docs need updating. The `/compact` command is mentioned in various places:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "/compact" docs/src/ RE… ✓ (5ms)
+
+Let me check the context management doc to see if it describes /compact output:
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/features/context.md ✓ (1ms)
+
+I should update the Manual compaction section to mention the new context summary:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/features/context.md (13 → 16 lines)
+    /compact
+    ```
+    
+  - This summarizes older messages while preserving recent context. You'll see:
+  + This summarizes older messages while preserving recent context. You'll see what survived:
+    
+    ```
+      compacted: 24 → 8 messages, ~85.2k → ~32.1k tokens
+  +   📋 Still in context: src/main.rs, src/tools.rs, auth refactor (2 files, 1 topic)
+    ```
+  + 
+  + The context summary shows which files and topics are still present after compaction, so you can trust that important context wasn't lost.
+ ✓ (41.5s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

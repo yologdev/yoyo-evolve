@@ -1,0 +1,238 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /git stage interactive file staging command. Let me start by understanding the existing code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enum GitSubcommand" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GIT_SUBCOMMANDS" src/co… ✓ (5ms)
+ ✓ (3ms)
+  ▶ read src/git.rs:257..317 ✓ (1ms)
+  ▶ read src/git.rs:316..376 ✓ (1ms)
+  4 tools completed in 7.7s (4 ✓)
+
+Now let me see the rest of run_git_subcommand and how `handle_git` works:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:375..475 ✓ (1ms)
+  ▶ read src/git.rs:474..514 ✓ (1ms)
+  ▶ read src/git.rs:513..523 ✓ (1ms)
+  3 tools completed in 23.2s (3 ✓)
+
+Now let me check how run_git works and what imports are available:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:1..51 ✓ (1ms)
+  ▶ read src/git.rs:50..100 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I have a good understanding. Let me also check the tests at the bottom of git.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/gi… ✓ (3ms)
+  ▶ read src/git.rs:613..813 ✓ (1ms)
+  ▶ read src/git.rs:812..852 ✓ (1ms)
+  3 tools completed in 14.0s (3 ✓)
+
+Now let me check the `GitSubcommand derives (need PartialEq` for tests):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:255..260 ✓ (1ms)
+
+Now let me check how the dispatch routes /git to understand the interactive input path:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_git\|git stage\|… ✓ (4ms)
+  ▶ read src/commands_git.rs:1453..1473 ✓ (1ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now I see the issue — run_git_subcommand is not interactive (no way to prompt for user input). The Stage handler needs to prompt the user. Let me check how other interactive features work in the codebase:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "stdin\|read_line\|rust… ✓ (4ms)
+  ▶ read src/commands_git.rs:805..825 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Good — the existing pattern uses io::stdin().read_line() and prints prompts to stderr. Let me check imports:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1..16 ✓ (1ms)
+
+Now I have a full picture. Let me plan and implement:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 20.0s (5 ✓)
+
+Let me start with the pure parsing function and its tests — test-first.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, I need to add the parse_stage_selection function and `parse_status_files helper, plus the Stage` variant. Let me find the exact spot to insert the new functions — right before the test module or near the git subcommand section:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:517..532 ✓ (1ms)
+
+Now let me add everything. I'll add the Stage variant to the enum, the parsing in parse_git_args, the helper functions, the handler in run_git_subcommand, and the tests.
+
+Step 1: Add `Stage` variant to the enum
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (2 → 4 lines)
+  +     /// `/git stage` — interactive file staging picker
+  +     Stage,
+        /// `/git diff` — show diff (unstaged by default, `--cached` for staged)
+        Diff { cached: bool },
+ ✓ (8.1s)
+
+Expected — I need to add the match arm. Let me continue building all the pieces.
+
+Step 2: Add `"stage"` to `parse_git_args`
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (1 → 2 lines)
+  +         "stage" => GitSubcommand::Stage,
+            "diff" => {
+ ✓ (8.0s)
+
+**Step 3: Add the helper functions and the Stage handler in run_git_subcommand**
+
+First, let me add the helper functions before run_git_subcommand:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:345..350 ✓ (0ms)
+  ▶ edit src/git.rs (5 → 129 lines)
+  +     }
+  + }
+  + 
+  + /// Parse `git status --porcelain` output into (status_code, filename) pairs.
+  + pub fn parse_status_files(porcelain: &str) -> Vec<(String, String)> {
+  +     porcelain
+  +         .lines()
+  +         .filter_map(|line| {
+  +             if line.len() < 4 {
+  +                 return None;
+  +             }
+  +             let status = line[..2].trim().to_string();
+  +             // Porcelain format: XY <space> filename (or XY <space> old -> new for renames)
+  +             let filename = line[3..].trim().to_string();
+  +             if filename.is_empty() {
+  +                 return None;
+  +             }
+  +             Some((status, filename))
+  +         })
+  +         .collect()
+  ... (107 more lines)
+ ✓ (8.0s)
+  2 tools completed in 31.4s (2 ✓)
+
+Now I need to add the Stage handler in run_git_subcommand. Let me find the right place — before the `Help` arm:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:626..641 ✓ (1ms)
+  ▶ edit src/git.rs (4 → 56 lines)
+                    Err(_) => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+                },
+            },
+  +         GitSubcommand::Stage => {
+  +             let porcelain = match run_git(&["status", "--porcelain"]) {
+  +                 Ok(text) => text,
+  +                 Err(_) => {
+  +                     eprintln!("{RED}  error: not in a git repository{RESET}\n");
+  +                     return;
+  +                 }
+  +             };
+  +             if porcelain.is_empty() {
+  +                 println!("{DIM}  (nothing to stage — clean working tree){RESET}\n");
+  +                 return;
+  +             }
+  +             let files = parse_status_files(&porcelain);
+  +             if files.is_empty() {
+  +                 println!("{DIM}  (nothing to stage){RESET}\n");
+  +                 return;
+  +             }
+  ... (36 more lines)
+ ✓ (58.3s)
+  2 tools completed in 1m 12s (2 ✓)
+
+Now let me update the help text to include stage:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (10 → 11 lines)
+                println!("{DIM}  usage: /git status             Show working tree status");
+                println!("         /git log [n]             Show last n commits (default: 5)");
+                println!("         /git add <path>          Stage files for commit");
+  +             println!("         /git stage               Interactive file staging picker");
+                println!("         /git diff [--cached]     Show diff (unstaged or staged changes)");
+                println!("         /git branch [name]       List branches or create & switch");
+                println!("         /git stash               Stash uncommitted changes");
+ ✓ (59.7s)
+
+Now let me add the `"stage" to GIT_SUBCOMMANDS in src/commands.rs`:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub const GIT_SUBCOMMANDS: &[&str] = &["status", "log", "add", "diff", "branch", "stash"];
+  + pub const GIT_SUBCOMMANDS: &[&str] = &["status", "log", "add", "stage", "diff", "branch", "stash"];
+ ✓ (56.2s)
+
+Seems like things are starting to compile. Let me run the full check:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (134ms)
+
+Build passes. Now let me run clippy:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.6s)
+
+Clippy passes. Let me run tests:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (25.3s)
+
+One test failure — a test that asserts on `git st<tab>` completion now gets 3 results instead of 2 because "stage" also matches "st". Let me fix that test:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_arg_completions_gi… ✓ (3ms)
+  ▶ read src/commands.rs:1142..1162 ✓ (1ms)
+  ▶ edit src/commands.rs (10 → 11 lines)
+            let candidates = command_arg_completions("/git", "st");
+            assert_eq!(
+                candidates.len(),
+  -             2,
+  -             "Should match 'status' and 'stash': {candidates:?}"
+  +             3,
+  +             "Should match 'status', 'stage', and 'stash': {candidates:?}"
+            );
+            assert!(candidates.contains(&"status".to_string()));
+  +         assert!(candidates.contains(&"stage".to_string()));
+            assert!(candidates.contains(&"stash".to_string()));
+        }
+ ✓ (58.5s)
+  3 tools completed in 1m 11s (3 ✓)
+
+Now let me add proper tests for parse_stage_selection and `parse_status_files`. Let me find the end of the tests module in git.rs:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/git.rs | tail -… ✓ (4ms)
+  ▶ read src/git.rs:1450..1480 ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me add tests for the new parsing functions at the end of the test module:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (7 → 145 lines)
+        fn run_git_panics_on_destructive_from_project_root() {
+            // This should panic because we're in the project root during cargo test
+            let _ = run_git(&["revert", "HEAD", "--no-edit"]);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_args_stage() {
+  +         assert_eq!(parse_git_args("stage"), GitSubcommand::Stage);
+  +         assert_eq!(parse_git_args("STAGE"), GitSubcommand::Stage);
+  +         assert_eq!(parse_git_args("Stage"), GitSubcommand::Stage);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_status_files_basic() {
+  +         let porcelain = " M src/main.rs\n?? new_file.rs\n D deleted.rs\n";
+  +         let files = parse_status_files(porcelain);
+  +         assert_eq!(files.len(), 3);
+  +         assert_eq!(files[0], ("M".to_string(), "src/main.rs".to_string()));
+  +         assert_eq!(files[1], ("??".to_string(), "new_file.rs".to_string()));
+  +         assert_eq!(files[2], ("D".to_string(), "deleted.rs".to_string()));
+  ... (123 more lines)
+ ✓ (58.2s)
+
+Now let me run the full checks:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (28.8s)
+  2 tools completed in 46.4s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
