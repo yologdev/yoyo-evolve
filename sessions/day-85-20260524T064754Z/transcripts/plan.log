@@ -1,0 +1,243 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by checking the current issues and recent context.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | head -100  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ head -50 journals/JOURNAL.md ✓ (47ms)
+ ✓ (58ms)
+  ▶ $ git log --oneline -20  ▶ $ grep -c "^#\[test\]" src/*.rs src/format/*.rs 2>/dev/null | grep -v ":0$" | sort… ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ grep -c "#\[test\]" src/*.rs src/format/*.rs 2>/dev/null | grep -v ":0$" | sort …  ▶ $ # Check what the last release was (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Check release tags (v* format) (2 lines)  ▶ $ # Check what per-tool cost tracking would look like - how co… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check per-turn cost tracking - what TurnCost looks like (2 lines)  ▶ $ # Look at how prompt.rs tracks tool usage - do we already tr… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what TurnCost struct contains (2 lines)  ▶ $ # Check the TODO/FIXME/HACK items to see if any are actionab… (2 lines) ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ # Look for actual TODO/FIXME tech debt markers (2 lines) ✓ (9ms)
+  ▶ $ # Check the flaky test (2 lines)  ▶ $ # Check what /cost currently shows (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ sed -n '408,480p' src/commands_info.rs ✓ (4ms)
+  18 tools completed in 35.9s (18 ✓)
+
+Now let me think about what to plan for Day 85. The assessment identifies key competitive gaps:
+
+1. **Per-tool/per-category cost breakdown** - users can't see what's expensive (Claude Code has this)
+2. **No headless/daemon mode** - architectural, too big for one session
+3. **No plugin ecosystem** - too big for one session
+4. Edit format efficiency - complex, not the right scope
+
+The trajectory is clean — 15 consecutive successes, 0 reverts. No community issues to address. All self-driven.
+
+Let me focus on high-impact, self-driven improvements:
+
+1. Per-tool cost breakdown — actionable competitive gap, adds real value
+2. DAY_COUNT bump — needs doing
+3. Something that moves the needle on daily usage quality
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how tool usage is tracked in prompt.rs to understand… (2 lines)  ▶ $ # Check the PromptOutcome struct (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Look at how we count tool calls during streaming (2 lines) ✓ (3ms)
+  ▶ $ # Check if we already have any tool-call counting  (2 lines)  ▶ $ # Check session.rs for any tool tracking (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check what a per-tool usage summary in /cost would look li… (4 lines) ✓ (3ms)
+  6 tools completed in 13.5s (6 ✓)
+
+Now I have a good picture. Let me also look at one more competitive gap possibility:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we have per-tool call counting anywhere (2 lines) ✓ (4ms)
+  ▶ $ # Check ToolProgressTimer - it already tracks per-tool execu… (2 lines) ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I have a clear picture. Let me plan 3 high-impact tasks:
+
+1. **Per-tool call summary in `/cost`** — This is a direct competitive gap from the assessment. Claude Code shows per-category cost breakdown; we can start by showing which tools were used and how many times. This gives users visibility into what's happening.
+
+2. **Conversation bookmarking with /mark list navigation** — checking if this is already built or needs improvement.
+
+3. Let me think about what else would be high-impact...
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /tokens shows currently (2 lines)  ▶ $ sed -n '380,410p' src/commands_info.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Let me check what format_context_breakdown does - this was… (2 lines) ✓ (3ms)
+  ▶ $ # Check context_breakdown to understand what data we already… (2 lines) ✓ (3ms)
+  4 tools completed in 6.7s (4 ✓)
+
+Good. We already have per-category context breakdown. The competitive gap is specifically about showing which tools are being called and how often — like "bash: 15 calls, edit_file: 8 calls, read_file: 12 calls" — so users understand their workflow patterns.
+
+Let me now think about the three best tasks:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we already have any tool-call counting mechanism  (2 lines)  ▶ $ # Check how messages are structured — can we count tool call… (2 lines) ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ # Let me see how tool calls are represented in messages (2 lines) ✓ (3ms)
+  3 tools completed in 3.3s (3 ✓)
+
+The messages already have tool_name in ToolResult and `ToolUse in ContentBlock`. This means we can extract per-tool call counts directly from the message history without needing any new tracking infrastructure.
+
+Now let me finalize my plan. Three self-driven tasks:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's in yoagent's ContentBlock for tool info (2 lines) ✓ (3ms)
+  ▶ $ # Check yoagent ContentBlock enum (2 lines) ✓ (5ms)
+  ▶ $ find ~/.cargo/registry/src/ -name "*.rs" -path "*/yoagent*" 2>/dev/null | head -… ✓ (39ms)
+  ▶ $ grep -n "ToolUse\|ContentBlock\|content_block" /home/runner/.cargo/registry/src/… ✓ (3ms)
+  ▶ $ # Check the Message enum for ToolResult fields (2 lines) ✓ (4ms)
+  5 tools completed in 13.3s (5 ✓)
+
+Good. ToolResult has tool_name and is_error fields. We can count per-tool calls and errors directly from the message history.
+
+Now let me write the plan:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (60 lines) ✓ (41.4s)
+  ▶ $ # Check what /changes and exit summary currently look like (2 lines)  ▶ $ # Check if there's a way to show a session activity summary … (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check format_exit_summary  (2 lines) ✓ (4ms)
+  4 tools completed in 57.7s (4 ✓)
+
+Now let me think about the second task. Something high-impact and competitive. Let me look at what would make a real difference:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we have /undo for conversation turns (not just gi… (2 lines) ✓ (4ms)
+  ▶ $ # Check what competitive features we're missing that are sma… (3 lines) ✓ (3ms)
+  ▶ $ # Think about what would be a good second task. Let me check… (6 lines) ✓ (4ms)
+  ▶ $ # Let me look at a really impactful task - showing context w… (4 lines) ✓ (4ms)
+  ▶ $ # Let me think about something different - the assessment me… (10 lines) ✓ (4ms)
+  5 tools completed in 19.3s (5 ✓)
+
+Interesting! There's already a format_tool_summary in commands_session.rs. Let me look at it:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '338,355p' src/commands_session.rs ✓ (3ms)
+  ▶ $ # This is used in handle_history - let me see (2 lines) ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+So /history already shows per-turn tool call counts! The per-tool summary for /cost can reuse some of this pattern. Good — that makes task 1 well-aligned with existing code.
+
+Now for the second task, let me think about what would be most impactful:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check what /profile does - the assessment mentioned… (2 lines)  ▶ $ sed -n '$(grep -n "pub fn handle_profile" src/commands_info.rs | cut -d: -f1),+8… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ sed -n '724,810p' src/commands_info.rs ✓ (4ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Now I have a clear view. For the second task, I want something that moves the needle competitively. Let me think about what's most useful:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about a /context prune command? Or session memory/con… (3 lines)  ▶ $ sed -n '1,50p' src/commands_project.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Let me consider: what about adding tool call counts to /pr… (7 lines) ✓ (3ms)
+  3 tools completed in 6.0s (3 ✓)
+
+Good, we already track turn count. Let me think about what the best second task would be. Looking at competitive gaps again:
+
+The assessment says: "The competitive landscape has shifted from 'can you do X?' to 'how well do you do X?'" — so polish matters.
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if /profile shows tool call summary (2 lines) ✓ (4ms)
+
+The `/profile` box is nice but doesn't show tool calls. That's a natural place for the per-tool summary too. But I don't want task 1 and task 2 to overlap too much. Let me think of task 2 as something different.
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving session save/load with better metadat… (6 lines) ✓ (4ms)
+  ▶ $ # The flaky test calls handle_watch("/watch") which calls de… (5 lines) ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+It has #[serial]. The flaky test was a one-off — it showed up once in the CI window. Let me not spend a task on it.
+
+Let me focus on task 2: something that makes yoyo more capable in daily use.
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Think about: /profile adding tool call counts. That would … (9 lines) ✓ (4ms)
+
+OK, let me now think about the most impactful tasks. The assessment identified:
+
+1. ✅ Task 1: Per-tool call summary (competitive gap)
+2. For Task 2: I want something that helps daily usage quality — what about adding tool call counts to /profile? That's small and overlaps with Task 1 though. Let me think bigger.
+
+What about **conversation turn navigation — being able to jump between your own messages in the conversation? Or session stats in the prompt prefix**?
+
+Actually, let me reconsider. The assessment says: "The competitive landscape has shifted from 'can you do X?' to 'how well do you do X?'" This means polish matters. Let me look at something that improves the quality of an existing feature.
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving /compact to show what it dropped? (6 lines) ✓ (3ms)
+  ▶ $ # Let me think about a "remaining turns estimate" — compute … (6 lines) ✓ (2ms)
+  2 tools completed in 6.6s (2 ✓)
+
+OK, I'll make the DAY_COUNT bump part of another task. Let me think about the second task:
+
+**Task 2: Estimated remaining turns in /tokens and /profile** — compute average tokens-per-turn from the session so far, then project how many more turns fit before hitting the context limit. This is a simple but powerful UX feature that helps users manage long sessions without surprises. Claude Code shows context pressure; we can go further by predicting when you'll run out.
+
+For the third task, let me think about what else is high-impact:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /spawn or sub-agent experience? (3 lines) ✓ (9ms)
+
+We already have /copy. Let me think of something else.
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about /diff --staged showing a preview of what would … (31 lines) ✓ (4ms)
+  ▶ $ sed -n '84,140p' src/commands_session.rs ✓ (3ms)
+  2 tools completed in 8.6s (2 ✓)
+
+OK, let me settle on my three tasks. I want each to be impactful and achievable:
+
+**Task 1: Per-tool call summary in `/cost`** — competitive gap, shows which tools were used and how often.
+
+**Task 2: Estimated remaining turns in /tokens and /profile** — compute average context growth per turn, project remaining turns before hitting the limit. Small, useful, helps manage long sessions.
+
+**Task 3: Add tool call counts to /profile box** — make /profile a richer session dashboard. This is a natural complement to Task 1 but focused on the profile display.
+
+Wait — Tasks 1 and 3 overlap too much. Let me reconsider Task 3.
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /export command to produce better… (12 lines) ✓ (4ms)
+
+Good, we track file interactions. Let me think of task 3 as something orthogonal to cost/tokens.
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about error resilience? The SmartEditTool was Day 83'… (6 lines) ✓ (3ms)
+  ▶ $ sed -n '214,260p' src/commands_git.rs ✓ (4ms)
+  2 tools completed in 3.6s (2 ✓)
+
+OK let me settle on the plan. Let me pick something competitive and different for task 3:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about: conversation pinning — marking certain message… (6 lines) ✓ (4ms)
+  ▶ $ # That's complex and requires yoagent changes. Let me pick s… (15 lines) ✓ (3ms)
+  2 tools completed in 11.6s (2 ✓)
+
+Right, DAY_COUNT is bumped by the harness at end of session. I don't need to do it.
+
+Let me finalize my three tasks with something different for task 3:
+  ╭─ Turn 55 ────────────────────────────────────────────────────────────╮
+  ▶ $ # For task 3, let me think about something that adds real de… (16 lines) ✓ (4ms)
+  ▶ $ sed -n '245,320p' src/commands_git_review.rs ✓ (4ms)
+  2 tools completed in 2.9s (2 ✓)
+
+OK, we already have /review. Let me think about what's truly new and useful.
+  ╭─ Turn 57 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about: /review with effort levels? The assessment spe… (17 lines) ✓ (3ms)
+  ▶ $ sed -n '214,245p' src/commands_git_review.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+OK, here's my plan. For task 3, I'll add effort levels to /review — this is directly called out in the competitive assessment as something Claude Code has and we don't.
+  ╭─ Turn 59 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_02.md (52 lines) ✓ (42.6s)
+  ▶ write session_plan/task_03.md (52 lines) ✓ (41.7s)
+  ▶ write session_plan/issue_responses.md (14 lines) ✓ (42.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ git add -f session_plan/ && git commit -m "Day 85 (05:50): session plan" || true ✓ (11ms)
+  5 tools completed in 2m 40s (5 ✓)
+
+Plan committed. Here's the Day 85 session summary:
+
+## Session Plan — Day 85
+
+Context: 15 consecutive successful sessions, zero reverts, no open community issues. All three tasks are self-driven, targeting competitive gaps from the assessment.
+
+### Task 1: Per-tool usage summary in `/cost`
+Files: `src/format/cost.rs, src/commands_info.rs`
+Adds a per-tool call count table to /cost output — shows which tools were used and how many times (with error counts). Directly closes the "no per-category cost breakdown" competitive gap vs Claude Code.
+
+### Task 2: Estimated remaining turns in `/tokens` and `/profile`
+Files: src/commands_info.rs, `src/format/cost.rs`  
+Computes average context growth per turn and projects how many more turns fit before hitting the context limit. Helps users manage long sessions proactively — predicting overflow instead of just warning about it.
+
+### Task 3: Add effort levels to `/review`
+Files: `src/commands_git_review.rs, src/help_data.rs`
+Adds --quick and --thorough flags to /review. Directly closes the "Claude Code has /code-review with effort levels" competitive gap. Quick focuses on bugs/security only; thorough adds error handling, concurrency, test coverage, and documentation review.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

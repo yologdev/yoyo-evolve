@@ -1,0 +1,264 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the estimated remaining turns feature. Let me start by understanding the existing code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_tokens" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_profile" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_turn_costs\|… ✓ (7ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ read src/format/cost.rs:295..375  ▶ read src/commands_info.rs:345..465 ✓ (1ms)
+ ✓ (3ms)
+  5 tools completed in 5.0s (5 ✓)
+
+Now let me read the handle_profile function:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:738..938 ✓ (2ms)
+
+Now let me check how total_tokens works:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn total_tokens\|pub fn…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn total_tokens\|pub f… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "total_tokens" src/ | h… ✓ (7ms)
+  3 tools completed in 4.6s (3 ✓)
+
+Good. total_tokens comes from yoagent::context. Now let me check the existing tests at the end of cost.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:560.. ✓ (7ms)
+
+Now let me check imports in cost.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:1..21 ✓ (1ms)
+
+Now let me look at what format_token_count produces and what Color constants are available:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:242..302 ✓ (1ms)
+
+Now I have a good understanding. Let me check what Color constants are available for use in cost.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "use crate::format" src/for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "^use\|^pub use\|YELLOW\|RE… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "^use \|^pub use " src/form… ✓ (3ms)
+  3 tools completed in 3.2s (3 ✓)
+
+No top-level use statements in cost.rs — the color constants come from super:: in the test module. Let me check how they're used in the non-test code:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DIM\|RESET\|YELLOW\|RED… ✓ (4ms)
+
+The color constants in cost.rs are only used in format_context_breakdown which imports them via use super::. Let me check what's in scope from `super`:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "pub const\|pub static\|pub… ✓ (4ms)
+
+Good. Now I have everything I need. Let me implement the feature.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 10.3s (5 ✓)
+
+Let me start with the tests and implementation in cost.rs. First, I need to understand the AgentMessage type to write tests:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentMessage" ~/.cargo… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "yoagent" Cargo.toml ✓ (3ms)
+  ▶ $ cat /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.… ✓ (5ms)
+  3 tools completed in 9.7s (3 ✓)
+
+Now let me check how the existing tests in cost.rs create `AgentMessage` objects:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentMessage\|Assistant… ✓ (4ms)
+
+Let me see how the existing tests construct messages:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:1235..1335 ✓ (1ms)
+
+Now I need to check how total_tokens from yoagent works:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn total_tokens" /home/runner/.cargo/registry/src/index.crates.io-1…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ $ sed -n '55,80p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557… ✓ (3ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Good — total_tokens takes &[AgentMessage] and returns usize. Now I have everything I need.
+
+Let me write the implementation and tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, add the two new functions to cost.rs right after the `context_bar function and before the pluralize` function:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:287..297 ✓ (1ms)
+  ▶ edit src/format/cost.rs (4 → 59 lines)
+        format!("{bar} {label}")
+  + }
+  + 
+  + /// Estimate how many more turns fit before hitting the context limit.
+  + ///
+  + /// Returns `None` if fewer than 2 assistant turns have occurred (not enough
+  + /// data for a meaningful average). Otherwise returns
+  + /// `Some((remaining_turns, avg_tokens_per_turn))`.
+  + pub fn estimate_remaining_turns(
+  +     messages: &[yoagent::AgentMessage],
+  +     max_context: u64,
+  + ) -> Option<(usize, f64)> {
+  +     // Count assistant turns
+  +     let turn_count = messages
+  +         .iter()
+  +         .filter(|m| {
+  +             matches!(
+  +                 m,
+  +                 yoagent::AgentMessage::Llm(yoagent::Message::Assistant { .. })
+  +             )
+  ... (39 more lines)
+ ✓ (12.8s)
+  2 tools completed in 27.8s (2 ✓)
+
+Expected — the functions aren't used yet. Let me add the tests and the usage in commands_info.rs next. Let me add tests first:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Now add tests. Let me find a good place in the test module:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_format_tool_cal… ✓ (3ms)
+  ▶ read src/format/cost.rs:1746..1761 ✓ (1ms)
+  ▶ edit src/format/cost.rs (10 → 128 lines)
+            }];
+            let output = format_tool_call_summary(&summary);
+            assert!(output.contains("(3 errors)"));
+  +     }
+  + 
+  +     // ── estimate_remaining_turns / format_remaining_turns ──
+  + 
+  +     #[test]
+  +     fn test_estimate_remaining_turns_empty() {
+  +         let messages: Vec<yoagent::AgentMessage> = vec![];
+  +         assert!(estimate_remaining_turns(&messages, 200_000).is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_estimate_remaining_turns_one_turn() {
+  +         use yoagent::{AgentMessage, Content, Message, StopReason, Usage};
+  + 
+  +         let messages = vec![AgentMessage::Llm(Message::Assistant {
+  +             content: vec![Content::Text { text: "hi".into() }],
+  +             stop_reason: StopReason::Stop,
+  ... (103 more lines)
+ ✓ (13.7s)
+  3 tools completed in 41.8s (3 ✓)
+
+The functions need to be used somewhere outside of tests. Let me integrate them into commands_info.rs now:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+First, check what's imported from cost in commands_info.rs:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::format" src/… ✓ (3ms)
+
+Good, it imports everything from crate::format. Let me check what format/mod.rs re-exports from cost:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub mod cost\|pub use c… ✓ (3ms)
+
+All public items from cost.rs are re-exported. So estimate_remaining_turns and format_remaining_turns will be accessible in commands_info.rs via `use crate::format::*`.
+
+Now integrate into handle_tokens(). I'll add the remaining turns estimate after the context bar (line 364):
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (3 → 8 lines)
+        println!("    {bar}");
+  + 
+  +     // Estimated remaining turns
+  +     if let Some((remaining, avg)) = estimate_remaining_turns(&messages, max_context) {
+  +         println!("    {}", format_remaining_turns(remaining, avg));
+  +     }
+    
+        // Show per-category context breakdown
+ ✓ (59.1s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 9s (3 ✓)
+
+Now integrate into handle_profile(). I need to add a "Remaining" line to the profile box after the "Context" line. Let me look at the profile more carefully:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:795..855 ✓ (1ms)
+
+I need to add a "Remaining" line after the "Context" line. The profile box uses `(key, plain_value, display_value) tuples where plain_value` is for width calculation. I'll compute the remaining turns estimate and add it as a line:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (7 → 20 lines)
+            format!("{ctx_color}{ctx_plain}{DIM}"),
+        ));
+    
+  -     // Use fixed label column of 10 chars (longest key is "Provider" = 8 + ":  " = 11)
+  +     // Estimated remaining turns
+  +     let remaining_str = estimate_remaining_turns(messages, max_context)
+  +         .map(|(r, a)| format_remaining_turns(r, a))
+  +         .unwrap_or_default();
+  +     // Strip ANSI codes for width calculation
+  +     let remaining_plain = remaining_str
+  +         .replace("\x1b[33m", "")
+  +         .replace("\x1b[31m", "")
+  +         .replace("\x1b[0m", "");
+  +     if !remaining_str.is_empty() {
+  +         lines.push(("Remaining", &remaining_plain, remaining_str.clone()));
+  +     }
+  + 
+  +     // Use fixed label column of 10 chars (longest key is "Remaining" = 9 + ":" = 10)
+ ✓ (58.8s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.9s)
+  4 tools completed in 1m 21s (4 ✓)
+
+Clippy passes. Now build and test:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (156ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (28.8s)
+  2 tools completed in 37.8s (2 ✓)
+
+All 88 tests pass. Let me verify my specific tests ran:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test remaining 2>&1 ✓ (154ms)
+
+Wait, 11 tests? That's more than my 5. Let me check — there are probably other tests in the codebase that match "remaining":
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test remaining -- --list 2… ✓ (134ms)
+
+My 5 new tests all pass. Let me also do the format check:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (696ms)
+
+All checks pass. Let me review my changes quickly to make sure they're clean:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (7ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Everything looks clean. Let me also check there's a potential issue: the remaining_plain variable is used after the `if !remaining_str.is_empty() — the borrow from remaining_plain` needs to live long enough. Let me verify:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:825..850 ✓ (1ms)
+
+Good — remaining_plain and remaining_str are both owned Strings declared before the lines are used, so the borrows live long enough. The build already confirmed this compiles.
+
+Now commit:
+  ╭─ Turn 53 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (15ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Done. Here's what I implemented:
+
+**`src/format/cost.rs`** — Two new functions:
+• estimate_remaining_turns(messages, max_context) — counts assistant turns, computes average context growth per turn via `total_tokens(), projects how many more turns fit. Returns None` with < 2 turns (not enough data).
+• `format_remaining_turns(remaining, avg_per_turn) — formats like ~12 turns remaining (~4.2k/turn avg)`. Yellow warning at ≤3 turns, red "context nearly full" at 0.
+
+`src/commands_info.rs`:
+• `handle_tokens()` — shows remaining turns estimate right after the context bar
+• handle_profile() — adds a "Remaining" line to the profile box after "Context", with proper ANSI-stripped width calculation for box alignment
+
+**5 tests added**: empty messages → None, one turn → None, basic 3-turn estimate, normal format output, low/zero warning with ANSI colors.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

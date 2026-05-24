@@ -1,0 +1,296 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement effort levels for the /review command. Let me start by understanding the current code.
+  ▶ read src/commands_git_review.rs  ▶ search 'build_review_prompt' in src ✓ (8ms)
+ ✓ (8ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Let me see the key functions more closely:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:120..220  ▶ search 'fn build_review_prompt' in src/commands_git_review.rs  ▶ search 'fn handle_review' in src/commands_git_review.rs  ▶ search 'fn run_non_interactive_review' in src/commands_git_review.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (5ms)
+ ✓ (3ms)
+  ▶ read src/commands_git_review.rs:213..313 ✓ (1ms)
+  5 tools completed in 15.6s (5 ✓)
+
+Now let me look at the existing tests to understand the pattern:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:730..850 ✓ (1ms)
+  ▶ read src/commands_git_review.rs:1010..1110 ✓ (1ms)
+  2 tools completed in 16.3s (2 ✓)
+
+Now let me check handle_review call sites in `dispatch.rs and the dispatch_sub.rs`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_review' in src  ▶ search 'run_non_interactive_review' in src ✓ (7ms)
+ ✓ (8ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Let me check the dispatch call sites to understand how input flows:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:958..978  ▶ read src/dispatch_sub.rs:480..510 ✓ (0ms)
+ ✓ (1ms)
+  2 tools completed in 2.8s (2 ✓)
+
+Let me also check how review_arg is constructed in dispatch_sub.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:440..470 ✓ (1ms)
+  ▶ search 'review_arg' in src/dispatch_sub.rs ✓ (3ms)
+  ▶ read src/dispatch_sub.rs:381..431 ✓ (1ms)
+  3 tools completed in 11.1s (3 ✓)
+
+Now let me check the help_data.rs for the current /review entry:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'review' in src/help_data.rs ✓ (3ms)
+  ▶ read src/help_data.rs:878..903 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now I have a complete picture. Let me also check if the `command_short_description` for review needs updating:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1275..1280 ✓ (1ms)
+
+Good. Now I have everything I need. Let me implement the changes.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 54.6s (7 ✓)
+
+Now let me implement. First, the ReviewEffort enum and parse_review_effort function, placed right before build_review_prompt:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git_review.rs (2 → 44 lines)
+  + /// Review effort level — controls depth and focus of the code review.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum ReviewEffort {
+  +     /// Focus on bugs and security only. Skip style nits. Be terse.
+  +     Quick,
+  +     /// Default: bugs, security, style, performance, suggestions.
+  +     Normal,
+  +     /// Deep review: also check error handling edge cases, API contract
+  +     /// violations, test coverage gaps, documentation accuracy, concurrency safety.
+  +     Thorough,
+  + }
+  + 
+  + impl ReviewEffort {
+  +     /// Human-readable label for the effort level.
+  +     pub fn label(&self) -> &'static str {
+  +         match self {
+  +             ReviewEffort::Quick => "quick",
+  +             ReviewEffort::Normal => "normal",
+  +             ReviewEffort::Thorough => "thorough",
+  +         }
+  ... (25 more lines)
+ ✓ (8.2s)
+  2 tools completed in 20.4s (2 ✓)
+
+Good, expected errors. Now let me update the prompt body to vary by effort level:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.9s (3 ✓)
+
+Now update the build_review_prompt body to vary by effort:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:256..296 ✓ (1ms)
+  ▶ edit src/commands_git_review.rs (30 → 59 lines)
+        } else {
+            content.to_string()
+        };
+  - 
+  -     format!(
+  -         r#"Review the following code ({label}). Look for:
+    
+  - 1. **Bugs** — logic errors, off-by-one errors, null/None handling, race conditions
+  - 2. **Security** — injection vulnerabilities, unsafe operations, credential exposure
+  - 3. **Style** — naming, idiomatic patterns, unnecessary complexity, dead code
+  - 4. **Performance** — obvious inefficiencies, unnecessary allocations, N+1 patterns
+  - 5. **Suggestions** — improvements, missing error handling, better approaches
+  +     let criteria = match effort {
+  +         ReviewEffort::Quick => {
+  +             "Focus on critical issues ONLY:\n\n\
+  +              1. **Bugs** — logic errors, crashes, data corruption\n\
+  +              2. **Security** — injection, unsafe operations, credential exposure\n\n\
+  +              Skip style, performance, and minor suggestions. Be terse — one line per finding."
+  +                 .to_string()
+  +         }
+  ... (43 more lines)
+ ✓ (8.2s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 31.8s (4 ✓)
+
+Now update run_non_interactive_review to parse effort and pass it through:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:140..150 ✓ (1ms)
+  ▶ edit src/commands_git_review.rs (8 → 9 lines)
+        arg: &str,
+        agent_config: &crate::agent_builder::AgentConfig,
+    ) -> Result<String, String> {
+  +     let (effort, remaining) = parse_review_effort(arg);
+        let (label, content) =
+  -         build_review_content(arg).ok_or_else(|| "nothing to review".to_string())?;
+  +         build_review_content(&remaining).ok_or_else(|| "nothing to review".to_string())?;
+    
+  -     let prompt = build_review_prompt(&label, &content);
+  +     let prompt = build_review_prompt(&label, &content, effort);
+ ✓ (8.3s)
+  2 tools completed in 18.1s (2 ✓)
+
+Now update handle_review:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:316..336 ✓ (0ms)
+  ▶ edit src/commands_git_review.rs (5 → 9 lines)
+        let arg = input.strip_prefix("/review").unwrap_or("").trim();
+  +     let (effort, remaining) = parse_review_effort(arg);
+    
+  -     match build_review_content(arg) {
+  +     match build_review_content(&remaining) {
+            Some((label, content)) => {
+  -             let prompt = build_review_prompt(&label, &content);
+  +             if effort != ReviewEffort::Normal {
+  +                 eprintln!("{DIM}  effort: {}{RESET}", effort.label());
+  +             }
+  +             let prompt = build_review_prompt(&label, &content, effort);
+ ✓ (7.8s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 18.4s (3 ✓)
+
+Good — the only errors are in tests now. Let me update all existing tests and add new ones:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me read all the test functions that call build_review_prompt:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:815..965 ✓ (1ms)
+
+Now I'll update all the existing tests that call build_review_prompt with 2 args to pass ReviewEffort::Normal, and add the new tests:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (64 → 64 lines)
+        #[test]
+        fn build_review_prompt_contains_label() {
+  -         let prompt = build_review_prompt("staged changes", "fn main() {}");
+  +         let prompt = build_review_prompt("staged changes", "fn main() {}", ReviewEffort::Normal);
+            assert!(
+                prompt.contains("staged changes"),
+                "Prompt should include the label"
+  ···
+        #[test]
+        fn build_review_prompt_contains_content() {
+            let code = "fn add(a: i32, b: i32) -> i32 { a + b }";
+  -         let prompt = build_review_prompt("test.rs", code);
+  +         let prompt = build_review_prompt("test.rs", code, ReviewEffort::Normal);
+            assert!(prompt.contains(code), "Prompt should include the code");
+        }
+    
+        #[test]
+        fn build_review_prompt_contains_review_criteria() {
+  -         let prompt = build_review_prompt("file.rs", "let x = 1;");
+  +         let prompt = build_review_prompt("file.rs", "let x = 1;", ReviewEffort::Normal);
+  ... (29 more lines)
+ ✓ (8.0s)
+
+There are more tests to fix. Let me update the remaining ones:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (3 → 6 lines)
+        fn test_build_review_prompt_contains_content() {
+  -         let prompt =
+  -             build_review_prompt("staged changes", "fn main() {\n    println!(\"hello\");\n}");
+  +         let prompt = build_review_prompt(
+  +             "staged changes",
+  +             "fn main() {\n    println!(\"hello\");\n}",
+  +             ReviewEffort::Normal,
+  +         );
+ ✓ (8.0s)
+  ▶ edit src/commands_git_review.rs (1 → 1 lines)
+  -         let prompt = build_review_prompt("big file", &large_content);
+  +         let prompt = build_review_prompt("big file", &large_content, ReviewEffort::Normal);
+ ✓ (8.0s)
+  ▶ edit src/commands_git_review.rs (1 → 5 lines)
+  -         let prompt = build_review_prompt("diff HEAD~3..HEAD", "diff --git a/foo b/foo\n+bar");
+  +         let prompt = build_review_prompt(
+  +             "diff HEAD~3..HEAD",
+  +             "diff --git a/foo b/foo\n+bar",
+  +             ReviewEffort::Normal,
+  +         );
+ ✓ (7.9s)
+  ▶ edit src/commands_git_review.rs (1 → 1 lines)
+  -         let prompt = build_review_prompt("PR #42", "diff --git a/foo b/foo");
+  +         let prompt = build_review_prompt("PR #42", "diff --git a/foo b/foo", ReviewEffort::Normal);
+ ✓ (57.2s)
+  4 tools completed in 1m 37s (4 ✓)
+
+Now let me add the new tests. Let me find the end of the tests module to add them:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:1190..1220 ✓ (1ms)
+  ▶ edit src/commands_git_review.rs (3 → 134 lines)
+            assert_eq!(a, b);
+  +     }
+  + 
+  +     // --- ReviewEffort tests ---
+  + 
+  +     #[test]
+  +     fn test_parse_review_effort_default() {
+  +         let (effort, remaining) = parse_review_effort("src/main.rs");
+  +         assert_eq!(effort, ReviewEffort::Normal);
+  +         assert_eq!(remaining, "src/main.rs");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_review_effort_default_empty() {
+  +         let (effort, remaining) = parse_review_effort("");
+  +         assert_eq!(effort, ReviewEffort::Normal);
+  +         assert_eq!(remaining, "");
+  +     }
+  + 
+  +     #[test]
+  ... (114 more lines)
+ ✓ (57.7s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 22s (3 ✓)
+
+Now update help_data.rs:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/help_data.rs (17 → 24 lines)
+            "review" => Some(
+  -             "/review [target] — AI code review\n\n\
+  +             "/review [--quick|--thorough] [target] — AI code review\n\n\
+                 Usage:\n\
+                 \x20 /review                   Review staged/uncommitted changes\n\
+                 \x20 /review <path>            Review a specific file\n\
+                 \x20 /review HEAD~3..HEAD      Review a commit range\n\
+  -              \x20 /review --pr 42           Review a GitHub PR\n\n\
+  -              Sends the diff or file to the AI for a code review, looking\n\
+  -              for bugs, style issues, and improvement opportunities.\n\n\
+  +              \x20 /review --pr 42           Review a GitHub PR\n\
+  +              \x20 /review --quick           Quick review: bugs & security only\n\
+  +              \x20 /review --thorough        Deep review: all dimensions\n\n\
+  +              Effort levels:\n\
+  +              \x20 --quick     Focus on bugs and security only. Skip style nits. Terse output.\n\
+  +              \x20 (default)   Bugs, security, style, performance, and suggestions.\n\
+  +              \x20 --thorough  Exhaustive review: also checks error handling, edge cases,\n\
+  +              \x20             API contracts, test coverage, docs, and concurrency.\n\n\
+  +              Sends the diff or file to the AI for a code review.\n\n\
+                 Also works as a CLI subcommand (non-interactive):\n\
+  ... (10 more lines)
+ ✓ (59.6s)
+  2 tools completed in 1m 15s (2 ✓)
+
+Also update the short description:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (1 → 1 lines)
+  -         "review" => Some("AI code review"),
+  +         "review" => Some("AI code review (--quick, --thorough)"),
+ ✓ (59.0s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

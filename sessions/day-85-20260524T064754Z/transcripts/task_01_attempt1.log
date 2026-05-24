@@ -1,0 +1,261 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the per-tool usage summary for /cost and /tokens. Let me start by understanding the existing code.
+  ▶ read src/format/cost.rs  ▶ read src/commands_info.rs ✓ (8ms)
+ ✓ (23ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Let me look at the key functions I need to modify and understand the message types:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_cost\|handle_tok…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn handle_cost\|pub… ✓ (3ms)
+ ✓ (6ms)
+  ▶ read src/commands_info.rs:351..471 ✓ (2ms)
+  3 tools completed in 12.6s (3 ✓)
+
+Now let me understand the AgentMessage type structure — what ToolResult looks like:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && find ~/.cargo/registry/src -path… ✓ (48ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentMessage\|ToolResul… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 15 "^pub enum Content… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 15 "^pub enum Message… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 20 "^pub enum Content… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '11,90p' ~/.cargo/registr… ✓ (4ms)
+  6 tools completed in 19.0s (6 ✓)
+
+Now let me understand AgentMessage:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,170p' ~/.cargo/regis… ✓ (3ms)
+
+Now I understand the data model. `AgentMessage::Llm(Message::ToolResult { tool_name, is_error, .. })` is what I need to look for. Let me also check how extract_turn_costs works as a pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn extract_turn_cos… ✓ (3ms)
+  ▶ read src/format/cost.rs:306..386 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now I have a clear picture. Let me also check what's already exported from cost.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "pub use\|use crate::format… ✓ (3ms)
+
+Good — cost::* is re-exported from format/mod.rs, so anything pub in cost.rs is available via `crate::format::*`.
+
+Now let me check what's imported in commands_info.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_info.rs ✓ (3ms)
+
+Now I have everything I need. Let me implement this.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 29.1s (5 ✓)
+
+Let me start with the tests-first approach. First, add the struct and functions to cost.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/format/cost.rs:375..385 ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+I'll add the new struct and functions after format_turn_costs and before format_context_breakdown:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (4 → 114 lines)
+  +     lines.join("\n")
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Per-tool call summary
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Summary of tool usage during a session.
+  + pub struct ToolCallSummary {
+  +     pub name: String,
+  +     pub calls: usize,
+  +     pub errors: usize,
+  + }
+  + 
+  + /// Extract per-tool call counts from conversation messages.
+  + ///
+  + /// Iterates over all `ToolResult` messages, counts calls per tool name,
+  + /// and tracks error counts. Returns sorted by call count descending,
+  + /// then alphabetically by name for ties.
+  + pub fn extract_tool_call_summary(messages: &[yoagent::AgentMessage]) -> Vec<ToolCallSummary> {
+  ... (93 more lines)
+ ✓ (8.4s)
+
+I see — pluralize takes 3 args. Let me check its signature:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn pluralize" src/f… ✓ (3ms)
+
+Right, it takes (count, singular, plural). Let me fix:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (13 → 17 lines)
+            let error_str = if s.errors > 0 {
+  -             format!(" ({} {})", s.errors, pluralize(s.errors as u64, "error"))
+  +             format!(
+  +                 " ({} {})",
+  +                 s.errors,
+  +                 pluralize(s.errors, "error", "errors")
+  +             )
+            } else {
+                String::new()
+            };
+  ···
+                "      {:<width$}  {:>3} {}{}",
+                s.name,
+                s.calls,
+  -             pluralize(s.calls as u64, "call"),
+  +             pluralize(s.calls, "call", "calls"),
+                error_str,
+                width = max_name_len,
+            ));
+ ✓ (8.4s)
+  ▶ edit src/format/cost.rs (9 → 9 lines)
+            format!(
+                " ({} {})",
+                total_errors,
+  -             pluralize(total_errors as u64, "error")
+  +             pluralize(total_errors, "error", "errors")
+            )
+        } else {
+            String::new()
+ ✓ (13.5s)
+  2 tools completed in 26.5s (2 ✓)
+
+Good — the functions compile, they're just unused yet. Let me now wire them into commands_info.rs and add tests simultaneously:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Now wire into handle_cost and handle_tokens:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (8 → 15 lines)
+            if !turn_costs.is_empty() {
+                println!();
+                println!("{}", format_turn_costs(&turn_costs));
+  +         }
+  + 
+  +         // Per-tool call summary
+  +         let tool_summary = extract_tool_call_summary(messages);
+  +         if !tool_summary.is_empty() {
+  +             println!();
+  +             println!("{}", format_tool_call_summary(&tool_summary));
+            }
+    
+            println!("{RESET}");
+ ✓ (58.4s)
+
+Now wire into handle_tokens. The messages are available via `agent.messages()`:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (6 → 13 lines)
+            let breakdown = context_breakdown(&messages);
+            println!();
+            println!("{}", format_context_breakdown(&breakdown));
+  +     }
+  + 
+  +     // Per-tool call summary
+  +     let tool_summary = extract_tool_call_summary(&messages);
+  +     if !tool_summary.is_empty() {
+  +         println!();
+  +         println!("{}", format_tool_call_summary(&tool_summary));
+        }
+ ✓ (59.2s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 7s (2 ✓)
+
+Now add the tests:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find where the existing tests are in cost.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes… ✓ (3ms)
+  ▶ read src/format/cost.rs:558..578 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me find the end of the test module:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/format/cost.rs ✓ (3ms)
+
+I need to add my tests before the closing }. Let me find the last test:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/cost.rs:1545..1555 ✓ (1ms)
+
+I need a helper function to create test messages. Let me look at how existing tests do it:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolResult\|tool_result… ✓ (4ms)
+  ▶ read src/format/cost.rs:1240..1300 ✓ (1ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Good, I see the pattern. Now let me add my tests:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (9 → 161 lines)
+            let (inp, _, _, out) = model_pricing("o4-mini-high").unwrap();
+            assert!((inp - 1.10).abs() < 0.001);
+            assert!((out - 4.40).abs() < 0.001);
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // Tool call summary tests
+  +     // -----------------------------------------------------------------------
+  + 
+  +     fn make_tool_result(tool_name: &str, is_error: bool) -> yoagent::AgentMessage {
+  +         use yoagent::{AgentMessage, Content, Message};
+  +         AgentMessage::Llm(Message::ToolResult {
+  +             tool_call_id: "test-id".into(),
+  +             tool_name: tool_name.into(),
+  +             content: vec![Content::Text {
+  +                 text: "result".into(),
+  +             }],
+  +             is_error,
+  +             timestamp: 0,
+  +         })
+  ... (137 more lines)
+ ✓ (58.3s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (6.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (44.8s)
+  6 tools completed in 2m 18s (6 ✓)
+
+All 3,404 tests pass (3,316 + 88), zero failures. Let me verify my specific new tests ran:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tool_call_summary 2>&… ✓ (139ms)
+
+All 8 tool call summary tests pass. Let me commit:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (7 lines) ✓ (15ms)
+  3 tools completed in 11.8s (3 ✓)
+
+Done. Here's what I built:
+
+**`src/format/cost.rs`** — Added:
+• ToolCallSummary struct with name, calls, errors fields
+• extract_tool_call_summary() — iterates ToolResult messages, counts per-tool calls and errors, returns sorted by call count descending (alphabetical for ties)
+• format_tool_call_summary() — renders a compact aligned table with tool names, call counts, error counts in parentheses, and a total line
+• 8 tests: empty input, correct counts, error tracking, sort order, ignoring non-tool messages, empty format, full format output, plural error formatting
+
+`src/commands_info.rs` — Wired in:
+• /cost now shows the tool usage table after the per-turn breakdown
+• /tokens now shows it after the context breakdown
+
+Example output:
+```
+    Tool usage:
+      bash        12 calls
+      edit_file    8 calls (1 error)
+      read_file    5 calls
+      search       3 calls
+      —           28 total (1 error)
+```
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
