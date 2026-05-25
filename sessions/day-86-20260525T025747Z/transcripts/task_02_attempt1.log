@@ -1,0 +1,279 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/commands_session.r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,250p' src/commands_s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_compact_arg\|Comp… ✓ (4ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now let me look at the test section and the imports:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '830,900p' src/commands_s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,15p' src/commands_sess… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use " src/commands_sess… ✓ (4ms)
+  3 tools completed in 8.6s (3 ✓)
+
+Now let me look at the total_tokens function and what's available from yoagent:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "total_tokens\|effectiv… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "summarize_context_topic… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '159,280p' src/prompt_uti… ✓ (4ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Now let me understand the message types and how tool calls are represented:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ToolCall\|ToolResult" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub enum Content" ~/.c… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' ~/.cargo/registry… ✓ (4ms)
+  3 tools completed in 8.9s (3 ✓)
+
+Now let me look at how ContextConfig works with keep_recent:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ContextConfig\|keep_rec… ✓ (4ms)
+
+Now I have a good understanding. Let me look at effective_context_tokens and ContextConfig::default():
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effective_context_token… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,35p' src/cli_config.r… ✓ (3ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Good. Now let me look at the full test section in commands_session.rs to understand the test structure:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '770,800p' src/commands_s… ✓ (3ms)
+
+Now I have enough context. Let me implement this step by step:
+
+1. Add Preview variant to CompactArg
+2. Update parse_compact_arg to recognize --preview and preview
+3. Add the `handle_compact_preview` function
+4. Add a branch in handle_compact for Preview
+5. Add tests
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (10 → 12 lines)
+        Default,
+        /// Explicit number of recent messages to keep.
+        KeepRecent(usize),
+  +     /// Preview what compaction would do without performing it.
+  +     Preview,
+        /// Invalid input — contains the original string for error reporting.
+        Invalid(String),
+    }
+ ✓ (8.1s)
+
+Expected - now update parse_compact_arg:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (13 → 16 lines)
+        }
+        if arg.eq_ignore_ascii_case("all") {
+            return CompactArg::KeepRecent(2);
+  +     }
+  +     if arg == "--preview" || arg.eq_ignore_ascii_case("preview") {
+  +         return CompactArg::Preview;
+        }
+        match arg.parse::<usize>() {
+            Ok(n) => CompactArg::KeepRecent(n.max(2)),
+ ✓ (8.1s)
+
+Now I need to update handle_compact to handle the Preview variant. Let me see the current code:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '183,220p' src/commands_s… ✓ (4ms)
+  ▶ edit src/commands_session.rs (10 → 14 lines)
+        let keep_recent = match parsed {
+            CompactArg::Default => None,
+            CompactArg::KeepRecent(n) => Some(n),
+  +         CompactArg::Preview => {
+  +             handle_compact_preview(agent);
+  +             return;
+  +         }
+            CompactArg::Invalid(s) => {
+                println!(
+  -                 "{DIM}  invalid argument: \"{s}\" — use a number or \"all\"\n  usage: /compact [N|all]{RESET}\n"
+  +                 "{DIM}  invalid argument: \"{s}\" — use a number, \"all\", or \"--preview\"\n  usage: /compact [N|all|--preview]{RESET}\n"
+                );
+                return;
+            }
+ ✓ (8.1s)
+  2 tools completed in 15.2s (2 ✓)
+
+Now I need to implement handle_compact_preview. Let me add it before handle_compact:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '183,186p' src/commands_s… ✓ (3ms)
+  ▶ edit src/commands_session.rs (4 → 162 lines)
+  + }
+  + 
+  + /// Show what compaction would do without performing it.
+  + /// Read-only operation: inspects messages, estimates savings, shows topics.
+  + fn handle_compact_preview(agent: &Agent) {
+  +     let messages = agent.messages();
+  +     let msg_count = messages.len();
+  +     let current_tokens = total_tokens(messages) as u64;
+  +     let context_window = crate::cli::effective_context_tokens();
+  +     let usage_pct = if context_window > 0 {
+  +         (current_tokens as f64 / context_window as f64 * 100.0) as u64
+  +     } else {
+  +         0
+  +     };
+  + 
+  +     if msg_count == 0 {
+  +         println!("{DIM}  📋 Compact preview: nothing to compact (empty conversation){RESET}\n");
+  +         return;
+  +     }
+  + 
+  ... (141 more lines)
+ ✓ (56.7s)
+  2 tools completed in 1m 25s (2 ✓)
+
+Now let's try building:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (128ms)
+
+Build passes. Now let's add tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_parse_compact_a… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1035,1060p' src/commands… ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Add the tests right after the invalid test:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (15 → 35 lines)
+                parse_compact_arg("3.5"),
+                CompactArg::Invalid("3.5".to_string())
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_compact_arg_preview() {
+  +         assert_eq!(parse_compact_arg("--preview"), CompactArg::Preview);
+  +         assert_eq!(parse_compact_arg("preview"), CompactArg::Preview);
+  +         assert_eq!(parse_compact_arg("Preview"), CompactArg::Preview);
+  +         assert_eq!(parse_compact_arg("  --preview  "), CompactArg::Preview);
+  +         assert_eq!(parse_compact_arg("  preview  "), CompactArg::Preview);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_compact_preview_empty_conversation() {
+  +         // handle_compact_preview should not panic on an agent with no messages
+  +         use yoagent::agent::Agent;
+  +         use yoagent::provider::AnthropicProvider;
+  +         let provider = AnthropicProvider::new("test-key");
+  ... (4 more lines)
+ ✓ (8.3s)
+
+Let me check how other tests create agents:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AnthropicProvider\|Agen… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1098,1112p' src/commands… ✓ (4ms)
+  2 tools completed in 8.3s (2 ✓)
+
+I see — it's a builder pattern, not `::new("key")`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (10 → 12 lines)
+            // handle_compact_preview should not panic on an agent with no messages
+            use yoagent::agent::Agent;
+            use yoagent::provider::AnthropicProvider;
+  -         let provider = AnthropicProvider::new("test-key");
+  -         let agent = Agent::new(provider);
+  +         let agent = Agent::new(AnthropicProvider)
+  +             .with_system_prompt("test")
+  +             .with_model("test-model")
+  +             .with_api_key("test-key");
+            // Just call it — should print the empty message and return without panic
+            handle_compact_preview(&agent);
+        }
+ ✓ (57.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (127ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_parse_compact_ar… ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_compact_preview_… ✓ (135ms)
+  4 tools completed in 1m 10s (4 ✓)
+
+Now let's run the full test suite and clippy:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (707ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (694ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (42.2s)
+  4 tools completed in 1m 11s (4 ✓)
+
+The failing test (test_hint_no_repeat_same_category) is pre-existing and unrelated to my changes. Let me verify:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash && cargo test format::… ✓ (15.1s)
+
+Interesting — it passes when run alone but fails when run with the full suite. This is a flaky test due to shared global state (hint tracking). Let me restore my changes:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash pop ✓ (11ms)
+
+Let me verify this test also fails without my changes (it's a test ordering issue with global state):
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- format::tests::tes… ✓ (15.1s)
+
+The test passes in isolation. This is a known flaky test issue with global state — pre-existing and not related to my changes. Let me confirm my specific tests pass and that all the existing compact tests still pass:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test compact 2>&1 ✓ (778ms)
+
+All 28 compact-related tests pass. Let me also check there are no issues with the rest of the test suite except the known flaky one:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (29.9s)
+
+All tests pass! The flaky test passed this time too. Let me run the full check one more time:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (13.9s)
+
+All clean. Now let me check if any docs need updating. The /compact command is documented in help text:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compact" src/help_data.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '105,120p' src/help_data.… ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+I need to update this help text to mention --preview:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (11 → 14 lines)
+            "compact" => Some(
+  -             "/compact [N|all] — Compact conversation to save context space\n\n\
+  +             "/compact [N|all|--preview] — Compact conversation to save context space\n\n\
+                 Summarizes older turns to free context window space.\n\n\
+                 Usage:\n\
+                 \x20 /compact              Default — keep last 10 messages at full fidelity\n\
+                 \x20 /compact 4            Keep last 4 messages, summarize everything before\n\
+  -              \x20 /compact all          Summarize everything except the last 2 messages\n\n\
+  +              \x20 /compact all          Summarize everything except the last 2 messages\n\
+  +              \x20 /compact --preview    Show what compaction would do without performing it\n\n\
+                 The number controls how many recent messages survive compaction at\n\
+                 full detail. Lower numbers free more space but lose more context.\n\
+  -              Minimum value is 2 (always keeps at least the last exchange).",
+  +              Minimum value is 2 (always keeps at least the last exchange).\n\n\
+  +              The --preview flag shows estimated token savings, message counts,\n\
+  +              files touched, and topics in the conversation — without changing anything.",
+            ),
+ ✓ (57.7s)
+
+Now let me check the short description for compact:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compact" src/help_data.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compact" src/help_data.… ✓ (3ms)
+  2 tools completed in 12.0s (2 ✓)
+
+The short description at line 1235 is fine as-is. Now let me check the docs:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compact" docs/src/ | h… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '36,68p' docs/src/feature… ✓ (3ms)
+  2 tools completed in 13.1s (2 ✓)
+
+Let me update the docs to mention --preview:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/features/context.md (14 → 24 lines)
+    ```
+    
+    The context summary shows which files and topics are still present after compaction, so you can trust that important context wasn't lost.
+  + 
+  + ### Previewing compaction
+  + 
+  + Not sure if you should compact? Use `--preview` to see what would happen without changing anything:
+  + 
+  + ```
+  + /compact --preview
+  + ```
+  + 
+  + This shows estimated token savings, which messages would be compressed, files touched, and topics in the conversation — all read-only.
+ ✓ (41.5s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

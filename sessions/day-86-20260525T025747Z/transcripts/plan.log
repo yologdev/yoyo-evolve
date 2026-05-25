@@ -1,0 +1,225 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat CHANGELOG.md | head -40📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (4ms)
+ ✓ (15ms)
+  ▶ $ git log --oneline v0.1.13..HEAD --no-merges | wc -l  ▶ $ git log --oneline v0.1.13..HEAD --no-merges | head -50 ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ git tag --sort=-creatordate | head -5 ✓ (4ms)
+  ▶ $ # Check what's changed since the last release (0.1.13 was Da… (3 lines)  ▶ $ # Let's look at issue #341 for context (2 lines) ✓ (6ms)
+ ✓ (533ms)
+  ▶ $ # Check what features have been added since 0.1.13 (Day 81, … (2 lines) ✓ (5ms)
+  ▶ $ git log --oneline --since="2026-05-20" --no-merges | grep -iE "(task|feature|add… ✓ (5ms)
+  ▶ $ git log --oneline --since="2026-05-20" --no-merges | grep -iE "Day 8[2-6].*Task"… ✓ (5ms)
+  ▶ $ git log --oneline --since="2026-05-20" --no-merges | grep -iE "Day 8[2-6]" | gre… ✓ (6ms)
+  ▶ $ git log --oneline --since="2026-05-20" --no-merges | grep -iE "Day 8[2-4]" | gre… ✓ (6ms)
+  ▶ $ git log --oneline --since="2026-05-20" --no-merges | grep -v "assessment\|learni… ✓ (5ms)
+  ▶ $ # Also check what was added in Day 82-84 that's not in the a… (2 lines) ✓ (5ms)
+  ▶ $ # Check Day 82-83 commits for features (2 lines) ✓ (5ms)
+  ▶ $ # The assessment mentions more features from Day 82-84. Let … (2 lines) ✓ (6ms)
+  ▶ $ git log --oneline | grep "Day 82\|Day 83" | grep -v "assessment\|learnings\|jour… ✓ (5ms)
+  ▶ $ # Let me check the journal for a full picture of Day 82-85 f… (2 lines) ✓ (7ms)
+  20 tools completed in 1m 9s (20 ✓)
+
+Now I have a thorough picture. Let me assess what to plan for this session. Key considerations:
+
+1. No community issues today — all 3 slots are self-driven
+2. Trajectory is excellent — 10/10 sessions green, 0 reverts
+3. **Since v0.1.13 (Day 81, May 20)**: ~5 days of features accumulated across Days 82-85 — SmartEditTool extraction + auto-fix, contextual hints, /help search, /add suggestions, LiteDescriptionTool, richer /status, /retry --with, per-tool cost breakdown, remaining turns estimate, relative timestamps in `/memories, /review` effort levels, exit summary with diffs, /add token estimates, /goal system prompt injection, /blindspot skill. That's a solid release.
+4. Biggest competitive gap: semantic understanding / model routing are the "table stakes" I'm missing; but the most immediately buildable gap is **auto-model selection** (routing simple tasks to faster/cheaper models)
+5. Assessment identified symbols.rs at 3,679 lines as the largest file — but splitting is reorganization, not capability
+6. **#341** (RLM roadmap) has concrete next steps — the explore-codebase skill already exists
+
+Let me focus on:
+• **Task 1: A meaningful capability gap closure — plan mode** (separate planning from execution, like Cursor Composer). I already have /plan in commands but let me check what it does.
+• Task 2: Something that makes the agent smarter in day-to-day use — auto-compact notification or **proactive context management**
+• Task 3: Release prep (v0.1.14) — accumulate changelog
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_plan\|commands_plan" src/dispatch.rs | head -10  ▶ $ head -60 src/commands_plan.rs ✓ (4ms)
+ ✓ (40ms)
+  ▶ $ wc -l src/commands_plan.rs  ▶ $ # Check what capabilities are in place for proactive compact… (2 lines) ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ # Let me check what's the biggest impactful thing I could bu… (3 lines)  ▶ $ # Check if yoagent supports image content (2 lines) ✓ (13ms)
+ ✓ (57ms)
+  ▶ $ # So I already have --image support for -p mode. What about … (2 lines) ✓ (4ms)
+  7 tools completed in 17.9s (7 ✓)
+
+Good — image support already exists in both --image (CLI) and /add (REPL). Let me think about what would be the most impactful capability work.
+
+Looking at the assessment's gap analysis, the most immediately impactful things I could build that are:
+1. Self-contained (≤3 files)
+2. Actually competitive differentiators
+3. Not architectural impossibilities
+
+**Best candidates:**
+1. `/diff --review` or **inline code review on uncommitted changes** — auto-review your working changes before commit. This is something Claude Code does really well.
+2. Auto-model routing — when a task is simple (e.g., just asking a question), use a faster/cheaper model automatically
+3. Release v0.1.14 — bundle all the Day 82-85 work into a release
+
+Actually, let me reconsider. Looking at the competitive landscape more carefully:
+
+• Context-aware file suggestions when editing — if I notice the user is working on a file that imports from another file, suggest loading it. This is what Cursor does with "related files."
+• Diff-aware context injection — when a user makes changes, auto-inject the relevant test files or dependent files into context
+
+Let me think about what would make the biggest user-facing difference. I'll go with:
+
+1. Task 1: /diff --review — auto-review uncommitted changes (like running code review on yourself before committing). High-value, self-contained, competitive.
+2. Task 2: Proactive file suggestions — after tool calls that touch files, suggest related files that might need updating (tests, imports, docs). Builds on existing /add suggestions infrastructure.
+3. Task 3: Release v0.1.14 — update CHANGELOG.md with all Day 82-85 features, ready for tagging.
+
+Wait — let me check if /diff --review already exists since there's already a handle_diff_explain:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "review\|explain" src/commands_git.rs | head -20  ▶ $ grep -n "handle_review\|/review" src/commands_git_review.rs | head -10 ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 2.2s (2 ✓)
+
+OK so /review already exists (review staged changes or files) and /diff --explain exists too. Let me think about what's actually missing.
+
+Looking again at the competitive analysis and what would be most impactful:
+
+1. **Conversation branching / undo at turn level** — the ability to say "go back 2 turns and try differently" without starting over. Claude Code supports this kind of interaction.
+2. Smart context injection — when an edit fails or a test fails, automatically inject the relevant files into context so the fixing attempt has what it needs.
+3. `/commit --fixup` — auto-fixup commits that amend the right parent, useful for PR workflows.
+
+Actually, let me look at something that would be really useful for day-to-day work: **diagnostic context injection**. When a test fails or a build error occurs, the agent should automatically pull in the relevant source file content to have full context for the fix. This is something all commercial agents do well.
+
+Let me check what happens currently when watch mode detects an error:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "build_watch_fix_prompt\|fn run_watch_after_prompt" src/watch.rs | head …  ▶ $ sed -n '600,680p' src/watch.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ sed -n '958,1020p' src/watch.rs ✓ (4ms)
+  3 tools completed in 5.9s (3 ✓)
+
+Now I have a good picture. The watch fix prompt sends the error output but doesn't pull in the source files that contain the errors. Let me think about a more impactful feature.
+
+Let me reconsider the three tasks for maximum impact:
+
+1. Task 1 (Capability gap): **Conversation summarization on /compact** — when compacting, show the user a brief summary of what survived and what was compressed, so they know what context they lost. This improves the "long conversation" workflow that differentiates commercial agents.
+
+Actually, wait. Let me think bigger. What's the one thing that would make the biggest user-experience difference?
+
+Looking at the assessment again: "Semantic indexing is table stakes" — but embedding-based indexing is a big lift. However, a simpler version is possible: dependency-aware file loading — when you edit a file, automatically identify files that import from it or that it imports, and make them available. This is what makes Cursor and Claude Code feel "smart" — they understand file relationships.
+
+Let me check what infrastructure exists:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's any import/dependency tracking (2 lines)  ▶ $ # Check suggest_related_files (2 lines) ✓ (3ms)
+ ✓ (13ms)
+  ▶ $ sed -n '879,940p' src/commands_file.rs ✓ (4ms)
+  3 tools completed in 4.7s (3 ✓)
+
+Good — suggest_related_files already parses use crate:: imports. This is already somewhat built. Let me pivot to something truly new and impactful.
+
+Let me think about what's really missing from a user's perspective that commercial agents do well:
+
+1. `/undo` with preview — undo last AI changes with a preview of what will be reverted (more granular than git checkout)
+2. **Multi-file edit planning** — before making changes across files, show the user what you plan to touch and get confirmation
+3. Context window pressure indicators — warn the user proactively when they're running low, suggest compaction
+
+Actually, I just realized something important from the trajectory: there's a panicking test `watch::tests::handle_watch_bare_sets_lint_and_test` mentioned. Let me verify it's fixed:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test handle_watch_bare_sets_lint_and_test 2>&1 | tail -5 ✓ (145ms)
+  ▶ $ # The test might have been renamed or removed. Let's check (2 lines) ✓ (3ms)
+  ▶ $ cargo test --bin yoyo handle_watch_bare 2>&1 | tail -10 ✓ (141ms)
+  3 tools completed in 8.7s (3 ✓)
+
+Good, the test passes. Now let me finalize my plan. I'll focus on three high-impact tasks:
+
+Task 1 (Capability gap — competitive): Auto-context injection for watch-mode fixes — When watch mode detects a build/test failure and sends a fix prompt, automatically read the source files mentioned in the errors and inject their relevant portions. This is what makes commercial agents' fix loops more effective — they don't just send the error, they send the code that needs changing. This touches `src/watch.rs` only.
+
+Task 2 (Self-driven capability): **`/diff review for uncommitted changes** — Wait, this might already exist via /review. Let me check what /review` without arguments does:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '317,380p' src/commands_git_review.rs ✓ (4ms)
+
+OK, /review already reviews staged changes. Good. Let me think about a different Task 2.
+
+Better idea for Task 2: **Conversation context budget warning** — proactively warn when approaching context limits and suggest /compact. The `proactive_compact_if_needed` function exists but let me see if it actually warns the user visibly:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '155,200p' src/commands_session.rs ✓ (3ms)
+  ▶ $ grep -n "context_budget_warning" src/format/mod.rs | head -5 ✓ (4ms)
+  ▶ $ sed -n '587,635p' src/format/mod.rs ✓ (4ms)
+  3 tools completed in 7.5s (3 ✓)
+
+OK good — context budget warnings already exist. Let me think about what's truly missing.
+
+Let me go with:
+
+Task 1 (biggest capability gap closure): **Smart error context in watch-mode fix prompts** — when `build_watch_fix_prompt` constructs the fix prompt, parse the error messages to extract file:line references, then read the relevant source lines (±5 context) and include them in the prompt. This makes the fix agent much more effective because it sees the code that needs changing without needing a tool call first. Touches only src/watch.rs.
+
+**Task 2 (competitive UX): /commit --split** — auto-split staged changes into logical atomic commits (one per file or per hunk group). This is something that Cursor and Claude Code facilitate naturally through their multi-step workflows. Touches src/commands_git.rs.
+
+Task 3 (release): **Prepare v0.1.14 release** — update CHANGELOG.md with all Day 82-85 features. Touches only CHANGELOG.md.
+
+Wait, actually let me reconsider Task 2. /commit --split is complex and might be hard to do well in 20 minutes. Let me think of something simpler but high-value.
+
+Better Task 2: `/changes` command — show a compact summary of all file changes in the current session with colored diffs. Like git diff but filtered to only what the AI did this session. This is functionality that Claude Code shows naturally. Let me check if this already exists:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_changes\|/changes" src/commands_retry.rs | head -10 ✓ (4ms)
+  ▶ $ sed -n '400,460p' src/commands_retry.rs ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+OK, /changes already exists and shows diffs. Good.
+
+Let me think about what's truly a new capability that a user would love. Here's my final plan:
+
+**Task 1 (Capability gap — makes watch-mode smarter)**: Auto-inject source context into watch fix prompts. When an error mentions `src/foo.rs:42`, read lines 37-47 of that file and include them in the fix prompt. This makes first-attempt fixes much more successful.
+
+**Task 2 (Competitive UX feature): /git stash support** — allow users to quickly stash/pop changes via slash commands. This is a basic git workflow that every developer uses but requires dropping to raw bash currently. Touches `src/commands_git.rs`.
+
+Hmm wait, that's too trivial. Let me think about something more impactful...
+
+Task 2 (New capability): Multi-turn undo — `/undo N` to revert the last N turns of AI changes (using TurnHistory), with a preview of what will be reverted. Currently `/undo` exists but let me check its scope:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_undo\|fn.*undo" src/commands_git.rs | head -10 ✓ (4ms)
+  ▶ $ sed -n '580,630p' src/commands_git.rs ✓ (4ms)
+  2 tools completed in 5.2s (2 ✓)
+
+OK, `/undo N` already exists and works with turn history. Good.
+
+Let me think harder about what's truly a high-value new feature. The assessment says:
+• **No bugs found** — stability is solid
+• **#341 (RLM roadmap)** — there's already an `explore-codebase` skill
+
+What about something practical and competitive: **auto-fix on edit_file failure within the prompt loop** — when edit_file fails (text not found), the agent should automatically retry with fuzzy matching without burning a full turn. Wait — SmartEditTool already does this! That was Day 83-85 work.
+
+OK, let me settle on my final three tasks:
+
+1. Task 1: Source context injection in watch-mode fix prompts — read the error-referenced files and include relevant lines in the prompt so the fixing agent doesn't need a tool call to understand what's wrong. High-value: makes fix loops complete in fewer iterations.
+
+2. Task 2: `/compact --preview` — show what a compaction would look like before doing it (topic summary, estimated token savings, what messages would be kept). This helps users make informed decisions about when/how to compact. Currently compaction is a black box.
+
+3. Task 3: Prepare v0.1.14 CHANGELOG — document all Day 82-85 features for release.
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Quick check: how many features since 0.1.13? Enough for a … (7 lines) ✓ (2ms)
+
+Now let me write the task files:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (43 lines) ✓ (42.5s)
+  ▶ write session_plan/task_02.md (51 lines) ✓ (42.3s)
+  ▶ write session_plan/task_03.md (49 lines) ✓ (42.6s)
+  ▶ write session_plan/issue_responses.md (9 lines) ✓ (42.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 4m 3s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 86 Session Plan
+
+**3 tasks, all self-driven** (no community issues today):
+
+### Task 1: Source context injection in watch-mode fix prompts
+Files: `src/watch.rs`
+When watch mode detects errors, parse file:line references from the structured errors, read the relevant source lines (±5 lines of context), and inject them into the fix prompt. This eliminates the first wasted tool call in fix loops where the agent needs to read the file before it can fix anything. Capped at ~3KB to avoid bloating.
+
+### Task 2: `/compact --preview` 
+Files: src/commands_session.rs, src/dispatch.rs
+Show what compaction would look like before doing it — estimated token savings, message counts, topic summary of what's in context. Turns compaction from a black box into an informed decision.
+
+### Task 3: Prepare CHANGELOG.md for v0.1.14
+Files: CHANGELOG.md
+Document all Day 82-85 features (~15 additions) for release. 5 days and 8 sessions of work — SmartEditTool, contextual hints, /help search, /review effort levels, per-tool usage, remaining turns estimates, and more.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,249 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/watch.rs ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct CompilerError" s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,170p' src/watch.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_watch_fix_prom… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '958,1060p' src/watch.rs ✓ (4ms)
+  5 tools completed in 15.2s (5 ✓)
+
+Now let me look at the build_error_summary_for function and also find where tests are:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_error_summary_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '864,960p' src/watch.rs ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now I need to look at the test section to understand the test patterns:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2050,2130p' src/watch.rs ✓ (4ms)
+
+Now let me look at the safe_truncate import and the use statements at the top:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/watch.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '7,15p' src/watch.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:7..15 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:14..17 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:16..19 ✓ (1ms)
+  5 tools completed in 15.2s (5 ✓)
+
+Now let me check the end of the file for the test module:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/wa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1360,1380p' src/watch.rs ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I have a good understanding of the structure. Let me look at what comes right after the build_watch_fix_prompt function to know where to place the new helper:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1020,1040p' src/watch.rs ✓ (4ms)
+
+Good. Now I understand the full picture. Let me implement the feature:
+
+1. Add extract_error_source_context helper
+2. Modify build_watch_fix_prompt to call it
+3. Add tests
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 24.7s (5 ✓)
+
+Now let me add the extract_error_source_context function. I'll place it right before `build_watch_fix_prompt`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '950,960p' src/watch.rs ✓ (3ms)
+
+I'll add the new helper function right before build_watch_fix_prompt:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (6 → 78 lines)
+  + /// Maximum total bytes of source context to inject into fix prompts.
+  + const SOURCE_CONTEXT_MAX_BYTES: usize = 3072;
+  + 
+  + /// Extract relevant source file lines around error locations.
+  + ///
+  + /// For each unique `(file, line)` pair in the error list, reads the file and
+  + /// extracts a window of context (±5 lines). Results are deduped by file+line,
+  + /// capped at [`SOURCE_CONTEXT_MAX_BYTES`] total, and formatted as markdown.
+  + ///
+  + /// Files that don't exist or can't be read are silently skipped.
+  + pub fn extract_error_source_context(errors: &[CompilerError]) -> String {
+  +     use std::collections::HashSet;
+  +     use std::fs;
+  + 
+  +     if errors.is_empty() {
+  +         return String::new();
+  +     }
+  + 
+  +     // Deduplicate (file, line) pairs — preserve insertion order via Vec
+  +     let mut seen = HashSet::new();
+  ... (55 more lines)
+ ✗ (4ms)
+    │ old_text not found in src/watch.rs.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:951..961 ✓ (1ms)
+  ▶ edit src/watch.rs (7 → 79 lines)
+  + /// Maximum total bytes of source context to inject into fix prompts.
+  + const SOURCE_CONTEXT_MAX_BYTES: usize = 3072;
+  + 
+  + /// Extract relevant source file lines around error locations.
+  + ///
+  + /// For each unique `(file, line)` pair in the error list, reads the file and
+  + /// extracts a window of context (±5 lines). Results are deduped by file+line,
+  + /// capped at [`SOURCE_CONTEXT_MAX_BYTES`] total, and formatted as markdown.
+  + ///
+  + /// Files that don't exist or can't be read are silently skipped.
+  + pub fn extract_error_source_context(errors: &[CompilerError]) -> String {
+  +     use std::collections::HashSet;
+  +     use std::fs;
+  + 
+  +     if errors.is_empty() {
+  +         return String::new();
+  +     }
+  + 
+  +     // Deduplicate (file, line) pairs — preserve insertion order via Vec
+  +     let mut seen = HashSet::new();
+  ... (55 more lines)
+ ✓ (13.2s)
+  3 tools completed in 35.4s (2 ✓, 1 ✗)
+
+Good, I need to fix the clippy issue and also actually use the function. Let me fix the loop first:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (4 → 4 lines)
+            let mut snippet = format!("**{}** (around line {}):\n```\n", file, line);
+  -         for i in start..end {
+  -             snippet.push_str(&format!("{:>4}: {}\n", i + 1, lines[i]));
+  +         for (i, src_line) in lines.iter().enumerate().take(end).skip(start) {
+  +             snippet.push_str(&format!("{:>4}: {}\n", i + 1, src_line));
+            }
+ ✓ (13.2s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 25.2s (3 ✓)
+
+Now I need to modify build_watch_fix_prompt to call extract_error_source_context. The function uses the errors variable and builds the final prompt. Let me see the full function:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1030..1085 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1080..1095 ✓ (1ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Now I'll modify build_watch_fix_prompt to call extract_error_source_context and inject the result:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (3 → 4 lines)
+        let structured_section = build_error_summary_for(&errors, detected_lang);
+  +     let source_context = extract_error_source_context(&errors);
+    
+        let hint = match cmd_type {
+ ✓ (13.0s)
+
+Good, now I need to use source_context in the format strings. Let me update the return expressions:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (13 → 13 lines)
+            format!(
+                "Your changes caused {cmd_type} failures. Here's the output from `{watch_cmd}`:\n\
+                 ```\n{truncated}\n```\n\n\
+  -              {summary}{hint}"
+  +              {summary}{source_context}{hint}"
+            )
+        } else {
+            format!(
+                "Your changes caused {cmd_type} failures. Here's the output from `{watch_cmd}`:\n\
+                 ```\n{truncated}\n```\n\
+  -              Please fix the issues.{hint}"
+  +              Please fix the issues.{source_context}{hint}"
+            )
+        }
+ ✓ (58.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (128ms)
+  2 tools completed in 1m 7s (2 ✓)
+
+Build passes. Now let me add the tests:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Let me find a good place to add the tests. Let me look at the end of the test module:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -50 src/watch.rs ✓ (3ms)
+
+Now let me add tests right before the closing } of the test module:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (17 → 194 lines)
+                build_error_summary_for(&errors, WatchLanguage::Python).expect("should return summary");
+            assert!(
+                summary.contains("Python"),
+  -             "should label as Python: {summary}"
+  +             "should label as Python: {summary}",
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_error_source_context_empty_errors() {
+  +         let result = extract_error_source_context(&[]);
+  +         assert!(result.is_empty(), "empty errors should produce empty string");
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_error_source_context_nonexistent_files() {
+  +         let errors = vec![CompilerError {
+  +             code: Some("E0308".to_string()),
+  +             message: "mismatched types".to_string(),
+  +             file: Some("/tmp/nonexistent_file_xyz_12345.rs".to_string()),
+  ... (165 more lines)
+ ✓ (56.7s)
+
+Now let's check if tempfile is available as a dev-dependency:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep tempfile Cargo.toml ✓ (3ms)
+
+Good, it's available. Now let's run the full check:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (44.3s)
+  2 tools completed in 1m 3s (2 ✓)
+
+All 88 tests pass. Let me specifically check that the new tests pass:
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test extract_error_source … ✓ (146ms)
+
+All 6 new tests pass. Let me also check the test that tests the prompt includes source context:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test build_watch_fix_promp… ✓ (138ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 20.1s (3 ✓)
+
+Let me do the full verification pipeline one more time to be sure:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (42.4s)
+
+Everything passes. Now let me commit:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (15ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Done. Let me verify the commit looks right:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 ✓ (4ms)
+
+The task is complete. Here's what I implemented:
+
+**New function: extract_error_source_context** — reads the actual source files referenced in compiler errors and extracts an 11-line window (±5 lines) around each error location. The function:
+• Deduplicates (file, line) pairs so the same location only appears once
+• Caps total injected context at 3KB (SOURCE_CONTEXT_MAX_BYTES) 
+• Silently skips files that don't exist or can't be read
+• Returns a formatted markdown section with file headers and line numbers
+
+Modified: `build_watch_fix_prompt` — now calls the helper after parsing errors and appends the source context section to the fix prompt, so the fixing agent sees both the error output AND the relevant code in the same turn.
+
+6 new tests:
+1. Empty errors → empty result
+2. Non-existent files → empty result (silent skip)
+3. Errors without file field → empty result
+4. Real file → correct window extraction with line numbers
+5. Duplicate file+line → only included once
+6. Many files with long lines → respects the 3KB cap
+7. Integration: build_watch_fix_prompt includes source context when errors have file references
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
