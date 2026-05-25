@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the existing test block in format/output.rs to understand the current test structure and then add comprehensive tests.
+  ▶ $ grep -n "#\[cfg(test)\]" src/format/output.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ wc -l src/format/output.rs ✓ (8ms)
+ ✓ (12ms)
+  ▶ read src/format/output.rs:1..51  ▶ read src/format/output.rs:653..753 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/format/output.rs:750.. ✓ (6ms)
+  5 tools completed in 17.2s (5 ✓)
+
+Now let me read the full function signatures and logic I need to test:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:43..243 ✓ (2ms)
+  ▶ read src/format/output.rs:242..442 ✓ (2ms)
+  ▶ read src/format/output.rs:441..641 ✓ (2ms)
+  3 tools completed in 11.1s (3 ✓)
+
+Now let me see the last part of the test file to know where to add new tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:1640.. ✓ (1ms)
+
+Let me also check what existing tests are in the 826-1640 range to know the full picture:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_" src/format/output.rs ✓ (8ms)
+  ▶ $ grep -n "fn test_" src/format/output.rs | head -80 ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good, now I have the full picture. Let me understand the existing coverage and identify the gaps I need to fill. I'll now write the new tests.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:826..831 ✓ (1ms)
+
+Now let me write the new tests. I'll add them right before the closing `}` of the test module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (21 → 407 lines)
+            // Tail should have the end
+            assert!(result.contains("fn last_function() {}"));
+            assert!(result.contains("// EOF"));
+  +     }
+  + 
+  +     // ========================================================================
+  +     // Day 86: Edge-case coverage for compression, truncation, and filtering
+  +     // ========================================================================
+  + 
+  +     // --- compress_tool_output edge cases ---
+  + 
+  +     #[test]
+  +     fn test_compress_empty_returns_empty() {
+  +         assert_eq!(compress_tool_output(""), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_compress_short_input_unchanged_content() {
+  +         // Short input with no ANSI, no repetition — should pass through
+  +         let input = "hello\nworld\nfoo";
+  ... (371 more lines)
+ ✓ (58.8s)
+
+Now let's run fmt, clippy, build, and test:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (717ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (6.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (44.1s)
+  4 tools completed in 1m 12s (4 ✓)
+
+All 3,465 unit tests pass (plus 88 integration tests), zero failures. Let me verify the new test count:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "fn test_" src/format/output.rs ✓ (39ms)
+
+That's 97 tests total, up from 68. I added 29 new test functions. Let me verify by listing just the new ones:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_" src/format/output.rs | tail -35 ✓ (4ms)
+
+29 new tests covering all the requested areas. Now let's commit:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (21ms)
+
+Done. Here's what I added — 29 new test functions in src/format/output.rs, bringing the total from 68 to 97:
+
+`compress_tool_output` (7 tests):
+• Empty input returns empty
+• Short input passes through unchanged
+• Repeated blank lines collapsed to ≤2
+• Consecutive duplicate lines collapsed with count marker
+• Very long single lines don't panic
+• Mixed repetitive + unique content: unique preserved, repetitive collapsed
+• ANSI stripping happens before collapse
+
+**`filter_test_output` (5 tests):**
+• Non-test output passes through unchanged
+• All-passing tests (≥5) compressed with count marker
+• Fewer than threshold (3 pass lines) kept intact
+• Empty input returns empty
+• Failures preserved among passes
+
+`smart_truncate_for_context` (3 tests):
+• Content exactly at limit not truncated
+• Single line under limit passes through
+• Multi-section content preserves headers in head and tail sections
+
+**truncate_tool_output UTF-8 safety (2 tests):**
+• Multi-byte UTF-8 chars (✓, 日本語, 🦀, あ) at truncation boundaries don't panic
+• Emoji (4-byte chars) at boundaries don't panic
+
+**`compress_tool_output` UTF-8 safety (1 test):**
+• Multi-byte category prefix (日本語 at boundary of CATEGORY_PREFIX_MAX=20) doesn't panic
+
+**format_tool_batch_summary (3 tests):**
+• Large count (15 tools, mixed success/failure)
+• All failures show ✗ marker
+• All successes show no ✗ marker
+
+`collapse_repetitive_lines` (3 tests):
+• 3 similar lines (below threshold) not collapsed
+• 4 similar lines (at threshold) collapsed
+• Empty lines not collapsed as similar
+
+**indent_tool_output (1 test):**
+• Content preserved with indent bar on each line
+
+**`strip_ansi_codes` (4 tests):**
+• Empty input, no-code input, nested codes, mid-multibyte-char codes
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

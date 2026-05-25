@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create a focused session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cat ISSUES_TODAY.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (43ms)
+  ▶ $ gh issue view 425 --repo yologdev/yoyo-evolve 2>/dev/null || echo "Could not fet… ✓ (351ms)
+  4 tools completed in 7.1s (4 ✓)
+
+Now let me check the current state of relevant files and recent changes to understand context:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if TODO.md already exists (4 lines)  ▶ $ # Check current test count and recent test files (2 lines)  ▶ $ # Look at what the /plan command does currently (2 lines) ✓ (4ms)
+ ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ # Check the CHANGELOG to see what version was just released (2 lines)  ▶ $ # Check current Cargo.toml version (2 lines)  ▶ $ # Check the test-to-code ratio for files with low coverage (7 lines) ✓ (3ms)
+ ✓ (3ms)
+ ✓ (25ms)
+  ▶ $ # Check what config options are currently supported in .yoyo… (2 lines)  ▶ $ # Check what SETTABLE_KEYS are available in config.rs (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  8 tools completed in 12.1s (8 ✓)
+
+Now let me check what config keys are actually persisted vs just runtime:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check which config keys are actually read from config file (2 lines)  ▶ $ # Look at what parse_config_file does (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check how thinking and other config values are consumed in… (2 lines)  ▶ $ # Check what flags are parsed in parse_args but don't have c… (2 lines) ✓ (5ms)
+ ✓ (5ms)
+  4 tools completed in 7.7s (4 ✓)
+
+Good. Now I have a clear picture. Let me plan the three tasks:
+
+1. **Self-driven (competitive gap):** Config file persistence for thinking, no_bell, quiet, no_color — these CLI flags should be persistable in `.yoyo.toml` so users don't have to pass them every time. This is a polish/discoverability gap vs Claude Code.
+
+2. **Community issue #425:** TODO.md Kanban-style planning board — implement the `/todo board or similar command that manages a TODO.md` file. This is a well-specified community challenge.
+
+3. Self-driven (test coverage): Add tests for `commands_todo.rs` which powers the agent's in-memory /todo tool — verifying core CRUD operations, formatting, and edge cases. This file likely has minimal tests relative to its importance.
+
+Let me verify the todo file's test coverage:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "#\[test\]" src/commands_todo.rs 2>/dev/null; wc -l src/commands_todo.rs  ▶ $ # Check which large files have fewest tests relative to size (7 lines) ✓ (4ms)
+ ✓ (31ms)
+  2 tools completed in 4.5s (2 ✓)
+
+OK, commands_todo.rs already has good coverage. Let me look for better test targets:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find files with worst test ratio (fewest tests per line) (8 lines) ✓ (222ms)
+  ▶ $ # Find files with 0 tests that are over 200 lines (8 lines) ✓ (221ms)
+  ▶ $ # Find files with least tests relative to size (>500 lines) (9 lines) ✓ (228ms)
+  ▶ $ # Check what's in prompt.rs that could use tests (2 lines)  ▶ $ # Check what's in format/cost.rs - it has complex logic that… (3 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # What about format/output.rs? (6 lines) ✓ (6ms)
+  6 tools completed in 15.8s (6 ✓)
+
+Good. Now let me think about the best three tasks. Here's my plan:
+
+**Task 1 (Self-driven, competitive polish):** Make thinking, `no_bell, quiet, and no_color persistable in .yoyo.toml` config file. Currently these only work as CLI flags. Users shouldn't have to type `--thinking high --no-bell` every time. This is a common complaint pattern and closes a usability gap.
+
+**Task 2 (Community issue #425):** Implement the TODO.md Kanban board — a `/todo board` subcommand that creates/manages a repository-level TODO.md file with Kanban sections. This is distinct from the existing in-memory /todo (which is agent-internal). The board file persists across sessions.
+
+Task 3 (Self-driven, test coverage): Add tests for smart_edit.rs — at 758 lines and only 10 tests, this is a recent extraction (Day 85) with complex fuzzy matching logic that deserves better coverage.
+
+Let me verify what tests smart_edit already has:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[test\]" src/smart_edit.rs ✓ (8ms)
+  ▶ $ # Check what functions in smart_edit.rs are NOT tested (2 lines) ✓ (3ms)
+  ▶ $ # Check the internal functions/helpers (2 lines) ✓ (3ms)
+  3 tools completed in 7.8s (3 ✓)
+
+Now I have good context. Let me reconsider task 3. Smart_edit only has 2 core functions. Let me think about a higher-impact test target.
+
+Actually, looking at the assessment again: "The test-to-code ratio (89 tests / 90,024 lines ≈ 1:1011) is still low in absolute terms." The most impactful test target would be prompt_retry.rs — it has complex error classification and retry logic that's critical for reliability:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "#\[test\]" src/prompt_retry.rs (3 lines) ✓ (41ms)
+
+That has 77 tests already — pretty good. Let me look at `safety.rs`:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "#\[test\]" src/safety.rs (2 lines) ✓ (39ms)
+  ▶ $ # What about session.rs? It has complex snapshot/restore log… (4 lines) ✓ (6ms)
+  2 tools completed in 8.2s (2 ✓)
+
+OK, let me refine the plan. Given the assessment highlights that config persistence is a polish opportunity and #425 is a well-specified community challenge, and that test coverage is the most improvable quality metric, here's my final plan:
+
+Task 1: Config file support for thinking, `no_bell, quiet, no_color` — make these persisted from .yoyo.toml
+Task 2: TODO.md Kanban board command for issue #425
+Task 3: Add comprehensive tests for safety.rs — only 20 tests for the critical bash command safety analysis module
+
+Wait, let me reconsider. Safety.rs has 510 lines and 20 tests — that's 1:25, not terrible. Let me check context.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ for f in src/context.rs src/conversations.rs src/providers.r… (5 lines) ✓ (24ms)
+
+Most files are decently tested. Let me check the TODO.md challenge more carefully to figure out how to scope it into one task touching ≤3 files:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # The TODO.md challenge essentially asks for: (9 lines) ✓ (3ms)
+  ▶ $ grep -A 40 "pub fn handle_todo" src/commands_todo.rs | head -45 ✓ (4ms)
+  2 tools completed in 6.7s (2 ✓)
+
+OK, I now have a solid plan. Let me create the task files.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (48 lines) ✓ (42.4s)
+  ▶ write session_plan/task_02.md (70 lines) ✓ (42.4s)
+  ▶ write session_plan/task_03.md (48 lines) ✓ (41.8s)
+  ▶ write session_plan/issue_responses.md (31 lines) ✓ (41.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 3m 50s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 86 Session Plan (20:17)
+
+### Task 1: Config persistence for thinking/no_bell/quiet/no_color (Self-driven)
+Files: src/config.rs, src/cli.rs
+Why: Users shouldn't have to pass `--thinking high --no-bell` every time. Config file persistence is a polish gap vs Claude Code. thinking already reads from config; the others don't. Adding them closes a usability paper cut.
+
+### Task 2: `/todo board` — TODO.md Kanban planning (Issue #425)
+Files: src/commands_todo.rs, src/dispatch.rs
+Why: Well-specified community challenge. Adds a persistent TODO.md file with Kanban sections (Backlog → Ready → In Progress → Review → Done), separate from the in-memory /todo. Supports init, add, move, done, goal, and evidence operations. Dedup built in. Pure markdown.
+
+### Task 3: Test coverage for format/output.rs (Self-driven)
+Files: src/format/output.rs
+Why: The assessment identifies test coverage (89 tests / 90K lines) as the most improvable quality metric. format/output.rs has critical compression/truncation logic including UTF-8 boundary handling (a past production crash vector). Adding 12-15 edge case tests for `compress_tool_output, filter_test_output, smart_truncate_for_context, and truncate_tool_output`.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
