@@ -1,0 +1,223 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task step by step. Let me start by understanding the existing patterns.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_watch" src/config.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_commit" src/cli.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SETTABLE_KEYS" src/conf… ✓ (3ms)
+ ✓ (4ms)
+ ✓ (8ms)
+  3 tools completed in 1.8s (3 ✓)
+
+Now let me read the relevant sections in detail:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:448..478  ▶ read src/config.rs:495..605  ▶ read src/config.rs:1225..1280 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (3ms)
+  3 tools completed in 1.6s (3 ✓)
+
+Now let me check the cli.rs auto_commit area:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:455..515  ▶ read src/cli.rs:2445..2495 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me look at how file_config is available in the parse_args context where auto_commit is set:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "file_config" src/cli.rs… ✓ (4ms)
+  ▶ read src/cli.rs:860..910 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good. I now have a clear picture. Let me implement this step by step.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.7s (7 ✓)
+
+Now let's implement. First, the parse_auto_commit_from_config function:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (5 → 16 lines)
+  + /// Check whether auto-commit is enabled in the config.
+  + ///
+  + /// Reads `auto_commit` from the given config map. Defaults to `false`
+  + /// when the key is absent — auto-commit must be explicitly opted into.
+  + pub fn parse_auto_commit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  +     match config.get("auto_commit").map(|v| v.as_str()) {
+  +         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  +         _ => false, // default: disabled
+  +     }
+  + }
+  + 
+    /// Check whether lite mode is enabled in the config.
+    ///
+    /// Reads `lite` from the given config map. Defaults to `false`
+ ✓ (13.1s)
+  2 tools completed in 22.9s (2 ✓)
+
+Expected — we need to use it in cli.rs. Let me continue with the other changes first.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (1 → 5 lines)
+        ("auto_watch", "auto-enable watch mode on start (true/false)"),
+  +     (
+  +         "auto_commit",
+  +         "auto-commit file changes after each agent turn (true/false)",
+  +     ),
+ ✓ (13.0s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 24.7s (4 ✓)
+
+Now add the validation arm:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (10 → 20 lines)
+                    "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                    _ => Err(format!(
+                        "invalid auto_watch value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+  +         "auto_commit" => {
+  +             let lower = value.to_ascii_lowercase();
+  +             match lower.as_str() {
+  +                 "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+  +                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
+  +                 _ => Err(format!(
+  +                     "invalid auto_commit value '{value}' — use true or false"
+                    )),
+                }
+            }
+ ✓ (13.1s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 23.3s (3 ✓)
+
+Now update cli.rs to use the config value:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli.rs (1 → 2 lines)
+  -     let auto_commit = args.iter().any(|a| a == "--auto-commit");
+  +     let auto_commit = args.iter().any(|a| a == "--auto-commit")
+  +         || crate::config::parse_auto_commit_from_config(file_config);
+ ✓ (58.6s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 6s (3 ✓)
+
+Now let me add the tests. First the config.rs tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me find the right spot to add tests — after the auto_watch tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:1285..1315 ✓ (1ms)
+  ▶ edit src/config.rs (5 → 53 lines)
+            assert!(validate_config_value("auto_watch", "maybe").is_err());
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_commit_defaults_to_false() {
+  +         let config = std::collections::HashMap::new();
+  +         assert!(!parse_auto_commit_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_commit_respects_true() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("auto_commit".to_string(), "true".to_string());
+  +         assert!(parse_auto_commit_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_commit_respects_false() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("auto_commit".to_string(), "false".to_string());
+  ... (32 more lines)
+ ✓ (57.5s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 9s (3 ✓)
+
+Now add the cli.rs test. Let me find where the existing auto_commit tests end:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/cli.rs:2475..2500 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+I need to add a test that verifies the config-based auto_commit. But the existing tests use parse_args which loads the actual `.yoyo.toml. Let me look at how the parse_output_flags` function can be tested more directly with a config map:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:454..459 ✓ (1ms)
+
+The parse_output_flags is a private function. Let me check how tests test this - they use parse_args which reads the actual config file. Since we can't control what's in .yoyo.toml during tests, the best approach is to test parse_auto_commit_from_config directly (already done in config.rs) and add a test for parse_output_flags or test it more directly. Let me check what the existing test does:
+
+The existing `test_auto_commit_flag_default_false test calls parse_args with no --auto-commit` flag. With our change, it will also check the config file. As long as .yoyo.toml doesn't have auto_commit = "true", the test still passes. Let me verify what's in the repo's .yoyo.toml:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat /home/runner/work/yoyo-evolve/yoyo-evolve/.yoyo.toml ✓ (38ms)
+
+Good, no auto_commit there. For a proper test of the config integration, I'll add a unit test that tests parse_output_flags directly with a config map containing auto_commit = "true":
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (5 → 31 lines)
+            assert!(
+                config.auto_commit,
+                "auto_commit should be true when --auto-commit is passed"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_auto_commit_from_config() {
+  +         // When config has auto_commit = "true", auto_commit should be true
+  +         // even without the --auto-commit CLI flag
+  +         let args: Vec<String> = vec!["yoyo".to_string()];
+  +         let mut file_config = std::collections::HashMap::new();
+  +         file_config.insert("auto_commit".to_string(), "true".to_string());
+  +         let of = parse_output_flags(&args, &file_config);
+  +         assert!(
+  +             of.auto_commit,
+  +             "auto_commit should be true when config has auto_commit = true"
+  +         );
+  +     }
+  + 
+  ... (11 more lines)
+ ✓ (58.2s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 2s (2 ✓)
+
+Now let's run the full check suite:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (30.2s)
+  4 tools completed in 55.4s (4 ✓)
+
+All 88 tests pass, no warnings, clean clippy. Let me verify the new tests specifically ran:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test auto_commit 2>&1 ✓ (651ms)
+
+All 9 auto_commit-related tests pass (4 new in config.rs + 2 new in cli.rs + 3 existing). Now commit:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (10 lines) ✓ (14ms)
+  2 tools completed in 8.3s (2 ✓)
+
+Done. Here's what I implemented:
+
+src/config.rs:
+1. Added parse_auto_commit_from_config() — reads auto_commit from config map, defaults to false (unlike auto_watch which defaults to true). Accepts `true/1/yes/on` as truthy values.
+2. Added "auto_commit" to SETTABLE_KEYS so /config set auto_commit true works.
+3. Added validation arm in validate_config_value() for "auto_commit" — accepts true/false/yes/no/on/off/1/0.
+4. Added 5 tests: auto_commit_defaults_to_false, auto_commit_respects_true, auto_commit_respects_false, `auto_commit_invalid_value_returns_false, validate_auto_commit_values`.
+
+src/cli.rs:
+5. Changed parse_output_flags() to merge CLI flag with config: `args.iter().any(|a| a == "--auto-commit") || crate::config::parse_auto_commit_from_config(file_config)`. Either source being true enables auto-commit.
+6. Added 2 tests: test_auto_commit_from_config (config true → auto_commit true), test_auto_commit_config_default_false (empty config → false).
+
+All checks pass: `cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test` (88 passed).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

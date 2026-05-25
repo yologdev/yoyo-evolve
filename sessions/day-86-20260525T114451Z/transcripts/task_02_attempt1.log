@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant files to understand the current state of help_data.rs and commands.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/help_data.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_COMMANDS" src/com… ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '52,120p' src/commands.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/help_data.rs ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/help_data.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn command_help" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn command_short_de… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  7 tools completed in 8.7s (7 ✓)
+
+Now let me check how command_help handles the leading slash:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '10,12p' src/help_data.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1219,1225p' src/help_dat… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.5s (2 ✓)
+
+The functions match on bare names (no leading `/). Let me check what commands are in KNOWN_COMMANDS` vs what's handled in command_help and command_short_description:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oP '^\s+"(\w[^"]*)"' src/h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oP '"/(\w+)"' src/commands… ✓ (7ms)
+ ✓ (9ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Let me see which entries in help_data don't appear in KNOWN_COMMANDS:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ diff /tmp/known_commands.txt /tmp/help_data_entries.txt ✓ (7ms)
+
+The diff is just sorting differences. Let me do a proper set difference:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ echo "In help_data but not KNOWN_COMMANDS:" && comm -23 /tmp/help_data_entries.t… ✓ (4ms)
+
+Good — every KNOWN_COMMAND has a help entry, plus there are some extra entries in help_data that aren't in KNOWN_COMMANDS (like clear!, mcp, permissions, profile, teach, tips, todo). These are "internal" or alias commands. Let me also check which of those have `command_short_description` entries:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oP '^\… (10 lines) ✓ (12ms)
+
+Interesting — exit and quit have short descriptions but no detailed help. Let me check what existing tests cover in help.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/hel…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test" src/help.rs | tai… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Now I have a clear picture. Let me also check KNOWN_COMMANDS includes clear!:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep 'clear' src/commands.rs | h… ✓ (3ms)
+
+OK, /clear! IS in KNOWN_COMMANDS. Let me also check some other "extra" commands:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '"/todo"' src/commands.r… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '52,140p' src/commands.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '138,145p' src/commands.r… ✓ (3ms)
+  3 tools completed in 6.8s (3 ✓)
+
+I see /quick is listed twice but that won't matter. Now I have everything I need. Let me also check how command_help handles leading slashes — it doesn't strip them based on what I saw, it just matches bare names. Let me verify:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "strip_prefix\|trim_start_m… ✓ (3ms)
+
+No slash stripping in help_data.rs. Let me check who strips it before calling:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "command_help\|command_s… ✓ (4ms)
+
+Interesting — there are already some tests in `help.rs`. Let me read the relevant test section to understand what's already covered:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1195,1320p' src/help.rs ✓ (4ms)
+
+There are already some tests in help.rs. The task says to add tests to `help_data.rs` itself — self-contained tests that cover data integrity. Let me now write the test module for help_data.rs. I should make the tests complementary (not just duplicates of what's in help.rs), focusing on data quality properties:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1300.. ✓ (1ms)
+
+Now let me write the test module:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (3 → 187 lines)
+            _ => None,
+  +     }
+  + }
+  + 
+  + #[cfg(test)]
+  + mod tests {
+  +     use super::*;
+  +     use crate::commands::KNOWN_COMMANDS;
+  +     use std::collections::HashSet;
+  + 
+  +     // ── Completeness tests ──
+  + 
+  +     #[test]
+  +     fn test_every_known_command_has_help() {
+  +         for cmd in KNOWN_COMMANDS {
+  +             let name = cmd.trim_start_matches('/');
+  +             // /exit is an alias for /quit — no dedicated help entry
+  +             if name == "exit" {
+  +                 continue;
+  +             }
+  ... (167 more lines)
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/help_data.rs. Include more surrounding context to make the match unique.
+  ▶ edit src/help_data.rs (4 → 188 lines)
+            "open" => Some("Open a file in your editor"),
+            _ => None,
+  +     }
+  + }
+  + 
+  + #[cfg(test)]
+  + mod tests {
+  +     use super::*;
+  +     use crate::commands::KNOWN_COMMANDS;
+  +     use std::collections::HashSet;
+  + 
+  +     // ── Completeness tests ──
+  + 
+  +     #[test]
+  +     fn test_every_known_command_has_help() {
+  +         for cmd in KNOWN_COMMANDS {
+  +             let name = cmd.trim_start_matches('/');
+  +             // /exit is an alias for /quit — no dedicated help entry
+  +             if name == "exit" {
+  +                 continue;
+  ... (168 more lines)
+ ✓ (55.5s)
+  2 tools completed in 1m 18s (1 ✓, 1 ✗)
+
+The auto-check triggered. Let me run the full test suite to see if there are any failures:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_data 2>&1 ✓ (134ms)
+
+The /quick command appears twice in KNOWN_COMMANDS, so its short description is "duplicated" with itself. Let me handle this — the issue is `/quick` appears twice in the list:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep '"/quick"' src/commands.rs ✓ (3ms)
+
+Yes, /quick is listed twice. The duplicate detection logic needs to handle this — when the same command appears twice in KNOWN_COMMANDS, it's not a copy-paste description error. Let me fix the test to deduplicate KNOWN_COMMANDS entries first:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (30 → 28 lines)
+        #[test]
+        fn test_no_duplicate_short_descriptions() {
+  -         let mut seen: HashSet<&str> = HashSet::new();
+  +         // Deduplicate KNOWN_COMMANDS (e.g. /quick appears twice)
+  +         let unique_cmds: HashSet<&str> = KNOWN_COMMANDS.iter().copied().collect();
+  + 
+  +         let mut seen: std::collections::HashMap<&str, &str> =
+  +             std::collections::HashMap::new();
+            let mut duplicates: Vec<(&str, &str)> = Vec::new();
+    
+  -         for cmd in KNOWN_COMMANDS {
+  +         for cmd in &unique_cmds {
+                let name = cmd.trim_start_matches('/');
+                if let Some(desc) = command_short_description(name) {
+  -                 if !seen.insert(desc) {
+  -                     // Find the first command with this description
+  -                     let first = KNOWN_COMMANDS
+  -                         .iter()
+  -                         .find(|c| {
+  -                             let n = c.trim_start_matches('/');
+  ... (10 more lines)
+ ✓ (58.2s)
+
+Now run the tests again:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_data 2>&1 ✓ (131ms)
+
+All 12 tests pass. Now let me run the full checks:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (6.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (43.6s)
+  3 tools completed in 1m 9s (3 ✓)
+
+All checks pass — fmt, clippy, build, and tests. Let me verify the test count for help_data specifically:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_data -- --list 2… ✓ (131ms)
+
+12 tests covering completeness, content quality, edge cases, and consistency. Now commit:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (26 lines) ✓ (13ms)
+
+Done. Added 12 self-contained tests to src/help_data.rs covering:
+
+1. Completeness — every KNOWN_COMMAND has both a command_help and `command_short_description` entry
+2. Content quality — short descriptions are ≤80 chars, help entries are ≥20 chars, functions use bare names (not slash-prefixed)
+3. Edge cases — empty strings and unknown commands return None
+4. Consistency — no duplicate descriptions (with quit/exit alias exception), help entries mention their command name, quit/exit share their description
+
+The duplicate detection handles the /quick appearing twice in KNOWN_COMMANDS by deduplicating first. All checks pass clean: fmt ✓, clippy ✓, build ✓, 3406 tests ✓.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
