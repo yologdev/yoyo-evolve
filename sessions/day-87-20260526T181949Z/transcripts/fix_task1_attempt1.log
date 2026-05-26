@@ -1,0 +1,349 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement I can make.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Let me explore the codebase for areas with potential improvements - focusing on common patterns like error handling, performance, and code quality.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 27s)
+
+Excellent analysis. The most impactful improvement is clearly **deduplicating the char-boundary truncation pattern** across 14+ call sites by introducing a safe_truncate_with_ellipsis() utility function and replacing all inline instances. This eliminates ~56 lines of duplicated tricky code, reduces bug surface area, and improves maintainability.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 12.3s (5 ✓)
+
+Let me first look at the existing safe_truncate function in format/mod.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'safe_truncate' in src/format/mod.rs ✓ (3ms)
+  ▶ read src/format/mod.rs:220..245 ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Good. Now let me find all the inline char-boundary truncation patterns that need to be replaced:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ search 'is_char_boundary' in src ✓ (8ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now let me look at each inline pattern to understand the variations (with vs without ellipsis, different variable names):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 22s)
+
+Now I have a complete picture. Let me implement the changes.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add the new utility functions to format/mod.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:224..249 ✓ (1ms)
+  ▶ edit src/format/mod.rs (19 → 62 lines)
+            b -= 1;
+        }
+        &s[..b]
+  + }
+  + 
+  + /// Truncate a string at a safe UTF-8 char boundary (by byte count) and append "…".
+  + /// If the string fits within `max_bytes`, returns it unchanged.
+  + /// This is the byte-based counterpart to `truncate_with_ellipsis` (which counts chars).
+  + pub fn safe_truncate_with_ellipsis(s: &str, max_bytes: usize) -> String {
+  +     if s.len() <= max_bytes {
+  +         return s.to_string();
+  +     }
+  +     let truncated = safe_truncate(s, max_bytes);
+  +     format!("{truncated}…")
+  + }
+  + 
+  + /// Truncate at a safe UTF-8 char boundary, then try to break at the last space
+  + /// before the limit (if the space is past `min_word_pos`). Appends "…".
+  + /// Useful for human-readable topic/summary truncation.
+  + pub fn safe_truncate_word_boundary(s: &str, max_bytes: usize, min_word_pos: usize) -> String {
+  ... (29 more lines)
+ ✓ (13.7s)
+  2 tools completed in 29.0s (2 ✓)
+
+Expected — the functions aren't used yet. Let me now replace all the inline patterns. Let me do this systematically:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Let me read the exact code at each location and make the replacements:
+
+**#1: commands_git.rs:509 — diff_text truncation (mutates String in place)**
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:505..520 ✓ (1ms)
+  ▶ edit src/commands_git.rs (9 → 7 lines)
+        // Truncate if too large
+        if diff_text.len() > DIFF_EXPLAIN_MAX_BYTES {
+  -         let mut b = DIFF_EXPLAIN_MAX_BYTES;
+  -         while b > 0 && !diff_text.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         diff_text.truncate(b);
+  -         diff_text.push_str("\n\n... (diff truncated for context limit)");
+  +         let truncated = safe_truncate(&diff_text, DIFF_EXPLAIN_MAX_BYTES);
+  +         let mut result = truncated.to_string();
+  +         result.push_str("\n\n... (diff truncated for context limit)");
+  +         diff_text = result;
+        }
+ ✓ (13.5s)
+  2 tools completed in 20.8s (2 ✓)
+
+Good, the first one compiles (only dead code errors for the not-yet-used functions). Let me check if safe_truncate is imported in commands_git.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::format' in src/commands_git.rs ✓ (3ms)
+
+Good, it's available via use crate::format::*. Now **#2: commands_git.rs:862 — diff truncation for commit AI**:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:857..872 ✓ (1ms)
+  ▶ edit src/commands_git.rs (12 → 8 lines)
+        let truncated = if diff.len() > COMMIT_AI_MAX_BYTES {
+  -         let mut b = COMMIT_AI_MAX_BYTES;
+  -         while b > 0 && !diff.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+            format!(
+                "{}\n\n... (diff truncated, {} total bytes)",
+  -             &diff[..b],
+  +             safe_truncate(diff, COMMIT_AI_MAX_BYTES),
+                diff.len()
+            )
+        } else {
+ ✓ (13.2s)
+  2 tools completed in 32.6s (2 ✓)
+
+Good. Now **#3 and #4: commands_bg.rs — stdout/stderr stream capping**:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:210..230 ✓ (1ms)
+  ▶ edit src/commands_bg.rs (13 → 4 lines)
+                            if out.len() < MAX_OUTPUT_BYTES {
+                                let remaining = MAX_OUTPUT_BYTES - out.len();
+  -                             if text.len() <= remaining {
+  -                                 out.push_str(&text);
+  -                             } else {
+  -                                 // Find a safe char boundary
+  -                                 let mut b = remaining;
+  -                                 while b > 0 && !text.is_char_boundary(b) {
+  -                                     b -= 1;
+  -                                 }
+  -                                 out.push_str(&text[..b]);
+  -                             }
+  +                             out.push_str(safe_truncate(&text, remaining));
+                            }
+ ✓ (7.9s)
+  2 tools completed in 13.5s (2 ✓)
+
+Need to check the imports for commands_bg.rs:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:1..11 ✓ (0ms)
+  ▶ edit src/commands_bg.rs (5 → 6 lines)
+  + use crate::format::safe_truncate;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::Arc;
+ ✓ (13.0s)
+  2 tools completed in 18.4s (2 ✓)
+
+Good, only the not-yet-used functions fail. Now **#4: commands_bg.rs stderr (second instance)**:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:230..250 ✓ (0ms)
+  ▶ edit src/commands_bg.rs (12 → 4 lines)
+                            if out.len() < MAX_OUTPUT_BYTES {
+                                let remaining = MAX_OUTPUT_BYTES - out.len();
+  -                             if text.len() <= remaining {
+  -                                 out.push_str(&text);
+  -                             } else {
+  -                                 let mut b = remaining;
+  -                                 while b > 0 && !text.is_char_boundary(b) {
+  -                                     b -= 1;
+  -                                 }
+  -                                 out.push_str(&text[..b]);
+  -                             }
+  +                             out.push_str(safe_truncate(&text, remaining));
+                            }
+ ✓ (13.0s)
+  2 tools completed in 19.5s (2 ✓)
+
+Now **#5: commands_bg.rs:459 — truncate_command display with ellipsis**:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:448..463 ✓ (0ms)
+
+Hmm, line numbers shifted due to edits. Let me search for the truncate_command function:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ search 'truncate_command|is_char_boundary' in src/commands_bg.rs ✓ (2ms)
+
+Wait, let me search more broadly:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ search 'char_boundary' in src/commands_bg.rs ✓ (2ms)
+  ▶ read src/commands_bg.rs:436..451 ✓ (0ms)
+  ▶ edit src/commands_bg.rs (14 → 5 lines)
+    /// Truncate a command string for display.
+    fn truncate_command(cmd: &str, max: usize) -> String {
+        let cmd = cmd.lines().next().unwrap_or(cmd); // first line only
+  -     if cmd.len() <= max {
+  -         cmd.to_string()
+  -     } else {
+  -         // Safe char boundary truncation
+  -         let mut b = max.saturating_sub(1);
+  -         while b > 0 && !cmd.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &cmd[..b])
+  -     }
+  +     safe_truncate_with_ellipsis(cmd, max.saturating_sub(1))
+    }
+ ✓ (7.7s)
+  ▶ edit src/commands_bg.rs (1 → 1 lines)
+  - use crate::format::safe_truncate;
+  + use crate::format::{safe_truncate, safe_truncate_with_ellipsis};
+ ✓ (13.0s)
+  4 tools completed in 31.0s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `safe_truncate_word_boundary` is never used[0m
+   [1m[94m--> [0msrc/format/mod.rs:251:8
+    [1m[94m|[0m
+[1m[94m251[0m [1m[94m|[0m pub fn safe_truncate_word_boundary(s: &str, max_bytes: usize, min_word_pos: usize) -> String {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `safe_byte_boundary` is never used[0m
+   [1m[94m--> [0msrc/format/mod.rs:271:8
+    [1m[94m|[0m
+[1m[94m271[0m [1m[94m|[0m pub fn safe_byte_boundary(s: &str, byte_pos: usize) -> usize {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 2 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the changes and fix the lint failures by using the unused functions or removing them.
+  ▶ search 'is_char_boundary' in src ✓ (8ms)
+
+There are still many remaining inline patterns that need replacing to use safe_truncate_word_boundary and safe_byte_boundary. Let me replace them all systematically, then verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 9.5s (4 ✓)
+
+Let me look at each remaining site. First, let me read the current helper definitions:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:224..284 ✓ (1ms)
+
+Now let me replace the remaining inline patterns. I'll do them in batches:
+
+**#6: commands_retry.rs:243**
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:236..251 ✓ (0ms)
+  ▶ search '^use crate::format' in src/commands_retry.rs ✓ (2ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good, already has use crate::format::*.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (12 → 7 lines)
+        if joined.len() <= 60 {
+            joined
+        } else {
+  -         // Find a safe char boundary for truncation
+  -         let mut b = 57;
+  -         while b > 0 && !joined.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &joined[..b])
+  +         safe_truncate_with_ellipsis(&joined, 57)
+        }
+ ✓ (13.0s)
+
+**#7: tool_wrappers.rs:607**
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:600..616 ✓ (0ms)
+  ▶ search '^use crate::format' in src/tool_wrappers.rs ✓ (2ms)
+  ▶ edit src/tool_wrappers.rs (13 → 8 lines)
+            // Append check failure output to the tool result
+            let truncated_output = if output.len() > AUTO_CHECK_MAX_CHARS {
+  -             // Find safe char boundary for truncation
+  -             let mut b = AUTO_CHECK_MAX_CHARS;
+  -             while b > 0 && !output.is_char_boundary(b) {
+  -                 b -= 1;
+  -             }
+                format!(
+                    "{}...\n[auto-check output truncated at {AUTO_CHECK_MAX_CHARS} chars]",
+  -                 &output[..b]
+  +                 safe_truncate(&output, AUTO_CHECK_MAX_CHARS)
+                )
+            } else {
+                output
+ ✓ (13.0s)
+  3 tools completed in 21.4s (3 ✓)
+
+**#8: prompt_utils.rs:230 — word boundary truncation**
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:221..241 ✓ (0ms)
+  ▶ edit src/prompt_utils.rs (20 → 9 lines)
+        let max_len = 50;
+        if first_line.len() <= max_len {
+            return first_line.to_string();
+  -     }
+  -     // Find a safe char boundary and then a word boundary
+  -     let mut end = max_len;
+  -     while end > 0 && !first_line.is_char_boundary(end) {
+  -         end -= 1;
+  -     }
+  -     // Try to break at the last space before the limit
+  -     if let Some(space_pos) = first_line[..end].rfind(' ') {
+  -         if space_pos > 10 {
+  -             end = space_pos;
+  -         }
+        }
+  -     format!("{}…", &first_line[..end])
+  +     safe_truncate_word_boundary(first_line, max_len, 10)
+    }
+ ✓ (13.1s)
+  2 tools completed in 20.2s (2 ✓)
+
+Good, safe_truncate_word_boundary is now used. Let me check the import in prompt_utils.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search '^use crate::format' in src/prompt_utils.rs ✓ (2ms)
+
+Good. Now **#9: commands_session.rs:271 — same word boundary pattern**
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:262..282 ✓ (1ms)
+  ▶ edit src/commands_session.rs (17 → 4 lines)
+                    if !text.is_empty() && !text.starts_with('/') && text.len() > 3 {
+                        // Take first ~50 chars as topic
+  -                     let topic = if text.len() <= 50 {
+  -                         text.to_string()
+  -                     } else {
+  -                         let mut end = 50;
+  -                         while end > 0 && !text.is_char_boundary(end) {
+  -                             end -= 1;
+  -                         }
+  -                         if let Some(sp) = text[..end].rfind(' ') {
+  -                             if sp > 10 {
+  -                                 end = sp;
+  -                             }
+  -                         }
+  -                         format!("{}…", &text[..end])
+  -                     };
+  +                     let topic = safe_truncate_word_boundary(text, 50, 10);
+                        topics.push(topic);

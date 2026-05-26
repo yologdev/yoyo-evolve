@@ -1,0 +1,157 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and then create the session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (6ms)
+  2 tools completed in 3.3s (2 ✓)
+
+No community issues. Let me check the current state of things to plan well.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat CHANGELOG.md | head -40 ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline v0.1.14..HEAD …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_watch_bare_sets_… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && read_file() { sed -n "${2},${3}p… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test handle_watch_bare_set…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma… ✓ (4ms)
+ ✓ (130ms)
+  9 tools completed in 13.7s (9 ✓)
+
+The flaky test passes locally. It uses #[serial] so it might be a test-ordering issue in CI. Let me look at what would be the most impactful work for this session.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline day87-08-24..H…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "post_pr_review\|post.*r… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,780p' src/commands_g… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_review\b" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,420p' src/commands_g… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '319,340p' src/commands_g… ✓ (3ms)
+  6 tools completed in 12.3s (6 ✓)
+
+Now let me think about the most impactful tasks. Looking at the assessment:
+
+1. **Self-driven capability gap**: The biggest buildable gap is shipping PR review comment posting — post_pr_review already exists but isn't wired into the /review flow. This would close a real gap vs Claude Code's CI/CD integration.
+
+2. Self-driven quality: The flaky test handle_watch_bare_sets_lint_and_test appeared once in CI. It passes locally but uses #[serial] — worth hardening.
+
+3. Self-driven capability: Looking at what would make yoyo more competitive — let me think about what's high-impact and buildable in 20 minutes per task.
+
+Let me check what `/review currently does vs what it could do with --post`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "review" src/help_data.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "review" src/dispatch.rs… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pr review\|--post\|revi… ✓ (3ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Good — so /pr review <n> --post is already wired up. The PR review posting path exists. Let me look at what other real competitive gaps are worth closing.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_review" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "providers\b" src/provi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/providers.rs ✓ (3ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  3 tools completed in 2.0s (3 ✓)
+
+Now let me think about what high-impact tasks make sense. The assessment identifies these key areas:
+
+1. Flaky test — handle_watch_bare_sets_lint_and_test panicked once in CI. Though it passes locally, it's worth hardening.
+2. **Capability gap: structured review posting** — /pr review --post exists but /review --post (the standalone review command) doesn't have it. The two review paths are disconnected.
+3. **Competitive edge: multi-provider UX** — yoyo lists 14 providers but the actual switching UX and documentation could be better.
+
+Let me look at something more impactful — what about improving the agent's ability to handle larger codebases? Or improving error recovery?
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_prompt\b" src/pr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/commands… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me look at something that would make a real competitive difference. One thing Claude Code does well is context awareness — understanding the full project structure. Let me check if there are meaningful improvements to `/context` or project understanding.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/context.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_project_context…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,230p' src/context.rs ✓ (3ms)
+ ✓ (4ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Let me think about what's genuinely high-impact for this session. The trajectory shows 10 consecutive successes with 0 reverts — things are running smoothly. Let me focus on real capability improvements.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn generate_repo_map_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "repo_map\|generate_rep… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Interesting — `generate_repo_map_for_prompt` exists but isn't used in context loading. That's a gap — repo maps are what Aider uses to give the model structural awareness of the codebase. Let me check what it generates:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '224,300p' src/commands_m… ✓ (4ms)
+
+This is a significant finding — the repo map generation exists and is well-built (16K chars, relevance-sorted, truncated) but **is never injected into the system prompt context**. Adding it would give the agent structural awareness of the entire codebase, similar to what Aider does. This is a high-impact, focused change.
+
+Let me also check what other improvements might be impactful:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SYSTEM_PROMPT" src/cli_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,176p' src/cli_config.… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me look at how context is assembled and where a repo map would fit:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "load_project_context\|s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '360,440p' src/agent_buil… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "system_prompt" src/main…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "system_prompt\|context.… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '778,800p' src/cli.rs ✓ (3ms)
+  5 tools completed in 8.8s (5 ✓)
+
+Ah — the repo map is already injected! Good. It was added in a previous session. So the codebase already has structural awareness. Let me think about what would genuinely move the needle.
+
+Let me look at what's been changing recently and what real users would benefit from:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_test\b" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/commands_lint… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me think about what's most impactful. Looking at the assessment's "Realistic next moves":
+
+1. PR review comment posting — already built
+2. Structured plan mode — /todo board was a step, but there could be more
+3. Better multi-provider support — yoagent already supports them, yoyo needs UI
+
+Let me check something competitive — what about improving the /spawn command to make sub-agents more useful, or improving the edit experience:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/tools.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/prompt.r… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Let me look at what would be most impactful. I want to focus on:
+
+1. **High-impact self-driven work** — something that makes yoyo genuinely better for real users
+2. **Test coverage for under-tested areas** — keeping the quality bar high  
+3. Competitive gap closing — something that moves toward Claude Code parity
+
+Let me check one idea — /diff improvements or improving the context budget display:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_context\b" sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/commands_proj… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Let me think about what high-value work to do. Here's my assessment of the three best tasks:
+
+Task 1: Inject repo map into sub-agent context — When yoyo spawns sub-agents (via /spawn or the `sub_agent` tool), they currently don't get the repo map that the main agent has. This means sub-agents are blind to codebase structure. This is a real capability gap.
+
+**Task 2: Add --filter flag to /map for targeted structural search** — Let users search for specific symbols in the repo map. Like grep but for the structure.
+
+Actually, let me think about what's more impactful for real users...
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sub_agent\|SubAgent\|bu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_sub_agent_tool…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '630,700p' src/tools.rs ✓ (3ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '930,1000p' src/tools.rs ✓ (3ms)
+  4 tools completed in 4.2s (4 ✓)
+
+OK, I have a good picture now. Let me plan three high-impact tasks:
+
+**Task 1 (Self-driven capability): Add --diff flag to /review for reviewing uncommitted changes** — Currently /review only works with branch diffs or PR diffs. Claude Code can review your working directory changes interactively. Adding /review --diff (review staged/unstaged changes) makes the review flow work without needing a branch comparison.
+
+Actually, let me check what /review already does:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,90p' src/commands_git_… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
