@@ -1,0 +1,88 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan this session carefully.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (6ms)
+
+Let me check the current open issues and the recent revert details:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | head -200 ✓ (3ms)
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null ✓ (3ms)
+  ▶ $ # Check the commands_bg test that caused the revert to under… (2 lines) ✓ (3ms)
+  ▶ $ # Check the truncate_command function and its test (2 lines) ✓ (4ms)
+  ▶ $ # Check the truncate_command function itself (2 lines) ✓ (3ms)
+  ▶ $ sed -n '453,475p' src/commands_bg.rs ✓ (3ms)
+  6 tools completed in 15.6s (6 ✓)
+
+Good — that function looks correct and the test passes now. The revert was from a previous session that modified something else which broke it. Let me check what the previous session tried to do:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what hooks.rs looks like - key area for user-configu… (2 lines) ✓ (2ms)
+  ▶ $ # Check the current hook infrastructure - what's exposed (2 lines) ✓ (4ms)
+  ▶ $ # Check what ShellHook currently supports (2 lines) ✓ (4ms)
+  ▶ $ # Check how hooks are currently loaded from config (2 lines) ✓ (4ms)
+  ▶ $ # What does the current .yoyo.toml look like for hook config… (2 lines) ✓ (3ms)
+  ▶ $ # Check where hooks are loaded in the agent builder (2 lines) ✓ (4ms)
+  ▶ $ # Check how hooks are loaded in main.rs / cli.rs (2 lines) ✓ (4ms)
+  ▶ $ # Check what config struct holds hooks (2 lines) ✓ (4ms)
+  8 tools completed in 22.8s (8 ✓)
+
+Now let me look at what would be the highest-impact tasks. The assessment identifies a clear competitive gap: user-configurable hooks. The infrastructure already exists — ShellHook, parse_hooks_from_config, `HookedTool` wrapper — but it needs documentation and tests to make it a real user-facing feature. Let me also check what else would be impactful.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check test coverage for hooks.rs (2 lines) ✓ (3ms)
+  ▶ $ # Check what the /hooks command shows currently (2 lines) ✓ (3ms)
+  ▶ $ sed -n '800,840p' src/commands_config.rs ✓ (3ms)
+  3 tools completed in 7.7s (3 ✓)
+
+Good — hooks are already a real feature with user-facing docs via /hooks. Now let me think about the most impactful tasks:
+
+Assessment key findings:
+1. Last session reverted (test failure in commands_bg). Issues #428/#429 are just tracking that.
+2. The competitive gap has shifted to platform features: agent teams, SDKs, user-configurable hooks, custom subagents, session branching.
+3. CI infrastructure has some unrelated flakiness with GitHub Actions downloads.
+4. 88 tests pass, no warnings, clean build.
+
+**Best tasks for this session:**
+
+1. **Self-driven (competitive gap):** User-configurable hooks are the lowest-hanging fruit of the platform gaps. The infrastructure exists but needs TOML table syntax support for richer configuration. Currently hooks use flat keys like `hooks.pre.bash = "..."` but there's no way to configure multiple hooks for the same tool, or add metadata. More importantly, users need documentation to discover and use this feature. Let me check what's missing...
+
+2. Self-driven (stability): Close issues #428/#429 since the revert is resolved and there's nothing to fix.
+
+3. **Self-driven (competitive gap):** Custom subagent definitions — let users define subagents with custom system prompts and tool restrictions via .yoyo.toml.
+
+Actually, let me reconsider. The hook system already works. Custom subagents are a big feature. Let me think about what's most impactful in 20 minutes per task.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's in the recent journal to understand trajector… (2 lines) ✓ (5ms)
+
+Now I have a clear picture. Let me plan the three tasks:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's anything specific about the /hooks docs i… (2 lines) ✓ (4ms)
+  ▶ $ # Check what prompt_retry.rs looks like for the retry hint s… (2 lines) ✓ (4ms)
+  ▶ $ # Let me check what's in the docs for hooks configuration (2 lines) ✓ (3ms)
+  ▶ $ # Look at docs structure to see where hooks docs should go (2 lines) ✓ (3ms)
+  ▶ $ # Check the SUMMARY.md for docs (2 lines) ✓ (3ms)
+  ▶ $ # Check what session branching / undo capabilities exist (2 lines) ✓ (4ms)
+  ▶ $ # Check the stash system (2 lines) ✓ (3ms)
+  ▶ $ # Check how many files/lines are in commands_bg.rs and under… (3 lines) ✓ (5ms)
+  8 tools completed in 24.4s (8 ✓)
+
+OK, let me now think carefully about my 3 tasks.
+
+**Task 1 (self-driven, competitive gap): Hooks documentation page** — The hook system is already functional but undiscoverable. Claude Code has 20+ hook lifecycle events prominently documented. I have a working system that nobody knows about. Adding a docs/src/configuration/hooks.md page with examples, use cases, and the TOML syntax — plus updating the SUMMARY.md — turns a hidden feature into a documented capability. This touches only docs files.
+
+Task 2 (self-driven, competitive gap): Session branching — Claude Code has session branching (fork, rewind). I have /stash (push/pop) and /save//load but no way to branch a conversation. Adding `/session branch` that creates a named snapshot you can return to — basically extending stash to support named branches — would close a real competitive gap. But this is bigger than 20 minutes and touches multiple files...
+
+Let me think about something more contained.
+
+**Task 2 (self-driven, stability): Close the revert issues and add a guard** — Issues #428/#429 track a test failure from last session. The root cause was that "self-improvement" tasks are too vague and can touch anything. Rather than just closing the issues, I should make the agent more resilient. But that's evolve.sh territory which I can't modify.
+
+Actually, let me focus on concrete, high-value, shippable tasks:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what tests exist for hooks.rs to see if there are ga… (2 lines) ✓ (4ms)
+  ▶ $ grep -c "#\[test\]" src/hooks.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (44ms)
+  2 tools completed in 2.5s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

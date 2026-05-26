@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make. Let me assess the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (19.1s)
+ ✓ (37.7s)
+  4 tools completed in 46.4s (4 ✓)
+
+Good — clean baseline. 88 tests passing, no clippy warnings. Now let me look for impactful improvements. Let me examine some key areas:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 58s)
+
+Interesting — the sub-agent found byte-indexing issues. Let me dig into the specific locations myself.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[.*\.\..*\]' src/forma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'safe_truncate' src/*.rs… ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Good — safe_truncate exists and is well-used. Now let me check for the specific byte-indexing danger in format/output.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,300p' src/format/out… ✓ (4ms)
+
+The line_category function already handles multi-byte properly. Let me check the trimmed[7..] and hash_part[..40] cases:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]\|\[.*\.\.\]'… ✓ (5ms)
+
+Let me look at the most dangerous ones — particularly in repl.rs where user input is involved:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1080,1270p' src/repl.rs ✓ (5ms)
+
+Found it! The step_x_of_y_incomplete function in repl.rs uses &text[i..i + 5] with byte-level indexing on text (which is `tail_lower, the result of to_lowercase()). If text` contains multi-byte characters, this will panic when i lands inside a multi-byte char.
+
+Let me see the full function and the surrounding context:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1240,1300p' src/repl.rs ✓ (4ms)
+
+This is exactly the kind of bug documented in the safety rules: **never use byte indexing on strings**. The i += 1 increments by byte, so when multi-byte characters like "étape" (French for "step") or any emoji appear in model output that's been lowercased, i can land inside a multi-byte UTF-8 sequence, and &text[i..i + 5] will panic.
+
+But wait — this function is called on tail_lower which is already lowercased. The input is LLM output. Let me also check for other byte-indexing issues:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1255,1290p' src/repl.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1246,1290p' src/repl.rs ✓ (3ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Let me see the full function including the rest slicing:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1246..1296 ✓ (1ms)
+
+Now let me also look at the extract_step_number function:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1224..1246 ✓ (1ms)
+
+Line 1237: &line[digits.len()..] — this is safe because digits is collected from chars().take_while(|c| c.is_ascii_digit()), so all chars are ASCII and `digits.len()` is a valid char boundary.
+
+Line 1263: &after_step[x_digits.len()..] — same reasoning, safe because x_digits are all ASCII digits.
+
+But the core issue is `step_x_of_y_incomplete: the i += 1` byte increment and &text[i..i + 5] is the real bug. If the LLM outputs something like "✓ step 2 of 5", after lowercasing the "✓" is 3 bytes. When i increments to byte position 1 or 2, `text[i..i+5] will panic because i` is mid-character.
+
+Now let me also look for other areas of improvement. Let me check for broader issues:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'i += 1' src/repl.rs src… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '300,320p' src/watch.rs ✓ (3ms)
+  2 tools completed in 5.7s (2 ✓)
+
+That i += 1 in watch.rs is operating on a Vec<&str> (lines), which is safe — it's line-level iteration.
+
+The format/output.rs ones are also line-level iteration on Vec<&str>. The only real byte-level i += 1 bug is in `step_x_of_y_incomplete`.
+
+Let me also check commands_session.rs line 274 and 279:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '265,290p' src/commands_s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '268,285p' src/commands_s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '266,281p' src/commands_s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A5 -B2 'text\[\.\.end\]… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '264,280p' src/commands_s… ✓ (3ms)
+  ▶ read src/commands_session.rs:264..284 ✓ (1ms)
+  6 tools completed in 17.2s (6 ✓)
+
+Good — this one is properly handled with is_char_boundary. 
+
+Now let me also look for other improvement areas. Let me check `tool_wrappers.rs` line 2031:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2025,2040p' src/tool_wra… ✓ (3ms)
+
+This is in a test, and the min(100) is fine if all the output is ASCII (which it will be in tests). Not great practice, but not a crash risk in production.
+
+Now let me look at tool_wrappers.rs line 239:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '230,250p' src/tool_wrapp… ✓ (3ms)
+
+This is safe because rfind('/') returns the byte position of an ASCII character, which is always a valid char boundary.
+
+OK, so my assessment is clear: **the most impactful fix is the step_x_of_y_incomplete function in repl.rs** — it uses byte-level iteration (i += 1) with string slicing (&text[i..i + 5]), which will panic on multi-byte UTF-8 input. This is exactly the class of bug documented in the safety rules (see issue #250 which caused planning agent crashes). 
+
+The function is called from looks_incomplete which processes every LLM response during auto-continue. LLM responses frequently contain Unicode characters (✓, →, •, emojis, non-ASCII quotes, etc.), making this a real production crash risk.
+
+Let me fix it properly. The clean solution is to use str::find or iterate by character instead of byte-level scanning.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 11.9s (4 ✓)
+
+First, let me write a test that would panic with the current code:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test.*step\|fn test.… ✓ (3ms)
+  ▶ read src/repl.rs:1918..1958 ✓ (1ms)
+  3 tools completed in 10.4s (3 ✓)
+
+Now let me add my test. I'll add it right after the existing test_step_x_of_y_incomplete test:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1925..1935 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
