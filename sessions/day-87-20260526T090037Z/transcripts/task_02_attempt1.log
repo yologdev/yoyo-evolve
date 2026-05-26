@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current SYSTEM_PROMPT and LITE_SYSTEM_PROMPT in cli_config.rs, then check existing tests.
+  ▶ $ grep -n "SYSTEM_PROMPT\|LITE_SYSTEM_PROMPT" src/cli_config.rs | head -30  ▶ $ grep -rn "SYSTEM_PROMPT\|system_prompt\|coding assistant" tests/ src/ --include=… ✓ (6ms)
+ ✓ (11ms)
+  ▶ read src/cli_config.rs:30..60  ▶ read src/cli_config.rs:115..165 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 13.8s (4 ✓)
+
+Good. Now I have the full picture. Let me implement the changes:
+
+1. Expand SYSTEM_PROMPT with behavioral guidance (~20 lines total)
+2. Add one line to LITE_SYSTEM_PROMPT about verifying changes
+3. Existing tests should still pass (they check for "coding assistant" and that lite < default)
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (5 → 14 lines)
+    You have access to the filesystem and shell. Be direct and concise.
+    When the user asks you to do something, do it — don't just explain how.
+    Use tools proactively: read files to understand context, run commands to verify your work.
+  - After making changes, run tests or verify the result when appropriate."#;
+  + After making changes, run tests or verify the result when appropriate.
+  + 
+  + How to work effectively:
+  + - Search before reading: use search and list_files to locate relevant code before reading whole files. Don't guess at file paths.
+  + - Be efficient with context: don't read entire large files when you only need a specific function. Use search or read with offset/limit to find the right section.
+  + - Verify changes: after edits, run the project's build/test/lint commands. Check that your changes compile and tests pass before moving on.
+  + - Plan multi-file edits: when a change spans multiple files, think through the approach first. Make changes incrementally and verify between steps.
+  + - Handle errors carefully: if a command fails or an edit doesn't match, read the error output. Check actual file content before retrying with a corrected edit.
+  + - Use git awareness: check git status/diff to understand the current state. Don't make changes that conflict with uncommitted work without asking.
+  + - Confirm destructive operations: before deleting files, resetting git state, or running other irreversible commands, confirm with the user."#;
+ ✓ (51.0s)
+  ▶ edit src/cli_config.rs (2 → 2 lines)
+    /// Minimal system prompt for --lite mode (small/local LLMs with limited context).
+  - pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).";
+  + pub const LITE_SYSTEM_PROMPT: &str = "You are a coding assistant. Help the user with their code.\nYou have tools: bash (run commands), read_file, write_file, edit_file (find and replace text in files).\nAfter making changes, run the project's build or test commands to verify nothing is broken.";
+ ✓ (48.8s)
+  2 tools completed in 1m 45s (2 ✓)
+
+Now let me verify the changes look right and run the checks:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:35..55 ✓ (0ms)
+
+Looks good. Let me run all the checks:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (847ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (158ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (16.9s)
+  3 tools completed in 24.1s (3 ✓)
+
+All 88 tests pass, no clippy warnings, build clean. Let me verify the specific tests that touch the system prompt:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_cli_config_const… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_cli_config 2>&1 … ✓ (416ms)
+  2 tools completed in 13.2s (2 ✓)
+
+All the relevant tests pass. Now let me commit:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (10 lines) ✓ (10ms)
+
+Done. Here's what I did:
+
+`SYSTEM_PROMPT` — expanded from 5 lines to 14. The original 5 lines are preserved as the opening (same voice, same tone). Below them, a "How to work effectively:" section adds 7 concrete behavioral bullets:
+
+1. Search before reading — use `search/list_files` to locate code, don't guess paths
+2. **Be efficient with context** — use search or offset/limit reads, don't slurp whole files
+3. Verify changes — run build/test/lint after edits
+4. **Plan multi-file edits** — think first, change incrementally, verify between steps
+5. Handle errors carefully — read error output, check actual file content before retrying
+6. Use git awareness — check status/diff, don't conflict with uncommitted work
+7. Confirm destructive operations — ask before deleting files or resetting git state
+
+`LITE_SYSTEM_PROMPT` — added one line: "After making changes, run the project's build or test commands to verify nothing is broken." Still much shorter than the full prompt.
+
+All 88 tests pass, clippy clean, fmt clean. The `LITE_SYSTEM_PROMPT.len() < SYSTEM_PROMPT.len()` invariant holds easily (253 bytes vs 1099 bytes).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

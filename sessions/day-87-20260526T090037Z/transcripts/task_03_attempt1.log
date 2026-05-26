@@ -1,0 +1,119 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code, then write a test, make the change, and verify.
+  ▶ search 'load_project_context' in src/context.rs ✓ (3ms)
+  ▶ read src/context.rs:127..307 ✓ (2ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me see the existing tests for conventions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:440..690 ✓ (2ms)
+
+Now I have a clear picture. The task is:
+
+1. Remove the if found.is_empty() guard around the conventions injection (lines 184-194)
+2. Update the test `test_project_context_skips_conventions_with_context_file` to expect conventions ARE present
+3. Add a new test that verifies both context file content AND conventions exist together
+
+Let me start with the code change, then update/add tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (13 → 12 lines)
+  -     // Append project-type conventions if no explicit context file was found
+  +     // Append project-type conventions (always, regardless of context files —
+  +     // conventions complement explicit instructions rather than replacing them)
+        let mut conventions_injected = false;
+  -     if found.is_empty() {
+  -         let project_type = detect_project_type(std::path::Path::new("."));
+  -         if let Some(hints) = project_type_hints(&project_type) {
+  -             if !context.is_empty() {
+  -                 context.push_str("\n\n");
+  -             }
+  -             context.push_str("## Development Conventions\n\n");
+  -             context.push_str(&hints);
+  -             conventions_injected = true;
+  +     let project_type = detect_project_type(std::path::Path::new("."));
+  +     if let Some(hints) = project_type_hints(&project_type) {
+  +         if !context.is_empty() {
+  +             context.push_str("\n\n");
+            }
+  +         context.push_str("## Development Conventions\n\n");
+  +         context.push_str(&hints);
+  ... (2 more lines)
+ ✓ (56.1s)
+
+The auto-check seems to have been truncated. Let me also update the status display section — previously it re-detected the project type only when conventions were injected, but now we already have `project_type` in scope:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:205..235 ✓ (0ms)
+
+Good — the redundant detect_project_type call on line 212 can now use the project_type variable already in scope from above. Let me fix that:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (4 → 3 lines)
+                if conventions_injected {
+  -                 let project_type = detect_project_type(std::path::Path::new("."));
+                    eprintln!("{DIM}  context: {project_type} conventions{RESET}");
+                }
+ ✓ (46.7s)
+
+Now update the test that previously verified conventions are NOT injected with a context file. The behavior is now reversed:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (39 → 51 lines)
+        #[test]
+        #[serial]
+  -     fn test_project_context_skips_conventions_with_context_file() {
+  -         // When YOYO.md exists, conventions should NOT be injected
+  +     fn test_project_context_includes_conventions_with_context_file() {
+  +         // When YOYO.md exists, conventions should STILL be injected
+  +         // (they complement explicit instructions)
+            use std::process::Command;
+            let dir = tempfile::TempDir::new().unwrap();
+            std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+  ···
+    
+            let ctx = ctx.unwrap();
+            assert!(
+  -             !ctx.contains("## Development Conventions"),
+  -             "Should NOT include conventions when YOYO.md exists"
+  +             ctx.contains("## Development Conventions"),
+  +             "Should include conventions even when YOYO.md exists"
+  +         );
+  +         assert!(
+  ... (15 more lines)
+ ✓ (48.7s)
+
+Now let me run the full check suite:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (833ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (16.6s)
+  3 tools completed in 25.2s (3 ✓)
+
+All 88 tests pass. Let me also specifically run the context tests to make sure my new and modified tests work:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- context 2>&1 | tai… ✓ (1.7s)
+
+All 136 context-related tests pass. Let me verify the final state of my changes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/context.rs ✓ (5ms)
+
+Clean diff. The changes are:
+
+1. Removed the `if found.is_empty()` guard — conventions are now always injected when detected
+2. Eliminated redundant `detect_project_type` call — reuses the variable already in scope
+3. Updated test — `test_project_context_skips_conventions_with_context_file → test_project_context_includes_conventions_with_context_file` with assertions that verify both YOYO.md content AND conventions are present, plus ordering verification
+
+Now commit:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (14 lines) ✓ (11ms)
+
+Done. The change is small and surgical:
+
+• What changed: Removed the if found.is_empty() guard around project-type conventions injection in load_project_context()
+• Why: Projects with a YOYO.md/CLAUDE.md were losing auto-detected build/test/lint commands (e.g., cargo build, cargo test), even though those conventions complement the context file
+• **Test**: Updated test_project_context_skips_conventions_with_context_file → test_project_context_includes_conventions_with_context_file, verifying both content sources appear and in the correct order (context file first, conventions after)
+• Bonus cleanup: Eliminated a redundant detect_project_type() call by reusing the already-scoped variable
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

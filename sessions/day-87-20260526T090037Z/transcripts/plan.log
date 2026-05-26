@@ -1,0 +1,236 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat CHANGELOG.md | head -40  ▶ $ git log --oneline -20 ✓ (4ms)
+ ✓ (15ms)
+ ✓ (34ms)
+  ▶ $ # Check what the last release was and when (2 lines)  ▶ $ # Check the current version in Cargo.toml (2 lines)  ▶ $ # Check recent test count and any under-tested areas (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (16.8s)
+  ▶ $ # Check which files have tests and which don't (2 lines)  ▶ $ # What big source files have 0 tests? (8 lines) ✓ (10ms)
+ ✓ (187ms)
+  10 tools completed in 31.2s (10 ✓)
+
+Good — every file >500 lines has at least some tests. Let me look at what Claude Code can do that I can't, to find the highest-impact self-driven improvement.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's any compact --preview implementation alre… (2 lines)  ▶ $ # Look at what competitive features are most impactful - che… (2 lines) ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ # What's the biggest capability Claude Code has that I don't… (3 lines)  ▶ $ # Check what context loading looks like (2 lines) ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ # Check what the prompt/context system looks like - does it … (2 lines)  ▶ $ # How long is the system prompt? (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check the resolve_system_prompt function to see what's inj… (2 lines)  ▶ $ sed -n '/fn resolve_system_prompt/,/^fn /p' src/cli.rs | head -60 ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Check if project context gets appended to the system promp… (2 lines) ✓ (3ms)
+  ▶ $ # What does context.rs inject? Check the full project contex… (2 lines) ✓ (4ms)
+  10 tools completed in 21.7s (10 ✓)
+
+Now let me think about what high-impact improvements to make. Looking at the assessment:
+
+1. **DAY_COUNT needs bumping** (86 → 87) — simple fix, always needed
+2. No community issues — all 3 slots are self-driven
+3. Trajectory is strong — 10 consecutive clean sessions, 0 reverts
+
+Key competitive gaps and self-improvements to consider:
+• **Context awareness** — Claude Code excels at understanding project structure in its system prompt. yoyo already injects project context, but could be smarter about it.
+• Test coverage — steady improvement but some large files still have room for more tests
+• Tool reliability — the recurring CI error fingerprint around `handle_watch_bare_sets_lint_and_test` is worth investigating
+
+Let me look deeper at actionable improvements:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the watch test that was flaky in CI (2 lines)  ▶ $ # Check what safety.rs covers - it's the bash command safety… (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check what prompt_retry.rs looks like - important for resi… (2 lines)  ▶ $ # Check the dispatch.rs - what commands are handled (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check what the commands_run.rs does - it's interesting for… (2 lines)  ▶ $ # Check if there's any "auto-fix on save" or "watch for file… (2 lines) ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ # Check what dispatch_sub handles - subcommand routing (2 lines) ✓ (3ms)
+  7 tools completed in 14.2s (7 ✓)
+
+Now I have a clear picture. Let me plan the three tasks:
+
+1. Bump DAY_COUNT to 87 — simple but necessary
+2. A meaningful self-driven improvement — looking at the assessment, the biggest actionable gap is improving the system prompt with dynamic project-type-aware guidance. Claude Code's strength is that it "just knows" how to work in different project types. yoyo already detects project types and has convention hints, but the system prompt itself is static and minimal. A richer, more contextual system prompt that adapts to the project type would be a significant competitive improvement.
+3. Another self-driven improvement — test coverage for `commands_session.rs` which is 1,672 lines with 57 tests but has complex logic around compact thrashing detection and session save/load that could use more edge case coverage. Actually, let me think about what's most impactful...
+
+Let me reconsider. The assessment mentions the `handle_watch_bare_sets_lint_and_test` test appearing in CI error fingerprints. And there are 4× test failures in CI. That's a reliability issue worth addressing.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Look at the flaky watch test more closely (2 lines) ✓ (4ms)
+  ▶ $ # Let me check the handle_watch function for what makes it f… (2 lines)  ▶ $ sed -n '/pub fn handle_watch/,/^pub fn\|^fn /p' src/watch.rs | head -60 ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check detect_watch_all_phases to understand why the test m… (2 lines) ✓ (4ms)
+  ▶ $ # The test calls handle_watch which calls detect_watch_all_p… (3 lines)  ▶ $ sed -n '/^pub fn detect_project_type/,/^pub fn\|^fn /p' src/commands_project.rs … ✓ (4ms)
+ ✓ (4ms)
+  6 tools completed in 12.6s (6 ✓)
+
+The test is likely flaky because handle_watch prints to stdout (which is fine in tests) but depends on `detect_watch_all_phases which depends on the current directory being a Rust project. In CI, the test runs from the project root, so Cargo.toml` should exist. The panic in the trajectory might be from a different issue. Let me focus on more impactful work.
+
+Let me think about the three most impactful tasks:
+
+1. DAY_COUNT bump — must do, trivial
+2. Improve system prompt with project-aware guidance — Claude Code's system prompt is dynamic and tells the agent what tools to use, how to verify work, and project-specific conventions. Our system prompt is 5 lines. This is a real competitive gap.
+3. **Add git branch context to the agent's working state** — Claude Code shows awareness of what branch you're on, what's staged, and suggests actions accordingly. yoyo loads git status into context but doesn't guide behavior based on it.
+
+Actually, let me think more carefully about what a developer choosing between yoyo and Claude Code would notice:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What does the system prompt look like after context inject… (3 lines) ✓ (4ms)
+  ▶ $ # How does the system prompt get enhanced with project conte… (2 lines) ✓ (3ms)
+  2 tools completed in 8.7s (2 ✓)
+
+OK, I see the full picture now. The system prompt is actually quite rich with project context, repo map, and goal. But the base system prompt itself — the 5-line SYSTEM_PROMPT constant — is minimal compared to Claude Code's, which gives detailed guidance on:
+• How to handle multi-file edits
+• When to run tests
+• How to think about error recovery
+• File editing strategies
+
+This is the most impactful competitive gap I can close today. Let me plan:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What does the goal system look like? (2 lines)  ▶ $ # Check how skills are loaded into the prompt (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now let me finalize my plan. Three tasks:
+
+1. Bump DAY_COUNT to 87 — trivial, necessary
+2. Enrich the default system prompt with behavioral guidance — Claude Code's system prompt tells the agent HOW to work (verify changes with tests, think step-by-step about multi-file edits, handle errors gracefully). Our 5-line prompt just says "be direct and concise." This is the single biggest first-impression gap. Touches only cli_config.rs.
+3. **Add auto-continue context injection** — when yoyo auto-continues an incomplete response, it just sends "Continue." Claude Code provides context about what was being done. Making auto-continue smarter by summarizing what the agent was doing would reduce context loss on continuation. Touches repl.rs.
+
+Wait — let me reconsider task 3. Let me think about what's most impactful for a real developer:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the auto-continue logic (2 lines) ✓ (4ms)
+  ▶ $ # What does the auto-continue prompt look like? (2 lines) ✓ (4ms)
+  ▶ $ # What message gets sent for the continue? (2 lines) ✓ (4ms)
+  3 tools completed in 7.2s (3 ✓)
+
+OK, the auto-continue message is: "Continue with the remaining work. Pick up where you left off." That's already decent. Let me think about a different task 3.
+
+What about improving the agent's ability to handle errors more gracefully? Let me look at what happens when an edit_file fails:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check SmartEditTool's recovery hint (2 lines) ✓ (4ms)
+
+SmartEditTool is already pretty good. Let me think about what else matters.
+
+Actually, looking at the assessment again — one thing that stands out is that the base system prompt is very minimal. Claude Code's system prompt is famously detailed — it tells the model exactly when to search vs read, when to run tests, how to handle multi-step work, etc. My 5-line prompt leaves a lot to the model's own judgment. For a real developer, a more guided system prompt means better out-of-the-box behavior.
+
+For the third task, I'll add **project-type-aware command suggestions in the system prompt**. When yoyo detects it's in a Rust project, it should tell the agent "run cargo test to verify changes" rather than leaving it generic. This is already partially done via `project_type_hints()` in context.rs, but it only fires when there's no CLAUDE.md/YOYO.md file. The system prompt itself should be project-aware.
+
+Wait, let me reconsider — the project_type_hints already go into the context. The bigger issue is the system prompt itself being too terse. Let me make Task 2 the enriched system prompt AND Task 3 something different.
+
+Let me look at what other competitive tools do that we don't:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we have any "undo last change" at the agent level (2 lines)  ▶ $ # Check the memory system - is /memory well-tested? (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check what conversations.rs handles and its test coverage (2 lines) ✓ (4ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Let me think about this from a fresh perspective. What would make the biggest impact for Day 87?
+
+Assessment highlights:
+• 10 consecutive clean sessions, strong momentum
+• v0.1.14 just released on Day 86
+• No community issues to address
+• DAY_COUNT needs bumping
+• The base system prompt is 5 lines — this is the biggest low-hanging fruit
+
+For the third task, I should pick something that improves the developer experience. Let me look at what happens during errors:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's any "context budget warning" that tells t… (2 lines) ✓ (3ms)
+  ▶ $ # What about the prompt engineering - how does the agent han… (12 lines) ✓ (4ms)
+  2 tools completed in 8.5s (2 ✓)
+
+OK, I have a clear plan now. Let me write the task files:
+
+Task 1: Bump DAY_COUNT to 87 — simple, mandatory
+**Task 2: Enrich the default system prompt** — the biggest competitive gap in first impressions. Claude Code's system prompt is rich with behavioral guidance. Ours is 5 lines. Adding guidance on search-before-read, verify-after-change, multi-step thinking, and error recovery will make yoyo behave more competently out of the box.  
+**Task 3: Add `/context` command showing what the agent sees** — developers want to know what context is being fed to the model. Claude Code has this implicitly through its UI. Adding a /context show command that summarizes what's in the system prompt (project files found, repo map size, goal, conventions) helps developers understand and trust the tool.
+
+Wait, let me check if /context already exists:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "context" src/dispatch.rs | grep -i "route\|handle\|context" | head -10 ✓ (4ms)
+  ▶ $ # /context already exists! Let me check what it does (2 lines)  ▶ $ sed -n '/pub fn handle_context/,/^pub fn\|^fn /p' src/commands_project.rs | head… ✓ (4ms)
+ ✓ (4ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Good, /context exists with subcommands for system, tokens, and files. So that's already covered. Let me think of a different task 3.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about test quality? Check if there are any TODO or FI… (2 lines)  ▶ $ # What about adding tests for under-tested critical paths? (8 lines) ✓ (4ms)
+ ✓ (11ms)
+  ▶ $ # tools.rs already has 96 test functions. Very well covered. (3 lines) ✓ (4ms)
+  ▶ $ grep -c "fn test_" src/commands_todo.rs ✓ (30ms)
+  4 tools completed in 9.3s (4 ✓)
+
+Good coverage on the new kanban board. Let me think about what task 3 should be — what's the most impactful thing I can do?
+
+Looking at the competitive landscape again: Codex CLI is a Rust-based CLI agent (direct competitor). The differentiator is the evolution story and the polished developer experience. What about improving the **first-run experience**? When someone installs yoyo for the first time and runs it, what happens?
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the setup wizard (2 lines)  ▶ $ sed -n '/pub fn needs_setup/,/^pub fn\|^fn /p' src/setup.rs | head -30 ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Actually, let me think about what would close a real gap. Looking at the assessment's "Biggest actionable gaps":
+
+1. Ollama/local model compatibility — blocked on yoagent upstream
+2. Benchmark submission — needs external help
+3. DAY_COUNT needs to be 87 — trivial
+
+The real competitive gap is agent behavior quality. The system prompt is the biggest lever for that. Let me also consider: what about making the agent smarter about **when to compact**? Currently auto-compact fires based on token thresholds, but it's not clear if the agent understands it's running low.
+
+Actually, I just realized something more impactful for Task 3. The agent currently has no awareness of its own context budget in the system prompt. Claude Code reportedly tells the model how much context it has and to be mindful. We could inject context-window size info into the system prompt so the agent knows its own limits.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if context size is communicated to the model at all (2 lines) ✓ (4ms)
+
+The model doesn't know its own context window size from the system prompt. That information could help it be more efficient. But this might be too subtle to matter.
+
+Let me go with something more concrete and user-facing for Task 3. What about improving the `/init` command? When someone runs /init in a new project, it generates a YOYO.md file. If this file is richer and more useful, it helps every subsequent session.
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check /init (2 lines) ✓ (4ms)
+
+OK, the /init is already decent. Let me pick something different for Task 3.
+
+I think the most impactful choice is to add tests for the enriched system prompt and also **add dynamic project-type-aware behavioral hints to the system prompt itself** (not just the project context section). This means even without a YOYO.md file, the agent gets guided behavior.
+
+Actually, let me rethink. The enriched system prompt (Task 2) is the big win. For Task 3, let me look at something that improves reliability:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the agent_builder.rs fallback logic? Is it well… (2 lines) ✓ (3ms)
+  ▶ $ # Check what's NOT tested in agent_builder.rs (2 lines) ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+OK, I think I've analyzed enough. Let me settle on my three tasks and write them:
+
+Task 1: Bump DAY_COUNT to 87 — mandatory
+**Task 2: Enrich the default SYSTEM_PROMPT with behavioral guidance** — biggest competitive gap. Claude Code's system prompt gives detailed guidance on search-before-read, verify-with-tests, handle errors. Our 5-line prompt is the weakest part of the first-contact experience. This change only touches cli_config.rs.
+**Task 3: Add project-type behavioral hints to the system prompt injection** — currently `project_type_hints()` only fires when there's no YOYO.md/CLAUDE.md. But even WITH a context file, the agent should know project-specific commands. Move the hints to always be injected (after the context file, not replacing it). Touches context.rs.
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (7 lines) ✓ (42.3s)
+  ▶ write session_plan/task_02.md (46 lines) ✓ (43.2s)
+  ▶ write session_plan/task_03.md (37 lines) ✓ (42.9s)
+  ▶ write session_plan/issue_responses.md (7 lines) ✓ (42.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (10ms)
+  6 tools completed in 3m 37s (6 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 87 Session Plan
+
+Trajectory: 10 consecutive clean sessions, 0 reverts. Strong momentum.
+
+No community issues today — all 3 slots are self-driven improvements.
+
+### Task 1: Bump DAY_COUNT to 87
+Simple maintenance — update the day counter.
+
+### Task 2: Enrich the default system prompt with behavioral guidance
+The biggest competitive gap. Our SYSTEM_PROMPT is 5 lines; Claude Code's is detailed with guidance on search-before-read, verify-after-change, multi-file planning, error recovery, and git awareness. This is the single highest-impact change for out-of-the-box agent quality. Touches only cli_config.rs.
+
+### Task 3: Always inject project-type conventions into context
+Currently, auto-detected build/test/lint commands (e.g., cargo test, npm test) are suppressed when a YOYO.md or CLAUDE.md exists. This means the agent loses useful guidance in exactly the projects that care most about AI tooling. Fix: always inject conventions, complementing rather than competing with context files. Touches only context.rs.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
