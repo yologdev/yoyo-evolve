@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current memory system, then implement fuzzy scoring with tests.
+  ▶ read src/memory.rs  ▶ read src/commands_memory.rs ✓ (6ms)
+ ✓ (9ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me see the full memory.rs, especially the existing test section and the parse_timestamp_to_epoch function which I'll need for recency scoring:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:85..285 ✓ (2ms)
+
+Now let me see the existing tests in memory.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:284.. ✓ (3ms)
+
+Now I have a clear picture. Let me also see the existing search test more carefully to understand backwards compatibility:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:383..503 ✓ (1ms)
+  ▶ read src/memory.rs:502..682 ✓ (2ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Good, I have a complete understanding of the codebase. Now let me plan and implement:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.4s (4 ✓)
+
+Let me start by writing the tests first, then implementing. I need to understand how `parse_timestamp_to_epoch` works since I'll use it for recency scoring. I also need to make it pub(crate) so tests can reference it if needed, or just test through the public interface.
+
+Let me implement the fuzzy scoring function and update search_memories:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/memory.rs (15 → 188 lines)
+  - /// Search memories by case-insensitive substring match.
+  - /// Returns a vec of `(index, &MemoryEntry)` for matching entries.
+  - /// An empty query matches all entries.
+  + /// Score a memory note against a query using fuzzy matching.
+  + ///
+  + /// Returns `None` for non-matches and `Some(score)` for matches.
+  + /// Higher scores indicate better matches.
+  + ///
+  + /// Matching rules:
+  + /// - Single word query: case-insensitive substring match
+  + /// - Multi-word query: ALL words must appear in the note (AND semantics, case-insensitive)
+  + ///
+  + /// Score boosters:
+  + /// - Exact substring match of the full query → highest base score
+  + /// - Word-boundary matches (word starts at beginning of a note word) → bonus
+  + /// - Consecutive word matches in the note → bonus
+  + /// - Shorter notes (more focused) → bonus
+  + pub fn fuzzy_score_memory(note: &str, query: &str) -> Option<f64> {
+  +     if query.is_empty() {
+  +         // Empty query matches everything with a neutral score
+  ... (175 more lines)
+ ✓ (47.1s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 26s (4 ✓)
+
+Now let me add the tests. I need to be careful about existing tests that check specific index positions and ordering — the new sorting behavior might change their expectations. Let me check which existing tests need updating:
+
+The existing tests that matter:
+1. `test_search_memories_basic` — checks index 1 is returned. Still fine since single result.
+2. test_search_memories_case_insensitive — checks single results. Fine.
+3. test_search_memories_no_match — checks empty. Fine.
+4. test_search_memories_empty_query — checks len=2. Now returns all in reverse order. Need to check.
+5. `test_search_memories_multiple_matches — checks results[0].0 == 0 and results[1].0 == 2`. With scoring, order may change since both have "cargo" at word boundary. Let me check: "cargo build first" has "cargo" at pos 0, "cargo fmt before commit" has "cargo" at pos 0. Both identical positions. The score tie-breaking would be... the entries have timestamps "t0" and "t2" which aren't parseable, so no recency bonus difference. But "cargo build first" is shorter (17 chars) vs "cargo fmt before commit" (22 chars), so it gets a slightly higher length bonus. So index 0 should still come first. Good.
+
+And in commands_memory.rs:
+• `test_search_memories_from_command — checks results[0].0 == 0 and results[1].0 == 2`. Same logic — "uses sqlx for DB" (pos 5 for "sqlx") vs "sqlx migrations in ./migrations" (pos 0 for "sqlx"). With scoring, the one at pos 0 (index 2) would score higher! This test will break. Let me update it.
+
+Wait, let me re-examine. In the command test:
+```
+"uses sqlx for DB" — "sqlx" at position 5
+"sqlx migrations in ./migrations" — "sqlx" at position 0
+```
+The second one has earlier position and is a word-boundary match in both cases (the 's' in "sqlx" comes after a space). Actually both are word-boundary matches. But position 0 gives a higher position bonus. So index 2 would score higher than index 0. The test asserts results[0].0 == 0 which would now be wrong.
+
+Let me also re-check the test_search_memories_empty_query — it currently checks `results.len() == 2` which is fine. But the existing test in memory.rs doesn't check order. Good.
+
+Now let me add the new tests in memory.rs and fix the existing test in commands_memory.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add the fuzzy_score_memory tests to memory.rs, right before the closing } of the tests module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:710.. ✓ (2ms)
+
+Now I need to check my test_search_memories_multiple_matches more carefully. Both "cargo build first" and "cargo fmt before commit" have "cargo" at position 0. Both are word-boundary matches. "cargo build first" is 17 chars, "cargo fmt before commit" is 22 chars. The shorter one gets a higher length bonus. So index 0 should score higher. The existing assertion should hold.
+
+Now let me add the new tests before the closing brace of the test module:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (8 → 232 lines)
+            assert!(parse_timestamp_to_epoch("2026-13-01 00:00").is_none()); // bad month
+            assert!(parse_timestamp_to_epoch("2026-05-32 00:00").is_none()); // bad day
+            assert!(parse_timestamp_to_epoch("2026-05-24 25:00").is_none()); // bad hour
+  +     }
+  + 
+  +     // --- fuzzy_score_memory tests ---
+  + 
+  +     #[test]
+  +     fn test_fuzzy_score_single_word_exact_match() {
+  +         let score = fuzzy_score_memory("docker required", "docker");
+  +         assert!(score.is_some());
+  +         let s = score.unwrap();
+  +         assert!(s > 15.0, "exact word-boundary match should score high: {s}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_fuzzy_score_single_word_mid_word_match() {
+  +         // "sqlx" inside "postgresql_sqlx_config" — not at word boundary
+  +         let score = fuzzy_score_memory("postgresql_sqlx_config", "sqlx");
+  +         assert!(score.is_some(), "substring should still match");
+  ... (209 more lines)
+ ✓ (46.7s)
+
+Now fix the test in commands_memory.rs that checks index ordering. With fuzzy scoring, the note with "sqlx" at position 0 will rank higher:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (4 → 6 lines)
+            let results = search_memories(&memory, "sqlx");
+            assert_eq!(results.len(), 2);
+  -         assert_eq!(results[0].0, 0);
+  -         assert_eq!(results[1].0, 2);
+  +         // With relevance scoring, "sqlx migrations in ./migrations" (sqlx at pos 0)
+  +         // ranks higher than "uses sqlx for DB" (sqlx at pos 5)
+  +         assert_eq!(results[0].0, 2);
+  +         assert_eq!(results[1].0, 0);
+ ✓ (44.2s)
+
+Let me also make sure fuzzy_score_memory is exported from the module since it's `pub`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (169ms)
+
+Good, it builds. Let me run the tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (14.7s)
+
+Hmm, the test is still failing. Let me look at the actual assertion more carefully:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_memory.rs:246..276 ✓ (0ms)
+
+The error says left: 0 right: 2 — meaning results[0].0 is 0, not 2. Let me debug why. The note "uses sqlx for DB" has `sqlx at position 5, while "sqlx migrations in ./migrations" has sqlx` at position 0. Let me think about the scores:
+
+For "uses sqlx for DB" (16 chars): pos=5, is_word_boundary (space before)=true, is_exact_word=true
+• score = 10.0 + 5.0 (boundary) + 3.0 (exact word) + 2.0/(1+5/20)=1.6 (position) + 5.0/(1+16/30)=3.26 (length) = 22.86
+
+For "sqlx migrations in ./migrations" (31 chars): pos=0, is_word_boundary=true, is_exact_word=true
+• score = 10.0 + 5.0 (boundary) + 3.0 (exact word) + 2.0/(1+0/20)=2.0 (position) + 5.0/(1+31/30)=2.46 (length) = 22.46
+
+So the shorter note (16 chars) wins because of the length bonus! The position advantage (0 vs 5) only contributes 0.4 points difference but the length bonus gives 0.8 points to the shorter one. So the original order was correct — index 0 first.
+
+Let me revert my change to the commands_memory test:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (6 → 6 lines)
+            let results = search_memories(&memory, "sqlx");
+            assert_eq!(results.len(), 2);
+  -         // With relevance scoring, "sqlx migrations in ./migrations" (sqlx at pos 0)
+  -         // ranks higher than "uses sqlx for DB" (sqlx at pos 5)
+  -         assert_eq!(results[0].0, 2);
+  -         assert_eq!(results[1].0, 0);
+  +         // "uses sqlx for DB" is shorter (more focused) so scores slightly
+  +         // higher than "sqlx migrations in ./migrations" despite later position
+  +         assert_eq!(results[0].0, 0);
+  +         assert_eq!(results[1].0, 2);
+ ✓ (46.9s)
+
+Now I also need to fix my test in memory.rs that assumes the same incorrect ordering. Let me check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ search 'test_search_memories_sorted_by_relevance' in src/memory.rs ✓ (3ms)
+  ▶ read src/memory.rs:1015..1045 ✓ (1ms)
+  2 tools completed in 2.8s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
