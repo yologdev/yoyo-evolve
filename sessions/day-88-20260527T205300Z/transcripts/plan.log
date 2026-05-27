@@ -1,0 +1,135 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and checking what's in the session plan directory, then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat session_plan/assessment.md 2>/dev/null | head -20📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -15 ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ # Check what was built but not committed in previous session… (2 lines)  ▶ $ # Check the flaky test details (2 lines)  ▶ $ # Check latest release version (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what the real latest version tag looks like (2 lines)  ▶ $ # Check for #[serial] usage in watch.rs tests and what globa… (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # Check if handle_watch modifies global state that non-seria… (2 lines)  ▶ $ # The flaky test IS marked #[serial] already. Let me check i… (3 lines) ✓ (4ms)
+ ✓ (4ms)
+  11 tools completed in 20.0s (11 ✓)
+
+Now I can see the flaky test issue clearly. detect_watch_all_phases_returns_separate_commands at line 1950 is NOT marked #[serial] but it calls detect_watch_all_phases() which may interact with global watch state. Let me verify:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if detect_watch_all_phases reads or writes global st… (2 lines)  ▶ $ # Check the structured stream JSON output gap - what does ou… (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ sed -n '68,85p' src/cli_config.rs  ▶ $ # Check if StreamJson is actually implemented or just declar… (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Check how StreamJson is handled in main.rs (2 lines)  ▶ $ sed -n '400,440p' src/main.rs ✓ (3ms)
+ ✓ (3ms)
+  6 tools completed in 9.0s (6 ✓)
+
+Good — StreamJson is already implemented. Let me now think about what the most impactful tasks would be for this session. Let me check one more thing:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the handle_watch_bare function to understand the fla… (2 lines)  ▶ $ # Check if detect_watch_all_phases actually reads/writes the… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Good. detect_watch_all_phases doesn't read/write global state — it only checks the filesystem for project type detection. The flaky test handle_watch_bare_sets_lint_and_test IS marked #[serial] already, so the flakiness might be from CI environment differences (maybe no Cargo.toml in the test runner's CWD). Actually, it passed locally because we ARE in a Rust project. Let me check what panic message would occur:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Look at the panic from trajectory more carefully - it just… (4 lines)  ▶ $ # Check how many unwrap()s are in production code (non-test)… (3 lines) ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now I have a clear picture. Let me plan the session. No community issues today, no sponsor issues. All 3 slots are self-driven.
+
+Based on the assessment:
+1. Fix the flaky test — CI stability is priority 0-adjacent
+2. **Reduce unwrap() density in session.rs** — the highest-density production file (128 unwraps in a session-tracking module where unexpected input can crash)
+3. Add `#[serial]` to the non-serial watch test that shares implicit state assumptions
+
+Actually, let me reconsider. The flaky test fix is small. Let me think about what's highest impact for competitive positioning:
+
+1. **Flaky CI test fix** — small but keeps CI green (stability)
+2. **Reduce unwrap density in session.rs** — robustness, prevents panics in production
+3. **Something competitive** — what's the biggest gap I can close in a 20-min task?
+
+The assessment identifies structured stream JSON as already built. Tree-sitter would be huge but way too big for one task. The unwrap density is a real bug class worth fixing — 128 unwraps in session.rs means 128 potential panics when users have unexpected data.
+
+Let me be strategic: fix the flaky test (tiny task), harden session.rs (medium task), and do something that moves the competitive needle — like improving the /spawn sub-agent system or adding a useful new capability.
+
+Actually, looking at the assessment more carefully, the biggest actionable self-improvement is hardening production code. Let me plan:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (25 lines) ✓ (43.7s)
+  ▶ write session_plan/task_02.md (39 lines) ✓ (44.2s)
+  ▶ $ # Check what the most impactful competitive feature would be… (3 lines)  ▶ $ # Check how /web currently works (2 lines) ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ # Let me think about a different competitive angle. What abo… (6 lines)  ▶ $ # What about improving commands_file.rs unwrap density too? … (6 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Let me look at what competitive feature would actually mov… (9 lines)  ▶ $ # Let me look at what commands_file.rs does with its 97 unwr… (17 lines) ✓ (4ms)
+ ✓ (3ms)
+  8 tools completed in 2m 11s (8 ✓)
+
+OK, I have a good picture now. Let me think about the best 3rd task. The codebase is mature — robustness improvements are high value. But for competitive positioning, I should also do something that a user would notice.
+
+Let me check one more thing — what about improving the commands_file.rs unwrap density, since that's the module users hit most (every /add, /apply, /open):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # How many of those 97 unwraps are in test code vs productio… (2 lines)  ▶ $ # Same for session.rs (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Wait — ALL the unwraps in both files are in test code?! Let me double-check this with a more accurate method:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # The awk script is too simplistic - #[cfg(test)] might not … (3 lines)  ▶ $ # Where does the test module start in session.rs? (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Multiple #[cfg(test)] blocks. Let me check if there are un… (2 lines)  ▶ $ # Also check between test blocks - there might be production… (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  4 tools completed in 5.8s (4 ✓)
+
+So the unwraps are all in test code! The #[cfg(test)] blocks contain all the unwraps. That changes the priority significantly — session.rs production code is actually clean. The assessment's "high unwrap density" finding was misleading because it counted test code.
+
+Let me re-plan. Task 2 (session.rs hardening) is a non-issue. I need a better 2nd and 3rd task. Let me check where the REAL production unwraps are:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find files with production unwraps (before any #[cfg(test)… (15 lines) ✓ (290ms)
+  ▶ $ # Cleaner approach - just check production code unwraps (31 lines) ✓ (46ms)
+  2 tools completed in 7.9s (2 ✓)
+
+So only symbols.rs has significant production unwraps (72). Everything else has them only in tests. That's actually great — the codebase is already well-hardened!
+
+Now let me rethink the 3 tasks. With no community issues and no CI failures, all 3 are self-driven:
+
+1. Fix flaky CI test (small, high value for CI stability)
+2. **Something competitive** — what's the biggest gap I can close?
+3. **Something competitive** — another gap or robustness improvement
+
+Let me look at what would be most impactful:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /doctor command to be more compre… (6 lines) ✓ (4ms)
+  ▶ $ # StreamJson is complete. Let me think about what competitiv… (16 lines)  ▶ $ wc -l src/commands_map.rs ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ # Let me think about what's actually most impactful for user… (20 lines) ✓ (4ms)
+  ▶ $ # OK, recently changed files are already included. Good. (7 lines)  ▶ $ sed -n '1,30p' src/symbols.rs ✓ (4ms)
+ ✓ (3ms)
+  6 tools completed in 25.7s (6 ✓)
+
+Those static regex unwrap() calls in symbols.rs are actually fine — they're compile-time regex patterns that will never fail (they're hardcoded valid patterns). The 72 "production" unwraps are mostly LazyLock regex initializations. Let me confirm:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check which production unwraps in symbols.rs are NOT regex… (2 lines)  ▶ $ # Better: check unwraps that are NOT in LazyLock blocks (fir… (2 lines) ✓ (6ms)
+ ✓ (5ms)
+  2 tools completed in 3.0s (2 ✓)
+
+All 72 production unwraps are regex initializations (LazyLock), and the remaining ones past line 700 are all in test code. The codebase is actually really well hardened!
+
+OK, so the real priorities are:
+1. Fix flaky CI test (reliability)
+2. Something genuinely competitive
+3. Something genuinely competitive
+
+Let me focus on what would make the biggest user-visible difference. Let me check a few more things:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /apply command? That's one of the… (3 lines)  ▶ $ # What about adding a /test command that's smarter — auto-de… (4 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Let me think about what users actually want most from a co… (11 lines) ✓ (3ms)
+  3 tools completed in 4.8s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

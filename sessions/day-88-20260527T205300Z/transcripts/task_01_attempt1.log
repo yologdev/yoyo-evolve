@@ -1,0 +1,126 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix this flaky CI test issue by auditing all tests in the watch.rs #[cfg(test)] module and ensuring proper #[serial] annotations.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/wat… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1433,1500p' src/watch.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[test\]\|#\[serial\]\… ✓ (5ms)
+  3 tools completed in 8.4s (3 ✓)
+
+Now let me get the full list of all test functions and identify which ones touch global state. Let me look at each test that might need #[serial]:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_\|fn detect_\|f… ✓ (4ms)
+
+Now let me look at the tests that DON'T have #[serial] to check if they touch global state. Let me look at the specific tests around the problematic areas:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1795,1860p' src/watch.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1940,2000p' src/watch.rs ✓ (4ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me look at detect_watch_all_phases to understand if it reads global state:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1313,1340p' src/watch.rs ✓ (3ms)
+
+Good — detect_watch_all_phases itself doesn't read/write the global WATCH_COMMANDS state. It only reads the filesystem to detect project type. However, let me also check `auto_detect_watch_command and detect_watch_all_command`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1287,1315p' src/watch.rs ✓ (3ms)
+
+OK, so detect_watch_all_phases, auto_detect_watch_command, and detect_watch_all_command are all pure project-type detection — they don't touch the global WATCH_COMMANDS state. They're safe to run in parallel with other tests.
+
+But wait — let me check if handle_watch modifies WATCH_COMMANDS internally. We already know it does (it calls set_watch_commands). The risk is: if handle_watch_bare_sets_lint_and_test (serial) runs concurrently with detect_watch_all_phases_returns_separate_commands (not serial), the detect_watch_all_phases test itself doesn't touch global state, so there shouldn't be a race there.
+
+However, let me re-read the task description more carefully. It says detect_watch_all_phases is also called *inside* handle_watch(""), so parallel execution with other watch tests calling handle_watch is risky. Let me think about this...
+
+Actually, detect_watch_all_phases is a pure function that reads only the filesystem — no global state. But the concern might be about `std::env::current_dir()` or other shared process state. Let me check if there are tests that change directory or something similar:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'set_current_dir\|chdir\… ✓ (3ms)
+
+No directory changes. Let me also check for any other remaining tests that might be missing `#[serial]` by systematically checking each test that calls any global-state function:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^    #\[test\]/{start=NR} … ✓ (6ms)
+
+Now let me check the tests around lines 1842 and 1888 that I see might be missing:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1840,1900p' src/watch.rs ✓ (4ms)
+
+Now let me check the handle_watch_bare_sets_lint_and_test test (the flaky one) and the area around it:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1920,1990p' src/watch.rs ✓ (4ms)
+
+Now I have a clear picture. Let me look at what the global state is:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'WATCH_COMMAND\|static\|… ✓ (4ms)
+
+So WATCH_COMMANDS is the shared global RwLock<Vec<String>>. Tests that call set_watch_command, set_watch_commands, get_watch_command, get_watch_commands, clear_watch_command, or handle_watch need `#[serial]`.
+
+Let me now systematically check each test that DOESN'T have #[serial] to see if it calls any of these functions:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (46 lines) ✓ (33ms)
+
+Interesting — my systematic check shows all tests that directly call global state functions already have #[serial]. And detect_watch_all_phases_returns_separate_commands doesn't directly call any of those functions.
+
+But the task description says there's a real flaky test. Let me think about what else could be causing it. Let me look at the `handle_watch function more carefully to understand what handle_watch_bare_sets_lint_and_test` actually does:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1332,1430p' src/watch.rs ✓ (4ms)
+
+Now let me also look at run_watch_after_prompt which is also called in the test `test_run_watch_after_prompt_empty_commands_returns_passed`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1782,1800p' src/watch.rs ✓ (3ms)
+
+OK, so to be safe and prevent any potential flakiness, the task asks me to add #[serial] to detect_watch_all_phases_returns_separate_commands. Even though it doesn't directly touch global state, running it #[serial] ensures it can't interfere with tests that do use handle_watch (which calls detect_watch_all_phases internally). 
+
+The real concern is more subtle: while detect_watch_all_phases itself is pure, if it runs concurrently with tests calling handle_watch, the interleaving of println! output or potential resource contention (project type detection reads Cargo.toml) could theoretically cause issues. Being conservative with #[serial] on all watch-related tests is the right call.
+
+Let me also check `auto_detect_watch_command_returns_lint_and_test_in_rust_project and detect_watch_all_command_returns_lint_and_test_for_rust` — these are similar detection-only tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1795,1843p' src/watch.rs ✓ (4ms)
+
+These are pure detection tests, no global state. But let me also look at the watch_subcommands_includes_all and `watch_subcommands_includes_lint` — those are just constant checks, totally safe.
+
+Now let me make the changes. The task says to add #[serial] to `detect_watch_all_phases_returns_separate_commands`. I'll also check if there are any other tests I should be concerned about. Let me be conservative: any test that calls functions which are also called internally by handle_watch could potentially be affected if handle_watch has side effects (it prints to stdout, which is a shared resource in tests). But the main concern is the global WATCH_COMMANDS state.
+
+Let me add #[serial] to the test that was identified:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1948..1953 ✓ (1ms)
+  ▶ edit src/watch.rs (2 → 3 lines)
+  +     #[serial]
+        #[test]
+        fn detect_watch_all_phases_returns_separate_commands() {
+ ✓ (1m 0s)
+  2 tools completed in 1m 5s (2 ✓)
+
+Now let me also check the auto_detect_watch_command_returns_lint_and_test_in_rust_project and detect_watch_all_command_returns_lint_and_test_for_rust tests. These call auto_detect_watch_command() and detect_watch_all_command() — the same functions that handle_watch calls internally. While they don't touch WATCH_COMMANDS directly, they exercise the same project-detection code path. Let me be thorough and add #[serial] to them too to prevent any potential issue:
+
+Actually, wait. Let me re-read the task more carefully:
+
+│ Audit ALL tests in the `watch.rs #[cfg(test)] module. Any test that calls handle_watch`, set_watch_command, set_watch_commands, get_watch_command, get_watch_commands, or clear_watch_command MUST have #[serial]. Add it to any that are missing.
+
+This is the specific criterion. My systematic check already showed all tests calling those functions already have `#[serial]. The one explicit addition is detect_watch_all_phases_returns_separate_commands` which doesn't directly call them but is named in the task. Let me verify my change and run the tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (731ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (156ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (29.1s)
+  4 tools completed in 54.9s (4 ✓)
+
+All 88 tests pass. Now let me run the watch tests specifically, both with single thread and parallel, multiple times to verify no flakiness:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "=== Run… ✓ (428ms)
+
+The module path is different. Let me find the correct filter:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | grep 'wa… ✓ (106ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep 'watch' ✓ (15.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i 'watch… ✓ (17.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (171ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do echo "===… ✓ (710ms)
+  5 tools completed in 48.8s (5 ✓)
+
+Hmm, that's filtering everything out. The :: separator is being treated differently. Let me use the right pattern:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do echo "===… ✓ (716ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
