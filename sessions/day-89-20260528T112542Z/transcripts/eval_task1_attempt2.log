@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate whether the task was implemented correctly. The key issue: the git diff is empty, meaning no changes were made.
+
+Let me verify this and check the current state of the watch tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached --stat ✓ (3ms)
+ ✓ (8ms)
+  2 tools completed in 1.9s (2 ✓)
+
+The diff is in the working tree. Let me examine the actual changes made.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/watch.rs | … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/watch.rs | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/watch.rs | … ✓ (7ms)
+ ✓ (8ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now let me check the key elements the task required:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'with_clean_watch_state'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 20 'fn with_clean_watch_… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 5 -A 10 'struct WatchSta… ✓ (3ms)
+  3 tools completed in 4.5s (3 ✓)
+
+Good - the drop guard is implemented. Now let me check if the previously missing `#[serial]` annotations were added:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B 3 'fn auto_detect_watch_… ✓ (3ms)
+
+Good - #[serial] was added to the two tests that were missing it. Now let me verify tests pass:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- watch::tests --tes… ✓ (158ms)
+
+All 82 watch tests pass. Let me also verify the full test suite:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (16.9s)
+
+All tests pass. Let me also quickly verify no tests that touch watch state are missing #[serial]:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/mod tests/,0' src/watch.rs… ✓ (6ms)
+
+Let me check which of these actually touch global state:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/mod tests/,0' src/watch.rs… ✓ (5ms)
+
+That's a pure constant test - no global state. The tests without #[serial] are all pure function tests (parsing, constants, etc.) that don't touch `WATCH_COMMANDS`. The implementation is correct.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (41.6s)
+
+**Verdict: PASS**
+
+The implementation correctly addresses all three requirements from the task:
+1. Drop guard (WatchStateGuard) ensures clear_watch_command() runs even on panic
+2. Helper function (with_clean_watch_state) wraps every test that touches WATCH_COMMANDS global state
+3. Missing `#[serial]` annotations added to the two tests that were calling auto_detect_watch_command/detect_watch_all_command without serialization
+
+All 82 watch tests pass, full suite passes.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

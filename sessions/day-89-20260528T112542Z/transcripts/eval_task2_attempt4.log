@@ -1,0 +1,74 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate this task quickly. First, let me check the git diff to see what changes were actually made.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_… ✓ (17ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Let me see the full diff more clearly for the key parts:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/help_data… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/help_data… ✓ (4ms)
+  3 tools completed in 7.1s (3 ✓)
+
+No changes to help_data.rs. The task explicitly says "Files: src/commands_todo.rs, src/help_data.rs" and "Update help text in help_data.rs for `/todo board` to reflect file-based IDs." Let me check the current help text:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 30 "todo board" src/help… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A 10 "todo board" src/… ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Help text still references "TODO.md" — was supposed to be updated. Now let me verify the main implementation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TODO.md\|TODO_MD" src/c… ✓ (3ms)
+
+Good - no references to TODO.md in the implementation file. Let me verify the core implementation exists:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn read_task_files\|fn … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "board init\|board add\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (14.2s)
+  3 tools completed in 20.9s (3 ✓)
+
+There is a test failure, but it's in format::tests::test_hint_no_repeat_same_category, which is unrelated to this task. Let me verify:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/format/mo… ✓ (4ms)
+
+That test failure is pre-existing, not from this task. Let me run just the todo tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_todo 2>&1 | … ✓ (175ms)
+
+All 46 todo-related tests pass. Let me now check the key implementation requirements:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "board_template\|board_h… ✓ (3ms)
+
+Good — all old helpers have been removed. Let me check if the `update_task_status function exists for the move and done` commands:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn update_task_status\|… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "test_board" src/command… ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+16 board-related tests. Let me quickly verify the test coverage for the required scenarios:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "fn test_board" src/command… ✓ (23ms)
+
+Tests cover: init, add, move by ID, done, reading existing task files, board rendering, evidence, goal, status updates. All required test scenarios from the task are covered.
+
+Now, the one issue: help_data.rs was NOT updated. The task explicitly says: "Update help text in help_data.rs for /todo board to reflect file-based IDs." The help text still says "TODO.md board" and doesn't mention file-based IDs like `task_01`.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 12 "Board (persistent" s… ✓ (3ms)
+
+The help text still references "TODO.md" and doesn't mention task_id for the move/done commands. The task requirement is explicit: "Update help text in help_data.rs for /todo board to reflect file-based IDs."
+
+However, the implementation itself is solid — all the core functionality works, tests pass, and the source of truth has been correctly moved from TODO.md to `session_plan/. The missing help_data.rs` update is a clear omission of a specified task file.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (43.5s)
+
+**Verdict: FAIL**
+
+The core commands_todo.rs redesign is well-implemented — `session_plan/` is now the source of truth, old helpers are removed, tests cover the key scenarios, and all 46 todo tests pass. However, the task explicitly lists src/help_data.rs as a file to modify and states "Update help text in help_data.rs for /todo board to reflect file-based IDs." That file was not touched, and the help text still references "TODO.md board" and doesn't show the file-based ID syntax (e.g., move <task_id> <status>).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

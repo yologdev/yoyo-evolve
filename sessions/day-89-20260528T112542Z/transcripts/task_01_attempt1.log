@@ -1,0 +1,134 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the watch tests and the global state they use.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WATCH_COMMANDS" src/wat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[serial\]\|#\[test\]\… ✓ (7ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[serial\]\|#\[test\]\… ✓ (5ms)
+  3 tools completed in 5.3s (3 ✓)
+
+Now let me read the full test module to understand all tests that touch global state:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1435,1990p' src/watch.rs ✓ (9ms)
+
+Let me now see the specific test that's failing and also identify ALL tests that touch global state but may be missing `#[serial]`:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^    #\[test\]|^    #\[ser… ✓ (7ms)
+
+Let me get the complete list of ALL tests and which ones call into global state functions:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (52 lines) ✓ (26ms)
+
+Found two tests missing #[serial]:
+1. `auto_detect_watch_command_returns_lint_and_test_in_rust_project`
+2. detect_watch_all_command_returns_lint_and_test_for_rust
+
+Let me also check the third test at line 1843 (handle_watch_all_sets_combined_command) and the others more carefully. Let me also check whether these tests really access global state:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1795,1860p' src/watch.rs ✓ (4ms)
+
+Now let me check auto_detect_watch_command and detect_watch_all_command to see if they truly touch global state:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn auto_detect_watc… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1287,1330p' src/watch.rs ✓ (4ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Good — auto_detect_watch_command and detect_watch_all_command and detect_watch_all_phases don't touch global state directly. My script had a false positive because those function names contain substrings of global-touching functions. They're read-only project detection. They don't need #[serial].
+
+But the test `detect_watch_all_phases_returns_separate_commands does have #[serial]` even though it doesn't need it. Let me check more carefully — let me look at handle_watch to understand the flow and all the tests that DO touch global state:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1332,1430p' src/watch.rs ✓ (5ms)
+
+Now let me look at the handle_watch_bare_sets_lint_and_test test that panics:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1921,1990p' src/watch.rs ✓ (4ms)
+
+The test handle_watch_bare_sets_lint_and_test already has #[serial] and calls clear_watch_command() at start and end. The real problem is that #[serial] only works within the same test binary, and run_watch_command_pass_with_set_watch and other tests also call into WATCH_COMMANDS. If another test binary has tests touching the same static, there could be issues.
+
+But wait — all these tests are in src/watch.rs and would be in the same binary. The real risk is if clear_watch_command() panics due to a poisoned lock. Let me check how rw_write_or_recover and `rw_read_or_recover` work:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rw_write_or_recover\|rw… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,35p' src/watch.rs ✓ (4ms)
+  2 tools completed in 9.0s (2 ✓)
+
+OK, so the lock recovery is already in place. The tests already have #[serial]. The issue is subtler. Let me think about what could actually cause the panic.
+
+The panic in CI is in handle_watch_bare_sets_lint_and_test. Let me check if handle_watch can panic:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unwrap()\|panic!\|expec… ✓ (5ms)
+
+Lines 1595 and 1614 have explicit panic!() calls in tests — those are tests that use set_watch_command and then check the global state. They're already #[serial].
+
+Now let me understand the real race condition scenario. cargo test runs tests in the same binary with multiple threads by default. #[serial] from serial_test ensures serial execution within the same binary. So these tests should be fine IF all tests touching global state have #[serial].
+
+Let me check if there are tests in OTHER files that touch watch commands:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_watch_command\|get… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "watch" tests/integrati… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]" src/tool_wra… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B5 -A20 "clear_watch_comma… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1440,1480p' src/tool_wra… ✓ (4ms)
+  5 tools completed in 16.8s (5 ✓)
+
+Found it! There are tests in tool_wrappers.rs that also touch WATCH_COMMANDS. Let me find them all:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "clear_watch_command\|se… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[serial\]\|#\[test\]\… ✓ (5ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Let me find the actual auto_check tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[serial\]\|#\[tokio::… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1470p' src/tool_wra… ✓ (5ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Good — the tool_wrappers.rs tests all have #[serial] AND clean up. The serial_test crate serializes tests with the default #[serial] group across ALL tests in the same binary, so these tests in tool_wrappers.rs and watch.rs would be serialized together.
+
+But wait — there's a critical subtlety. The #[serial] tests serialize against each other, but non-#[serial] tests can still run concurrently with them in the default serial group configuration. Let me verify...
+
+Actually, serial_test guarantees that #[serial] tests in the default group run one at a time AND do not overlap with non-serial tests that happen to share state. The problem is tests that DON'T have #[serial] but still access the global state can run in parallel with each other AND with the serial tests (depending on timing).
+
+Wait no, that's not right. `#[serial]` tests wait for all parallel tests to finish before running. But the issue is: if a non-serial test runs, it doesn't wait for serial tests. Actually, let me re-check: serial_test does ensure mutual exclusion between #[serial] tests and non-serial tests in the same module... no, it only serializes the #[serial]-annotated ones. Non-serial tests run freely.
+
+The core issue: if `run_watch_command_pass_with_set_watch (which has #[serial]`) runs, it will be serialized. But if some test WITHOUT #[serial] happens to call into code that indirectly touches WATCH_COMMANDS... Let me check `run_watch_command`:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_watch_comman… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1104,1145p' src/watch.rs ✓ (4ms)
+  2 tools completed in 3.9s (2 ✓)
+
+`run_watch_command takes a cmd string directly — it does NOT touch WATCH_COMMANDS` global state. So tests like test_run_watch_command_success that call `run_watch_command("echo hello") are fine without #[serial]`.
+
+Now let me carefully map out the actual problem. Let me check what the panic actually looks like:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- handle_watch_bare_… ✓ (171ms)
+
+It passes locally. The flakiness is intermittent. Let me think about what could cause it:
+
+1. All WATCH_COMMANDS-touching tests in watch.rs and `tool_wrappers.rs have #[serial]` — they should serialize properly within the same binary.
+2. The RwLock poison recovery is in place.
+3. `#[serial] in serial_test` does work across the entire binary, not just per-module.
+
+The remaining attack surface: **handle_watch calls `detect_watch_all_phases()` which is pure (no global state), but then it calls set_watch_commands which mutates global state**. If handle_watch is called from a #[serial] test context, this is fine. But what if there's a panic INSIDE the test before cleanup?
+
+Actually, let me re-read the task description more carefully. The task says to add a **drop guard** for cleanup. That's the real fix — if a test panics (assertion failure) after setting global state but before clear_watch_command(), the global state remains dirty and poisons subsequent tests.
+
+Let me verify: with #[serial], if test A panics, does test B still run? Yes — serial_test catches the panic and runs the next serial test. But now the global state from test A is still dirty. If test B calls clear_watch_command() at its start, it should be fine. But if it doesn't...
+
+Let me check which tests DON'T call clear_watch_command() at the start:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (60 lines) ✓ (26ms)
+
+Now let me also check tool_wrappers.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (57 lines) ✓ (23ms)
+
+Now I have a clear picture. Let me create a plan:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

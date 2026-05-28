@@ -1,0 +1,287 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the watch tests and the global state they use.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WATCH_COMMANDS" src/wat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]" src/watch.rs ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1430,1470p' src/watch.rs ✓ (4ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now let me see ALL the tests and identify which ones touch global state:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1434,2732p' src/watch.rs ✓ (19ms)
+
+That was truncated. Let me get the full test section by finding all tests that touch global state:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_watch_command\|set_… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[serial\]" src/watch.… ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me get a clear view of which tests touch global state but are missing #[serial] or cleanup. Let me extract each test function name along with whether it has #[serial], and whether it calls any of the global-state functions:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (37 lines) ✓ (28ms)
+
+Interesting! The script says ALL tests touching global state are missing #[serial], but grep found #[serial] annotations. Let me check the issue - the #[serial] might be in the wrong location relative to my script's parsing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1545,1620p' src/watch.rs ✓ (4ms)
+
+I see - the tests DO already have #[serial]. My Python script had a bug where it was parsing wrong. Let me verify more carefully:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (56 lines) ✓ (28ms)
+
+Now I have a clear picture. Two tests touch global state but lack #[serial]:
+1. `auto_detect_watch_command_returns_lint_and_test_in_rust_project` (L1795)
+2. detect_watch_all_command_returns_lint_and_test_for_rust (L1819)
+
+And many serial tests don't have clear_watch_command() at both start AND end. Let me also note that `test_build_watch_fix_prompt has #[serial]` unnecessarily (no global state usage).
+
+Now let me look at the specific tests that need fixing and the ones that need the cleanup pattern:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1793,1860p' src/watch.rs ✓ (4ms)
+
+Now let me check auto_detect_watch_command and detect_watch_all_command to see if they actually write global state:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn auto_detect_watch_co… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1287,1330p' src/watch.rs ✓ (4ms)
+  2 tools completed in 7.2s (2 ✓)
+
+OK, auto_detect_watch_command and detect_watch_all_command and detect_watch_all_phases are **read-only** — they don't write to WATCH_COMMANDS. However they do read from current_dir() which could theoretically be affected, but they don't touch the global. The task says "ALL must be serialized" for these functions, but actually these don't touch global mutable state. Still, the task is clear — let's add #[serial] to be safe (they could be impacted by other tests changing watch state concurrently, even if they themselves don't write it).
+
+Now let me plan the full implementation:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 19.6s (4 ✓)
+
+Let me now read the full tests section to understand every test I need to modify:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1434,1444p' src/watch.rs ✓ (3ms)
+
+Let me see the exact area where I need to add the helper, and all tests that need modification. Let me read the tests section in chunks to understand each test:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1434,1443p' src/watch.rs ✓ (3ms)
+
+Now, let me implement the changes. I'll use `sub_agent` to do the full implementation since it involves many edits across the test section:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me see the exact test bodies for all tests that need modification:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1545,1720p' src/watch.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1720,2000p' src/watch.rs ✓ (6ms)
+  2 tools completed in 8.7s (2 ✓)
+
+Now I have a complete picture. Let me implement all the changes:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1434..1444 ✓ (1ms)
+
+Now let me implement all changes at once. First the helper, then convert all tests:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (9 → 30 lines)
+        // #[serial] to prevent flaky failures from parallel test execution. The
+        // `serial_test` crate ensures these tests run one at a time. Any test calling
+        // set_watch_command, set_watch_commands, get_watch_command, get_watch_commands,
+  -     // clear_watch_command, or handle_watch must use #[serial].
+  +     // clear_watch_command, handle_watch, detect_watch_all_phases,
+  +     // detect_watch_all_command, or auto_detect_watch_command must use #[serial].
+  + 
+  +     /// Drop guard that clears global watch state on drop (even on panic).
+  +     /// Use via `with_clean_watch_state` to ensure every serial test starts
+  +     /// and ends with a clean `WATCH_COMMANDS`.
+  +     struct WatchStateGuard;
+  + 
+  +     impl Drop for WatchStateGuard {
+  +         fn drop(&mut self) {
+  +             clear_watch_command();
+  +         }
+  +     }
+  + 
+  +     /// Run a closure with clean global watch state. Clears WATCH_COMMANDS
+  +     /// before the closure runs, and clears again on return — even if the
+  ... (6 more lines)
+ ✓ (13.5s)
+
+Good, the helper compiles but isn't used yet. Now I need to convert all the serial tests. Let me do them one by one:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (71 → 73 lines)
+        #[serial]
+        #[test]
+        fn test_watch_command_none_by_default() {
+  -         // After clearing, there should be no watch command
+  -         clear_watch_command();
+  -         assert!(
+  -             get_watch_command().is_none(),
+  -             "should have no watch command after clear"
+  -         );
+  +         with_clean_watch_state(|| {
+  +             assert!(
+  +                 get_watch_command().is_none(),
+  +                 "should have no watch command after clear"
+  +             );
+  +         });
+        }
+    
+        #[serial]
+        #[test]
+        fn test_watch_command_roundtrip() {
+  ... (100 more lines)
+ ✓ (59.0s)
+
+Now the multi-phase watch tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (46 → 52 lines)
+        #[serial]
+        #[test]
+        fn test_set_get_watch_commands_roundtrip() {
+  -         set_watch_commands(&["cargo clippy", "cargo test"]);
+  -         let cmds = get_watch_commands();
+  -         assert_eq!(cmds.len(), 2);
+  -         assert_eq!(cmds[0], "cargo clippy");
+  -         assert_eq!(cmds[1], "cargo test");
+  -         clear_watch_command();
+  -         assert!(get_watch_commands().is_empty());
+  +         with_clean_watch_state(|| {
+  +             set_watch_commands(&["cargo clippy", "cargo test"]);
+  +             let cmds = get_watch_commands();
+  +             assert_eq!(cmds.len(), 2);
+  +             assert_eq!(cmds[0], "cargo clippy");
+  +             assert_eq!(cmds[1], "cargo test");
+  +             clear_watch_command();
+  +             assert!(get_watch_commands().is_empty());
+  +         });
+        }
+  ... (59 more lines)
+ ✓ (59.0s)
+
+Now the `test_run_watch_after_prompt_empty_commands_returns_passed` test:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (12 → 13 lines)
+        #[serial]
+        #[test]
+        fn test_run_watch_after_prompt_empty_commands_returns_passed() {
+  -         // When no watch commands are set, should return passed immediately
+  -         clear_watch_command();
+  -         assert!(
+  -             get_watch_commands().is_empty(),
+  -             "precondition: no commands set"
+  -         );
+  -         // The function checks get_watch_commands() first and returns a passing
+  -         // WatchResult if empty. We verify the guard condition.
+  +         with_clean_watch_state(|| {
+  +             // When no watch commands are set, should return passed immediately
+  +             assert!(
+  +                 get_watch_commands().is_empty(),
+  +                 "precondition: no commands set"
+  +             );
+  +             // The function checks get_watch_commands() first and returns a passing
+  +             // WatchResult if empty. We verify the guard condition.
+  +         });
+  ... (1 more lines)
+ ✓ (1m 1s)
+
+Now the two tests missing #[serial] — `auto_detect_watch_command_returns_lint_and_test_in_rust_project and detect_watch_all_command_returns_lint_and_test_for_rust`:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (46 → 52 lines)
+  +     #[serial]
+        #[test]
+        fn auto_detect_watch_command_returns_lint_and_test_in_rust_project() {
+  -         // We're running from a directory with Cargo.toml, so this should detect Rust
+  -         // After the Day 58 change, auto-detect defaults to lint+test (not test-only)
+  -         let cmd = auto_detect_watch_command();
+  -         assert!(
+  -             cmd.is_some(),
+  -             "should detect a watch command in a Rust project"
+  -         );
+  -         let cmd = cmd.unwrap();
+  -         assert!(
+  -             cmd.contains("clippy"),
+  -             "auto-detect should include lint (clippy): {cmd}"
+  -         );
+  -         assert!(
+  -             cmd.contains("cargo test"),
+  -             "auto-detect should include test: {cmd}"
+  -         );
+  -         assert!(
+  ... (71 more lines)
+ ✓ (58.8s)
+
+Now the handle_watch_all_sets_combined_command test:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (37 → 35 lines)
+        #[serial]
+        #[test]
+        fn handle_watch_all_sets_combined_command() {
+  -         // Clear any previous watch command
+  -         clear_watch_command();
+  -         // Run /watch all — since we're in a Rust project, it should set separate phases
+  -         handle_watch("/watch all");
+  -         let cmd = get_watch_command();
+  -         assert!(
+  -             cmd.is_some(),
+  -             "watch command should be set after /watch all"
+  -         );
+  -         let cmd = cmd.unwrap();
+  -         assert!(
+  -             cmd.contains("clippy") && cmd.contains("cargo test"),
+  -             "watch all should set lint && test: {cmd}"
+  -         );
+  -         // Verify multi-phase: should have 2 separate commands
+  -         let phases = get_watch_commands();
+  -         assert_eq!(
+  ... (48 more lines)
+ ✓ (59.4s)
+
+Now `handle_watch_lint_sets_lint_only_command`:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (24 → 22 lines)
+        #[serial]
+        #[test]
+        fn handle_watch_lint_sets_lint_only_command() {
+  -         // Clear any previous watch command
+  -         clear_watch_command();
+  -         // Run /watch lint — since we're in a Rust project, it should set clippy only
+  -         handle_watch("/watch lint");
+  -         let cmd = get_watch_command();
+  -         assert!(
+  -             cmd.is_some(),
+  -             "watch command should be set after /watch lint"
+  -         );
+  -         let cmd = cmd.unwrap();
+  -         assert!(
+  -             cmd.contains("clippy"),
+  -             "watch lint should set lint command: {cmd}"
+  -         );
+  -         assert!(
+  -             !cmd.contains("cargo test"),
+  -             "watch lint should NOT include test: {cmd}"
+  ... (22 more lines)
+ ✓ (59.4s)
+
+Now `handle_watch_bare_sets_lint_and_test`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (27 → 25 lines)
+        #[serial]
+        #[test]
+        fn handle_watch_bare_sets_lint_and_test() {
+  -         // Clear any previous watch command
+  -         clear_watch_command();
+  -         // Run bare /watch — should now set lint+test as separate phases
+  -         handle_watch("/watch");
+  -         let cmd = get_watch_command();
+  -         assert!(
+  -             cmd.is_some(),
+  -             "watch command should be set after bare /watch"
+  -         );
+  -         let cmd = cmd.unwrap();
+  -         assert!(
+  -             cmd.contains("clippy") && cmd.contains("cargo test"),
+  -             "bare /watch should set lint && test: {cmd}"
+  -         );
+  -         // Verify multi-phase
+  -         let phases = get_watch_commands();
+  -         assert_eq!(
+  ... (28 more lines)

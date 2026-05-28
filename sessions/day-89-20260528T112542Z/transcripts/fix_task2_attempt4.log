@@ -1,0 +1,78 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of help_data.rs and what needs to be updated.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "todo\|board\|TODO" src/… ✓ (6ms)
+
+Now let me see the full todo help text section:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1150..1175 ✓ (1ms)
+
+Now let me also check the current state of commands_todo.rs to understand the implementation:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TODO_MD\|SESSION_PLAN\|… ✓ (5ms)
+
+Good - the implementation already uses session_plan/ as the source of truth. The only thing missing is updating help_data.rs. Let me now update the help text to reflect the file-based IDs and session_plan-based approach:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (8 → 11 lines)
+  -              Board (persistent TODO.md Kanban):\n\
+  -              \x20 /todo board              Show TODO.md board\n\
+  -              \x20 /todo board init [goal]  Create TODO.md\n\
+  -              \x20 /todo board add <section> <task>  Add task to section\n\
+  -              \x20 /todo board move <task> <section> Move task\n\
+  -              \x20 /todo board done <task>  Mark task done\n\
+  -              \x20 /todo board goal <text>  Set current goal\n\
+  -              \x20 /todo board evidence <text>  Add to evidence log",
+  +              Board (Kanban view of session_plan/ tasks):\n\
+  +              \x20 /todo board              Show board (reads session_plan/task_*.md)\n\
+  +              \x20 /todo board init [goal]  Create session_plan/ with optional goal\n\
+  +              \x20 /todo board add <title>  Add task (creates task_NN.md, status: backlog)\n\
+  +              \x20 /todo board move <task_id> <status>  Update status in task file\n\
+  +              \x20   e.g. /todo board move task_02 active\n\
+  +              \x20 /todo board done <task_id>  Set task status to done\n\
+  +              \x20 /todo board goal <text>  Write/update session_plan/goal.md\n\
+  +              \x20 /todo board evidence <text>  Append to session_plan/evidence.md\n\n\
+  +              Task IDs are file-based (task_01, task_02, etc.) derived from filenames.\n\
+  +              Valid statuses: backlog, active, done.",
+ ✓ (58.9s)
+
+Now let me verify the change looks correct:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1150..1180 ✓ (1ms)
+
+Good. Now let me also check if the short description for "todo" mentions TODO.md:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "todo" src/help_data.rs ✓ (4ms)
+
+The short description at line 1312 is fine — it doesn't reference TODO.md. Now let me also check if there are any other references to "TODO.md" in help_data.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TODO\.md" src/help_data… ✓ (3ms)
+
+No more references to TODO.md. Now let's run the required checks:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (43.3s)
+  3 tools completed in 1m 11s (3 ✓)
+
+All checks pass. Let me verify the diff to confirm exactly what changed:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/help_data.rs ✓ (5ms)
+
+The fix is complete. Here's what was changed:
+
+`src/help_data.rs` — Updated the /todo board help text to reflect the file-based session_plan architecture:
+
+1. Changed section header from "Board (persistent TODO.md Kanban)" → "Board (Kanban view of session_plan/ tasks)"
+2. Updated /todo board description to mention it reads `session_plan/task_*.md`
+3. Updated /todo board init to say "Create session_plan/ with optional goal" instead of "Create TODO.md"
+4. Changed /todo board add <section> <task> → /todo board add <title> with note about creating `task_NN.md`
+5. Changed /todo board move <task> <section> → /todo board move <task_id> <status> with an example (`/todo board move task_02 active`)
+6. Changed /todo board done <task> → /todo board done <task_id>
+7. Updated goal/evidence to reference session_plan/goal.md and session_plan/evidence.md
+8. Added explanatory footer about file-based task IDs and valid statuses
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
