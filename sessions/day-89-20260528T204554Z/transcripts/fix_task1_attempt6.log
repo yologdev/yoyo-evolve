@@ -1,0 +1,191 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement, then implement it.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 7.0s (4 ✓)
+
+Let me scan the source files for potential improvements - areas with code duplication, missing error handling, or performance issues.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (34.9s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (3m 30s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 6s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 6m 29s (4 ✓)
+
+Good analysis. The most impactful improvement is deduplicating the inline char-boundary truncation pattern across 14 sites. This is a robustness win (prevents future UTF-8 panics from hand-rolled patterns) and a maintainability win (DRY). Let me implement it.
+
+First, let me examine the existing utilities and the inline patterns:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ search 'fn safe_truncate|fn truncate_with_ellipsis|fn truncate' in src/format/mod.rs ✓ (2ms)
+  ▶ search 'safe_truncate|truncate_with_ellipsis|pub fn truncate' in src/format/mod.rs ✓ (3ms)
+  ▶ search 'truncat' in src/format/mod.rs ✓ (3ms)
+  ▶ read src/format/mod.rs:224..254 ✓ (1ms)
+  5 tools completed in 11.3s (5 ✓)
+
+Now let me find all 14 inline sites that duplicate this pattern:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_char_boundary' in src (*.rs) ✓ (7ms)
+
+Let me examine each inline site to understand the exact pattern used:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:210..260 ✓ (1ms)
+  ▶ read src/commands_bg.rs:455..470 ✓ (0ms)
+  ▶ read src/commands_git.rs:505..520 ✓ (1ms)
+  ▶ read src/commands_git.rs:858..873 ✓ (1ms)
+  ▶ read src/commands_retry.rs:237..252 ✓ (1ms)
+  ▶ read src/commands_session.rs:265..280 ✓ (1ms)
+  ▶ read src/prompt_utils.rs:224..239 ✓ (0ms)
+  ▶ read src/prompt_utils.rs:238..243 ✓ (0ms)
+  ▶ read src/repl.rs:1082..1097 ✓ (1ms)
+  ▶ read src/tool_wrappers.rs:600..615 ✓ (1ms)
+  ▶ read src/commands_revisit.rs:322..337 ✓ (1ms)
+  ▶ read src/commands_revisit.rs:338..353 ✓ (0ms)
+  ▶ read src/commands_skill.rs:210..225 ✓ (0ms)
+  ▶ read src/format/output.rs:275..290 ✓ (1ms)
+  14 tools completed in 30.4s (14 ✓)
+
+Now I have a clear picture. Let me categorize the patterns:
+
+1. **Simple byte truncation** (replaceable with safe_truncate): `commands_bg.rs:217,246, repl.rs:1087, format/output.rs:281`
+2. **Byte truncation + ellipsis suffix** (new helper safe_truncate_with_msg): `commands_bg.rs:460, commands_retry.rs:243, commands_revisit.rs:328,343, commands_skill.rs:215`
+3. **Byte truncation + custom message on owned String**: commands_git.rs:511,864, `tool_wrappers.rs:607`
+4. **Byte truncation + word-boundary refinement**: commands_session.rs:271, prompt_utils.rs:230
+
+Let me now implement the improvement. I'll add a safe_truncate_with_msg helper to `format/mod.rs` and replace all the inline patterns.
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:234..239 ✓ (1ms)
+
+Now let me add two new helpers after safe_truncate:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (4 → 31 lines)
+        &s[..b]
+  + }
+  + 
+  + /// Truncate a string at a safe UTF-8 byte boundary and append a suffix (e.g. `"…"`).
+  + /// Returns the original string unchanged if it fits within `max_bytes`.
+  + pub fn safe_truncate_with_suffix(s: &str, max_bytes: usize, suffix: &str) -> String {
+  +     if s.len() <= max_bytes {
+  +         return s.to_string();
+  +     }
+  +     let truncated = safe_truncate(s, max_bytes);
+  +     format!("{truncated}{suffix}")
+  + }
+  + 
+  + /// Truncate an owned `String` in-place at a safe UTF-8 byte boundary and append a suffix.
+  + /// No-op if the string fits within `max_bytes`.
+  + pub fn safe_truncate_in_place(s: &mut String, max_bytes: usize, suffix: &str) {
+  +     if s.len() <= max_bytes {
+  +         return;
+  +     }
+  +     let boundary = {
+  ... (11 more lines)
+ ✓ (13.9s)
+
+Good, the helpers are added. Now I need to replace all the inline patterns. Let me do this file by file.
+
+1. commands_bg.rs - Three sites
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:1..6 ✓ (1ms)
+  ▶ search 'use crate::format' in src/commands_bg.rs ✓ (2ms)
+  ▶ edit src/commands_bg.rs (1 → 1 lines)
+  - use crate::format::{BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW};
+  + use crate::format::{safe_truncate, safe_truncate_with_suffix, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW};
+ ✓ (13.8s)
+  3 tools completed in 23.7s (3 ✓)
+
+Expected. Now replace the inline patterns in commands_bg.rs:
+
+Site 1 (line ~217): stdout buffer truncation
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_bg.rs (10 → 5 lines)
+                                if text.len() <= remaining {
+                                    out.push_str(&text);
+                                } else {
+  -                                 // Find a safe char boundary
+  -                                 let mut b = remaining;
+  -                                 while b > 0 && !text.is_char_boundary(b) {
+  -                                     b -= 1;
+  -                                 }
+  -                                 out.push_str(&text[..b]);
+  +                                 out.push_str(safe_truncate(&text, remaining));
+                                }
+ ✓ (13.8s)
+
+Site 2 (stderr buffer truncation - same pattern):
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:233..248 ✓ (1ms)
+  ▶ edit src/commands_bg.rs (9 → 5 lines)
+                                if text.len() <= remaining {
+                                    out.push_str(&text);
+                                } else {
+  -                                 let mut b = remaining;
+  -                                 while b > 0 && !text.is_char_boundary(b) {
+  -                                     b -= 1;
+  -                                 }
+  -                                 out.push_str(&text[..b]);
+  +                                 out.push_str(safe_truncate(&text, remaining));
+                                }
+ ✓ (13.9s)
+  2 tools completed in 20.3s (2 ✓)
+
+Site 3 (command display with ellipsis):
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_bg.rs:447..462 ✓ (1ms)
+  ▶ edit src/commands_bg.rs (10 → 5 lines)
+            cmd.to_string()
+        } else {
+  -         // Safe char boundary truncation
+  -         let mut b = max.saturating_sub(1);
+  -         while b > 0 && !cmd.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &cmd[..b])
+  +         safe_truncate_with_suffix(cmd, max.saturating_sub(1), "…")
+        }
+    }
+ ✓ (13.5s)
+  2 tools completed in 19.2s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `safe_truncate_in_place` is never used[0m
+   [1m[94m--> [0msrc/format/mod.rs:249:8
+    [1m[94m|[0m
+[1m[94m249[0m [1m[94m|[0m pub fn safe_truncate_in_place(s: &mut String, max_bytes: usize, suffix: &str) {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix the lint failure. The safe_truncate_in_place function is unused - I need to either use it or remove it. Let me check if any of the remaining inline patterns need it.
+  ▶ search 'is_char_boundary' in src (*.rs) ✓ (8ms)
+
+The commands_git.rs sites truncate owned Strings in place - those are candidates for safe_truncate_in_place. Let me check them:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:506..521 ✓ (1ms)
+
+Yes, that's a perfect use of safe_truncate_in_place. Let me also check the other one:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:858..873 ✓ (1ms)
+
+This one uses safe_truncate (on a &str, not in

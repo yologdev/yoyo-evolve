@@ -1,0 +1,126 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create a focused plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ gh issue view 433 --repo yologdev/yoyo-evolve 2>/dev/null | head -120 ✓ (514ms)
+  ▶ $ gh issue view 433 --repo yologdev/yoyo-evolve --comments 2>/dev/null ✓ (458ms)
+  4 tools completed in 6.6s (4 ✓)
+
+Now let me understand the current state of commands_todo.rs — the assessment says the Day 89 morning session already partially addressed #433. Let me check what was done.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ head -80 src/commands_todo.rs ✓ (48ms)
+  ▶ $ grep -n "handle_todo_board\|BoardTask\|session_plan\|TODO\.md\|board" src/comman… ✓ (4ms)
+  ▶ $ wc -l src/commands_todo.rs ✓ (7ms)
+  3 tools completed in 6.5s (3 ✓)
+
+Good — the morning session already rewrote /todo board to read from `session_plan/task_*.md`. But the community comment from @voku emphasizes: (1) use file-based IDs (task_02), not title matching, (2) board is a projection, not storage, (3) no TODO.md or board.md. Let me check if the current implementation follows these constraints.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '458,650p' src/commands_todo.rs ✓ (4ms)
+
+Good, the current implementation already uses file-based task IDs (`task_02), reads from session_plan/`, and the board is a view/projection. Let me check for any remaining issues — is there still title-based matching anywhere?
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "normalize_task_id\|create_task_file\|update_task_status" src/commands_t… ✓ (3ms)
+
+Good — the implementation already uses file-based task IDs as @voku requested. The morning session seems to have done a solid job. Let me check the comment's specific concern — is there any title-based matching happening?
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '391,433p' src/commands_todo.rs ✓ (3ms)
+
+The implementation looks solid — file-based IDs, no title matching, board is a view. #433 is largely addressed. Now let me focus on planning the best use of 3 task slots.
+
+Let me check what gaps to work on:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the /quick duplicate bug mentioned in assessment (2 lines) ✓ (3ms)
+  ▶ $ # Check for duplicate in KNOWN_COMMANDS (2 lines) ✓ (3ms)
+  ▶ $ sed -n '52,130p' src/commands.rs ✓ (3ms)
+  ▶ $ sed -n '130,160p' src/commands.rs ✓ (3ms)
+  4 tools completed in 10.6s (4 ✓)
+
+Found the duplicate — /quick appears at line ~121 and again near line ~140. Let me think about the best tasks.
+
+Now let me think about self-driven improvements. The assessment mentions 1,366 unwrap() calls outside tests, and ~119 unguarded byte-slice operations. But those are sweep tasks, not high-impact. Let me look at competitive gaps.
+
+One meaningful self-driven improvement: **prompt caching / cost optimization**. Claude API supports prompt caching which can dramatically reduce costs. Let me check if yoagent supports it.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src -name "*.rs" -path "*/yoagent-*" 2>/dev/null | head -… ✓ (46ms)
+  ▶ $ grep -rl "cache\|caching\|cache_control" ~/.cargo/registry/src/*/yoagent-*/src/ … ✓ (5ms)
+  ▶ $ grep -n "cache" ~/.cargo/registry/src/*/yoagent-0.8.3/src/types.rs 2>/dev/null |… ✓ (3ms)
+  ▶ $ grep -n "CacheStrategy\|cache_strategy\|PromptCaching\|ContextConfig" ~/.cargo/r… ✓ (3ms)
+  ▶ $ sed -n '205,280p' ~/.cargo/registry/src/*/yoagent-0.8.3/src/types.rs 2>/dev/null ✓ (4ms)
+  5 tools completed in 11.4s (5 ✓)
+
+yoagent already has CacheConfig with auto caching. Let me check if yoyo is using it:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CacheConfig\|cache_config\|CacheStrategy\|cache_strategy" src/agent_bui… ✓ (4ms)
+
+Prompt caching is already enabled. Good.
+
+Let me check what other self-driven improvements would be high-impact. Let me look at the cost display to see if we're showing cache stats:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "cache_read\|cache_write\|cache_hit\|cache_stats" src/format/cost.rs | h… ✓ (4ms)
+
+Caching is well-integrated. Let me think about what's genuinely high-impact.
+
+Let me look at the most impactful self-driven work. Let me consider:
+
+1. **Fix the /quick duplicate in KNOWN_COMMANDS** — trivial but sloppy (assessment bug #1)
+2. Improve error recovery — a competitive edge area
+3. Better context management — something users would notice
+
+Let me think about what a real developer hitting yoyo for the first time would struggle with. Let me check if there's anything related to the /help system or discoverability:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if /help search works well — look at the implementat… (2 lines) ✓ (3ms)
+
+Let me think about a genuinely competitive improvement. Looking at the assessment:
+
+• 88 slash commands — but is the help discoverable? Do new users know what's possible?
+• The command_arg_hint and completions system — does it guide users well?
+
+Actually, let me look at something more impactful. The assessment notes "No semantic codebase indexing" as a gap. While full embeddings is out of scope, there's something practical: **improving the /outline and /map commands to be more useful for code navigation**. But that's already decent.
+
+Let me think about what genuinely matters for Day 89. Looking at my trajectory — 10/10 sessions succeeded, CI is clean, 3,529 tests passing. The codebase is mature. Let me pick tasks that close competitive gaps or improve quality:
+
+1. #433 follow-up — @voku's comment adds important constraints. The morning session addressed the core issue but let me verify the comment's specific points are met.
+2. **Self-driven: Fix the /quick duplicate + deduplicate KNOWN_COMMANDS validation** — small but shows code quality.
+3. **Self-driven: Something impactful for competitive positioning.**
+
+Let me think about what competitive feature would be most impactful. Looking at the assessment gaps:
+
+• "No IDE integration" — can't do in one task
+• "No Agent SDK" — can't do in one task  
+• "No semantic codebase indexing" — partial improvement possible
+
+Actually, let me think about a different angle. What do users struggle with that Claude Code handles well? **Context awareness** — Claude Code automatically understands project structure, finds relevant files. Yoyo has /context, /map, /add but the automatic part could be stronger. When a user asks about a function, does yoyo automatically find the right files?
+
+Let me look at what happens when a prompt is run — does the system prompt include repo map?
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "repo_map\|generate_repo_map" src/context.rs src/agent_builder.rs src/cl… ✓ (3ms)
+  ▶ $ grep -rn "repo_map\|generate_repo_map" src/ | head -15 ✓ (6ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Good — the repo map is injected into the system prompt. Let me check the limit:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '277,330p' src/commands_map.rs ✓ (3ms)
+
+OK, the architecture is already solid for context. Let me think about what would actually help users most.
+
+Let me check something more specific — the unwrap() audit. The assessment says 1,366 calls but many are in tests. What about production code?
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Count unwrap() calls outside test modules (rough estimate) (2 lines) ✓ (8ms)
+  ▶ $ # More accurate: count unwrap() only in non-test code (22 lines) ✓ (55ms)
+  2 tools completed in 9.8s (2 ✓)
+
+80 non-test unwrap() calls. That's a real robustness concern but sweeping all 80 is a multi-session effort. Let me focus on the most crash-prone files.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find which files have the most non-test unwrap() calls (23 lines) ✓ (42ms)
+
+`symbols.rs has 72 non-test unwrap()` calls — that's a potential crash surface in symbol extraction (which powers /map, /outline, context injection). Let me check what kind of unwraps:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What are the unwraps in symbols.rs (non-test)? (11 lines) ✓ (20ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
