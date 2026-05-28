@@ -234,6 +234,16 @@ pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
     &s[..b]
 }
 
+/// Truncate a string at a safe UTF-8 byte boundary and append a suffix (e.g. `"…"`).
+/// Returns the original string unchanged if it fits within `max_bytes`.
+pub fn safe_truncate_with_suffix(s: &str, max_bytes: usize, suffix: &str) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let truncated = safe_truncate(s, max_bytes);
+    format!("{truncated}{suffix}")
+}
+
 pub fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((idx, _)) => format!("{}…", &s[..idx]),

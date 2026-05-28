@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
-use crate::format::{BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW};
+use crate::format::{
+    safe_truncate, safe_truncate_with_suffix, BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW,
+};
 use crate::sync_util::lock_or_recover;
 
 /// Maximum bytes of output to buffer per background job (256KB, same as StreamingBashTool).
@@ -212,12 +214,7 @@ async fn run_background_command(
                             if text.len() <= remaining {
                                 out.push_str(&text);
                             } else {
-                                // Find a safe char boundary
-                                let mut b = remaining;
-                                while b > 0 && !text.is_char_boundary(b) {
-                                    b -= 1;
-                                }
-                                out.push_str(&text[..b]);
+                                out.push_str(safe_truncate(&text, remaining));
                             }
                         }
                     }
@@ -242,11 +239,7 @@ async fn run_background_command(
                             if text.len() <= remaining {
                                 out.push_str(&text);
                             } else {
-                                let mut b = remaining;
-                                while b > 0 && !text.is_char_boundary(b) {
-                                    b -= 1;
-                                }
-                                out.push_str(&text[..b]);
+                                out.push_str(safe_truncate(&text, remaining));
                             }
                         }
                     }
@@ -455,12 +448,7 @@ fn truncate_command(cmd: &str, max: usize) -> String {
     if cmd.len() <= max {
         cmd.to_string()
     } else {
-        // Safe char boundary truncation
-        let mut b = max.saturating_sub(1);
-        while b > 0 && !cmd.is_char_boundary(b) {
-            b -= 1;
-        }
-        format!("{}…", &cmd[..b])
+        safe_truncate_with_suffix(cmd, max.saturating_sub(1), "…")
     }
 }
 
