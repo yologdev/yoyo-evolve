@@ -1,0 +1,196 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code and what was already done.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/watch.rs ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good, the flaky test fix is already in place. Now let me find all the byte-indexing sites in watch.rs that need hardening:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]\|\[.*\.\.\]'… ✓ (3ms)
+
+Now let me read the relevant sections to understand each byte-indexing site:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '220,260p' src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '400,440p' src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,435p' src/watch.rs ✓ (3ms)
+  3 tools completed in 6.7s (3 ✓)
+
+Let me see more of the TypeScript parsing:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '410,460p' src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '415,430p' src/watch.rs ✓ (3ms)
+  2 tools completed in 3.9s (2 ✓)
+
+I need to see the exact line references. Let me look at lines around 424-427:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=422 && NR<=430' src/wat… ✓ (3ms)
+
+Let me get the full picture with actual line numbers:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[' src/watch.rs | grep… ✓ (3ms)
+
+Now let me read each section in detail to understand the context:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=235 && NR<=250' src/wat… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=570 && NR<=615' src/wat… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=605 && NR<=615' src/wat… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=600 && NR<=620' src/wat… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=604 && NR<=614' src/wat… ✓ (3ms)
+  5 tools completed in 12.1s (5 ✓)
+
+Let me just read the full relevant sections more broadly:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/watch.rs | awk 'NR>=6… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/watch.rs | awk 'NR>=6… ✓ (4ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me also check line 321:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/watch.rs | awk 'NR>=3… ✓ (4ms)
+
+Line 321 is slicing a Vec<&str> (not a string) so that's fine - it's element indexing, not byte indexing.
+
+Now let me look at the TypeScript section more carefully with the exact lines around 424-428:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/watch.rs | awk 'NR>=4… ✓ (4ms)
+
+Now I have a complete picture. Let me also check line 678:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/watch.rs | awk 'NR>=6… ✓ (4ms)
+
+Now let me find where the existing tests are so I know where to add new ones:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[test\]' src/watch.rs ✓ (3ms)
+
+Let me see the end of the test module to find the last test and the closing brace:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/watch.rs ✓ (2ms)
+
+Now let me see a few existing test names to understand pattern:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn parse_rust\|fn parse… ✓ (3ms)
+
+Now I have a complete understanding. Let me plan and implement all the changes:
+
+1. Add safety comments to all byte-indexing sites explaining why they're safe
+2. Add `is_char_boundary()` guards for any arithmetic positions
+3. Add multi-byte UTF-8 tests for all three parsers
+
+Let me analyze each site:
+
+Line 244: &rest[..bracket_end] — `bracket_end from rest.find(']'), ASCII ]` → safe
+Line 245: rest[bracket_end + 1..] — bracket_end is position of ] (1 byte ASCII), +1 is next char boundary → safe  
+Line 415: trimmed[paren_pos..].find(')') — paren_pos from find('('), ASCII → safe
+Line 416: `&trimmed[paren_pos + paren_end + 1..] — both from find()` of ASCII chars, arithmetic adds only 1 → safe
+Line 424: &rest[..colon] — colon from rest.find(": "), ASCII → safe
+Line 426: rest[colon + 2..] — colon from find(": "), +2 for the 2 ASCII chars → safe
+Line 427: trimmed[..paren_pos] — paren_pos from find('('), ASCII → safe
+Line 428: `&trimmed[paren_pos + 1..paren_pos + paren_end]` — arithmetic on find results of ASCII chars → safe
+Line 580: &rest[..dash_pos] and rest[dash_pos + 3..] — `dash_pos from find(" - ")`, +3 for 3 ASCII chars → safe
+Line 604: `parts[2..] — this is a Vec<&str>` slice, not string indexing → not relevant
+**Line 612**: &rest[colon_pos + 9..] — colon_pos from `find(": error: ")` which is 9 ASCII chars, +9 → safe
+Line 636: `after_prefix[..quote_end] — quote_end from find('"')`, ASCII → safe
+Line 638: &after_prefix[quote_end + 1..] — quote_end from `find('"')`, +1 → safe
+Line 640: &after_file[line_start + 5..] — `line_start from find("line ")` which is 5 ASCII chars, +5 → safe
+Line 657: `&trimmed[..colon_pos] — colon_pos from find(": ")`, ASCII → safe
+Line 678: trimmed[1..] — hardcoded 1, but guarded by starts_with("E   ") or starts_with("E\t"), so `E is ASCII (1 byte), 1` is a valid boundary → safe
+
+All positions are derived from find() on ASCII patterns. The arithmetic additions are all for ASCII character widths (1-9 bytes of purely ASCII search patterns). These are all inherently safe because ASCII bytes in UTF-8 are always single-byte and thus always at char boundaries. I need to add safety comments and also add the multi-byte UTF-8 tests.
+
+Let me now implement all the changes:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:242..248 ✓ (1ms)
+  ▶ edit src/watch.rs (3 → 5 lines)
+                if let Some(bracket_end) = rest.find(']') {
+  +                 // SAFETY: bracket_end from find(']'); ']' is ASCII so always a char boundary.
+  +                 // bracket_end + 1 is the byte after a single-byte ASCII char, also a boundary.
+                    let code = &rest[..bracket_end];
+                    let msg = rest[bracket_end + 1..].trim_start_matches(':').trim();
+ ✓ (46.9s)
+  2 tools completed in 55.2s (2 ✓)
+
+Now the TypeScript section (around line 415-428, shifted by +2):
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:414..434 ✓ (1ms)
+  ▶ edit src/watch.rs (15 → 23 lines)
+            if let Some(paren_pos) = trimmed.find('(') {
+  +             // SAFETY: paren_pos from find('('); '(' is ASCII, always a char boundary.
+                if let Some(paren_end) = trimmed[paren_pos..].find(')') {
+  +                 // SAFETY: paren_pos + paren_end is position of ')' (ASCII) in original trimmed;
+  +                 // +1 is byte after single-byte ASCII char, always a char boundary.
+                    let after_paren = &trimmed[paren_pos + paren_end + 1..];
+                    // Check for ": error TS" or ": warning TS" pattern
+                    if let Some(rest) = after_paren
+  ···
+                    {
+                        // Try to extract TSxxxx code
+                        if let Some(colon) = rest.find(": ") {
+  +                         // SAFETY: colon from find(": "); ':' and ' ' are ASCII, always char boundaries.
+  +                         // colon + 2 skips two ASCII bytes, also a char boundary.
+                            let code_part = &rest[..colon];
+                            if code_part.starts_with("TS") {
+                                let msg = rest[colon + 2..].trim();
+  +                             // SAFETY: paren_pos from find('('), ASCII char boundary.
+                                let file = trimmed[..paren_pos].to_string();
+  +                             // SAFETY: paren_pos + 1 is byte after '(' (ASCII), paren_pos + paren_end
+  ... (2 more lines)
+ ✓ (47.1s)
+  2 tools completed in 59.0s (2 ✓)
+
+Now the Python section - line 580 area (shifted). Let me find it:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'dash_pos.*find.*" - "' … ✓ (3ms)
+  ▶ read src/watch.rs:588..594 ✓ (1ms)
+  ▶ edit src/watch.rs (3 → 5 lines)
+                let rest = trimmed.strip_prefix("FAILED ").unwrap();
+                let (test_path, msg) = if let Some(dash_pos) = rest.find(" - ") {
+  +                 // SAFETY: dash_pos from find(" - "); space/dash are ASCII, always char boundaries.
+  +                 // dash_pos + 3 skips three ASCII bytes (' ', '-', ' '), also a char boundary.
+                    (&rest[..dash_pos], rest[dash_pos + 3..].trim())
+ ✓ (47.4s)
+  3 tools completed in 57.5s (3 ✓)
+
+Now the mypy colon_pos + 9 site:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'colon_pos + 9' src/watc… ✓ (3ms)
+  ▶ read src/watch.rs:620..628 ✓ (1ms)
+  ▶ edit src/watch.rs (4 → 6 lines)
+                            .or_else(|| {
+                                // Handle `col: error: msg` format (e.g. `10: error: msg`)
+                                if let Some(colon_pos) = rest.find(": error: ") {
+  +                                 // SAFETY: colon_pos from find(": error: ") — 9 ASCII bytes;
+  +                                 // colon_pos + 9 lands right after the matched pattern, a char boundary.
+                                    Some(&rest[colon_pos + 9..])
+ ✓ (47.1s)
+  3 tools completed in 56.8s (3 ✓)
+
+Now the Python traceback section (File "..."):
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'after_prefix\[.*quote_e… ✓ (3ms)
+  ▶ read src/watch.rs:647..661 ✓ (1ms)
+  ▶ edit src/watch.rs (6 → 10 lines)
+                if let Some(quote_end) = after_prefix.find('"') {
+  +                 // SAFETY: quote_end from find('"'); '"' is ASCII, always a char boundary.
+  +                 // quote_end + 1 is byte after single-byte ASCII char, also a char boundary.
+                    let file = after_prefix[..quote_end].to_string();
+                    // Extract line number: ", line 42"
+                    let after_file = &after_prefix[quote_end + 1..];
+                    if let Some(line_start) = after_file.find("line ") {
+  +                     // SAFETY: line_start from find("line "); 5 ASCII bytes,
+  +                     // line_start + 5 lands right after the match, a char boundary.
+                        let line_str = &after_file[line_start + 5..];
+ ✓ (47.4s)
+  3 tools completed in 56.9s (3 ✓)
+
+Now the error type pattern (Pattern 4):
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'error_type.*trimmed\[' … ✓ (3ms)
+  ▶ read src/watch.rs:672..678 ✓ (0ms)
+  2 tools completed in 2.9s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,214 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code and what's needed.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_gi… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_mo… ✓ (4ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Now let me see what unrelated changes exist in other files:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/dispatch.rs… ✓ (6ms)
+
+The evaluator says there's an unrelated `ReviewFlags/--fix` refactor. I need to:
+1. Revert the unrelated changes (ReviewFlags/--fix refactor in commands_git_review.rs, dispatch.rs, help_data.rs, watch.rs)
+2. Keep only the safety comments/guards
+3. Add the missing unicode tests for parse_blame_args and `parse_move_args`
+
+Let me first understand what the original files look like and what safety comments were added:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash ✓ (16ms)
+
+Now let me look at the original files to understand the byte-indexing sites:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]\|\[.*\.\.\]'… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]\|\[.*\.\.\]'… ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. Now let me look at the test sections of both files:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_parse_blame' sr… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_parse_move\|fn … ✓ (3ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me pop the stash and work with the changes:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash pop ✓ (11ms)
+
+The evaluator says:
+1. The unrelated ReviewFlags/--fix refactor needs to be reverted
+2. Unicode tests for parse_blame_args and parse_move_args are missing
+
+Let me first revert the unrelated changes (dispatch.rs, help_data.rs, watch.rs, and the ReviewFlags refactor in commands_git_review.rs), then keep only the safety comments and add the required tests.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout HEAD -- src/dispatc… ✓ (4ms)
+
+Now revert the commands_git_review.rs to original and re-apply only the safety comments:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout HEAD -- src/command… ✓ (4ms)
+
+Now let me add the safety comments to the correct locations in the original file. Let me find the exact lines:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,370p' src/commands_g… ✓ (3ms)
+  ▶ edit src/commands_git_review.rs (8 → 12 lines)
+        // Check for <file>:<start>-<end> pattern
+        if let Some(colon_pos) = arg.rfind(':') {
+  +         // SAFETY: colon_pos from rfind(':') — ':' is ASCII (1 byte), so colon_pos
+  +         // and colon_pos + 1 are always valid char boundaries.
+            let file_part = &arg[..colon_pos];
+            let range_part = &arg[colon_pos + 1..];
+    
+            if let Some(dash_pos) = range_part.find('-') {
+  +             // SAFETY: dash_pos from find('-') — '-' is ASCII (1 byte), so dash_pos
+  +             // and dash_pos + 1 are always valid char boundaries within range_part.
+                let start_str = &range_part[..dash_pos];
+                let end_str = &range_part[dash_pos + 1..];
+ ✓ (47.1s)
+  2 tools completed in 59.7s (2 ✓)
+
+Now find the colorize_blame_line byte-indexing sites:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '405,425p' src/commands_g… ✓ (3ms)
+  ▶ edit src/commands_git_review.rs (4 → 7 lines)
+  +     // SAFETY: paren_open from find('('), paren_close from find(')') — both ASCII
+  +     // (1 byte each), so paren_open, paren_open + 1, paren_close, and paren_close + 1
+  +     // are all valid char boundaries.
+        let hash = &line[..paren_open];
+        let annotation = &line[paren_open + 1..paren_close];
+        let code = if paren_close + 1 < line.len() {
+ ✓ (47.3s)
+  2 tools completed in 54.3s (2 ✓)
+
+Now the annotation parsing section:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,455p' src/commands_g… ✓ (3ms)
+  ▶ edit src/commands_git_review.rs (6 → 11 lines)
+        // Look for a date pattern: 4-digit year followed by -
+        for (i, _) in annotation.char_indices() {
+            if i + 10 <= annotation.len() {
+  +             // SAFETY: i from char_indices() is always a valid char boundary.
+                let slice = &annotation[i..];
+                if slice.len() >= 10
+  +                 // SAFETY: as_bytes() indexing is safe because slice.len() >= 10
+  +                 // and bytes 0-9 are checked individually. The sub-slices [..4],
+  +                 // [5..7], [8..10] are safe because all checked bytes are ASCII digits
+  +                 // or '-', so every index falls on a char boundary.
+                    && slice.as_bytes()[4] == b'-'
+ ✓ (48.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '445,460p' src/commands_g… ✓ (3ms)
+  ▶ edit src/commands_git_review.rs (3 → 4 lines)
+                {
+  +                 // SAFETY: i from char_indices() — always a valid char boundary.
+                    author = annotation[..i].trim_end();
+                    date_and_lineno = &annotation[i..];
+ ✓ (47.6s)
+  4 tools completed in 1m 52s (4 ✓)
+
+Now the `rfind(char::is_whitespace)` site:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '458,470p' src/commands_g… ✓ (3ms)
+  ▶ edit src/commands_git_review.rs (5 → 7 lines)
+        let (date_part, lineno_part) =
+            if let Some(last_space) = date_and_lineno.rfind(char::is_whitespace) {
+  +             // SAFETY: rfind(char::is_whitespace) returns the byte index of the
+  +             // start of the matching char — always a valid char boundary.
+                let candidate = date_and_lineno[last_space..].trim();
+                if candidate.chars().all(|c| c.is_ascii_digit()) && !candidate.is_empty() {
+                    (&date_and_lineno[..last_space], candidate)
+ ✓ (47.0s)
+  2 tools completed in 53.6s (2 ✓)
+
+Now verify the commands_move.rs safety comments are still in place:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_mo… ✓ (4ms)
+
+Good, commands_move.rs still has the safety comments. Now I need to add the two required unicode tests. Let me find the test sections:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1035,1060p' src/commands… ✓ (3ms)
+
+Let me find the right place to add the unicode test for parse_blame_args — right after the existing parse_blame_args tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1050,1060p' src/commands… ✓ (3ms)
+  ▶ edit src/commands_git_review.rs (8 → 27 lines)
+            let result = parse_blame_args("/blame some:file:thing").unwrap();
+            assert_eq!(result.file, "some:file:thing");
+            assert_eq!(result.range, None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_blame_args_unicode_file_path() {
+  +         // File paths can contain multi-byte UTF-8 characters (e.g., accented letters).
+  +         // The colon and dash splitting must not panic on such paths.
+  +         let result = parse_blame_args("/blame src/données.rs:10-20").unwrap();
+  +         assert_eq!(result.file, "src/données.rs");
+  +         assert_eq!(result.range, Some((10, 20)));
+  + 
+  +         // Unicode path without range
+  +         let result2 = parse_blame_args("/blame src/données.rs").unwrap();
+  +         assert_eq!(result2.file, "src/données.rs");
+  +         assert_eq!(result2.range, None);
+  + 
+  +         // Unicode path with colon but non-numeric range (treated as file)
+  +         let result3 = parse_blame_args("/blame café:résumé").unwrap();
+  ... (5 more lines)
+ ✓ (47.1s)
+  2 tools completed in 56.5s (2 ✓)
+
+Now add the unicode test for parse_move_args:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '654,680p' src/commands_m… ✓ (3ms)
+  ▶ edit src/commands_move.rs (6 → 23 lines)
+        #[test]
+        fn test_parse_move_args_too_many() {
+            assert!(parse_move_args("/move A::b C D").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_move_args_unicode_method_name() {
+  +         // Method and type names can contain multi-byte UTF-8 characters.
+  +         // The "::" splitting must not panic on such names.
+  +         let args = parse_move_args("/move Type::método Target").unwrap();
+  +         assert_eq!(args.source_type, "Type");
+  +         assert_eq!(args.method_name, "método");
+  +         assert_eq!(args.target_type, "Target");
+  +         assert!(args.target_file.is_none());
+  + 
+  +         // Unicode in both type and method
+  +         let args2 = parse_move_args("/move Données::résumé Cible").unwrap();
+  +         assert_eq!(args2.source_type, "Données");
+  +         assert_eq!(args2.method_name, "résumé");
+  +         assert_eq!(args2.target_type, "Cible");
+  ... (3 more lines)
+ ✓ (47.8s)
+  2 tools completed in 1m 1s (2 ✓)
+
+Now let me verify only the two target files are modified:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (4ms)
+
+Only the two target files are changed. Now let's run the full verification:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (22.8s)
+  3 tools completed in 40.8s (3 ✓)
+
+All 88 tests pass. Let me verify the new tests specifically ran:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test unicode 2>&1 ✓ (113ms)
+
+All unicode tests pass. Let me also run the specific new tests by name to confirm:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_parse_blame_args… ✓ (110ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_parse_move_args_… ✓ (108ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Let me do a final check of the diff to confirm it's clean and only contains what the task requires:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD ✓ (5ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

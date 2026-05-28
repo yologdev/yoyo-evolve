@@ -1,0 +1,373 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the --fix flag for /review.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -50 src/commands_git_review…  ▶ search 'parse_review_effort' in src/commands_git_review.rs  ▶ search 'handle_review' in src/commands_git_review.rs ✓ (2ms)
+ ✓ (5ms)
+ ✓ (2ms)
+  ▶ read src/commands_git_review.rs:130..160  ▶ read src/commands_git_review.rs:225..345  ▶ read src/commands_git_review.rs:319..419 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  6 tools completed in 6.1s (6 ✓)
+
+Now let me look at how /review is dispatched:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'review' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:935..960 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I understand the current structure. Let me also look at the existing tests to understand the pattern:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:1210..1350 ✓ (1ms)
+
+Now I have a complete picture. Let me also check the commands module to see how handle_review is re-exported:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_review' in src/commands.rs ✓ (2ms)
+
+Good. Now let me check how the watch-mode fix prompt pattern works, since the task says to follow that pattern:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'run_prompt\|fix_prompt\|follow.up' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:560..590 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I have the full picture. Let me plan the implementation:
+
+1. **Rename parse_review_effort to `parse_review_flags** returning a ReviewFlags struct with effort and fix` fields
+2. Modify `handle_review` to return a fix prompt when --fix is set
+3. Update dispatch.rs to feed the fix prompt back to the agent
+4. Write tests first
+
+Let me start with the tests and the ReviewFlags struct:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.2s (7 ✓)
+
+Now let me check what other callers use parse_review_effort:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'parse_review_effort' ✗ (5.4s)
+    │ Search error: grep: ./target/debug/yoyo: binary file matches
+  ▶ search 'parse_review_effort' in src ✓ (7ms)
+  2 tools completed in 9.7s (1 ✓, 1 ✗)
+
+Good — it's only used within commands_git_review.rs. Two call sites in production code (lines 144 and 326) plus tests. Let me also check what handle_review returns — specifically the ReviewResult pattern I need:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:1..31 ✓ (1ms)
+
+Now let me look at how run_prompt works vs. run_prompt_with_changes to understand the return type:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search '^pub async fn run_prompt\b"' in src/prompt.rs ✓ (2ms)
+  ▶ search 'pub async fn run_prompt\b' in src/prompt.rs ✓ (2ms)
+  ▶ read src/prompt.rs:689..704 ✓ (1ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Good. Now I understand the full picture. Let me implement this step by step.
+
+**Step 1: Add ReviewFlags struct and parse_review_flags, keep parse_review_effort as a wrapper for backward compat.**
+
+Actually, I'll just rename parse_review_effort to `parse_review_flags` and update all callers, since it's all internal. Let me implement everything now:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, add the ReviewFlags struct and replace parse_review_effort with parse_review_flags:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (18 → 29 lines)
+  - /// Parse effort flags from review input.
+  + /// Parsed flags from `/review` input.
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub struct ReviewFlags {
+  +     /// Effort level: quick, normal, or thorough.
+  +     pub effort: ReviewEffort,
+  +     /// Whether `--fix` was specified (auto-apply findings).
+  +     pub fix: bool,
+  + }
+  + 
+  + /// Parse effort and mode flags from review input.
+    ///
+  - /// Strips `--quick` or `--thorough` from the input and returns the
+  - /// effort level plus the remaining argument string (file path, range, etc.).
+  - pub fn parse_review_effort(input: &str) -> (ReviewEffort, String) {
+  + /// Strips `--quick`, `--thorough`, and `--fix` from the input and returns
+  + /// the parsed flags plus the remaining argument string (file path, range, etc.).
+  + pub fn parse_review_flags(input: &str) -> (ReviewFlags, String) {
+        let mut effort = ReviewEffort::Normal;
+  +     let mut fix = false;
+  ... (14 more lines)
+ ✓ (6.9s)
+
+Expected — now I need to update the callers. Let me update both call sites and the handle_review function:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:138..168 ✓ (0ms)
+  ▶ edit src/commands_git_review.rs (5 → 5 lines)
+  -     let (effort, remaining) = parse_review_effort(arg);
+  +     let (flags, remaining) = parse_review_flags(arg);
+        let (label, content) =
+            build_review_content(&remaining).ok_or_else(|| "nothing to review".to_string())?;
+    
+  -     let prompt = build_review_prompt(&label, &content, effort);
+  +     let prompt = build_review_prompt(&label, &content, flags.effort);
+ ✓ (6.8s)
+  2 tools completed in 13.1s (2 ✓)
+
+Now update handle_review — this is the big change. I need to modify it to support --fix:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:327..357 ✓ (1ms)
+
+Now I need to think about the return type. Currently handle_review returns Option<String> — the review prompt that was sent. When --fix is used, I need to:
+1. Run the review as normal
+2. Collect the review output
+3. Build a fix prompt from the output
+4. Return that fix prompt so `dispatch.rs` can feed it to the agent
+
+The key question: how to collect the review output. Looking at run_prompt, it streams output but doesn't return the assistant text directly. Let me check PromptOutcome:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct PromptOutcome' in src/prompt.rs ✓ (2ms)
+  ▶ read src/prompt.rs:60..90 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+`PromptOutcome has a text field. So run_prompt` returns the collected text. Now I can use this to build the fix prompt. Let me also add a helper function to build the fix prompt from review findings:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (24 → 57 lines)
+    /// Handle the /review command: review staged changes or a specific file.
+  - /// Returns the review prompt if sent to AI, None otherwise.
+  + ///
+  + /// Returns `Some(ReviewOutput)` if a review was performed, None otherwise.
+  + /// When `--fix` is specified, `ReviewOutput::fix_prompt` contains a follow-up
+  + /// prompt that should be fed back to the agent to auto-apply the findings.
+    pub async fn handle_review(
+        input: &str,
+        agent: &mut Agent,
+        session_total: &mut Usage,
+        model: &str,
+  - ) -> Option<String> {
+  + ) -> Option<ReviewOutput> {
+        let arg = input.strip_prefix("/review").unwrap_or("").trim();
+  -     let (effort, remaining) = parse_review_effort(arg);
+  +     let (flags, remaining) = parse_review_flags(arg);
+    
+        match build_review_content(&remaining) {
+            Some((label, content)) => {
+  -             if effort != ReviewEffort::Normal {
+  ... (45 more lines)
+ ✓ (7.1s)
+
+Good — expected. Now let me update dispatch.rs:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/dispatch.rs:948:40
+    [1m[94m|[0m
+[1m[94m948[0m [1m[94m|[0m                 *ctx.last_input = Some(review_prompt);
+    [1m[94m|[0m                                   [1m[94m----[0m [1m[91m^^^^^^^^^^^^^[0m [1m[91mexpected `String`, found `ReviewOutput`[0m
+    [1m[94m|[0m                                   [1m[94m|[0m
+    [1m[94m|[0m                                   [1m[94marguments to this enum variant are incorrect[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: the type constructed contains `commands_git_review::ReviewOutput` due to the type of the argument passed
+   [1m[94m--> [0msrc/dispatch.rs:948:35
+    [1m[94m|[0m
+[1m[94m948[0m [1m[94m|[0m                 *ctx.last_input = Some(review_prompt);
+    [1m[94m|[0m                                   [1m[96m^^^^^[0m[1m[94m-------------[0m[1m[96m^[0m
+    [1m[94m|[0m                                        [1m[94m|[0m
+    [1m[94m|[0m                                        [1m[94mthis argument influences the type of `Some`[0m
+[1m[92mnote[0m: tuple variant defined here
+   [1m[94m--> [0m/rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/option.rs:608:4
+
+[1mFor more information about this error, try `rustc --explain E0308`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[E0425][0m[1m: cannot find function `parse_review_effort` in this scope[0m
+    [1m[94m--> [0msrc/commands_git_review.rs:1263:35
+     [1m[94m|[0m
+[1m[94m 250[0m [1m[94m|[0m pub fn parse_review_flags(input: &str) -> (ReviewFlags, String) {
+     [1m[94m|[0m [1m[94m---------------------------------------------------------------[0m [1m[94msimilarly named function `parse...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the code and fix all the issues systematically.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (6.9s)
+
+Two categories of errors:
+1. dispatch.rs:948 — handle_review now returns ReviewOutput instead of String
+2. All tests — still call parse_review_effort instead of parse_review_flags
+
+Let me see the full list of test errors and fix them all:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'parse_review_effort' sr… ✓ (3ms)
+
+Now let me read the full test section to understand the structure before doing a bulk replacement:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git_review.rs:1258..1398 ✓ (1ms)
+
+Now I need to fix two things:
+1. Replace all parse_review_effort calls in tests with `parse_review_flags` and destructure correctly (the return type changed from (ReviewEffort, String) to (ReviewFlags, String))
+2. Fix `dispatch.rs:948 to handle the new ReviewOutput` type
+
+Let me do the tests first — the old tests destructured as (effort, remaining) but now it's (flags, remaining) where flags.effort is the effort:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (51 → 78 lines)
+  -     // --- ReviewEffort tests ---
+  +     // --- ReviewFlags tests ---
+    
+        #[test]
+  -     fn test_parse_review_effort_default() {
+  -         let (effort, remaining) = parse_review_effort("src/main.rs");
+  -         assert_eq!(effort, ReviewEffort::Normal);
+  +     fn test_parse_review_flags_default() {
+  +         let (flags, remaining) = parse_review_flags("src/main.rs");
+  +         assert_eq!(flags.effort, ReviewEffort::Normal);
+  +         assert!(!flags.fix);
+            assert_eq!(remaining, "src/main.rs");
+        }
+    
+        #[test]
+  -     fn test_parse_review_effort_default_empty() {
+  -         let (effort, remaining) = parse_review_effort("");
+  -         assert_eq!(effort, ReviewEffort::Normal);
+  +     fn test_parse_review_flags_default_empty() {
+  +         let (flags, remaining) = parse_review_flags("");
+  ... (80 more lines)
+ ✓ (7.1s)
+
+Good progress — one more test to fix (the PR flag test at the end) and the dispatch.rs issue. Let me fix the remaining test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (6 → 16 lines)
+        #[test]
+  -     fn test_parse_review_effort_with_pr_flag() {
+  -         let (effort, remaining) = parse_review_effort("--quick --pr 42");
+  -         assert_eq!(effort, ReviewEffort::Quick);
+  +     fn test_parse_review_flags_with_pr_flag() {
+  +         let (flags, remaining) = parse_review_flags("--quick --pr 42");
+  +         assert_eq!(flags.effort, ReviewEffort::Quick);
+  +         assert!(!flags.fix);
+            assert_eq!(remaining, "--pr 42");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_review_fix_prompt() {
+  +         let findings = "## Issues Found\n1. Bug on line 42\n2. Missing error handling";
+  +         let prompt = build_review_fix_prompt(findings);
+  +         assert!(prompt.contains("apply the suggested fixes"));
+  +         assert!(prompt.contains("Bug on line 42"));
+  +         assert!(prompt.contains("Missing error handling"));
+        }
+ ✓ (6.8s)
+
+Only the dispatch.rs error remains. Let me fix it — the handler now returns ReviewOutput instead of `String`, and I need to handle the fix prompt:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:939..959 ✓ (1ms)
+
+Now I need to update this to: (1) store the review prompt as last_input, and (2) if there's a fix prompt, feed it back to the agent:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (13 → 25 lines)
+            CommandRoute::Review => {
+  -             if let Some(review_prompt) = commands::handle_review(
+  +             if let Some(review_output) = commands::handle_review(
+                    ctx.input,
+                    ctx.agent,
+                    ctx.session_total,
+  ···
+                )
+                .await
+                {
+  -                 *ctx.last_input = Some(review_prompt);
+  +                 *ctx.last_input = Some(review_output.review_prompt);
+  +                 // When --fix is used, feed the fix prompt back to the agent
+  +                 if let Some(fix_prompt) = review_output.fix_prompt {
+  +                     run_prompt_with_changes(
+  +                         ctx.agent,
+  +                         &fix_prompt,
+  +                         ctx.session_total,
+  +                         &ctx.agent_config.model,
+  +                         ctx.changes,
+  ... (7 more lines)
+ ✓ (6.7s)
+
+The field is session_changes, not changes. Let me fix:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (1 → 1 lines)
+  -                         ctx.changes,
+  +                         ctx.session_changes,
+ ✓ (47.2s)
+
+Now let me check if the needed imports are present in dispatch.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'run_prompt_with_changes' in src/dispatch.rs ✓ (2ms)
+
+Good, already imported. Let me also check auto_compact_if_needed is imported:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_compact_if_needed' in src/dispatch.rs ✓ (2ms)
+
+Good. Now let me also make sure ReviewOutput is exported from the commands module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_git_review' in src/commands.rs ✓ (2ms)
+
+The dispatch.rs code accesses commands::handle_review which returns ReviewOutput — the type is used inline via the returned value, so it doesn't need an explicit import. Let me run the full check:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.3s)
+
+Clippy passes. Now tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (23.8s)
+
+All 3608 tests pass (3520 unit + 88 integration). Let me now also check that the build is clean:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (101ms)
+
+Everything passes. Now let me update the docs and commit. Let me check what needs updating in help_data.rs and the docs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'review' in src/help_data.rs ✓ (3ms)
+  ▶ read src/help_data.rs:881..911 ✓ (1ms)
+  ▶ edit src/help_data.rs (24 → 30 lines)
+            "review" => Some(
+  -             "/review [--quick|--thorough] [target] — AI code review\n\n\
+  +             "/review [--quick|--thorough] [--fix] [target] — AI code review\n\n\
+                 Usage:\n\
+                 \x20 /review                   Review staged/uncommitted changes\n\
+                 \x20 /review <path>            Review a specific file\n\
+                 \x20 /review HEAD~3..HEAD      Review a commit range\n\
+                 \x20 /review --pr 42           Review a GitHub PR\n\
+                 \x20 /review --quick           Quick review: bugs & security only\n\
+  -              \x20 /review --thorough        Deep review: all dimensions\n\n\
+  +              \x20 /review --thorough        Deep review: all dimensions\n\
+  +              \x20 /review --fix             Review and auto-apply fixes\n\n\
+                 Effort levels:\n\
+                 \x20 --quick     Focus on bugs and security only. Skip style nits. Terse output.\n\
+                 \x20 (default)   Bugs, security, style, performance, and suggestions.\n\
+                 \x20 --thorough  Exhaustive review: also checks error handling, edge cases,\n\
+                 \x20             API contracts, test coverage, docs, and concurrency.\n\n\
+  +              Fix mode:\n\
+  +              \x20 --fix       After generating the review, automatically feed the findings\n\
+  +              \x20             back to the agent to apply fixes to the codebase.\n\
+  ... (12 more lines)
+ ✓ (46.8s)
+  3 tools completed in 1m 5s (3 ✓)
+
+Now update the short description:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (1 → 1 lines)
+  -         "review" => Some("AI code review (--quick, --thorough)"),
+  +         "review" => Some("AI code review (--quick, --thorough, --fix)"),
+ ✓ (44.9s)
+
+Let me check whether that was a real failure or just truncation:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (34.0s)
+
+All green. Now let me check if the README or commands table needs an update:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'review' in README.md ✓ (2ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

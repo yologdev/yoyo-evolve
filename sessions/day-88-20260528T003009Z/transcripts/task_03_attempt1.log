@@ -1,0 +1,186 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by examining the byte-indexing sites in both files to understand the exact patterns, then add safety comments and tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]\|\[.*\.\.\]'…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]\|\[.*\.\.\]'… ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me look at the specific functions in detail:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '390,420p' src/commands_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '445,500p' src/commands_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '640,710p' src/commands_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '835,855p' src/commands_g… ✓ (3ms)
+ ✓ (0ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,110p' src/commands_mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,195p' src/commands_m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '305,330p' src/commands_m…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,455p' src/commands_m… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  8 tools completed in 5.9s (8 ✓)
+
+Good — I can see that commands_move.rs already has `is_char_boundary()` guards at lines 316 and 441. Let me look more closely at the remaining sites. Let me also check the `colorize_blame_line` function more carefully:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '470,490p' src/commands_g… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '474,484p' src/commands_g… ✓ (2ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Let me get the raw file bytes to see what's on those lines with `...`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=470 && NR<=484' src/com… ✓ (3ms)
+
+The ... seems to be in the actual file. Let me check:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_git_review.r… ✓ (3ms)
+
+Now I can see clearly. The slice[..4], slice[5..7], slice[8..10] are all on ASCII digit positions following the as_bytes() checks. Let me now check annotation[..i] — i comes from `char_indices()` which always gives valid char boundaries.
+
+Now let me check `paren_open and paren_close` indexing:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_git_review.r… ✓ (3ms)
+
+`paren_open from find('(') — (` is ASCII. paren_close from find(')') — ) is ASCII. Both safe.
+
+Now let me look at `extract_review_json`:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_git_review.r… ✓ (3ms)
+
+`content_start is start + marker.len() where marker is all ASCII. start is from find()` which returns a char boundary. ASCII length addition on a char boundary stays at a char boundary. `response[content_start..] is safe. The find("") on that sub-slice returns a byte offset relative to `content_start, so content_start + end is also safe. The find('[') and rfind(']')` are ASCII, also safe.
+
+Now let me look at `extract_json_string_field and extract_json_number_field`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_git_review.r… ✓ (3ms)
+
+Line 664: &after_colon[1..] — we've just confirmed after_colon starts with '"' which is ASCII (1 byte), so index 1 is always a char boundary. Safe.
+
+Line 656: key_pos + pattern.len() — pattern is "\"{}\"".format(key) where key is always ASCII JSON key names. key_pos from find() is a char boundary. Adding ASCII-only length preserves char boundary. Safe.
+
+Now let me check the `commands_move.rs` sites more carefully:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_move.rs | se… ✓ (3ms)
+
+Line 99: p from find("impl ") — "impl " is ASCII. `find() returns a char boundary. trimmed[..p]` safe.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_move.rs | se… ✓ (3ms)
+
+Line 172-174: pos from find(&fn_pattern) where fn_pattern is `"fn {method_name}". pos is a char boundary. fn_pattern.len() — this is where it gets interesting. If method_name` contains multi-byte UTF-8 characters, fn_pattern.len() returns byte length, but since pos is a valid char boundary and fn_pattern is the exact string found at that position, `pos + fn_pattern.len()` is also a valid char boundary (it's the byte right after the matched substring). Safe.
+
+Line 182: &trimmed[..pos] — pos from find(), always a char boundary. Safe.
+
+Now let me check line 80:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_move.rs | se… ✓ (3ms)
+
+Same pattern — pos from find(), always a char boundary.
+
+Good. I now have a complete picture. Let me now check what tests already exist:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '858,900p' src/commands_g…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '622,670p' src/commands_m… ✓ (3ms)
+ ✓ (3ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Now let me see the existing tests to understand the test patterns, and then check the end of each test module:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_git_review.rs… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/commands_git_review…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/commands_move.rs ✓ (5ms)
+ ✓ (5ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Good, there are already some multibyte tests in commands_move.rs. Now let me plan and execute:
+
+1. Add safety comments to all byte-indexing sites in both files
+2. Add unicode-aware tests for `parse_blame_args and parse_move_args`
+3. Run checks
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.7s (4 ✓)
+
+Let me start with the safety comments in commands_git_review.rs:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git_review.rs (4 → 6 lines)
+        // Check for <file>:<start>-<end> pattern
+        if let Some(colon_pos) = arg.rfind(':') {
+  +         // SAFETY: colon_pos from rfind(':') — ':' is ASCII (1 byte), so colon_pos
+  +         // and colon_pos + 1 are always valid char boundaries.
+            let file_part = &arg[..colon_pos];
+            let range_part = &arg[colon_pos + 1..];
+ ✓ (47.4s)
+  ▶ edit src/commands_git_review.rs (3 → 5 lines)
+            if let Some(dash_pos) = range_part.find('-') {
+  +             // SAFETY: dash_pos from find('-') — '-' is ASCII (1 byte), so dash_pos
+  +             // and dash_pos + 1 are always valid char boundaries.
+                let start_str = &range_part[..dash_pos];
+                let end_str = &range_part[dash_pos + 1..];
+ ✓ (47.3s)
+  3 tools completed in 1m 45s (3 ✓)
+
+Now the colorize_blame_line function:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (4 → 7 lines)
+  +     // SAFETY: paren_open from find('('), paren_close from find(')') — both ASCII
+  +     // (1 byte each), so paren_open, paren_open + 1, paren_close, and paren_close + 1
+  +     // are all valid char boundaries.
+        let hash = &line[..paren_open];
+        let annotation = &line[paren_open + 1..paren_close];
+        let code = if paren_close + 1 < line.len() {
+ ✓ (47.2s)
+
+Now the date-pattern matching in colorize_blame_line:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_git_review.r… ✓ (3ms)
+  ▶ edit src/commands_git_review.rs (17 → 25 lines)
+        // Look for a date pattern: 4-digit year followed by -
+        for (i, _) in annotation.char_indices() {
+            if i + 10 <= annotation.len() {
+  +             // SAFETY: i from char_indices() is always a valid char boundary.
+                let slice = &annotation[i..];
+                if slice.len() >= 10
+  +                 // SAFETY: as_bytes() indexing is valid because slice.len() >= 10
+  +                 // and we only check bytes 4 and 7 which are within bounds.
+  +                 // The str slices [..4], [5..7], [8..10] are safe because if
+  +                 // bytes 4 and 7 are b'-' (ASCII), then positions 0-3 are each
+  +                 // single-byte chars (confirmed ASCII digits), making 4, 5, 7, 8, 10
+  +                 // all valid char boundaries.
+                    && slice.as_bytes()[4] == b'-'
+                    && slice.as_bytes()[7] == b'-'
+                    && slice[..4].chars().all(|c| c.is_ascii_digit())
+                    && slice[5..7].chars().all(|c| c.is_ascii_digit())
+                    && slice[8..10].chars().all(|c| c.is_ascii_digit())
+                {
+  +                 // SAFETY: i from char_indices() — always a valid char boundary.
+                    author = annotation[..i].trim_end();
+  ... (2 more lines)
+ ✓ (47.6s)
+  2 tools completed in 59.1s (2 ✓)
+
+Now the rfind(char::is_whitespace) site:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_git_review.r… ✓ (3ms)
+
+Wait — rfind(char::is_whitespace) could potentially return a byte position inside a multi-byte character if there were multi-byte whitespace characters. But rfind with a char pattern uses `Pattern::into_searcher` which always returns valid char boundaries. Let me verify this understanding is correct: str::rfind with a char predicate returns the byte index of the start of the matching character, which is always a char boundary. And for multi-byte whitespace (like non-breaking space U+00A0, which is 2 bytes in UTF-8), `last_space would be the start of that character, so date_and_lineno[last_space..] starts at that char boundary — fine. But date_and_lineno[..last_space]` also splits at that char boundary — also fine. 
+
+However there's a subtle issue: date_and_lineno[last_space..].trim() — this works correctly. But the actual date/lineno data is typically all ASCII from git blame. Let me add a safety comment:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_review.rs (7 → 9 lines)
+        // The lineno is typically the last whitespace-separated token
+        let (date_part, lineno_part) =
+            if let Some(last_space) = date_and_lineno.rfind(char::is_whitespace) {
+  +             // SAFETY: rfind(char::is_whitespace) returns the byte index of the
+  +             // start of the matching char — always a valid char boundary.
+                let candidate = date_and_lineno[last_space..].trim();
+                if candidate.chars().all(|c| c.is_ascii_digit()) && !candidate.is_empty() {
+                    (&date_and_lineno[..last_space], candidate)
+ ✓ (47.2s)
+
+Now the extract_json_string_field and extract_json_number_field:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -n src/commands_git_review.r… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the issues and then create a focused session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (5ms)
+  2 tools completed in 2.1s (2 ✓)
+
+No community issues. Let me check what's been done recently and identify the highest-impact work.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -20📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat CHANGELOG.md | head -60 ✓ (3ms)
+ ✓ (15ms)
+  ▶ $ git log --oneline v0.1.14..HEAD --no-merges | wc -l  ▶ $ git log --oneline v0.1.14..HEAD --no-merges | head -30 ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ git tag | tail -5 ✓ (3ms)
+  ▶ $ # Check last release tag (2 lines) ✓ (3ms)
+  ▶ $ # Check how many sessions since last release (v0.1.14 was 20… (2 lines)  ▶ $ # Look at the byte-indexing debt mentioned in assessment - c… (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # More targeted: find actual string byte-indexing (not array… (3 lines) ✓ (10ms)
+  ▶ $ # Focus specifically on the dangerous patterns: string trunc… (3 lines)  ▶ $ # Check the flaky test mentioned in trajectory (2 lines) ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ # Check the flaky test (2 lines) ✓ (3ms)
+  ▶ $ # Check what handle_watch does - it likely depends on curren… (2 lines)  ▶ $ # Look at the auto_detect_watch_command to understand the fl… (2 lines) ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ sed -n '1287,1340p' src/watch.rs ✓ (3ms)
+  15 tools completed in 32.1s (15 ✓)
+
+Now I understand the landscape. Let me think about the highest-impact tasks:
+
+1. **Byte-indexing safety debt (63 sites)** — The assessment identifies this as the largest class-level safety risk. The CLAUDE.md safety rules explicitly prohibit it. This is a systematic sweep that needs to be done file-by-file. High impact for stability.
+
+2. Flaky CI test — handle_watch_bare_sets_lint_and_test panicked in CI. The test depends on current_dir() being a Rust project. If CI runs from a different directory state, it could fail. Small fix, high reliability impact.
+
+3. **Competitive gap: `/review --fix`** — Claude Code has code-review-with-auto-fix. We have /review but no --fix mode. This is an actionable competitive gap that touches at most 2-3 files.
+
+Let me check what the byte-indexing situation looks like more concretely to scope the tasks:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find the most dangerous byte-indexing: string slicing that… (3 lines) ✓ (4ms)
+  ▶ $ # Check format files for byte-indexing (2 lines) ✓ (4ms)
+  2 tools completed in 4.5s (2 ✓)
+
+The byte-indexing issue is widespread but most sites involve ASCII-safe operations (parsing compiler output, hex hashes, known patterns). The most impactful sweep would focus on files where user-provided text is sliced. Let me scope this down to one file per task.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check which files have the most risky byte-indexing (user … (5 lines) ✓ (9ms)
+  ▶ $ # Look at the review command to understand what --fix would … (2 lines) ✓ (3ms)
+  ▶ $ sed -n '319,380p' src/commands_git_review.rs ✓ (3ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now let me think about the three tasks:
+
+**Task 1 (Self-driven, competitive gap):** Fix the byte-indexing safety debt in watch.rs — 7 sites, the most dangerous because watch parses compiler output which could contain multi-byte chars in file paths and error messages.
+
+Task 2 (Self-driven, competitive gap): Fix byte-indexing in commands_git_review.rs — 6 sites, user-facing content in blame/review that handles file paths and user text.
+
+Task 3 (Self-driven, stability): Fix the flaky CI test `handle_watch_bare_sets_lint_and_test and harden byte-indexing in commands_move.rs` (4 sites, handles user method names that could contain non-ASCII).
+
+Actually, let me reconsider. The byte-indexing sweep is important but it's class-level cleanup. Let me think about what moves me closest to rivaling Claude Code. The assessment calls out /review --fix as a direct competitive gap. That's a user-visible feature. Let me balance: 2 safety tasks + 1 competitive feature, or focus the safety work tighter.
+
+Looking at this more carefully, many of the byte-indexing sites are actually safe because they're operating on positions found by find() which returns byte offsets that are always at char boundaries for ASCII delimiters like :, [, -. The real danger is `truncate(n) where n` is computed arithmetically.
+
+Let me focus on higher-impact work:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check for truly dangerous patterns - truncate with arithme… (2 lines) ✓ (6ms)
+  ▶ $ # Check the ones that look risky: (8 lines) ✓ (3ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Good — commands_git.rs already has the char boundary guard. The `truncate(len - 1)` calls are for removing trailing newlines which are always single bytes. tools.rs already uses safe_len. So the truncate sites are mostly safe.
+
+Let me redirect my focus to the most impactful competitive improvements:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the structured review / PR review with --fix? L… (2 lines) ✓ (3ms)
+
+Now I have a clear picture. Let me plan the session:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (28 lines) ✓ (34.4s)
+  ▶ write session_plan/task_02.md (33 lines) ✓ (33.6s)
+  ▶ write session_plan/task_03.md (37 lines) ✓ (34.2s)
+  ▶ write session_plan/issue_responses.md (24 lines) ✓ (34.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (9ms)
+  6 tools completed in 3m 25s (6 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 88, Session 5 — Plan
+
+**3 tasks, all self-driven** (no community issues today):
+
+| # | Task | Impact | Files |
+|---|------|--------|-------|
+| 1 | `/review --fix` mode | Competitive gap vs Claude Code — auto-apply review findings | commands_git_review.rs, dispatch.rs |
+| 2 | Fix flaky watch test + harden byte-indexing | CI stability + safety debt | watch.rs |
+| 3 | Byte-indexing safety in git_review + move | Class-level safety sweep | commands_git_review.rs, commands_move.rs |
+
+Strategy: Task 1 closes the biggest actionable competitive gap (Claude Code's /code-review --fix). Tasks 2-3 continue the systematic byte-indexing safety sweep identified in assessment — 63 sites across the codebase, tackling the highest-risk files first (user-facing text in watch output, blame args, and move commands). The flaky CI test fix in Task 2 addresses a real trajectory signal.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
