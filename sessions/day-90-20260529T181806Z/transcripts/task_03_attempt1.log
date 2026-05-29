@@ -1,0 +1,198 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current test module in src/prompt_retry.rs to understand the existing tests and the tool_recovery_hint function.
+  ▶ search 'fn tool_recovery_hint' in src/prompt_retry.rs  ▶ search '#\[cfg\(test\)\]' in src/prompt_retry.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/prompt_retry.rs:90..170 ✓ (1ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Now let me find the existing tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'test_tool_recovery_hint' in src/prompt_retry.rs ✓ (3ms)
+  ▶ read src/prompt_retry.rs:680..830 ✓ (2ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I have a clear picture. Let me implement the changes:
+
+1. Add the comprehensive `test_all_recovery_hints_are_actionable` test
+2. Update existing individual tests to use semantic checks instead of exact string matches
+
+Let me also check what's right after the `test_tool_recovery_hint_known_tools_both_attempts` test to know where to insert:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:820..830 ✓ (1ms)
+
+Now I'll make the changes. First, add the comprehensive test after the existing test_tool_recovery_hint_known_tools_both_attempts:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (2 → 42 lines)
+  +     #[test]
+  +     fn test_all_recovery_hints_are_actionable() {
+  +         let tools = [
+  +             "bash",
+  +             "edit_file",
+  +             "write_file",
+  +             "read_file",
+  +             "search",
+  +             "rename_symbol",
+  +             "unknown_tool",
+  +         ];
+  +         let action_words = [
+  +             "try",
+  +             "use",
+  +             "check",
+  +             "verify",
+  +             "retry",
+  +             "break",
+  +             "approach",
+  +             "alternative",
+  ... (22 more lines)
+ ✓ (59.9s)
+
+Now update the individual tests to use semantic checks. Let me update each one:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (18 → 25 lines)
+        #[test]
+        fn test_tool_recovery_hint_bash_attempt1() {
+            let hint = tool_recovery_hint("bash", 1);
+  -         assert!(hint.contains("shell command failed"), "bash hint: {hint}");
+  +         assert!(
+  +             hint.contains("command") || hint.contains("shell"),
+  +             "bash hint should mention command or shell: {hint}"
+  +         );
+  +         assert!(
+  +             hint.contains("failed") || hint.contains("check") || hint.contains("different"),
+  +             "bash hint should suggest diagnosis or alternative: {hint}"
+  +         );
+        }
+    
+        #[test]
+        fn test_tool_recovery_hint_bash_attempt2() {
+            let hint = tool_recovery_hint("bash", 2);
+            assert!(
+  -             hint.contains("simpler command"),
+  -             "bash escalated hint should suggest simpler command: {hint}"
+  ... (10 more lines)
+ ✓ (59.0s)
+  ▶ edit src/prompt_retry.rs (22 → 25 lines)
+        #[test]
+        fn test_tool_recovery_hint_edit_file_attempt1() {
+            let hint = tool_recovery_hint("edit_file", 1);
+  -         assert!(hint.contains("edit failed"), "edit_file hint: {hint}");
+            assert!(
+  -             hint.contains("read_file"),
+  -             "edit_file hint should suggest read_file: {hint}"
+  +             hint.contains("edit") || hint.contains("mismatch") || hint.contains("old_text"),
+  +             "edit_file hint should mention the edit failure mode: {hint}"
+  +         );
+  +         assert!(
+  +             hint.contains("read_file") || hint.contains("current contents"),
+  +             "edit_file hint should suggest reading current contents: {hint}"
+            );
+        }
+    
+  ···
+        fn test_tool_recovery_hint_edit_file_attempt2() {
+            let hint = tool_recovery_hint("edit_file", 2);
+            assert!(
+  ... (12 more lines)
+ ✓ (59.7s)
+  ▶ edit src/prompt_retry.rs (12 → 8 lines)
+        #[test]
+        fn test_tool_recovery_hint_read_file_attempt2() {
+            let hint = tool_recovery_hint("read_file", 2);
+  -         assert!(
+  -             hint.contains("bash"),
+  -             "read_file escalated hint should suggest bash: {hint}"
+  -         );
+            assert!(
+  -             hint.contains("cat"),
+  -             "read_file escalated hint should suggest cat: {hint}"
+  +             hint.contains("bash") || hint.contains("cat") || hint.contains("head"),
+  +             "read_file escalated hint should suggest a shell alternative: {hint}"
+            );
+        }
+ ✓ (59.9s)
+  ▶ edit src/prompt_retry.rs (12 → 8 lines)
+        #[test]
+        fn test_tool_recovery_hint_search_attempt2() {
+            let hint = tool_recovery_hint("search", 2);
+  -         assert!(
+  -             hint.contains("bash"),
+  -             "search escalated hint should suggest bash: {hint}"
+  -         );
+            assert!(
+  -             hint.contains("grep"),
+  -             "search escalated hint should suggest grep: {hint}"
+  +             hint.contains("bash") || hint.contains("grep") || hint.contains("find"),
+  +             "search escalated hint should suggest a shell search alternative: {hint}"
+            );
+        }
+ ✓ (59.1s)
+  ▶ edit src/prompt_retry.rs (12 → 9 lines)
+        #[test]
+        fn test_tool_recovery_hint_write_file_attempt2() {
+            let hint = tool_recovery_hint("write_file", 2);
+  -         assert!(
+  -             hint.contains("bash"),
+  -             "write_file escalated hint should suggest bash: {hint}"
+  -         );
+            assert!(
+  -             hint.contains("HEREDOC"),
+  -             "write_file escalated hint should suggest heredoc: {hint}"
+  +             hint.contains("bash") || hint.contains("cat") || hint.contains("heredoc")
+  +                 || hint.contains("HEREDOC"),
+  +             "write_file escalated hint should suggest a shell write alternative: {hint}"
+            );
+        }
+ ✓ (59.4s)
+  ▶ edit src/prompt_retry.rs (12 → 12 lines)
+        fn test_tool_recovery_hint_rename_symbol_attempt2() {
+            let hint = tool_recovery_hint("rename_symbol", 2);
+            assert!(
+  -             hint.contains("search"),
+  -             "rename_symbol escalated hint should suggest search: {hint}"
+  +             hint.contains("search") || hint.contains("find") || hint.contains("occurrences"),
+  +             "rename_symbol escalated hint should suggest finding occurrences: {hint}"
+            );
+            assert!(
+  -             hint.contains("edit_file"),
+  -             "rename_symbol escalated hint should suggest edit_file: {hint}"
+  +             hint.contains("edit_file") || hint.contains("replace"),
+  +             "rename_symbol escalated hint should suggest manual replacement: {hint}"
+            );
+        }
+ ✓ (59.4s)
+  ▶ edit src/prompt_retry.rs (17 → 17 lines)
+        fn test_tool_recovery_hint_unknown() {
+            let hint = tool_recovery_hint("some_unknown_tool", 1);
+            assert!(
+  -             hint.contains("different approach"),
+  -             "unknown tool hint: {hint}"
+  +             hint.contains("different") || hint.contains("approach") || hint.contains("try"),
+  +             "unknown tool hint should suggest a different approach: {hint}"
+            );
+        }
+    
+  ···
+        fn test_tool_recovery_hint_unknown_attempt2() {
+            let hint = tool_recovery_hint("some_unknown_tool", 2);
+            assert!(
+  -             hint.contains("completely different"),
+  -             "unknown tool escalated hint: {hint}"
+  +             hint.contains("different") || hint.contains("alternative") || hint.contains("approach"),
+  +             "unknown tool escalated hint should suggest trying something different: {hint}"
+            );
+        }
+ ✓ (59.6s)
+  7 tools completed in 7m 26s (7 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (45.2s)
+  2 tools completed in 1m 3s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,52 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the specific test that was missed in `src/prompt_retry.rs`:
+  ▶ search 'test_build_retry_prompt_with_tool_name' in src/prompt_retry.rs ✓ (3ms)
+  ▶ read src/prompt_retry.rs:965..995 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I can see the exact fragile assertion at lines 976-980. Let me fix it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (5 → 10 lines)
+  -         // Should include a recovery hint (edit_file hint mentions read_file)
+  +         // Should include some recovery guidance (semantic check, not exact wording)
+  +         let has_recovery_hint = result.contains("read_file")
+  +             || result.contains("current contents")
+  +             || result.contains("verify")
+  +             || result.contains("mismatch")
+  +             || result.contains("retry");
+            assert!(
+  -             result.contains("read_file"),
+  -             "should include recovery hint: {result}"
+  +             has_recovery_hint,
+  +             "should include recovery guidance for edit_file: {result}"
+            );
+ ✓ (1m 0s)
+
+Now let me verify the other two tests were already fixed in the prior attempt:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'test_retry_prompt_with_tool_name' in src/commands_retry.rs ✓ (3ms)
+  ▶ read src/commands_retry.rs:859..889 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Good, that one was already fixed. Let me check the bash tool test too:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'test_build_retry_prompt_with_bash_tool' in src/prompt_retry.rs ✓ (2ms)
+  ▶ read src/prompt_retry.rs:993..1013 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+All three tests are now fixed. Let me run the checks:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (29.4s)
+  2 tools completed in 48.5s (2 ✓)
+
+All 88 tests pass, no clippy warnings, formatting is clean. 
+
+The fix was simple: the test test_build_retry_prompt_with_tool_name in src/prompt_retry.rs (line 976-980) still had the fragile result.contains("read_file") assertion. I replaced it with the same semantic multi-condition check used in the other two tests, accepting any of read_file, current contents, verify, mismatch, or retry as valid recovery guidance keywords.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

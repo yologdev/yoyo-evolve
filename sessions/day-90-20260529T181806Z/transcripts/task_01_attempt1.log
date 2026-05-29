@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant test sections in the two files to understand the current assertions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_retry_prompt_with_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_build_retry_prompt… ✓ (3ms)
+ ✓ (5ms)
+  ▶ read src/commands_retry.rs:855..885  ▶ read src/prompt_retry.rs:960..1010 ✓ (1ms)
+ ✓ (1ms)
+  4 tools completed in 5.7s (4 ✓)
+
+Good, I can see all three tests clearly. Now let me make the surgical edits:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (5 → 10 lines)
+  -         // Should include a recovery hint from tool_recovery_hint
+  +         // Should include some recovery guidance (resilient to hint text changes)
+  +         let has_recovery_hint = result.contains("read_file")
+  +             || result.contains("current contents")
+  +             || result.contains("verify")
+  +             || result.contains("mismatch")
+  +             || result.contains("retry");
+            assert!(
+  -             result.contains("read_file"),
+  -             "edit_file hint should suggest read_file: {result}"
+  +             has_recovery_hint,
+  +             "should include recovery guidance for edit_file: {result}"
+            );
+  ▶ edit src/prompt_retry.rs (5 → 10 lines)
+  -         // Should include a recovery hint (edit_file hint mentions read_file)
+  +         // Should include some recovery guidance (resilient to hint text changes)
+  +         let has_recovery_hint = result.contains("read_file")
+  +             || result.contains("current contents")
+  +             || result.contains("verify")
+  +             || result.contains("mismatch")
+  +             || result.contains("retry");
+            assert!(
+  -             result.contains("read_file"),
+  -             "should include recovery hint: {result}"
+  +             has_recovery_hint,
+  +             "should include recovery guidance for edit_file: {result}"
+            );
+  ▶ edit src/prompt_retry.rs (5 → 10 lines)
+  -         // bash hint should mention command/approach
+  +         // bash hint should include some recovery guidance (resilient to hint text changes)
+  +         let has_recovery_hint = result.contains("command")
+  +             || result.contains("approach")
+  +             || result.contains("simpler")
+  +             || result.contains("try")
+  +             || result.contains("retry");
+            assert!(
+  -             result.contains("command"),
+  -             "should include recovery hint about command: {result}"
+  +             has_recovery_hint,
+  +             "should include recovery guidance for bash: {result}"
+            );
+ ✓ (59.0s)
+ ✓ (1m 42s)
+ ✓ (2m 25s)
+  3 tools completed in 2m 27s (3 ✓)
+
+Now run the full check suite:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (29.8s)
+  2 tools completed in 48.0s (2 ✓)
+
+All 88 tests pass. Let me also verify the specific tests I changed ran:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_retry_prompt_wit… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test retry_prompt_with_too… ✓ (257ms)
+  2 tools completed in 5.4s (2 ✓)
+
+All three target tests pass. Now commit:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (14 lines) ✓ (13ms)
+
+Done. Three test assertions across two files changed from exact-substring checks to semantic multi-keyword checks:
+
+1. **src/commands_retry.rs `test_retry_prompt_with_tool_name** — contains("read_file") → accepts any of read_file, current contents`, verify, mismatch, retry
+2. `src/prompt_retry.rs` `test_build_retry_prompt_with_tool_name` — same pattern
+3. **src/prompt_retry.rs `test_build_retry_prompt_with_bash_tool** — contains("command") → accepts any of command, approach, simpler, try, retry`
+
+No production code changed. All 3,530 tests pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

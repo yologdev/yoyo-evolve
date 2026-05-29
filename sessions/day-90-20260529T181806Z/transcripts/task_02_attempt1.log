@@ -1,0 +1,158 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by examining the specific file and line mentioned, then search for other byte-slice patterns in test code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '&content\[\.\.200' src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'pub fn safe_truncate' s… ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 1.3s (2 ✓)
+
+Good. Let me see the context around line 1717 and check if `safe_truncate` is already imported in the test module:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1700..1730  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/com… ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/commands_project.rs:824..839 ✓ (1ms)
+  3 tools completed in 3.7s (3 ✓)
+
+Now let me search for all byte-slice patterns in test code across the entire codebase:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\[\.\..*\.\(min\|len\)…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '&\w*\[\.\..*\]' src/ -… ✓ (8ms)
+ ✓ (8ms)
+  2 tools completed in 1.3s (2 ✓)
+
+Now let me focus on patterns specifically in test code (`#[cfg(test)] modules). Let me check the ones that use .min()` which are the most suspicious:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (32 lines) ✓ (85ms)
+
+Let me look at the relevant test-code ones more carefully. The `commands_search.rs:236 and 628` are likely array/vec slices, not string slices. Let me verify each:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '233,240p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '625,632p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2198,2208p' src/help.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1788,1796p' src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2027,2035p' src/tool_wra… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (5ms)
+ ✓ (2ms)
+ ✓ (5ms)
+  5 tools completed in 2.0s (5 ✓)
+
+Now I have a clear picture. The byte-slice patterns in test code that need fixing:
+
+1. `src/commands_project.rs:1717 — &content[..200.min(content.len())]`
+2. src/help.rs:2202 — &text[..text.len().min(60)]
+3. `src/tool_wrappers.rs:1792 — &text[..text.len().min(200)]`
+4. src/tool_wrappers.rs:2031 — &text[..text.len().min(100)]
+
+The commands_search.rs ones are safe — `pos` is from a string match (char-boundary), and matches[..limit] is a vec slice. Let me also check `format/mod.rs:737`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '730,742p' src/format/mod… ✓ (3ms)
+
+That's fine — it's using char_indices().nth() which gives char-boundary indices. Now let me fix all four violations:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (1 → 1 lines)
+  -             &content[..200.min(content.len())]
+  +             crate::format::safe_truncate(&content, 200)
+  ▶ edit src/help.rs (1 → 1 lines)
+  -                     &text[..text.len().min(60)]
+  +                     crate::format::safe_truncate(text, 60)
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -                     &text[..text.len().min(200)]
+  +                     crate::format::safe_truncate(text, 200)
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -             &text[..text.len().min(100)]
+  +             crate::format::safe_truncate(text, 100)
+ ✓ (8.1s)
+ ✓ (16.2s)
+ ✓ (24.4s)
+ ✓ (32.4s)
+  4 tools completed in 34.3s (4 ✓)
+
+The text variable at line 2031 is a String, needs a borrow. Let me check the context and fix:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2025,2038p' src/tool_wra… ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -             crate::format::safe_truncate(text, 100)
+  +             crate::format::safe_truncate(&text, 100)
+ ✓ (59.7s)
+  2 tools completed in 1m 14s (2 ✓)
+
+Now let me also check the other tool_wrappers.rs call and the help.rs call — they might also have String vs &str issues:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1785,1800p' src/tool_wra…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2195,2210p' src/help.rs ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+The help.rs one uses text which is a &str (return of command_help), so that should be fine. The `tool_wrappers.rs:1792 — text` is a reference there, let me check:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1770,1795p' src/tool_wra… ✓ (3ms)
+
+Here text comes from pattern-matching Content::Text { text }, so text is a &String, which auto-derefs to &str. But the original line was &text[..text.len().min(200)] — the & already borrows it. Wait, the edit already went through but the original wasn't fixed properly. Let me check current state:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1790,1794p' src/tool_wra… ✓ (3ms)
+
+Hmm, my edit to this line didn't stick because there was already a & in front of it in the original. Let me check what the old text actually was:
+
+Wait, I see — the edit command said it replaced 1 line, but the auto-check still failed on line 2031. Let me look at the exact text at line 1792:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1792p' src/tool_wrappers… ✓ (3ms)
+
+The edit for this line didn't match because the original text had leading whitespace with &text rather than just &text. The search string `&text[..text.len().min(200)]` didn't match with proper indentation. Let me fix it properly:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (1 → 1 lines)
+  -                     &text[..text.len().min(200)]
+  +                     crate::format::safe_truncate(text, 200)
+ ✓ (59.4s)
+
+Now let me run the build:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.1s)
+
+Clean. Let me run tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (30.3s)
+
+All 88 tests pass. Let me verify each changed file looks correct:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (7ms)
+
+I see there's also a change in prompt_retry.rs that was already uncommitted. Let me check the git status:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (5ms)
+
+The prompt_retry.rs change was already part of the uncommitted state before I started. Let me check if it was already there:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash list  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 3.4s (2 ✓)
+
+The prompt_retry.rs change is from Task 1 that was already committed — but it seems it wasn't fully staged. Let me check:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/prompt_retry.rs ✓ (4ms)
+
+This is a leftover from Task 1 that didn't get committed. It's related to that task (making recovery hint tests resilient). I should include it in my commit since it's part of the same session. Let me verify everything passes one more time:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (44.9s)
+
+All checks pass. Now let me also verify `safe_truncate is indeed pub`:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'pub fn safe_truncate' s… ✓ (3ms)
+
+Good — safe_truncate is pub and accessible. Now commit:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (18ms)
+
+Done. Here's what I did:
+
+**Fixed 4 byte-index safety violations in test code** across 3 files, replacing unsafe `&str[..n] patterns with safe_truncate()`:
+
+1. **`src/commands_project.rs:1717`** — &content[..200.min(content.len())] → crate::format::safe_truncate(&content, 200)
+2. **`src/help.rs:2202** — &text[..text.len().min(60)] → crate::format::safe_truncate(text, 60)`
+3. `src/tool_wrappers.rs:1792` — &text[..text.len().min(200)] → crate::format::safe_truncate(text, 200)
+4. `src/tool_wrappers.rs:2031` — &text[..text.len().min(100)] → crate::format::safe_truncate(&text, 100)
+
+These patterns would panic if the string contained multi-byte UTF-8 characters and the byte offset fell mid-character. While the test strings are currently ASCII, this violates the project's own safety rule in CLAUDE.md. safe_truncate handles char boundaries correctly using `is_char_boundary()`.
+
+Also included: a leftover fix from Task 1 in prompt_retry.rs that makes a recovery hint test check semantics rather than exact wording.
+
+Verified: safe_truncate is already pub in `src/format/mod.rs`. All 88 tests pass, clippy clean, formatted.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

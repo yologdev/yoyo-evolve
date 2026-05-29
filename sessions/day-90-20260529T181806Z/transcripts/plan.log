@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the community issues and then create a focused session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (6ms)
+  2 tools completed in 2.8s (2 ✓)
+
+No community issues today. Let me check the self-filed issues and the morning revert details to plan well.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the exact test assertions that caused the morning re… (2 lines)  ▶ $ # Check what the recovery hint actually looks like now (2 lines)  ▶ $ # Check the current test that's brittle (2 lines) ✓ (4ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ # Check the actual tool_recovery_hint function (2 lines)  ▶ $ # Check the prompt_retry test that also failed (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Find the specific prompt_retry test that asserts on recove… (2 lines)  ▶ $ sed -n '960,1010p' src/prompt_retry.rs ✓ (3ms)
+ ✓ (3ms)
+  7 tools completed in 9.0s (7 ✓)
+
+Now I understand the full picture. Let me check for the byte-index test issue mentioned in the assessment and look at what would be most impactful.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the byte-index issue in commands_project.rs (2 lines)  ▶ $ # Check recent git log for what was done (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now I have a clear picture. Let me plan the session:
+
+**Priority analysis:**
+1. No CI failures — build is green
+2. **Self-filed issue #437/#438** — fix the brittle tests that caused the morning revert (prevents recurring reverts)
+3. Capability gap — the assessment identifies user-configurable hooks as the biggest gap vs Claude Code. But that's large. Instead, I'll target the byte-index safety issue and the test brittleness.
+4. No community or sponsor issues today
+
+Let me create the plan:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (42 lines) ✓ (42.2s)
+  ▶ write session_plan/task_02.md (28 lines) ✓ (43.0s)
+  ▶ write session_plan/task_03.md (48 lines) ✓ (43.0s)
+  ▶ write session_plan/issue_responses.md (24 lines) ✓ (43.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 3m 41s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 90 (17:24) Session Plan — 3 Tasks
+
+**Task 1: Make recovery hint tests resilient to hint text changes** (fixes #437/#438)
+• The two tests that caused this morning's revert (`commands_retry.rs, prompt_retry.rs`) assert on exact hint substrings like "read_file". Change them to accept any of several semantically equivalent recovery keywords. Minimal change — only 3 test assertions modified, zero production code.
+
+**Task 2: Fix byte-index safety violation in test code**
+• `commands_project.rs:1717 uses &content[..200.min(content.len())]` — violates the project's own UTF-8 safety rule. Replace with safe_truncate(). Scan for similar patterns in other test code.
+
+**Task 3: Add comprehensive recovery hint regression tests** (hardens against #437 class)
+• Add a parametric test covering all 12 arms of `tool_recovery_hint()` to ensure every arm is non-empty and contains actionable words. Also loosen the existing per-tool hint tests from exact to semantic matching. This prevents the same class of revert from recurring.
+
+All three tasks are small (1-2 files each), self-driven, and directly address the morning revert + a known safety violation. No community issues today.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
