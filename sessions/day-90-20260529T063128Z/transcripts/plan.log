@@ -1,0 +1,138 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (4ms)
+ ✓ (2ms)
+  ▶ $ cat ISSUES_TODAY.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (45ms)
+  3 tools completed in 3.7s (3 ✓)
+
+Let me check what Day 89 already did for #433 and the current state of the board code:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n "session_plan\|TODO\.md\|task_\*\.md\|BoardTask\|handle_todo_b…  ▶ $ gh issue view 433 --json title,state,comments --jq '.state' 2>/dev/null ✓ (4ms)
+ ✓ (451ms)
+  ▶ $ gh issue view 433 --json comments --jq '.comments[-1].body' 2>/dev/null | head -… ✓ (468ms)
+  ▶ $ gh issue view 433 --json comments --jq '.comments[-1].body' 2>/dev/null ✓ (427ms)
+  4 tools completed in 9.8s (4 ✓)
+
+Good — so @voku's latest comment is about ensuring the board is a view over task files, not a separate storage model, and using file-based IDs not title matching. Let me check what Day 89 already did:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "TODO\.md" src/commands_todo.rs ✓ (28ms)
+  ▶ $ sed -n '459,620p' src/commands_todo.rs ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Good. Day 89 already rewrote the board to read from `session_plan/task_*.md` files. The issue is OPEN and @voku's latest comment validates the approach but adds additional constraints. Let me check whether the current implementation already satisfies those constraints (file-based IDs, task files as source of truth, no title matching):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "normalize_task_id\|update_task_status\|title.*match\|find.*title" src/c… ✓ (3ms)
+
+The implementation already uses file-based task IDs (task_01, task_02) and normalize_task_id converts shorthand (1, 01) to task_01 format. It reads/writes session_plan/task_*.md files directly. @voku's latest comment seems largely addressed by the Day 89 changes. The issue can be closed with a response explaining what was done.
+
+Now let me think about what to plan for Day 90. Let me check the current state of some capability gaps:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's auto-memory / automatic learning from ses… (2 lines)  ▶ $ # Check current model routing - what exists (2 lines) ✓ (7ms)
+ ✓ (9ms)
+  ▶ $ # Check what the latest release tag is (2 lines)  ▶ $ # Check how many commits since last release (2 lines) ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ # Check version and last crates.io release (2 lines)  ▶ $ # Check what the DAY_COUNT is (2 lines) ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ # Check git release tags (v* tags) (2 lines) ✓ (3ms)
+  ▶ $ # Look at competitive gaps I can close - automatic model rou… (3 lines) ✓ (3ms)
+  8 tools completed in 20.4s (8 ✓)
+
+Now let me think about what high-impact tasks to plan for Day 90. Based on the assessment:
+
+1. #433 is basically done — just needs a response/close. The Day 89 implementation already aligned /todo board with `session_plan/*` using file-based IDs.
+
+2. **Self-driven work priorities from assessment:**
+   • Automatic model routing (competitive gap #3)
+   • 1,300 unwrap() calls — systematic hardening
+   • DAY_COUNT bump to 90
+
+3. **Biggest competitive gap I can actually close:** Automatic model routing based on task complexity. But that's complex and needs careful design. Let me think about something more concrete and impactful.
+
+Let me look at what would make the biggest difference:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what commands_todo.rs does with the board status in … (2 lines)  ▶ $ # What self-driven improvements would be most impactful? (8 lines) ✓ (3ms)
+ ✓ (97ms)
+  ▶ $ # Let me understand what kind of unwraps these are in the to… (3 lines) ✓ (3ms)
+  3 tools completed in 5.9s (3 ✓)
+
+Most of the unwrap() calls in symbols.rs are on Regex::new() in `LazyLock` — these are infallible in practice (compiled-in regex patterns). Similarly many will be safe patterns. Let me focus on truly risky ones:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # commands_project.rs - what kind of unwraps? (2 lines) ✓ (3ms)
+
+All in tests. Let me find files with risky (non-test) unwraps:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Count unwrap() calls outside of test modules and outside L… (10 lines) ✓ (10ms)
+  ▶ $ # Try a different approach - look at non-test unwrap counts (16 lines) ✓ (174ms)
+  ▶ $ # symbols.rs - how many are Regex::new().unwrap() vs other? (2 lines) ✓ (4ms)
+  ▶ $ # What are these other unwraps? (2 lines) ✓ (5ms)
+  4 tools completed in 14.1s (4 ✓)
+
+OK — the vast majority of non-test unwraps in symbols.rs are regex compilation which is safe. The unwrap situation isn't a pressing concern.
+
+Let me think about what the highest-impact self-driven work would be for Day 90. Looking at the assessment's competitive gaps:
+
+• **Automatic model routing** — this is a real competitive differentiator
+• **Better session persistence / auto-memory** — another user-facing gap
+• DAY_COUNT bump — routine maintenance
+
+For Day 90 as a milestone day, let me focus on something impactful. Let me check what auto-memory would look like:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check current memory system (2 lines)  ▶ $ # Check what /remember does currently (2 lines) ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Now let me think strategically about Day 90. The trajectory shows 10 consecutive clean sessions. The codebase is healthy. What would make the biggest difference?
+
+Looking at the competitive landscape, one thing that would be very impactful is context-aware file suggestions — when a user asks a question, automatically suggest or include relevant files based on the conversation. This is something Claude Code and Cursor do well. But that's complex.
+
+A more focused and achievable improvement: smart context injection — automatically loading relevant project memories into the agent's context when they match the current conversation topic. Right now /remember saves notes but they're only loaded when explicitly requested.
+
+Actually, let me think about what's most impactful for real developers:
+
+1. **DAY_COUNT bump to 90** — routine, always needed
+2. Close #433 — community issue, already done, just needs response
+3. **A competitive capability improvement** — something real
+
+Let me look at what would be a good self-driven task. The assessment mentions "automatic model routing" and "better session persistence / auto-memory" as reachable gaps. Let me also check if there's any low-hanging fruit in the existing code:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /context command or project conte… (3 lines)  ▶ $ # How does memory get injected into prompts currently? (2 lines) ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ # How does context get into the system prompt? (2 lines) ✓ (3ms)
+  ▶ $ # How does context loading work - what files are read? (2 lines) ✓ (2ms)
+  4 tools completed in 8.0s (4 ✓)
+
+Interesting — memories ARE already loaded into the system prompt context. Good. The auto-memory idea would be about automatically adding memories during a session based on what the agent learns.
+
+Let me think about what's genuinely most impactful for Day 90. Let me look at a concrete competitive feature:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if we have /diff --stat or summary mode   (2 lines) ✓ (3ms)
+
+OK, let me make my final plan. Here's what I'll do for Day 90:
+
+Task 1 (self-driven): Bump DAY_COUNT to 90 — standard maintenance.
+
+Task 2 (self-driven, competitive): Add **smart model routing hints** — when the user's prompt matches certain patterns (simple question → suggest lite model, complex multi-file change → suggest thinking model), show a contextual hint. This is a stepping stone toward automatic model routing (competitive gap #3) and touches only format/mod.rs where the hint system already lives.
+
+Actually, let me look at a more impactful idea. Let me look at what the contextual hint system already does:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "contextual_hint\|HintContext" src/format/mod.rs | head -20 ✓ (3ms)
+  ▶ $ sed -n '666,730p' src/format/mod.rs ✓ (2ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Good system. Now let me think about what's truly the most impactful self-driven work for Day 90. Given the competitive landscape, let me think about what real developers encounter:
+
+1. When they switch models mid-conversation, there's no feedback about what the model is good at
+2. There's no way to quickly see what changed in a session without running `/diff`
+3. The /health command checks project health but doesn't auto-run
+
+Let me think of something more concrete and competitive. Let me look at what Claude Code does that yoyo doesn't — one of the most useful features is auto-file-detection — when you mention a file path in conversation, it automatically reads it. Let me check if yoyo does this:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "expand_file_mentions\|auto.*file\|detect.*file.*path\|mention.*file" s… ✓ (8ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

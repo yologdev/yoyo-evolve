@@ -1,0 +1,172 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify a high-impact improvement, then implement it.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.1s (4 ✓)
+
+Let me explore the codebase to find improvement opportunities, focusing on areas with potential bugs, missing safety, or significant UX gaps.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 21s)
+
+Good, the codebase is fairly clean. Let me look for more impactful improvements — areas where functionality could be meaningfully enhanced.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 2s)
+  ▶ read src/safety.rs ✓ (2ms)
+  ▶ read src/safety.rs:100..300 ✓ (1ms)
+  ▶ read src/safety.rs:300..500 ✓ (1ms)
+  ▶ read src/safety.rs:500..750 ✓ (1ms)
+  5 tools completed in 2m 20s (5 ✓)
+
+Now I have a good understanding of the safety module. Let me now look at the broader picture to decide on the most impactful improvement. Let me check a few more areas:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 21s)
+
+Now I have a clear picture. The most impactful improvement is enhancing the tool_recovery_hint system to be error-pattern-aware. Let me examine the current implementation and plan the changes.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ search 'tool_recovery_hint' in src ✓ (6ms)
+  ▶ search 'pub fn tool_recovery_hint' in src/prompt_retry.rs ✓ (2ms)
+  ▶ read src/prompt_retry.rs:1..51 ✓ (1ms)
+  ▶ read src/prompt_retry.rs:50..150 ✓ (0ms)
+  ▶ read src/prompt_retry.rs:149..179 ✓ (0ms)
+  7 tools completed in 20.1s (7 ✓)
+
+Now let me look at the RecoveryHintTool in tool_wrappers.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:685..765 ✓ (0ms)
+
+Now let me look at how the calls flow — particularly in build_retry_prompt and build_auto_retry_prompt:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'build_auto_retry_prompt\("' in src ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'build_auto_retry_prompt' in src ✓ (5ms)
+  2 tools completed in 5.8s (1 ✓, 1 ✗)
+
+Let me look at how the error message flows to the retry prompt in prompt.rs:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:860..890 ✓ (0ms)
+
+Now I have a clear picture of the entire flow. The key insight is:
+
+1. tool_recovery_hint(tool_name, attempt) only takes tool name and attempt number
+2. Both build_retry_prompt and build_auto_retry_prompt already have the error message available but don't pass it
+3. RecoveryHintTool has the error message (msg) but doesn't pass it to the hint function
+
+The improvement: make tool_recovery_hint error-pattern-aware by accepting an optional error message parameter. This way:
+• When edit_file fails with "No such file" → suggest write_file to create it
+• When edit_file fails with "old_text not found" → suggest `read_file` (current behavior, but more specific)
+• When bash fails with "permission denied" → suggest chmod 
+• When bash fails with "command not found" → suggest checking installation
+• When write_file fails with "No such file or directory" → suggest `mkdir -p`
+• When read_file/list_files fails with "not found" → suggest verifying path
+• When search fails with pattern error → suggest simplifying the pattern
+
+Let me also check the test file for existing tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn test_tool_recovery"' in src/prompt_retry.rs ✓ (2ms)
+  ▶ search 'tool_recovery_hint"' in src/prompt_retry.rs ✓ (2ms)
+  ▶ search 'test_tool_recovery' in src/prompt_retry.rs ✓ (2ms)
+  ▶ read src/prompt_retry.rs:680..830 ✓ (1ms)
+  4 tools completed in 11.1s (4 ✓)
+
+Now let me also check the test for build_auto_retry and the retry prompt to see what tests exist:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:824..884 ✓ (1ms)
+
+Now I have a complete understanding. Let me implement the improvement. Here's my plan:
+
+1. Extend `tool_recovery_hint` to accept an optional error message and provide error-pattern-specific hints
+2. Update all callers to pass the error message through
+3. Update `RecoveryHintTool` to pass the error message
+4. Add comprehensive tests for the new error-pattern-aware hints
+5. Update existing tests to use the new signature
+
+Let me implement this:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:92..152 ✓ (0ms)
+
+Now let me implement. I'll replace the tool_recovery_hint function with an error-pattern-aware version:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (64 → 201 lines)
+    /// Return a tool-specific recovery hint for the given tool name.
+    ///
+  - /// Hints escalate based on the retry attempt number:
+  - /// - **Attempt 1**: diagnostic advice (fix the immediate error, same tool)
+  - /// - **Attempt 2+**: concrete alternative tool suggestions (switch tools entirely)
+  + /// Hints are resolved in priority order:
+  + /// 1. **Error-pattern-specific** — if `error_msg` matches a known failure pattern
+  + ///    for this tool, return a targeted hint (e.g., "file not found" on `edit_file`
+  + ///    suggests `write_file` to create it). This fires regardless of attempt number.
+  + /// 2. **Attempt-based escalation** — if no pattern matches:
+  + ///    - **Attempt 1**: diagnostic advice (fix the immediate error, same tool)
+  + ///    - **Attempt 2+**: concrete alternative tool suggestions (switch tools entirely)
+    ///
+  - /// This prevents premature tool-switching on transient failures while ensuring
+  - /// the agent doesn't get stuck retrying the same failing approach.
+  + /// This prevents the agent from wasting retries on the wrong recovery strategy
+  + /// (e.g., re-reading a file that doesn't exist instead of creating it).
+    pub fn tool_recovery_hint(tool_name: &str, attempt: u32) -> &'static str {
+  +     tool_recovery_hint_with_error(tool_name, attempt, None)
+  + }
+  ... (152 more lines)
+ ✓ (35.7s)
+
+Now update build_retry_prompt to pass the error message through:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (14 → 14 lines)
+                };
+                match tool_name {
+                    Some(name) => {
+  -                     let hint = tool_recovery_hint(name, 1);
+  +                     let hint = tool_recovery_hint_with_error(name, 1, Some(err));
+                        format!(
+                            "[Previous attempt failed — {name} error: {summary}. {hint}]\n\n{input}"
+                        )
+ ✓ (34.3s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3530 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_on_anthropic_build_agent ... ok
+test agent_builder::tests::test_client_headers_openai ... ok
+test agen...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
