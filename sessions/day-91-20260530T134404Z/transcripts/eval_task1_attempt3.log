@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate this task quickly and thoroughly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (27.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.1s)
+  2 tools completed in 46.1s (2 ✓)
+
+Good — builds, tests pass, clippy clean. Now let me evaluate the substance of the changes.
+
+**Change 1: highlight_match in commands_search.rs** — Fixes a real Unicode safety bug. The old code used `path_lower.rfind()` which returns byte offsets in the lowercased string, then used those offsets to slice the original string. When to_lowercase() changes byte length (e.g., Turkish İ → i̇), this causes byte-offset mismatches and potential panics. The new code uses char-level indexing with proper mapping back to original byte boundaries.
+
+**Change 2: highlight_matches and search_messages in `prompt_utils.rs** — Same class of bug fixed. The old code used lower_text.match_indices() which returns byte offsets from the lowercased text, then used query.len()` (byte length of original query) to compute end offsets — both wrong when lowercasing changes byte lengths. The new code does char-level matching with proper reverse mapping. New tests cover multi-byte Unicode cases.
+
+**Change 3: commands_run.rs test serialization** — Adds a mutex to serialize tests that access global LAST_FAILED_RUN state. This fixes potential test flakiness from parallel execution — a legitimate race condition fix.
+
+All three changes address the project's documented safety rule: "Never use byte indexing on strings" (CLAUDE.md). The changes are substantive, correct, and address real bugs that could cause panics with non-ASCII input.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (31.5s)
+
+**Verdict: PASS** — The implementation correctly fixes real Unicode safety bugs (byte-offset mismatches when to_lowercase() changes string byte length) in three functions, adds proper test coverage for multi-byte Unicode cases, and fixes a test race condition. All changes are substantive, correct, and aligned with the project's safety rules.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

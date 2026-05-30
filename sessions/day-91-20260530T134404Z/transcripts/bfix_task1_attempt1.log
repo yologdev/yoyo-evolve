@@ -1,0 +1,102 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the failing test and the related code to understand what's going on.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_last_failed_run_cl… ✓ (5ms)
+  ▶ read src/commands_run.rs:380..420 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me look at the set_last_failed_run, get_last_failed_run, and clear_last_failed_run functions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn set_last_failed_run\… ✓ (4ms)
+
+The issue is a test race condition. Since LAST_FAILED_RUN is a global static, tests running in parallel can interfere with each other. The test `test_last_failed_run_cleared_on_success` sets the value and immediately checks it, but another test (like the one at line 370 that also uses clear_last_failed_run()) could clear it first.
+
+Let me check the other test that uses the same global:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:360..400 ✓ (1ms)
+
+Yes, the classic race condition. test_last_failed_run_initially_none calls clear_last_failed_run() which can race with test_last_failed_run_cleared_on_success setting the value. Let me check if there's a test serialization mechanism already used in this codebase:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial\|SERIAL\|test_mu… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 -- src/comm… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_ru… ✓ (4ms)
+  4 tools completed in 10.2s (4 ✓)
+
+No recent changes to this file. Let me check what was changed recently:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (4ms)
+  2 tools completed in 3.5s (2 ✓)
+
+The test is a pre-existing flaky test due to shared mutable global state across parallel tests. The fix is to add a mutex to serialize these tests. Let me look at the full test module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:345..515 ✓ (1ms)
+
+The three tests that touch LAST_FAILED_RUN (test_last_failed_run_initially_none, `test_last_failed_run_store_and_retrieve, test_last_failed_run_cleared_on_success`) race with each other. The fix is to serialize them with a shared test mutex.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:300..330 ✓ (0ms)
+
+I'll add a test-serialization mutex for the tests that share the LAST_FAILED_RUN global state:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (3 → 8 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  +     use std::sync::Mutex;
+  + 
+  +     /// Serializes tests that read/write the global `LAST_FAILED_RUN` state
+  +     /// to prevent race conditions when tests run in parallel.
+  +     static FAILED_RUN_LOCK: Mutex<()> = Mutex::new(());
+ ✓ (13.5s)
+
+Now let me update the three tests to actually use the lock:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (10 → 12 lines)
+        #[test]
+        fn test_last_failed_run_initially_none() {
+  +         let _guard = FAILED_RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            // Clear any state from other tests
+            clear_last_failed_run();
+            assert!(get_last_failed_run().is_none());
+  ···
+    
+        #[test]
+        fn test_last_failed_run_store_and_retrieve() {
+  +         let _guard = FAILED_RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let result = RunResult {
+ ✓ (59.8s)
+  ▶ edit src/commands_run.rs (3 → 4 lines)
+        #[test]
+        fn test_last_failed_run_cleared_on_success() {
+  +         let _guard = FAILED_RUN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            set_last_failed_run(RunResult {
+ ✓ (1m 1s)
+  2 tools completed in 2m 6s (2 ✓)
+
+Now run the full check:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (845ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (28.6s)
+  3 tools completed in 56.8s (3 ✓)
+
+Let me also run the specific failing test a few times to confirm it's no longer flaky:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in {1..5}; do cargo test t… ✓ (693ms)
+
+All passing consistently. Let me also run the full test suite once more to be sure:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (17.4s)
+
+All 3618 tests pass (3530 + 88), 0 failures.
+
+Fix summary: The `test_last_failed_run_cleared_on_success test was failing due to a race condition — three tests (test_last_failed_run_initially_none, test_last_failed_run_store_and_retrieve, test_last_failed_run_cleared_on_success`) all read/write the global LAST_FAILED_RUN static and ran in parallel. When test_last_failed_run_initially_none called `clear_last_failed_run() between another test's set and assert`, the assertion failed.
+
+The fix adds a FAILED_RUN_LOCK mutex in the test module, acquired by all three tests with unwrap_or_else(|e| e.into_inner()) (poison recovery), serializing their access to the shared global state.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

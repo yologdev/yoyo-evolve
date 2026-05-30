@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | head -100 ✓ (3ms)
+  ▶ $ cat ISSUES_TODAY.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (46ms)
+  4 tools completed in 5.7s (4 ✓)
+
+Let me check the full issue text and recent comment from @voku:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 443 --repo yologdev/yoyo-evolve 2>/dev/null || echo "gh CLI not av… ✓ (467ms)
+  ▶ $ gh issue view 443 --repo yologdev/yoyo-evolve --comments 2>/dev/null | tail -30 ✓ (431ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me check the trajectory data and recent CI status for context, then think about what the best 3 tasks are:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what the watch test panic was about (2 lines) ✓ (4ms)
+  ▶ $ # Check the last release tag to assess if a new release is w… (2 lines) ✓ (4ms)
+  ▶ $ # Check how many .expect() calls are in production code (not… (2 lines) ✓ (8ms)
+  ▶ $ # Let me understand the expect() landscape better — which fi… (2 lines) ✓ (9ms)
+  ▶ $ # Check what the expects in help.rs are — probably regex com… (2 lines) ✓ (4ms)
+  ▶ $ # Those are in test code. Let me be more precise - check non… (22 lines) ✓ (28ms)
+  ▶ $ # OK so the expects are all in test code. Good. Let me check… (22 lines) ✓ (56ms)
+  7 tools completed in 29.8s (7 ✓)
+
+Good — only 3 production .expect() calls, and those are all on things that should never fail (taking a pipe that was just set up). The 132 number was inflated by test code. Not a priority.
+
+Now let me think about the 3 best tasks for this session:
+
+**Task 1 (Self-driven, competitive gap): The assessment identifies structured output / headless mode** as a Tier 1 gap. Gemini CLI offers --json and --stream-json. yoyo has piped mode but no structured JSON output. This is a concrete, buildable feature that makes yoyo more composable and competitive. A `--json` flag for single-prompt mode that wraps the response in a JSON envelope would be a strong step.
+
+Task 2 (Self-driven, hardening): The trajectory shows a one-time test panic in `watch::tests::handle_watch_bare_sets_lint_and_test`. Even though it didn't recur, investigating and hardening it is good preventive work. But actually, it only appeared once — let me look for something more impactful.
+
+Actually, let me reconsider. The assessment notes **110 byte-slice sites remain unannotated**. The sweep has been going for 3 sessions now. Let me look at what the most impactful self-driven work would be:
+
+1. Structured JSON output (`--json`) — competitive gap, composability
+2. **Image input documentation/testing** — the assessment says /add handles images but it's not well-documented or tested  
+3. **Issue #443** — learning-to-skill pipeline, community request
+
+Let me plan:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check current piped mode / output format handling (2 lines) ✓ (4ms)
+  ▶ $ # Check the OutputFormat enum and how it's used in execution (2 lines) ✓ (3ms)
+  ▶ $ sed -n '71,85p' src/cli_config.rs ✓ (3ms)
+  ▶ $ # How is OutputFormat actually used in main.rs / prompt.rs? (2 lines) ✓ (4ms)
+  ▶ $ # Check how JSON output currently works (2 lines) ✓ (4ms)
+  ▶ $ # Check for run_prompt_stream_json (2 lines) ✓ (4ms)
+  ▶ $ sed -n '1105,1200p' src/prompt.rs ✓ (4ms)
+  7 tools completed in 18.8s (7 ✓)
+
+OK, so yoyo already HAS --json and `--output-format stream-json` implemented! The assessment said "no structured JSON output format" but that's incorrect — it exists. Let me reconsider.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the --json final output? Check how the json_out… (2 lines) ✓ (4ms)
+
+OK, `--json` is already fully implemented. Let me pivot to other tasks.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about image input? Check how /add handles images (2 lines) ✓ (4ms)
+
+Image support exists in /add. Let me focus on finding the best competitive gap work.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check what competitive features are most impactful … (3 lines) ✓ (4ms)
+  ▶ $ # Let me look at what real competitive gaps remain (3 lines) ✓ (4ms)
+  2 tools completed in 7.8s (2 ✓)
+
+OK, --continue already exists. Let me think more carefully about what to prioritize.
+
+The assessment identifies these Tier 1 gaps:
+1. **MCP server support** — limited, but this is complex architecture
+2. Image/multimodal input — already exists, just needs docs/testing
+3. Codebase semantic indexing — tree-sitter, big effort
+4. **Local model polish (Ollama)** — blocked on yoagent upstream
+5. **Structured output / headless mode** — already exists (--json, `--output-format stream-json`)
+
+So most of the "gaps" are either already closed or blocked. Let me look for real gaps I can close:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Does yoyo have any form of "allowlist/denylist" for tools … (2 lines) ✓ (4ms)
+  ▶ $ # What about /memory command? Check if it exists (2 lines) ✓ (4ms)
+  ▶ $ wc -l src/commands_memory.rs src/memory.rs 2>/dev/null ✓ (3ms)
+  ▶ $ # Let me look at what a real developer hitting yoyo for the … (3 lines) ✓ (4ms)
+  4 tools completed in 11.8s (4 ✓)
+
+Let me now think about what I want to build. Let me consider the most impactful things:
+
+1. Issue #443 is the only community issue and it's thoughtful, with good follow-up from @voku. It asks for a learning-to-skill distillation pipeline. This is a substantial feature that aligns with yoyo's existing skill-evolve and memory systems. I should acknowledge it and start building toward it.
+
+2. **Self-driven competitive work**: Looking at the assessment more carefully, the most impactful competitive gap that ISN'T already implemented is codebase semantic indexing. But that needs tree-sitter and is too big for one session. A more achievable gap: yoyo doesn't have a /context show or /context edit that lets you see and modify what project context is being injected into the system prompt. Claude Code has this. Let me check...
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check /context command (2 lines) ✓ (4ms)
+  ▶ $ sed -n '19,100p' src/commands_project.rs ✓ (4ms)
+  2 tools completed in 2.1s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

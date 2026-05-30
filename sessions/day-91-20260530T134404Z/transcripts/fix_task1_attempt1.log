@@ -1,0 +1,196 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I need to understand the current state - there are uncommitted changes in src/commands_run.rs. Let me look at what's there and then decide on the best improvement to implement and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && echo "---" && git … ✓ (10ms)
+
+Good - there's an uncommitted fix for test serialization in commands_run.rs. Now let me identify the most impactful improvement. Let me look at the codebase for concrete issues.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (17.4s)
+
+Tests pass. Let me do a focused scan for real issues - unsafe string indexing (a known problem area per CLAUDE.md), potential panics, and other concrete bugs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\[\.\.' src/ --include… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\[\.\.' src/ --include… ✓ (8ms)
+  2 tools completed in 3.4s (2 ✓)
+
+There are 102 instances of byte indexing. Many of them may be safe (e.g., indexing by positions found via find() on ASCII patterns, or on known-ASCII strings). Let me focus on the ones that could genuinely panic with multi-byte characters.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (3m 9s)
+
+Excellent. Two genuinely unsafe byte-indexing bugs found. These are exactly the kind of issue CLAUDE.md warns about. Let me fix both.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:100..160 ✓ (1ms)
+
+Now let me look at the second unsafe site:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:220..260 ✓ (1ms)
+
+Now let me also check the highlight_matches function that the first site calls:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:70..100 ✓ (1ms)
+
+`highlight_matches has the same class of bug! match_start is a byte offset in lower_text`, but it's used to index text. Let me now fix all three sites.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 11.8s (6 ✓)
+
+The key insight: to_lowercase() can change the byte length of characters. For example, the German ß uppercased then lowercased, or Turkish İ lowercased, produce different byte lengths. When we get byte offsets from `lower_text.find() or lower_text.match_indices()`, those offsets may not correspond to valid positions in the original text.
+
+The correct approach is to build a mapping from lowercased byte positions back to original byte positions using `char_indices()`.
+
+Let me fix all three sites:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/prompt_utils.rs (23 → 62 lines)
+    /// Highlight all occurrences of `query` in `text` using BOLD ANSI codes (case-insensitive).
+    /// Returns the text with matching substrings wrapped in BOLD..RESET.
+  + ///
+  + /// Uses char-level comparison to avoid byte-offset mismatches between `text`
+  + /// and its lowercased form (which can differ in byte length for certain
+  + /// Unicode characters like Turkish İ → i̇).
+    pub fn highlight_matches(text: &str, query: &str) -> String {
+        if query.is_empty() {
+            return text.to_string();
+        }
+  -     let lower_text = text.to_lowercase();
+        let lower_query = query.to_lowercase();
+  +     let query_char_count = lower_query.chars().count();
+  + 
+  +     // Build char-index-to-byte-offset mapping for the original text
+  +     let char_starts: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+  +     let lower_chars: Vec<char> = text.chars().flat_map(|c| c.to_lowercase()).collect();
+  + 
+  +     // We need a mapping: for each char in lower_chars, which original char produced it?
+  +     // Since to_lowercase() can produce multiple chars from one original char, build
+  ... (53 more lines)
+ ✓ (1m 2s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 25s (4 ✓)
+
+Now fix search_messages. The problem is that `match_pos from lower.find()` is a byte offset in the lowercased string, used to slice the original. I need to use a char-aware approach:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (27 → 49 lines)
+            if text.to_lowercase().contains(&query_lower) {
+                let (role, _) = summarize_message(msg);
+                // Find match context: show text around the first match
+  -             let lower = text.to_lowercase();
+  -             let match_pos = lower.find(&query_lower).unwrap_or(0);
+  -             let start = match_pos.saturating_sub(20);
+  -             // Get byte-safe boundaries
+  -             let start = text[..start]
+  -                 .char_indices()
+  -                 .last()
+  -                 .map(|(idx, _)| idx)
+  +             // Use char-level search to avoid byte-offset mismatches between
+  +             // the original text and its lowercased form.
+  +             let lower_chars: Vec<char> = text.chars().flat_map(|c| c.to_lowercase()).collect();
+  +             let query_chars: Vec<char> = query_lower.chars().collect();
+  +             let char_starts: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+  + 
+  +             // Build lower-char-index → original-char-index mapping
+  +             let mut lower_to_orig: Vec<usize> = Vec::with_capacity(lower_chars.len());
+  +             for (orig_idx, ch) in text.chars().enumerate() {
+  ... (33 more lines)
+ ✓ (1m 2s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 7s (3 ✓)
+
+Now fix highlight_match in `commands_search.rs`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (19 → 50 lines)
+    /// Highlight the matching pattern within a file path for display.
+    /// Returns the path with ANSI bold/color around the matched portion.
+  + ///
+  + /// Uses char-level search to avoid byte-offset mismatches between
+  + /// the path and its lowercased form (safe for non-ASCII filenames).
+    pub fn highlight_match(path: &str, pattern: &str) -> String {
+  -     let path_lower = path.to_lowercase();
+        let pattern_lower = pattern.to_lowercase();
+  +     let pattern_lower_chars: Vec<char> = pattern_lower.chars().collect();
+    
+  -     if let Some(pos) = path_lower.rfind(&pattern_lower) {
+  -         // Prefer highlighting in the filename portion
+  -         let end = pos + pattern.len();
+  +     // Build lowered char array and mapping back to original char indices
+  +     let lower_chars: Vec<char> = path.chars().flat_map(|c| c.to_lowercase()).collect();
+  +     let char_starts: Vec<usize> = path.char_indices().map(|(i, _)| i).collect();
+  + 
+  +     let mut lower_to_orig: Vec<usize> = Vec::with_capacity(lower_chars.len());
+  +     for (orig_idx, ch) in path.chars().enumerate() {
+  +         for _ in 0..ch.to_lowercase().count() {
+  ... (35 more lines)
+ ✓ (1m 1s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 5s (2 ✓)
+
+Now let me add tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/pro… ✓ (3ms)
+  ▶ read src/prompt_utils.rs:396..446 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/prompt_utils.rs ✓ (3ms)
+  ▶ edit src/prompt_utils.rs (5 → 51 lines)
+        #[test]
+        fn test_extract_topic_phrase_empty() {
+            assert_eq!(extract_topic_phrase(""), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_highlight_matches_ascii() {
+  +         let result = highlight_matches("hello world hello", "hello");
+  +         // Should contain BOLD markers around both "hello" occurrences
+  +         assert!(result.contains("hello"));
+  +         assert!(result.contains("world"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_highlight_matches_case_insensitive() {
+  +         let result = highlight_matches("Hello World HELLO", "hello");
+  +         // Original case preserved in output
+  +         assert!(result.contains("Hello"));
+  +         assert!(result.contains("HELLO"));
+  +     }
+  ... (31 more lines)
+ ✓ (9.6s)
+  5 tools completed in 26.5s (5 ✓)
+
+There are already existing tests with those names. Let me see:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_highlight_match… ✓ (3ms)
+
+I need to remove the duplicate test names and just add the new ones (the multibyte test is the important one):
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (51 → 32 lines)
+        #[test]
+        fn test_extract_topic_phrase_empty() {
+            assert_eq!(extract_topic_phrase(""), "");
+  -     }
+  - 
+  -     #[test]
+  -     fn test_highlight_matches_ascii() {
+  -         let result = highlight_matches("hello world hello", "hello");
+  -         // Should contain BOLD markers around both "hello" occurrences
+  -         assert!(result.contains("hello"));
+  -         assert!(result.contains("world"));
+  -     }
+  - 
+  -     #[test]
+  -     fn test_highlight_matches_case_insensitive() {
+  -         let result = highlight_matches("Hello World HELLO", "hello");
+  -         // Original case preserved in output
+  -         assert!(result.contains("Hello"));
+  -         assert!(result.contains("HELLO"));
+        }
+  ... (30 more lines)
