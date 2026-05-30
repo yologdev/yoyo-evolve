@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat SPONSORS.md 2>/dev/null | head -30📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (4ms)
+ ✓ (15ms)
+  4 tools completed in 4.2s (4 ✓)
+
+Now let me think about what to plan. Let me check the assessment's key findings:
+
+1. **Last ~5 sessions have been bug-fixing and hardening** — no new features. Time to build something.
+2. Biggest competitive gaps: hooks system, semantic repo map, prompt caching, git worktree isolation
+3. Issue #443: Already replied — @voku wants harder gates on learning→skill distillation. I already responded explaining what exists.
+4. **80 production unwrap() calls** — potential stability issue
+5. No sponsor issues requiring immediate attention.
+
+Let me check what the hooks system gap looks like — this is the #1 competitive gap and would be a meaningful feature:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Hook\|hook" src/hooks.rs | head -30  ▶ $ wc -l src/hooks.rs ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 1.2s (2 ✓)
+
+We already have a hook system internally! The gap the assessment identifies is *user-configurable* hooks — like Claude Code's ability to auto-format on file save, run lint after edits, etc. Let me check what's configurable:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "hooks" src/config.rs | head -20  ▶ $ grep -n "auto_check\|AutoCheck\|auto-check" src/tool_wrappers.rs | head -20 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Good. We have AutoCheckTool that runs watch commands after edits, and HookRegistry internally. But there's no user-configurable hook system in .yoyo.toml. Let me focus on what would be highest impact.
+
+Looking at my trajectory: 10/10 successes, 0 reverts, the codebase is stable. The last 5 sessions were all hardening. It's time to build a real feature that closes a competitive gap.
+
+My plan:
+
+1. **Task 1 (self-driven, competitive gap):** User-configurable hooks in .yoyo.toml — allow users to define pre_edit and post_edit commands (like auto-format after file writes). This is the #1 competitive gap from the assessment. Start with config parsing + hook execution for file edits.
+
+2. Task 2 (self-driven, stability): Audit and fix production `unwrap() calls in core paths — prompt.rs and agent_builder.rs` are critical paths where panics would crash the agent. Convert the most dangerous ones to proper error handling.
+
+3. Task 3 (community): Issue #443 — I already replied explaining what exists. @voku's follow-up asks for harder gates. This is more of a design/skill-evolve concern than a code task. I'll note it in responses but not dedicate a task since I already replied and it's in the skill-evolve domain.
+
+Let me instead think about a better third task. The assessment notes symbols.rs at 3,679 lines is the largest module. But splitting files is low-impact. Let me look for something more user-facing.
+
+Actually, let me reconsider the task allocation. The assessment says the biggest gaps are infrastructure-level now, and the most impactful local improvements are: (1) better context intelligence, (2) hooks/automation, (3) session efficiency. Let me pick from these.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "unwrap()" src/prompt.rs src/agent_builder.rs src/main.rs src/repl.rs 2>… ✓ (4ms)
+  ▶ $ grep -n "unwrap()" src/prompt.rs | head -20 ✓ (4ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Most of those are in tests. Let me check production-only:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "unwrap()" src/prompt.rs | grep -v "#\[cfg(test)\]" … (12 lines) ✓ (26ms)
+
+These are all in test code (after the `#[cfg(test)]` module starts). Let me check more carefully where the test module begins:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^#\[cfg(test)\]" src/prompt.rs ✓ (8ms)
+
+So all 37 unwraps in prompt.rs are in test code (line 1276+). That's fine. Let me check the actually critical production paths:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (14 lines) ✓ (25ms)
+  ▶ $ # Check all src files for production unwraps (19 lines) ✓ (52ms)
+  2 tools completed in 13.2s (2 ✓)
+
+OK, so 80 production unwraps break down as:
+• ~70 are Regex::new(...).unwrap() in LazyLock statics in symbols.rs — these are safe (compile-time constants)
+• ~5 are in config.rs, `commands_skill.rs, watch.rs` — some might need attention
+• A few are in help_data.rs — just example text
+
+The regex unwraps are totally safe — they're static patterns that either work or don't at compile time. The real production unwrap risk is minimal. Let me shift focus to more impactful work.
+
+Let me plan 3 tasks that move me forward competitively:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what hooks config looks like currently (2 lines) ✓ (3ms)
+  ▶ $ # Check .yoyo.toml for current config format (2 lines) ✓ (3ms)
+  ▶ $ # Check what the hooks.rs system looks like more closely - t… (2 lines) ✓ (4ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Good. The hooks infrastructure exists but only has AuditHook. The competitive gap is user-configurable hooks — like "after any file write, run prettier" or "before commit, run eslint". This is what Claude Code offers.
+
+Let me now think about the 3 most impactful tasks:
+
+Task 1: User-configurable hooks — Parse [hooks] section from .yoyo.toml, register user-defined pre/post hooks for file operations. This is the #1 competitive gap. I'll scope it tightly: just config parsing + a CommandHook that runs a shell command, integrated into the existing HookRegistry.
+
+**Task 2: Smart context relevance for /add** — When adding files, suggest related files the user might also want. The `suggest_related_files function already exists in commands_file.rs`. Let me check if it's actually wired up:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "suggest_related" src/commands_file.rs | head -10 ✓ (4ms)
+
+OK, that exists. Let me focus on what's actually impactful. The assessment says the three most impactful improvements for a local CLI agent are:
+1. Better context intelligence (what to send to the model)
+2. Hooks/automation (reduce manual ceremony)  
+3. Session efficiency (prompt caching, smarter compaction)
+
+For hooks, the scope is: config parsing in `config.rs, a new CommandHook struct in hooks.rs, and wiring in tools.rs` or agent_builder.rs. That's 3 files — fits the constraint.
+
+For a second task, let me look at something concrete and user-facing. What about improving the `/map` command with better output? The assessment says Aider has semantic repo maps but ours is structural. Even improving the structural output to be more useful would help.
+
+For a third task, since the pattern has been "all hardening, no features" for 5 sessions, I should push on something that users would notice. Let me look at an unserved need.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /map currently does (2 lines) ✓ (4ms)
+  ▶ $ read_file src/commands_map.rs 286 335 ✓ (2ms)
+  ▶ read src/commands_map.rs:286..336 ✓ (1ms)
+  3 tools completed in 20.8s (3 ✓)
+
+OK, I have a good sense of the codebase now. Let me finalize my plan:
+
+**Task 1 (self-driven, #1 competitive gap):** User-configurable hooks in `.yoyo.toml — [hooks] section with post_edit and post_write` commands. This lets users auto-format on save, auto-lint after edits, etc. Touches: config.rs (parsing), `hooks.rs (CommandHook implementation), agent_builder.rs` (wiring).
+
+Task 2 (self-driven, competitive): Add --hot flag to /map that shows only recently-modified files (last N git commits). This makes the repo map more context-aware — closer to Aider's semantic relevance without needing tree-sitter. Touches: commands_map.rs only.
+
+Task 3 (self-driven, competitive): Add `/context stats` subcommand showing what's in the agent's context window — file breakdown, system prompt size, conversation turns, tool results. The assessment shows `context_breakdown exists in commands_info.rs` but isn't surfaced as a discoverable command. Making it easy to see "where are my tokens going" improves session efficiency. Touches: commands_info.rs, `dispatch.rs (routing), help_data.rs` (help text).
+
+Wait, let me verify /context and what it already does:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_context\|fn context_subcommands" src/commands_project.rs | he… ✓ (4ms)
+  ▶ read src/commands_project.rs:19..69 ✓ (1ms)
+  2 tools completed in 3.5s (2 ✓)
+
+OK, /context already has system, tokens, files subcommands. The `context_breakdown in commands_info.rs is actually for the /tokens` command. Let me rethink task 3.
+
+Let me look for a better third task. What about improving error recovery? Or something more user-facing?
+
+Actually, let me look at what `/context tokens` already shows vs what would be more useful:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_tokens\|fn context_breakdown\|fn show_context_tokens" src/com… ✓ (4ms)
+
+OK, those features exist. Let me think about what else would be high-impact. Let me reconsider Task 3 as something around the hooks feature itself — perhaps tests and documentation.
+
+Actually, the hooks feature is already 3 files. Let me make Task 3 about something different that's truly self-driven.
+
+What about **smart auto-continue improvements**? The looks_incomplete heuristic in `repl.rs` is critical for UX — when the model hits a length limit mid-response, we auto-continue. Let me check what it looks like:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn looks_incomplete" src/repl.rs ✓ (8ms)
+  ▶ read src/repl.rs:1077..1137 ✓ (1ms)
+  2 tools completed in 3.3s (2 ✓)
+
+OK, that's a solid heuristic. Let me think about task 3 differently.
+
+Given the assessment says "the last 5 sessions have been entirely hardening with no new features", the most strategic move is to ship **two features** (hooks + one more) and one smaller improvement. Let me think about what would be impactful.
+
+How about adding **`/diff explain`** capability — when viewing a diff, the user can ask the agent to explain it? Let me check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_diff_explain" src/commands_git.rs ✓ (8ms)
+
+That already exists. Let me look at what's truly missing. Let me check what the `/profile` command does — the assessment mentions it:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_profile" src/commands_info.rs ✓ (8ms)
+  ▶ read src/commands_info.rs:743..783 ✓ (1ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Let me think more carefully about what would make me most competitive. The assessment identifies the #1 gap as hooks. Let me focus:
+
+**Task 1:** User-configurable hooks — `[hooks]` config section + CommandHook implementation
+Task 2: `/map --hot` — show only recently modified files in repo map
+Task 3: Improve /map to include dependency relationships between files (which files import/use which)
+
+Wait, tasks 2 and 3 both touch `commands_map.rs. Let me combine them or pick one. Actually /map --hot` is the more impactful one — making the repo map contextually relevant.
+
+For task 3, let me think about something completely different. What about improving the **first-run experience**? The assessment says first-contact features have outsized impact. What does the first run look like?
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn needs_setup\|fn run_setup_wizard" src/setup.rs | head -5 ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
