@@ -1,0 +1,245 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the fixed-path temp dir tests in cli.rs, setup.rs, and prompt_utils.rs. Let me start by finding all the instances.
+  ▶ $ grep -rn 'temp_dir.*join.*"yoyo_test' src/cli.rs src/setup.rs src/prompt_utils.r…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (41ms)
+
+Good, 9 instances total. Let me look at each test to understand the patterns.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use tempfile' src/cli.rs src/setup.rs src/prompt_utils.rs ✓ (8ms)
+  ▶ $ grep -n '#\[cfg(test)\]' src/cli.rs src/setup.rs src/prompt_utils.rs ✓ (7ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Let me examine each file's test module and the specific tests. I'll delegate each file to a sub-agent for focused work, but first let me read all the relevant test sections.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1970..2090  ▶ read src/setup.rs:735..1035  ▶ read src/prompt_utils.rs:380..430 ✓ (3ms)
+ ✓ (3ms)
+ ✓ (5ms)
+  3 tools completed in 1.7s (3 ✓)
+
+Now I have a clear picture. Let me also check what imports exist in the test modules:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '/^#\[cfg(test)\]/,/^}/{ /^mod tests/,+20p; }' src/cli.rs | head -20 ✓ (4ms)
+  ▶ $ sed -n '/^#\[cfg(test)\]/,/^}/{ /^mod tests/,+10p; }' src/setup.rs | head -10 ✓ (4ms)
+  ▶ $ sed -n '/^#\[cfg(test)\]/,/^}/{ /^mod tests/,+10p; }' src/prompt_utils.rs | head… ✓ (3ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Now I have everything I need. Let me make all the edits.
+
+**1. Fix src/prompt_utils.rs** (simplest — 1 test):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (11 → 12 lines)
+        #[test]
+        fn test_write_output_file_some() {
+  -         let dir = std::env::temp_dir().join("yoyo_test_output");
+  -         let _ = std::fs::create_dir_all(&dir);
+  -         let path = dir.join("test_output.txt");
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_output")
+  +             .tempdir()
+  +             .unwrap();
+  +         let path = tmp_dir.path().join("test_output.txt");
+            let path_str = path.to_string_lossy().to_string();
+            write_output_file(&Some(path_str), "hello from yoyo");
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(content, "hello from yoyo");
+  -         let _ = std::fs::remove_file(&path);
+        }
+ ✓ (59.7s)
+
+**2. Fix src/cli.rs** (4 tests):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (17 → 16 lines)
+            // Create a temp file and verify resolve_system_prompt reads it
+  -         let dir = std::env::temp_dir().join("yoyo_test_system_file");
+  -         let _ = std::fs::create_dir_all(&dir);
+  -         let prompt_path = dir.join("test_prompt.txt");
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_system_file")
+  +             .tempdir()
+  +             .unwrap();
+  +         let prompt_path = tmp_dir.path().join("test_prompt.txt");
+            std::fs::write(&prompt_path, "You are a Python expert").unwrap();
+    
+            let result = resolve_system_prompt(
+  ···
+                None,
+            );
+            assert_eq!(result, "You are a Python expert");
+  - 
+  -         // Cleanup
+  -         let _ = std::fs::remove_dir_all(&dir);
+        }
+ ✓ (59.1s)
+  ▶ edit src/cli.rs (18 → 18 lines)
+        #[test]
+        fn test_config_system_file_overrides_system_prompt() {
+            // When both are present in config, system_file wins
+  -         let dir = std::env::temp_dir().join("yoyo_test_sf_override");
+  -         let _ = std::fs::create_dir_all(&dir);
+  -         let prompt_path = dir.join("override_prompt.txt");
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_sf_override")
+  +             .tempdir()
+  +             .unwrap();
+  +         let prompt_path = tmp_dir.path().join("override_prompt.txt");
+            std::fs::write(&prompt_path, "From file").unwrap();
+    
+            let result = resolve_system_prompt(
+  ···
+                Some("From config key".into()),
+            );
+            assert_eq!(result, "From file");
+  - 
+  -         let _ = std::fs::remove_dir_all(&dir);
+  ... (1 more lines)
+ ✓ (1m 0s)
+  ▶ edit src/cli.rs (18 → 18 lines)
+        #[test]
+        fn test_cli_system_file_overrides_config() {
+            // CLI --system-file content should override config file system_file
+  -         let dir = std::env::temp_dir().join("yoyo_test_cli_sf_override");
+  -         let _ = std::fs::create_dir_all(&dir);
+  -         let config_path = dir.join("config_prompt.txt");
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_cli_sf_override")
+  +             .tempdir()
+  +             .unwrap();
+  +         let config_path = tmp_dir.path().join("config_prompt.txt");
+            std::fs::write(&config_path, "Config file content").unwrap();
+    
+            let result = resolve_system_prompt(
+  ···
+                Some("Config prompt text".into()),
+            );
+            assert_eq!(result, "CLI file content");
+  - 
+  -         let _ = std::fs::remove_dir_all(&dir);
+  ... (1 more lines)
+ ✓ (58.3s)
+  ▶ edit src/cli.rs (18 → 18 lines)
+        #[test]
+        fn test_cli_system_overrides_config_system_file() {
+            // CLI --system should also override config system_file
+  -         let dir = std::env::temp_dir().join("yoyo_test_cli_sys_vs_config_file");
+  -         let _ = std::fs::create_dir_all(&dir);
+  -         let config_path = dir.join("config_prompt.txt");
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_cli_sys_vs_config_file")
+  +             .tempdir()
+  +             .unwrap();
+  +         let config_path = tmp_dir.path().join("config_prompt.txt");
+            std::fs::write(&config_path, "Config file content").unwrap();
+    
+            let result = resolve_system_prompt(
+  ···
+                None,
+            );
+            assert_eq!(result, "CLI text wins");
+  - 
+  -         let _ = std::fs::remove_dir_all(&dir);
+  ... (1 more lines)
+ ✓ (57.8s)
+  4 tools completed in 4m 17s (4 ✓)
+
+**3. Fix src/setup.rs** (4 tests):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/setup.rs (16 → 15 lines)
+        #[test]
+        fn test_save_config_to_file() {
+            // Use a temp dir to avoid polluting the project
+  -         let dir = std::env::temp_dir().join("yoyo_test_wizard");
+  -         let _ = std::fs::create_dir_all(&dir);
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_wizard")
+  +             .tempdir()
+  +             .unwrap();
+    
+  -         let result = save_config_to_file(&dir, "openai", "gpt-4o", None);
+  +         let result = save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None);
+            assert!(result.is_ok());
+    
+  -         let content = std::fs::read_to_string(dir.join(".yoyo.toml")).unwrap();
+  +         let content = std::fs::read_to_string(tmp_dir.path().join(".yoyo.toml")).unwrap();
+            assert!(content.contains("provider = \"openai\""));
+            assert!(content.contains("model = \"gpt-4o\""));
+  - 
+  -         // Cleanup
+  ... (2 more lines)
+ ✓ (58.3s)
+  ▶ edit src/setup.rs (37 → 37 lines)
+        #[serial]
+        fn test_save_config_to_user_file() {
+            // Use a temp dir to simulate XDG_CONFIG_HOME
+  -         let dir = std::env::temp_dir().join("yoyo_test_xdg_save");
+  -         let _ = std::fs::remove_dir_all(&dir);
+  -         std::fs::create_dir_all(&dir).unwrap();
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_xdg_save")
+  +             .tempdir()
+  +             .unwrap();
+    
+            // Override XDG_CONFIG_HOME so user_config_path() points here
+            let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+  -         std::env::set_var("XDG_CONFIG_HOME", &dir);
+  +         std::env::set_var("XDG_CONFIG_HOME", tmp_dir.path());
+    
+            let result = save_config_to_user_file("google", "gemini-2.0-flash", None);
+            assert!(result.is_ok(), "save_config_to_user_file should succeed");
+  ···
+            assert!(content.contains("provider = \"google\""));
+  ... (11 more lines)
+ ✓ (59.5s)
+  ▶ edit src/setup.rs (29 → 29 lines)
+        #[serial]
+        fn test_save_config_to_user_file_creates_parent_dirs() {
+            // Use a temp dir with nested path to verify parent creation
+  -         let dir = std::env::temp_dir().join("yoyo_test_xdg_nested");
+  -         let _ = std::fs::remove_dir_all(&dir);
+  -         // Don't create the dir — save_config_to_user_file should create it
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_xdg_nested")
+  +             .tempdir()
+  +             .unwrap();
+    
+            let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+  -         std::env::set_var("XDG_CONFIG_HOME", &dir);
+  +         std::env::set_var("XDG_CONFIG_HOME", tmp_dir.path());
+    
+            let result = save_config_to_user_file("openai", "gpt-4o", None);
+            assert!(
+  ···
+                result.err()
+            );
+  ... (14 more lines)
+ ✓ (59.7s)
+  ▶ edit src/setup.rs (41 → 42 lines)
+        #[serial]
+        fn test_wizard_save_to_user_level() {
+            // Set up a temp XDG dir so saving actually works
+  -         let dir = std::env::temp_dir().join("yoyo_test_wizard_user_save");
+  -         let _ = std::fs::remove_dir_all(&dir);
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_wizard_user_save")
+  +             .tempdir()
+  +             .unwrap();
+    
+            let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+  -         std::env::set_var("XDG_CONFIG_HOME", &dir);
+  +         std::env::set_var("XDG_CONFIG_HOME", tmp_dir.path());
+    
+            // Choose ollama (4), default model, save to user-level (2)
+            let input = "4\n\n2\n";
+  ···
+            );
+    
+            // Verify file was actually created
+  ... (18 more lines)
+ ✓ (1m 0s)
+  4 tools completed in 4m 32s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

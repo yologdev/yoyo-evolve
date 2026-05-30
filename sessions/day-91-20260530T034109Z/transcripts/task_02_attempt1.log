@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the fixed-path temp dir tests in commands_project.rs. Let me start by finding all the affected tests.
+  ▶ $ grep -n 'yoyo_test_\|temp_dir()\.join("yoyo_test' src/commands_project.rs | head… ✓ (4ms)
+  ▶ $ grep -n 'yoyo_test_\|temp_dir()\.join("yoyo_test' src/commands_project.rs | tail… ✓ (3ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Let me read the full test section to understand each test's structure:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1480.. ✓ (4ms)
+
+Now let me see the remaining tests I need to fix:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1579..1829 ✓ (2ms)
+
+Now I have a clear picture. I need to note the test that checks the fallback name — it uses the temp dir name as the expected value, so with `tempfile::TempDir` the dir name will be randomized. Let me handle that one specially.
+
+Let me count all the tests that need changes:
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'std::env::temp_dir().join("yoyo_test' src/commands_project.rs ✓ (41ms)
+
+Good, exactly 16. Now let me make the changes. I'll delegate the actual editing to a sub-agent since it's many surgical edits:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 55s)
+
+Let me verify what was done:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'std::env::temp_dir().join("yoyo_test' src/commands_project.rs ✓ (38ms)
+  ▶ $ grep -c 'tempfile::Builder::new()' src/commands_project.rs ✓ (38ms)
+  2 tools completed in 5.9s (2 ✓)
+
+All 16 replacements done. Let me verify the special case test:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 10 'test_detect_project_name_fallback_to_dir' src/commands_project.rs ✓ (37ms)
+
+Good. Let me also check that no cleanup lines remain:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'remove_dir_all' src/commands_project.rs ✓ (7ms)
+
+All cleanup lines removed. Let me spot-check a few tests to make sure the tmp_dir binding is alive for the whole test:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -B1 -A8 'test_detect_project_type_node\b' src/commands_project.rs ✓ (38ms)
+  ▶ $ grep -B1 -A12 'test_scan_important_dirs_with_subdirs' src/commands_project.rs ✓ (37ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Wait, std::fs::create_dir_all was used for subdirectories — let me make sure those are still creating inside the tmp dir:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -B1 -A10 'test_scan_important_dirs_with_subdirs' src/commands_project.rs ✓ (37ms)
+
+The ... in the output is suspicious. Let me read the exact lines:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '/test_scan_important_dirs_with_subdirs/,/^    }/p' src/commands_project.… ✓ (3ms)
+
+That's literally ... (4 more similar lines) in the file? That seems wrong. Let me read the raw file:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '4 more similar' src/commands_project.rs ✓ (7ms)
+  ▶ $ awk '/test_scan_important_dirs_with_subdirs/,/^    \}/' src/commands_project.rs ✓ (4ms)
+  ▶ $ grep -n 'similar' src/commands_project.rs ✓ (7ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Hmm, grep says there's no "similar" in the file, but awk shows it. This seems like a display artifact. Let me use read_file:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'test_scan_important_dirs_with_subdirs' src/commands_project.rs ✓ (7ms)
+  ▶ read src/commands_project.rs:1609..1624 ✓ (0ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Good — the file is correct, the awk output was being collapsed by the display. Now let me run the verification pipeline:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (716ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project 2>&1… ✓ (14.2s)
+  4 tools completed in 48.5s (4 ✓)
+
+All 103 tests pass. Let me also run the full test suite to make sure nothing else broke:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (31.2s)
+
+All green. Now commit:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (13ms)
+
+Done. Clean fix — 16 tests migrated from fixed temp paths to tempfile::Builder, eliminating parallel test race conditions. All checks pass: build ✓, clippy ✓, fmt ✓, 88 unit tests + 89 integration tests ✓.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

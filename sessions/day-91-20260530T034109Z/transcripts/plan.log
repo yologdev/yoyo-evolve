@@ -1,0 +1,64 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and understanding what's needed, then create a focused plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 1.6s (2 ✓)
+
+No community issues today. All 3 slots are self-driven. Let me check the current state of the flaky test and the fixed-path temp directory problem to scope tasks accurately.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'temp_dir.*join.*"yoyo_test' src/ --include='*.rs' | head -30  ▶ $ grep -rn 'test_compute_self_written_temp_repo' src/ --include='*.rs' | head -10  ▶ $ grep -rn 'unwrap()' src/symbols.rs | grep -v '#\[test\]' | grep -v '// test' | h… ✓ (7ms)
+ ✓ (9ms)
+ ✓ (11ms)
+  ▶ $ # Count fixed-path temp dirs by file to scope the sweep (6 lines)  ▶ $ # Check if tempfile crate is already a dependency (2 lines) ✓ (2ms)
+ ✓ (13ms)
+  ▶ $ # Check the flaky test pattern (2 lines) ✓ (3ms)
+  6 tools completed in 10.5s (6 ✓)
+
+Good — I have a clear picture. Now let me plan the three tasks.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the watch test that panicked once in CI (2 lines)  ▶ $ # Look at recently changed files for context (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check if the watch test uses the with_clean_watch_state gu… (2 lines) ✓ (3ms)
+  ▶ $ # Check how the test detects project type — it seems to rely… (2 lines) ✓ (3ms)
+  4 tools completed in 8.0s (4 ✓)
+
+Now let me think about what to prioritize. The assessment is clear:
+
+1. **Flaky test fix** — `test_compute_self_written_temp_repo` is the 5th instance of the same fixed-path temp dir bug. This is a stability issue that affects CI reliability.
+
+2. **Sweep remaining fixed-path temp dirs** — There are 30 instances across 6 files. The assessment calls this out: "a sweep is overdue." But 3-file limit means I need to split this.
+
+3. Self-driven capability improvement — Something competitive. Looking at the assessment, the most impactful self-driven work would be improving error recovery or context awareness (the assessment notes these are genuine strengths).
+
+Let me create the plan:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (34 lines) ✓ (41.9s)
+  ▶ write session_plan/task_02.md (35 lines) ✓ (42.8s)
+  ▶ write session_plan/task_03.md (39 lines) ✓ (42.5s)
+  ▶ write session_plan/issue_responses.md (20 lines) ✓ (44.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 3m 40s (6 ✓)
+
+Plan committed. Here's what Day 91 is about:
+
+## Day 91 Session Plan — The Great Temp Dir Sweep
+
+Theme: Eliminate an entire class of flaky test failures. The fixed-path temp directory pattern has caused CI noise across Days 77, 79, 80, 81, and 90. This session finishes the job — all 30 instances across 6 files, replaced with tempfile::TempDir for race-free parallel test execution.
+
+| Task | Files | What |
+|------|-------|------|
+| Task 1 | commands_info.rs, commands_session.rs | Fix the known flaky test + 4 siblings (5 instances) |
+| Task 2 | commands_project.rs | Biggest batch — 16 fixed-path tests in one file |
+| Task 3 | cli.rs, setup.rs, prompt_utils.rs | Final sweep — 9 remaining instances, zero left after |
+
+After this session, `grep -rn 'temp_dir.join."yoyo_test' src/` should return zero results. No more fixed-path temp dirs. No more flaky CI from test races.
+
+This is stability work — not glamorous, but foundational. Trustworthy CI is the floor everything else stands on.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,207 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the flaky temp dir tests by replacing fixed paths with tempfile::TempDir. Let me start by examining the affected test code.
+  ▶ search 'yoyo_test_self_written|yoyo_test_no_git_sw' in src/commands_info.rs  ▶ search 'yoyo_test_autosave|yoyo_test_continue_path|yoyo_test_continu…' in src/commands_session.rs ✓ (2ms)
+ ✓ (2ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Let me search more broadly for the test names and fixed temp paths.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'test_compute_self_written' in src/commands_info.rs  ▶ search 'yoyo_test' in src/commands_info.rs  ▶ search 'yoyo_test' in src/commands_session.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  3 tools completed in 983ms (3 ✓)
+
+Found them all. Let me read the full test functions.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2210..2290  ▶ read src/commands_session.rs:1095..1165 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Now let me see the rest of the test_compute_self_written_temp_repo test:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2289..2304 ✓ (1ms)
+  ▶ read src/commands_info.rs:2303..2323 ✓ (1ms)
+  ▶ read src/commands_info.rs:2322..2337 ✓ (1ms)
+  3 tools completed in 5.4s (3 ✓)
+
+Now I have the full picture. Let me also check if tempfile is already imported in these files:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'tempfile' in src/commands_info.rs  ▶ search 'tempfile' in src/commands_session.rs ✓ (2ms)
+ ✓ (2ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Good — tempfile is already used in commands_info.rs. Now let me make the changes.
+
+**Fix commands_info.rs — test 1: `test_compute_self_written_pct_not_in_git_repo`**
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (21 → 22 lines)
+        #[test]
+        fn test_compute_self_written_pct_not_in_git_repo() {
+            // In a temp dir with no git repo, git ls-files should fail
+  -         let tmp = std::env::temp_dir().join("yoyo_test_no_git_sw");
+  -         let _ = std::fs::remove_dir_all(&tmp);
+  +         let tmp = tempfile::Builder::new()
+  +             .prefix("yoyo_test_no_git_sw_")
+  +             .tempdir()
+  +             .unwrap();
+  +         let tmp = tmp.path();
+            std::fs::create_dir_all(tmp.join("src")).unwrap();
+            std::fs::write(tmp.join("src/lib.rs"), "fn foo() {}\n").unwrap();
+    
+            // Run git ls-files in the temp dir — should fail (no .git)
+            let output = std::process::Command::new("git")
+                .args(["ls-files", "src/"])
+  -             .current_dir(&tmp)
+  +             .current_dir(tmp)
+                .output()
+                .unwrap();
+  ... (7 more lines)
+ ✓ (58.5s)
+
+**Fix commands_info.rs — test 2: test_compute_self_written_temp_repo**
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (18 → 21 lines)
+            // We replicate compute_self_written_pct_inner's logic but with explicit
+            // current_dir() calls, since set_current_dir is process-global and not
+            // safe in parallel tests.
+  -         let tmp = std::env::temp_dir().join("yoyo_test_self_written");
+  -         let _ = std::fs::remove_dir_all(&tmp);
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_self_written_")
+  +             .tempdir()
+  +             .unwrap();
+  +         let tmp = tmp_dir.path();
+            std::fs::create_dir_all(tmp.join("src")).unwrap();
+    
+            // Init repo
+            let run = |args: &[&str]| {
+                std::process::Command::new("git")
+                    .args(args)
+  -                 .current_dir(&tmp)
+  +                 .current_dir(tmp)
+                    .output()
+                    .unwrap()
+  ... (1 more lines)
+ ✓ (13.1s)
+
+I need to fix the remaining references to &tmp further in the test. Let me see the full remaining portion:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2260..2330 ✓ (1ms)
+
+I need to fix the three remaining &tmp references and remove the manual cleanup at the end:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (6 → 6 lines)
+            // Run git blame in the temp repo
+            let output = std::process::Command::new("git")
+                .args(["blame", "--line-porcelain", "src/main.rs"])
+  -             .current_dir(&tmp)
+  +             .current_dir(tmp)
+                .output()
+                .unwrap();
+ ✓ (13.2s)
+  ▶ edit src/commands_info.rs (25 → 24 lines)
+            let output = std::process::Command::new("git")
+                .args(["blame", "--line-porcelain", "src/main.rs"])
+  -             .current_dir(&tmp)
+  +             .current_dir(tmp)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+  ···
+    
+            let pct = (self_written as f64 / total as f64) * 100.0;
+            assert!(pct < 100.0, "percentage should be less than 100%");
+  - 
+  -         let _ = std::fs::remove_dir_all(&tmp);
+  +     }
+ ✓ (189ms)
+  2 tools completed in 21.0s (2 ✓)
+
+I lost a closing brace. Let me check:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2325..2335 ✓ (1ms)
+
+I see — there were two closing braces (}) in the original: one for the test function and one was extra from the original formatting. Wait, looking at the original code again, line 2329 had `let _ = std::fs::remove_dir_all(&tmp); followed by line 2330 }` closing the function. My replacement kept the function closing } at line 2328 but there's an extra } at line 2329. Let me check more carefully:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2323..2333 ✓ (0ms)
+
+There's a duplicate }. I see — the original had } from `remove_dir_all line and then } closing the fn. My edit removed the remove_dir_all` line and its } but the original actually had a separate } on the next line closing the function. Let me just remove the duplicate:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (5 → 4 lines)
+            assert!(pct < 100.0, "percentage should be less than 100%");
+  -     }
+        }
+    
+        // --- Context breakdown tests ---
+ ✓ (58.9s)
+
+Now fix commands_session.rs — all 3 tests:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (56 → 54 lines)
+            use yoagent::provider::AnthropicProvider;
+    
+            // Use a temp directory to avoid polluting the project
+  -         let tmp_dir = std::env::temp_dir().join("yoyo_test_autosave");
+  -         let _ = std::fs::remove_dir_all(&tmp_dir);
+  -         std::fs::create_dir_all(&tmp_dir).unwrap();
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_autosave_")
+  +             .tempdir()
+  +             .unwrap();
+    
+            // Create an agent with an empty conversation — should NOT save
+            let agent = Agent::new(AnthropicProvider)
+                .with_system_prompt("test")
+                .with_model("test-model")
+                .with_api_key("test-key");
+  -         auto_save_on_exit_in(&agent, &tmp_dir);
+  +         auto_save_on_exit_in(&agent, tmp_dir.path());
+            assert!(
+  -             !tmp_dir.join(AUTO_SAVE_SESSION_PATH).exists(),
+  ... (51 more lines)
+ ✓ (57.7s)
+
+Now let me run all the checks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (141ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (29.1s)
+  3 tools completed in 48.6s (3 ✓)
+
+All 3,530 unit tests pass, 88 integration tests pass. Let me also run the specific tests a few times to confirm no races:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "--- Run… ✓ (451ms)
+
+That's the integration tests binary — let me target the correct binary:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "--- Run… ✓ (447ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "--- Run… ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "--- Run… ✓ (736ms)
+  3 tools completed in 7.9s (3 ✓)
+
+All tests pass reliably across multiple runs. Now let me commit:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (6ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Clean diff — exactly what we want. Every fixed-path temp dir replaced with tempfile::TempDir, all manual remove_dir_all cleanup removed (TempDir auto-cleans on drop). Let me commit:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (10 lines) ✓ (14ms)
+
+Done! Clean fix. Here's what I did:
+
+Problem: 5 tests used fixed paths like `std::env::temp_dir().join("yoyo_test_...") which race when cargo test` runs tests in parallel — the same bug class I've fixed 4 times before on Days 77, 79, 80, and 81.
+
+Fix: Replaced all 5 fixed temp paths with `tempfile::Builder::new().prefix("yoyo_test_...").tempdir().unwrap()`:
+• src/commands_info.rs: 2 tests (`test_compute_self_written_pct_not_in_git_repo, test_compute_self_written_temp_repo`)
+• src/commands_session.rs: 3 tests (test_auto_save_creates_directory_and_file, test_continue_session_path_prefers_auto_save, `test_continue_session_path_falls_back_to_default`)
+
+Also removed all manual remove_dir_all cleanup since TempDir auto-cleans on drop. All 3,618 tests pass, clippy clean, verified no races across multiple runs.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
