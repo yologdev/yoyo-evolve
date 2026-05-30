@@ -229,11 +229,12 @@ pub fn retry_delay(attempt: u32) -> Duration {
 
 /// Classify whether an API error message looks transient (worth retrying).
 /// Retries: rate limits (429), server errors (5xx), network/connection issues, overloaded.
-/// Does NOT retry: auth errors (401/403), invalid requests (400), permission denied.
+/// Does NOT retry: auth errors (401/403), invalid requests (400), permission denied,
+/// billing/quota exhaustion.
 pub fn is_retriable_error(error_msg: &str) -> bool {
     let lower = error_msg.to_lowercase();
 
-    // Don't retry auth or client errors
+    // Don't retry auth, client, or billing/quota errors
     let non_retriable = [
         "401",
         "403",
@@ -247,6 +248,19 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
         "invalid_api_key",
         "not_found",
         "404",
+        // Billing / quota exhaustion — retrying won't help
+        "insufficient_quota",
+        "insufficient quota",
+        "billing_hard_limit_reached",
+        "billing hard limit",
+        "credit balance",
+        "out of credits",
+        "plan limit",
+        "spending limit",
+        "budget exceeded",
+        "quota exceeded",
+        "payment required",
+        "402",
     ];
     for keyword in &non_retriable {
         if lower.contains(keyword) {
@@ -296,10 +310,12 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
 /// with actionable suggestions. Returns `None` for errors that don't match
 /// known patterns.
 ///
-/// Recognises three broad classes:
+/// Recognises five broad classes:
 /// 1. **Auth failures** (401/403/unauthorized) — checks the relevant env var
-/// 2. **Network errors** (connection refused/reset/timeout) — provider-specific hints
-/// 3. **Model not found** (404/invalid model) — suggests known models for the provider
+/// 2. **Billing/quota exhaustion** (402/insufficient_quota/credit balance) — actionable billing advice
+/// 3. **Rate limits** (429/too many requests) — explains auto-retry behaviour
+/// 4. **Network errors** (connection refused/reset/timeout) — provider-specific hints
+/// 5. **Model not found** (404/invalid model) — suggests known models for the provider
 pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
     let lower = error.to_lowercase();
     let provider = infer_provider_from_model(model);
@@ -323,6 +339,58 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
              {status}\n\
              Set it with: export {env_var}=<your-key>\n\
              {config_hint}"
+        ));
+    }
+
+    // Billing / quota exhaustion — not retriable, needs user action
+    if lower.contains("insufficient_quota")
+        || lower.contains("insufficient quota")
+        || lower.contains("billing_hard_limit_reached")
+        || lower.contains("billing hard limit")
+        || lower.contains("credit balance")
+        || lower.contains("out of credits")
+        || lower.contains("plan limit")
+        || lower.contains("spending limit")
+        || lower.contains("budget exceeded")
+        || lower.contains("quota exceeded")
+        || lower.contains("payment required")
+        || lower.contains("402")
+    {
+        let dashboard = match provider.as_str() {
+            "anthropic" => "https://console.anthropic.com/settings/billing",
+            "openai" => "https://platform.openai.com/account/billing",
+            "google" => "https://console.cloud.google.com/billing",
+            "deepseek" => "https://platform.deepseek.com/top_up",
+            _ => "",
+        };
+        let mut msg = format!(
+            "Billing/quota limit reached for provider '{provider}'.\n\
+             Your API key has exhausted its available credits or hit a spending cap.\n\
+             This is not a transient error — retrying won't help."
+        );
+        if !dashboard.is_empty() {
+            msg.push_str(&format!("\n  Check your balance: {dashboard}"));
+        }
+        msg.push_str(&format!(
+            "\n  Options:\n\
+             \x20   • Add credits or raise your spending limit in the {provider} dashboard\n\
+             \x20   • Switch to a different provider: /provider <name>\n\
+             \x20   • Use a local model: /model ollama/llama3"
+        ));
+        return Some(msg);
+    }
+
+    // Rate limits — retriable (handled by auto-retry) but give the user context
+    if lower.contains("429")
+        || lower.contains("rate limit")
+        || lower.contains("rate_limit")
+        || lower.contains("too many requests")
+    {
+        return Some(format!(
+            "Rate limited by provider '{provider}'.\n\
+             yoyo will auto-retry with exponential backoff (up to {MAX_RETRIES} attempts).\n\
+             If this persists, you may be on a low-tier plan with strict rate limits.\n\
+             Consider upgrading your API plan or switching to a different model."
         ));
     }
 
@@ -519,6 +587,23 @@ mod tests {
         assert!(!is_retriable_error("400 Bad Request"));
         assert!(!is_retriable_error("invalid request body"));
         assert!(!is_retriable_error("404 not_found"));
+    }
+
+    #[test]
+    fn test_is_not_retriable_billing_quota_errors() {
+        // Billing/quota exhaustion — retrying won't help, needs user action
+        assert!(!is_retriable_error("insufficient_quota"));
+        assert!(!is_retriable_error("Insufficient quota remaining"));
+        assert!(!is_retriable_error("billing_hard_limit_reached"));
+        assert!(!is_retriable_error("You exceeded your billing hard limit"));
+        assert!(!is_retriable_error("Your credit balance is too low"));
+        assert!(!is_retriable_error("out of credits"));
+        assert!(!is_retriable_error("Plan limit exceeded"));
+        assert!(!is_retriable_error("spending limit reached"));
+        assert!(!is_retriable_error("Budget exceeded for this month"));
+        assert!(!is_retriable_error("quota exceeded"));
+        assert!(!is_retriable_error("402 Payment Required"));
+        assert!(!is_retriable_error("payment required"));
     }
 
     #[test]
@@ -1276,6 +1361,79 @@ mod tests {
         let diag = diagnose_api_error("connection reset by peer", "gemini-2.5-pro");
         assert!(diag.is_some());
         assert!(diag.unwrap().contains("Network error"));
+    }
+
+    // ---------------------------------------------------------------
+    // diagnose_api_error tests — billing/quota exhaustion branch
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_diagnose_insufficient_quota_anthropic() {
+        let diag = diagnose_api_error("insufficient_quota", "claude-sonnet-4-20250514");
+        assert!(diag.is_some());
+        let msg = diag.unwrap();
+        assert!(
+            msg.contains("Billing/quota limit"),
+            "should mention billing: {msg}"
+        );
+        assert!(msg.contains("anthropic"), "should mention provider: {msg}");
+        assert!(
+            msg.contains("console.anthropic.com"),
+            "should include Anthropic dashboard link: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_diagnose_billing_hard_limit_openai() {
+        let diag = diagnose_api_error("billing_hard_limit_reached", "gpt-4o");
+        assert!(diag.is_some());
+        let msg = diag.unwrap();
+        assert!(msg.contains("Billing/quota limit"), "msg: {msg}");
+        assert!(
+            msg.contains("platform.openai.com"),
+            "should include OpenAI dashboard link: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_diagnose_402_payment_required() {
+        let diag = diagnose_api_error("402 Payment Required", "claude-sonnet-4-20250514");
+        assert!(diag.is_some());
+        let msg = diag.unwrap();
+        assert!(msg.contains("Billing/quota limit"), "msg: {msg}");
+        assert!(
+            msg.contains("credits or hit a spending cap"),
+            "should explain the issue: {msg}"
+        );
+        assert!(
+            msg.contains("/provider"),
+            "should suggest switching provider: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_diagnose_out_of_credits() {
+        let diag = diagnose_api_error("out of credits on your account", "deepseek-chat");
+        assert!(diag.is_some());
+        let msg = diag.unwrap();
+        assert!(msg.contains("Billing/quota limit"), "msg: {msg}");
+        assert!(
+            msg.contains("platform.deepseek.com"),
+            "should include DeepSeek dashboard link: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_diagnose_quota_exceeded_unknown_provider() {
+        let diag = diagnose_api_error("quota exceeded", "some-unknown-model");
+        assert!(diag.is_some());
+        let msg = diag.unwrap();
+        assert!(msg.contains("Billing/quota limit"), "msg: {msg}");
+        // Unknown provider should still give generic advice
+        assert!(
+            msg.contains("Add credits"),
+            "should suggest adding credits: {msg}"
+        );
     }
 
     // ---------------------------------------------------------------
