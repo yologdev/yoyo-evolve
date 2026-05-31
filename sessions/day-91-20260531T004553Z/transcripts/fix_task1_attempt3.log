@@ -1,0 +1,223 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify an impactful improvement, then implement it.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 10.7s (5 ✓)
+
+Let me explore the codebase to find areas for improvement:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (39.4s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 10s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 54s)
+  3 tools completed in 3m 57s (3 ✓)
+
+Let me look more directly at some specific areas:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\.unwrap()' src/safety.… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[.*\.\.' src/safety.rs… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'truncate\|split_at\|\[… ✓ (5ms)
+  3 tools completed in 9.7s (3 ✓)
+
+Let me look at the smart_truncate_for_context function more carefully - the potential usize underflow:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:618..678 ✓ (1ms)
+
+Now let me look at broader areas for improvement. Let me search for more significant opportunities:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.truncate(' src/*.rs … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'is_char_boundary' src/… ✓ (6ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Let me now look at some broader areas - the safety.rs file for the string slicing issues and format/output.rs for the underflow bug:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:95..155 ✓ (1ms)
+
+Now let me look at a broader picture to find the most impactful improvement. Let me check areas with real user-facing impact:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'TODO\|FIXME\|HACK\|XXX… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'todo!\|unimplemented!'… ✓ (12ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Let me look at the safety.rs file more holistically - the string safety issue in check_rm_destruction and similar functions is a real improvement. But let me also look for larger impact areas:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs ✓ (2ms)
+  ▶ read src/safety.rs ✓ (5ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Let me look at more impactful areas. Let me check the tool_wrappers and smart_edit for opportunities:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn ' src/smart_edit.rs … ✓ (4ms)
+
+Let me look for something with more user-visible impact. Let me check the safety module more carefully - it's missing detection of some dangerous patterns:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:290..550 ✓ (2ms)
+
+Now let me look for a high-impact improvement. Let me check the safety module - it's missing some important destructive patterns. Let me also check the `format/output.rs` underflow bug and see the broader picture:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'fn test_' src/safety.rs ✓ (3ms)
+
+Let me look at what safety patterns are missing. I want to find something meaningful:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:155..235 ✓ (1ms)
+
+Now let me think about what would be the most impactful improvement. I see several options:
+
+1. **Fix the smart_truncate_for_context underflow bug** (format/output.rs line 645) - a real bug but edge case
+2. Add missing safety patterns - high user-facing impact, protects against dangerous commands
+3. **Add char boundary safety to safety.rs string slicing** - correctness issue
+
+Let me focus on the most impactful: adding missing destructive command patterns to `safety.rs`. The safety module is critical infrastructure - it protects users from accidentally running dangerous commands. I notice it's missing several important patterns:
+
+1. **chmod 000** - making files inaccessible (not just 777)
+2. **`> /dev/sda`** - writing to raw device files
+3. `crontab -r` - removing all cron jobs
+4. `iptables -F` - flushing firewall rules
+5. Environment variable destruction - `unset PATH, export PATH=`
+
+Let me also check what test coverage exists and identify where the format/output.rs bug is:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:621..661 ✓ (1ms)
+
+I'll combine three improvements:
+
+1. Fix the `smart_truncate_for_context` underflow bug when `tail_count == 0` (usize underflow on line 645)
+2. **Add important missing safety patterns** to safety.rs - env destruction, crontab removal, raw device writes, and chmod 000  
+3. Add char boundary guards in safety.rs string slicing operations
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Let me implement the improvements:
+
+### Fix 1: `smart_truncate_for_context` usize underflow
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (20 → 24 lines)
+        // 40% head, 20% tail — gives more context at the top (imports, types, structs)
+        let head_count = (max_lines * 2) / 5;
+        let tail_count = max_lines / 5;
+  +     // Guard: if max_lines is too small for meaningful head/tail split, just take head
+  +     let tail_count = tail_count.min(total.saturating_sub(head_count));
+        let omitted = total - head_count - tail_count;
+    
+        let mut result = String::new();
+  ···
+            "\n[... {} lines omitted ({} total) — use /add file:START-END for specific sections ...]\n\n",
+            omitted, total
+        ));
+  -     for (i, line) in lines[total - tail_count..].iter().enumerate() {
+  -         result.push_str(line);
+  -         if i < tail_count - 1 {
+  -             result.push('\n');
+  +     if tail_count > 0 {
+  +         for (i, line) in lines[total - tail_count..].iter().enumerate() {
+  +             result.push_str(line);
+  +             if i < tail_count - 1 {
+  ... (4 more lines)
+ ✓ (59.1s)
+
+### Fix 2: Add missing safety patterns to `safety.rs`
+
+Now let me add the new safety checks. First, I need to add the new check functions and wire them into analyze_bash_command:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (7 → 22 lines)
+        // 13. Moving files to system paths
+        if let Some(reason) = check_mv_system_paths(cmd) {
+  +         return Some(reason);
+  +     }
+  + 
+  +     // 14. Environment variable destruction
+  +     if let Some(reason) = check_env_destruction(cmd) {
+  +         return Some(reason);
+  +     }
+  + 
+  +     // 15. Crontab removal
+  +     if let Some(reason) = check_crontab_removal(cmd) {
+  +         return Some(reason);
+  +     }
+  + 
+  +     // 16. Raw device writes
+  +     if let Some(reason) = check_raw_device_write(cmd) {
+            return Some(reason);
+        }
+    
+ ✓ (8.7s)
+
+Good, now I need to add the new functions. Let me add them before the tests section:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (6 → 128 lines)
+  +     None
+  + }
+  + 
+  + /// Check for environment variable destruction (unsetting critical vars like PATH).
+  + fn check_env_destruction(cmd: &str) -> Option<String> {
+  +     let critical_vars = ["PATH", "HOME", "USER", "SHELL", "LD_PRELOAD", "LD_LIBRARY_PATH"];
+  + 
+  +     for var in &critical_vars {
+  +         // unset PATH
+  +         let unset_pattern = format!("unset {var}");
+  +         if cmd.contains(&unset_pattern) {
+  +             return Some(format!(
+  +                 "Environment destruction: 'unset {var}' removes a critical environment variable"
+  +             ));
+  +         }
+  + 
+  +         // export PATH= (empty value)
+  +         let empty_export = format!("export {var}=");
+  +         if let Some(pos) = cmd.find(&empty_export) {
+  +             let after = &cmd[pos + empty_export.len()..];
+  ... (105 more lines)
+ ✓ (59.8s)
+
+Now let me add the tests for the new safety checks:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/safety.rs ✓ (3ms)
+  ▶ edit src/safety.rs (3 → 44 lines)
+            assert!(analyze_bash_command("eval $(cat local_script.sh)").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_analyze_env_destruction() {
+  +         // Unsetting critical environment variables
+  +         assert!(analyze_bash_command("unset PATH").is_some());
+  +         assert!(analyze_bash_command("unset HOME").is_some());
+  +         assert!(analyze_bash_command("unset LD_LIBRARY_PATH").is_some());
+  +         // Setting PATH to empty
+  +         assert!(analyze_bash_command("export PATH=").is_some());
+  +         assert!(analyze_bash_command("export PATH=\"\"").is_some());
+  +         // Safe: normal exports
+  +         assert!(analyze_bash_command("export PATH=/usr/bin:$PATH").is_none());
+  +         assert!(analyze_bash_command("export MY_VAR=hello").is_none());
+  +         // LD_PRELOAD injection
+  +         assert!(analyze_bash_command("LD_PRELOAD=/tmp/evil.so ./app").is_some());
+  +         assert!(analyze_bash_command("export LD_PRELOAD=/tmp/evil.so").is_some());
+  +         // Safe: unsetting LD_PRELOAD is fine
+  +         assert!(analyze_bash_command("unset LD_PRELOAD").is_some()); // unset still flagged
+  ... (24 more lines)
+ ✓ (57.0s)
+  2 tools completed in 1m 9s (2 ✓)
+
+Let me run the full build/test to see the exact failure:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (14.7s)
+
+The dd if=/dev/sda is being caught by the existing check_disk_operations function (which flags `dd if=`). Let me fix that test:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (4 → 3 lines)
+            // Safe: reading from devices or writing to files
+  -         assert!(analyze_bash_command("dd if=/dev/sda of=backup.img").is_none());
+            assert!(analyze_bash_command("cat /dev/null > /tmp/empty").is_none());
+        }
