@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the community issues and checking the current state, then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ # Check for the UTF-8 truncate bug mentioned in assessment (2 lines)  ▶ $ # Check what the auto-watch default currently is (2 lines)  ▶ $ # Check the unwrap count for critical paths (2 lines) ✓ (4ms)
+ ✓ (6ms)
+ ✓ (11ms)
+  ▶ $ # Check the truncate at line 527 - is it already safe? (2 lines)  ▶ $ # Check if there's a duplicate issue situation with #446 and… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  7 tools completed in 16.0s (7 ✓)
+
+Good — the truncate at line 527 is already safe (uses is_char_boundary). The assessment's bug report was a false positive. Now let me think about what to plan.
+
+Let me check the latest journal and recent work to avoid repeating things:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's been done recently on Day 92 (2 lines)  ▶ $ # Check if #446 and #448 are truly duplicates that should be… (3 lines) ✓ (5ms)
+ ✓ (408ms)
+  2 tools completed in 2.5s (2 ✓)
+
+Both #446 and #448 are open and duplicates. Let me check the auto-watch default more closely, and think about what the highest-impact tasks are for this session.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there are any open issues I should know about (2 lines)  ▶ $ # Check how auto_watch is actually used in repl/main (2 lines) ✓ (4ms)
+ ✓ (224ms)
+  ▶ $ # Check if there are any unwrap() calls in critical I/O path… (3 lines) ✓ (5ms)
+  3 tools completed in 6.0s (3 ✓)
+
+Those are all in test code (serialization tests). Let me focus on non-test unwraps in critical paths:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Find unwraps that are truly in production paths (not insid… (3 lines)  ▶ $ # Check the SkillOpt paper reference from #443 - what @Mikha… (3 lines) ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me plan the session. Here's my thinking:
+
+**Task allocation:**
+1. **Self-driven (capability gap):** The auto-watch default flip (#448/#446) — this is both a self-filed issue AND a real UX problem that affects all non-Rust users. It's the single biggest friction point for new users. Consolidate the duplicate issues too.
+2. **Self-driven (competitive improvement):** 1,410 unwrap() calls outside tests — this is a stability concern. I should audit and fix the most critical production-path unwraps. Let me focus on the hottest paths: main.rs, repl.rs, agent_builder.rs, prompt.rs (non-test).
+3. Community issue (#443): The learnings→skills distillation pipeline. @voku and @Mikhael-Danilov both engaged. I can't build the full pipeline in one task, but I can add a concrete first step: a /learnings triage command or a step in the synthesis workflow that identifies learnings with pattern_key that recur ≥3 times and flags them as skill candidates.
+
+Wait — let me reconsider. The unwrap audit across all critical paths would touch many files. Let me scope it to 3 files max. And the learnings→skills pipeline is complex enough that I should think about what's achievable in 20 minutes.
+
+Let me check what the most impactful self-driven task would be:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check unwraps in the most critical non-test paths (6 lines) ✓ (10ms)
+  ▶ $ # More accurate: find non-test unwraps in production code (15 lines)  ▶ $ # Check more files (13 lines) ✓ (253ms)
+ ✓ (807ms)
+  3 tools completed in 12.1s (3 ✓)
+
+Interesting — the critical paths (main, prompt, repl, dispatch, agent_builder) are already clean. The 1,410 count must be dominated by test code and command handlers. The commands_move.rs has 34 non-test unwraps, which is significant. But this isn't as urgent as I thought.
+
+Let me think about what's most impactful for this session:
+
+1. Auto-watch default flip (#448/#446) — High impact, directly addresses user friction. Touches config.rs + watch.rs + tests. Small, well-scoped.
+2. A competitive capability — What can Claude Code do that I can't? From the assessment: plugin system, IDE integration, GitHub PR agent mode. The most achievable gap to close in one task might be something else entirely...
+3. Issue #443 response — I should at least respond meaningfully.
+
+Let me think about what self-driven improvement would be most competitive. Let me check what Claude Code's most loved features are that I'm missing:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the learnings→skills triage? Check how many lea… (2 lines) ✓ (5ms)
+  ▶ $ # Check pattern_key format in learnings (2 lines) ✓ (4ms)
+  ▶ $ # Count learnings with pattern_key (4 lines) ✓ (4ms)
+  ▶ $ # Check for recurring pattern_keys (≥3 occurrences would be … (2 lines) ✓ (6ms)
+  4 tools completed in 14.4s (4 ✓)
+
+Only 65 out of 186 learnings have pattern_key, and none recur ≥3 times. The learnings→skills pipeline isn't ripe yet — not enough data. I should respond to #443 with this honest assessment.
+
+Now let me finalize my plan. Three tasks:
+
+1. Auto-watch default flip (#448/#446) — Fix the biggest UX friction point. Consolidate duplicates.
+2. **`commands_move.rs` unwrap audit** — 34 production unwraps in one file, the biggest concentration. This is crash surface area reduction, directly improves stability.
+3. **Self-driven: improve /map sophistication** — The assessment notes Aider's repo-map is a key differentiator. My /map exists but is less sophisticated. Let me check what could be improved.
+
+Actually, wait. Let me reconsider task 3. The unwrap audit in commands_move.rs is good for stability but not very exciting for competitive positioning. What about something more impactful?
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /map currently does (2 lines)  ▶ $ # Check current repo map capabilities briefly (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.3s (2 ✓)
+
+Let me think about what would be the most competitive improvement. The assessment says:
+
+• Biggest remaining gap: Ollama/local model support (#426, blocked on upstream yoagent)
+• **Most impactful self-driven work:** Something that makes yoyo more useful in day-to-day coding
+
+Looking at my trajectory — 10 consecutive successes, no reverts. I'm in a good streak. Let me pick something that moves the needle for real users:
+
+**Task 3: Hardened unwrap audit of `commands_move.rs`** — 34 unwraps in production code is a crash waiting to happen. This is the kind of stability work that makes a tool trustworthy. Real developers choose tools they can trust not to crash.
+
+Let me finalize:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (24 lines) ✓ (42.6s)
+  ▶ $ # Verify yoyo's own .yoyo.toml has auto_watch = true (2 lines) ✓ (3ms)
+  ▶ $ cat .yoyo.toml📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (43ms)
+  3 tools completed in 49.2s (3 ✓)
+
+So yoyo's own config doesn't have auto_watch = true — it relied on the default being true. I need to update the task to also add auto_watch = true to .yoyo.toml so the evolution pipeline keeps working.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (24 lines) ✓ (42.5s)
+  ▶ $ # Check what kind of unwraps are in commands_move.rs (produc… (15 lines) ✓ (25ms)
+  ▶ $ # Hmm, the test module detection isn't working right. Let me… (2 lines) ✓ (4ms)
+  3 tools completed in 51.4s (3 ✓)
+
+All 34 unwraps are in test code! The earlier analysis was wrong — the test module detection script failed. So the critical-path unwrap situation is actually fine. Let me reconsider task 3.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let's find truly non-test unwraps across the codebase (33 lines) ✓ (33ms)
+
+Only 81 production unwraps, with 72 in symbols.rs. That's a much smaller problem than 1,410. Let me check what those 72 are:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what the symbols.rs unwraps are about (17 lines) ✓ (21ms)
+
+All 72 are regex compilation in LazyLock — these are compile-time constant patterns that will never fail. The unwrap() is actually the correct pattern here (it's an assertion that the regex is valid, and it runs exactly once). This is not a real stability concern.
+
+So the unwrap situation is actually fine. Let me pick a more impactful third task. Let me think about competitive features...
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What competitive feature would have the most impact? (3 lines)  ▶ $ # Check if there's a way to improve context loading for larg… (4 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Let me look at what /map supports in terms of flags/featur… (2 lines) ✓ (4ms)
+  3 tools completed in 4.8s (3 ✓)
+
+The /map is functional but basic — it just lists symbols. Let me think about what's actually the most impactful competitive improvement I could make in one focused task (max 3 files, 20 minutes).
+
+Looking at the assessment gaps and thinking about what real developers need:
+
+1. **Auto-watch default** (#448) — most impactful UX fix ✓
+2. What about **improving the /map with dependency-aware ranking?** Aider's repo-map ranks files by relevance using a graph-based approach. But that's complex and would touch many files.
+3. **/diff --explain improvement?** Already exists.
+4. **Consolidate the 5 files over 2,700 lines?** The assessment mentions symbols.rs, commands_git.rs, `format/markdown.rs, commands_search.rs, watch.rs` as maintenance burdens. But splitting files is risky multi-file work.
+
+Let me think about what a real user hitting yoyo for the first time would want. The assessment says "first-contact features have outsized impact." What about improving project type detection and context loading?
+
+Actually, let me look at something more concrete and impactful: the /map --focus feature — showing only symbols relevant to a given file or function. This would make /map much more useful for large codebases and close the gap with Aider's context-aware repo map.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how generate_repo_map_for_prompt works - this is wha… (2 lines) ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

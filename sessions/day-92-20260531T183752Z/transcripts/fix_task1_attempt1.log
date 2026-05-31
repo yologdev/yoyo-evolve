@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  ▶ $ cat .yoyo.toml📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ search 'auto_detect_watch_command' in src/watch.rs ✓ (2ms)
+ ✓ (42ms)
+  ▶ read src/watch.rs:1287..1367  ▶ search 'run_watch_after_prompt' in src/watch.rs ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 5.6s (4 ✓)
+
+Now let me look at where auto-watch is invoked to understand the flow - specifically in run_watch_after_prompt where the auto-detect happens:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1192..1282 ✓ (2ms)
+
+Now let me look for where auto-watch config is checked and watch commands are set up at session start:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_watch' in src ✓ (9ms)
+
+Good. It looks like the src/config.rs changes are already done (defaults to false, test renamed). Now I need to:
+1. Add auto_watch = true to .yoyo.toml
+2. Add a hint in src/watch.rs when a test runner is detected but auto-watch is off
+
+Let me check the repl.rs code where auto-watch is checked to understand the flow:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:678..693 ✓ (1ms)
+
+Now let me look at the main.rs auto-watch section:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:218..233 ✓ (1ms)
+
+Now I understand the flow. When auto_watch is true and no watch command is set, it auto-detects and sets it. When auto_watch is false, it doesn't. The task wants me to add a hint in the case where auto-watch is OFF but a test runner is detected. The best place for this is in src/watch.rs's auto_detect_watch_command function, or more practically, in the call sites in main.rs and repl.rs. But the task says to add it in src/watch.rs. 
+
+Let me create a helper function in src/watch.rs that can be called when auto-watch is off but detection finds something. Let me look at how the detection is called:
+
+The call sites check agent_config.auto_watch first, and only call auto_detect_watch_command() if it's true. So with the default now being false, the detection never runs and no hint is shown. I need to add an else branch that detects the tool and prints a hint.
+
+Let me add a function in watch.rs for this hint, then update the call sites:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1283..1293 ✓ (1ms)
+
+Now I'll add a hint function right after auto_detect_watch_command:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (2 → 12 lines)
+  + /// Print a hint to stderr when a test runner is detected but auto-watch is disabled.
+  + /// Call this from startup paths when `auto_watch` is false.
+  + pub fn hint_auto_watch_available() {
+  +     if let Some(cmd) = auto_detect_watch_command() {
+  +         eprintln!(
+  +             "{DIM}  💡 Detected `{cmd}` — enable auto-watch with `auto_watch = true` in .yoyo.toml{RESET}"
+  +         );
+  +     }
+  + }
+  + 
+    /// Auto-detect a combined lint + test command for the current project.
+    /// Returns both commands chained with `&&` so the first failure stops execution.
+ ✓ (1ms)
+
+Now update main.rs to call the hint when auto-watch is off. Let me look at the full block:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:218..233 ✓ (1ms)
+  ▶ edit src/main.rs (9 → 11 lines)
+                    eprintln!("{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}");
+                }
+            }
+  +     } else if get_watch_command().is_none() && !agent_config.auto_watch && !print_mode {
+  +         watch::hint_auto_watch_available();
+        }
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/main.rs. Include more surrounding context to make the match unique.
+  ▶ read src/main.rs:215..235 ✓ (1ms)
+  ▶ read src/main.rs:424..444 ✓ (1ms)
+  4 tools completed in 12.8s (3 ✓, 1 ✗)
+
+I'll edit both occurrences with enough context to make them unique:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (16 → 18 lines)
+                    eprintln!("{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}");
+                }
+            }
+  +     } else if get_watch_command().is_none() && !agent_config.auto_watch && !print_mode {
+  +         watch::hint_auto_watch_available();
+        }
+    
+        let mut session_total = Usage::default();
+ ✓ (1ms)
+  ▶ edit src/main.rs (16 → 18 lines)
+                    eprintln!("{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}");
+                }
+            }
+  +     } else if get_watch_command().is_none() && !agent_config.auto_watch && !print_mode {
+  +         watch::hint_auto_watch_available();
+        }
+    
+        let mut session_total = Usage::default();
+ ✓ (1ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now update repl.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:676..691 ✓ (1ms)
+  ▶ edit src/repl.rs (10 → 12 lines)
+                    "{DIM}  👀 Auto-watch: `{cmd}` (disable with /watch off or auto_watch = false){RESET}\n"
+                );
+            }
+  +     } else if get_watch_command().is_none() && !agent_config.auto_watch {
+  +         crate::watch::hint_auto_watch_available();
+        }
+    }
+ ✓ (1ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Now update `.yoyo.toml to add auto_watch = true`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit .yoyo.toml (3 → 4 lines)
+    # yoyo configuration — generated by setup wizard
+    provider = "anthropic"
+    model = "claude-opus-4-6"
+  + auto_watch = true
+ ✓ (1ms)
+
+Now let's build and test:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (45.7s)
+  3 tools completed in 1m 17s (3 ✓)
+
+All 88 tests pass. Let me verify the changes are complete:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo.toml ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hint_auto_watch_availab… ✓ (3ms)
+  ▶ read src/watch.rs:1290..1302 ✓ (1ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Let me verify the full diff of what was changed:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (8ms)
+
+All the evaluator's requirements are now met:
+
+1. ✅ **`.yoyo.toml** updated with auto_watch = true` (task item 4)
+2. ✅ `src/watch.rs` has a new hint_auto_watch_available() function that prints a hint when a test runner is detected but auto-watch is off (task item 3)
+3. ✅ `src/main.rs` and `src/repl.rs` call the hint function in the else-branch when auto-watch is disabled
+4. ✅ `src/config.rs` already had the default flipped to false and the test renamed (from previous implementation)
+5. ✅ All tests pass, clippy clean, formatted
+
+

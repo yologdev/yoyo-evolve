@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code, then make the changes systematically.
+  ▶ search 'parse_auto_watch_from_config' in src/config.rs  ▶ search 'auto_watch' in src/watch.rs  ▶ search 'auto_watch' in .yoyo.toml ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/config.rs:449..479  ▶ read src/config.rs:1310..1355  ▶ read .yoyo.toml ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  6 tools completed in 5.5s (6 ✓)
+
+Good. Now let me check watch.rs for auto-detect messaging and the /watch help text:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto.?detect|auto.?watch|default|by default' in src/watch.rs  ▶ search 'handle_watch' in src/watch.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/watch.rs:1332..1442 ✓ (1ms)
+  3 tools completed in 4.7s (3 ✓)
+
+Now let me check where auto-watch is triggered — in main.rs and repl.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_watch' in src/main.rs  ▶ search 'auto_watch' in src/repl.rs ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Let me look at the auto-watch setup messages in main.rs more closely:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:218..233  ▶ read src/main.rs:424..439  ▶ read src/repl.rs:678..693 ✓ (0ms)
+ ✓ (1ms)
+ ✓ (2ms)
+  3 tools completed in 1.4s (3 ✓)
+
+Now let me also check the auto_detect_watch_command function to see where to add the hint:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn auto_detect_watch_command' in src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs:1287..1317 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me check the AgentConfig struct to see auto_watch:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_watch' in src/agent_builder.rs ✓ (3ms)
+
+Those are mostly in tests. Let me check the key line where auto_watch comes from config:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:644..649  ▶ read src/main.rs:916..921  ▶ read src/main.rs:1344..1349 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  3 tools completed in 1.6s (3 ✓)
+
+Let me also check the Config struct in cli.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_watch' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:908..913 ✓ (1ms)
+  ▶ search 'auto_watch' in src/cli_config.rs ✓ (3ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Good. I now have the full picture. Let me also check docs for any mention of auto-watch defaults:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto.?watch' in docs  ▶ search 'auto.?watch' in README.md ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me check the help text for any mention:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto.watch.*default|default.*auto.watch' in src ✓ (5ms)
+  ▶ search 'watch' in src/help_data.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. Now I have a complete picture. Let me make all the changes:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 15.7s (6 ✓)
+
+Now let's make the changes. First, the core default flip in src/config.rs:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (9 → 10 lines)
+  - /// Reads `auto_watch` from the given config map. Defaults to `true`
+  - /// when the key is absent — watch mode is on by default for detected
+  - /// projects so new users get Aider-style edit→test→fix automatically.
+  + /// Reads `auto_watch` from the given config map. Defaults to `false`
+  + /// when the key is absent — watch mode must be explicitly opted into
+  + /// via `auto_watch = true` in `.yoyo.toml`. This avoids surprising
+  + /// non-Rust users and local-model users with automatic test runs.
+    pub fn parse_auto_watch_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+        match config.get("auto_watch").map(|v| v.as_str()) {
+  -         Some("false") | Some("0") | Some("no") | Some("off") => false,
+  -         _ => true, // default: enabled
+  +         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  +         _ => false, // default: disabled
+        }
+    }
+ ✓ (58.1s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 10s (3 ✓)
+
+Now update the test:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (5 → 5 lines)
+        #[test]
+  -     fn auto_watch_defaults_to_true() {
+  +     fn auto_watch_defaults_to_false() {
+            let config = std::collections::HashMap::new();
+  -         assert!(parse_auto_watch_from_config(&config));
+  +         assert!(!parse_auto_watch_from_config(&config));
+        }
+ ✓ (1m 0s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 9s (3 ✓)
+
+Now add the hint in the auto-watch disabled paths. The hint should appear when auto-watch is off but we detect a project. Let me update the three locations in main.rs and repl.rs where auto-watch fires:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+The current pattern is: `if auto_watch && no watch command set → detect and set`. I need to add an else branch that hints when auto-watch is off. Let me look at the exact code blocks:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:218..233 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
