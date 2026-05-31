@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the `/diff --functions` flag. Let me start by understanding the existing code structure.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 18s)
+
+Now let me look at the exact code I need to modify:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:163..253  ▶ read src/commands_git.rs:1..16 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/commands_git.rs:252..312 ✓ (1ms)
+  3 tools completed in 4.2s (3 ✓)
+
+Now let me check what existing tests look like for parse_diff_args:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'parse_diff_args' in src/commands_git.rs ✓ (3ms)
+  ▶ read src/commands_git.rs:1845..1925 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me check how handle_diff_explain is handled (the most recent flag addition pattern):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:520..590 ✓ (1ms)
+
+Now let me check what gather_diff_text does and how the --explain branch works in handle_diff:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'gather_diff_text' in src/commands_git.rs ✓ (3ms)
+  ▶ read src/commands_git.rs:453..523 ✓ (1ms)
+  2 tools completed in 7.2s (2 ✓)
+
+Now let me look at symbols more closely to understand how to compare them:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/symbols.rs:220..270 ✓ (1ms)
+
+Now let me check where the explain flag handling is in `handle_diff`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'opts\.explain' in src/commands_git.rs ✓ (3ms)
+
+So explain isn't checked in handle_diff — it's handled separately via handle_diff_explain. Let me check how the dispatch works:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'diff.*explain\|handle_diff"' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:520..550 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Good — --functions is a non-AI flag like --name-only and --stat, so it should be handled within handle_diff directly, not in dispatch. Let me also check the DIFF_FLAGS constant:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'DIFF_FLAGS' in src/commands.rs ✓ (3ms)
+
+Now let me check the help data for /diff:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'diff' in src/help_data.rs ✓ (3ms)
+
+Now I have a clear picture. Let me plan the implementation:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 14.2s (5 ✓)
+
+Let's start. First, add the functions field to DiffOptions and parsing:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git.rs (9 → 10 lines)
+        pub name_only: bool,
+        pub stat_only: bool,
+        pub explain: bool,
+  +     pub functions: bool,
+        pub file: Option<String>,
+    }
+ ✓ (8.5s)
+  2 tools completed in 15.9s (2 ✓)
+
+Expected. Now update the parsing function:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (36 → 40 lines)
+    /// - `/diff` — all changes (default)
+    /// - `/diff --staged` or `/diff --cached` — staged only
+    /// - `/diff --name-only` — filenames only
+  + /// - `/diff --functions` — semantic-level change summary (added/modified/removed symbols)
+    /// - `/diff --explain` — AI-powered explanation of changes
+    /// - `/diff <file>` — diff for a specific file
+    /// - Combined: `/diff --staged --name-only src/main.rs`
+  ···
+        let mut name_only = false;
+        let mut stat_only = false;
+        let mut explain = false;
+  +     let mut functions = false;
+        let mut file = None;
+    
+        for part in parts {
+  ···
+                "--name-only" => name_only = true,
+                "--stat" => stat_only = true,
+                "--explain" => explain = true,
+  +             "--functions" => functions = true,
+  ... (11 more lines)
+ ✓ (58.9s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 4s (2 ✓)
+
+Now let me write the tests and the implementation. Let me first check if existing tests need the functions field:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1848..1968 ✓ (2ms)
+
+Good, the existing tests don't assert on functions directly so they'll still pass. Now let me find the end of the test module to add my new tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1960..2020 ✓ (1ms)
+
+Now let me implement the core logic. First, let me add the import for symbols and write the handle_diff_functions function along with its helper types. Let me also check how SymbolKind can be displayed:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ search 'impl.*Display.*SymbolKind|impl.*SymbolKind.*Display|fn fmt.*…' in src/symbols.rs ✓ (3ms)
+
+No Display impl for SymbolKind. I'll use Debug format ({:?}) which gives "Function", `"Struct"`, etc. — nice enough for this. Or I'll write a small helper. Let me also check if `Eq and Hash are derived for SymbolKind`:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ search 'derive.*SymbolKind|SymbolKind.*derive' in src/symbols.rs ✓ (3ms)
+  ▶ read src/symbols.rs:223..228 ✓ (1ms)
+  2 tools completed in 3.2s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,338 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "functions" src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DiffOptions" src… ✓ (3ms)
+ ✓ (6ms)
+  ▶ read src/commands_git.rs:155..235 ✓ (1ms)
+  3 tools completed in 4.2s (3 ✓)
+
+Now let me see the handle_diff function fully to understand where to wire in the --functions path:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:219..339 ✓ (2ms)
+
+Now let me understand the extract_symbols and detect_language functions:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn extract_symbols\… ✓ (4ms)
+  ▶ read src/symbols.rs:225..285 ✓ (1ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Good. Now let me check if SymbolKind has `Display or PartialEq`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl.*SymbolKind\|deriv… ✓ (4ms)
+
+`SymbolKind has PartialEq. Symbol doesn't have PartialEq` but that's fine - I'll compare by name and kind. Let me also check what `detect_language` returns:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/symbols.rs:709..749 ✓ (1ms)
+
+Now let me check the imports at the top of commands_git.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1..16 ✓ (2ms)
+
+Now let me check the existing tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/commands_… ✓ (4ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Let me check one of the test functions to see the pattern they follow for parse_diff_args:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1854..1914 ✓ (1ms)
+
+Now let me check how the --explain flag is wired in, since `--functions` should follow a similar pattern:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "explain\|handle_diff_ex… ✓ (4ms)
+
+Let me see how explain is wired in the dispatch flow - it's called from dispatch.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_diff\|diff.*expl… ✓ (4ms)
+  ▶ read src/dispatch.rs:520..550 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Now I have a clear picture. The --functions flag is parsed but never wired in. I need to:
+
+1. Add handle_diff_functions function in commands_git.rs
+2. Wire it into handle_diff (like --name-only and `--stat` are wired, not in dispatch.rs since it doesn't need async)
+3. Add tests
+
+Let me also check what run_git returns and how it's used:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn run_git" src/git… ✓ (3ms)
+  ▶ read src/git.rs:58..88 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Good - run_git returns Result<String, String>. `git show HEAD:<file>` is a non-destructive read, so it'll work in tests too.
+
+Now let me check how `SymbolKind` is displayed. Does it implement Display?
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl.*Display.*SymbolKi… ✓ (3ms)
+
+No Display impl. I'll format it myself. Now let me implement the solution:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 8.9s (4 ✓)
+
+Let me first look at the exact spot where I need to wire --functions into handle_diff:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:276..291 ✓ (1ms)
+
+Now let me implement the handle_diff_functions function and wire it in. Let me first see the full `handle_diff` to find the right insertion point:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:322..332 ✓ (1ms)
+
+Now, let me implement everything. I'll add the handle_diff_functions function and wire it in:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git.rs (10 → 12 lines)
+    use crate::git::*;
+    use crate::prompt::run_prompt;
+    use crate::session::TurnHistory;
+  + use crate::symbols::{self, SymbolKind};
+    
+  + use std::collections::HashMap;
+    use std::io::{self, Write};
+    use yoagent::agent::Agent;
+    use yoagent::*;
+ ✓ (13.4s)
+  2 tools completed in 20.6s (2 ✓)
+
+That's expected - the imports will be used once I add the function. Let me now add the handle_diff_functions function. Let me find the right place to insert it - right before or after handle_diff_explain:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:524..534 ✓ (1ms)
+
+I'll add my function right before handle_diff_explain. Let me find the exact boundary:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:525..530 ✓ (1ms)
+
+Now let me add the semantic diff types and functions:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (2 → 217 lines)
+  + /// The semantic status of a symbol when comparing two versions.
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub enum SymbolChange {
+  +     Added,
+  +     Removed,
+  +     Modified,
+  + }
+  + 
+  + /// A single symbol-level change entry.
+  + #[derive(Debug, Clone)]
+  + pub struct SymbolDiff {
+  +     pub name: String,
+  +     pub kind: SymbolKind,
+  +     pub change: SymbolChange,
+  + }
+  + 
+  + /// Compare old and new symbol lists, returning semantic diffs.
+  + ///
+  + /// Match symbols by (name, kind) pair:
+  + /// - Present only in new → Added
+  ... (197 more lines)
+ ✓ (8.3s)
+
+`SymbolKind needs Hash and Eq` traits for use as a HashMap key. Let me add those derives:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/symbols.rs:224..227 ✓ (1ms)
+  ▶ edit src/symbols.rs (2 → 2 lines)
+  - #[derive(Debug, Clone, PartialEq)]
+  + #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub enum SymbolKind {
+ ✓ (13.4s)
+  2 tools completed in 19.0s (2 ✓)
+
+Good - it compiles but warns about unused functions because I haven't wired them in yet. Let me now wire `--functions into handle_diff`:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.1s (2 ✓)
+
+Now wire --functions into handle_diff. It should go after --stat and before the normal diff flow, similar to how --name-only and `--stat` work:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:322..332 ✓ (1ms)
+
+I need to add the `--functions check right after --stat` returns (line 326) and before the normal diff path (line 329). Let me see the exact text around line 325-329:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (3 → 9 lines)
+  +                 return;
+  +             }
+  + 
+  +             // --functions: show semantic-level change summary
+  +             if opts.functions {
+  +                 handle_diff_functions(&opts);
+                    return;
+                }
+    
+ ✗ (0ms)
+    │ old_text matches 7 locations in src/commands_git.rs. Include more surrounding context to make the match unique.
+
+Let me be more specific:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:320..335 ✓ (1ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: enum `SymbolChange` is never used[0m
+   [1m[94m--> [0msrc/commands_git.rs:530:10
+    [1m[94m|[0m
+[1m[94m530[0m [1m[94m|[0m pub enum SymbolChange {
+    [1m[94m|[0m          [1m[91m^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: struct `SymbolDiff` is never constructed[0m
+   [1m[94m--> [0msrc/commands_git.rs:538:12
+    [1m[94m|[0m
+[1m[94m538[0m [1m[94m|[0m pub struct SymbolDiff {
+    [1m[94m|[0m            [1m[91m^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `compare_symbols` is never used[0m
+   [1m[94m--> [0msrc/commands_git.rs:550:8
+    [1m[94m|[0m
+[1m[94m550[0m [1m[94m|[0m pub fn compare_symbols(
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `symbol_kind_label` is never used[0m
+   [1m[94m--> [0msrc/commands_git.rs:600:4
+    [1m[94m|[0m
+[1m[94m600[0m [1m[94m|[0m fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `handle_diff_functions` is never used[0m
+   [1m[94m--> [0msrc/commands_git.rs:618:8
+    [1m[94m|[0m
+[1m[94m618[0m [1m[94m|[0m pub fn handle_diff_functions(opts: &DiffOptions) {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: match can be simplified with `.unwrap_or_default()`[0m
+   [1m[94m--> [0msrc/commands_git.rs:678:27
+    [1m[94m|[0m
+[1m[94m678[0m [1m[94m|[0m           let new_content = match std::fs::read_to_string(file_path) {
+    [1m[94m|[0m [1m[91m ___________________________^[0m
+[1m[94m679[0m [1m[94m|[0m [1m[91m|[0m             Ok(c) => c,
+[1m[94m680[0m [1m[94m|[0...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix both issues: 1) wire `handle_diff_functions into handle_diff` so the functions are used, and 2) fix the clippy lint about unwrap_or_default.
+  ▶ read src/commands_git.rs:320..335 ✓ (1ms)
+  ▶ edit src/commands_git.rs (7 → 13 lines)
+                    }
+  +                 return;
+  +             }
+  + 
+  +             // --functions: show semantic-level change summary
+  +             if opts.functions {
+  +                 handle_diff_functions(&opts);
+                    return;
+                }
+    
+ ✗ (1ms)
+    │ old_text not found in src/commands_git.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '323,332p' src/commands_g… ✓ (4ms)
+  3 tools completed in 8.0s (2 ✓, 1 ✗)
+
+There's a Unicode comment (box drawing chars). Let me get the exact line content:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:325..333 ✓ (1ms)
+
+Line 328 is hidden by the display but exists. Let me get the raw content:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '325,331p' src/commands_g… ✓ (3ms)
+
+Wait, there's a comment on line 328 that's not showing. Let me check:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=325 && NR<=332' src/com… ✓ (4ms)
+
+OK so line 328 has the Unicode comment. Let me use a different approach - insert the block using sed:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '326,329p' src/commands_g… ✓ (13ms)
+
+Now I see - there's a Unicode box-drawing comment on line 328. Let me use a Python script to do the insertion cleanly:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (18 lines) ✓ (20ms)
+
+Now fix the clippy lint about unwrap_or_default:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "match std::fs::read_to_… ✓ (3ms)
+  ▶ read src/commands_git.rs:685..690 ✓ (1ms)
+  ▶ edit src/commands_git.rs (4 → 1 lines)
+  -         let new_content = match std::fs::read_to_string(file_path) {
+  -             Ok(c) => c,
+  -             Err(_) => String::new(), // file was deleted
+  -         };
+  +         let new_content: String = std::fs::read_to_string(file_path).unwrap_or_default();
+ ✓ (58.5s)
+  3 tools completed in 1m 5s (3 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.4s)
+
+Clippy passes. Now let's run the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (28.8s)
+
+All 88 tests pass. Now let me add the required tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_parse_diff_args… ✓ (3ms)
+  ▶ read src/commands_git.rs:2177..2192 ✓ (1ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me find what's on line 2184:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2182,2187p' src/commands… ✓ (3ms)
+
+Good. Now I need to check what imports the test module has:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/com… ✓ (3ms)
+  ▶ read src/commands_git.rs:1684..1699 ✓ (1ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Now add the tests after the explain test:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (6 → 168 lines)
+        fn test_parse_diff_args_explain_with_file() {
+            let opts = parse_diff_args("/diff --explain src/main.rs");
+            assert!(opts.explain);
+  +         assert!(!opts.staged_only);
+  +         assert_eq!(opts.file, Some("src/main.rs".to_string()));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_diff_args_functions() {
+  +         let opts = parse_diff_args("/diff --functions");
+  +         assert!(opts.functions);
+            assert!(!opts.staged_only);
+  +         assert!(!opts.name_only);
+  +         assert!(!opts.explain);
+  +         assert_eq!(opts.file, None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_diff_args_functions_staged() {
+  +         let opts = parse_diff_args("/diff --functions --staged");
+  ... (148 more lines)
+ ✓ (58.7s)
+
+Now run the full check:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (6.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (44.2s)
+  3 tools completed in 1m 13s (3 ✓)
+
+All 3555 + 88 tests pass, clippy is clean, and the build succeeds. Let me verify the new tests specifically ran:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_parse_diff_args_… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --test-threads=1 -… ✓ (48.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test "functions" 2>&1 ✓ (177ms)
+  3 tools completed in 53.5s (3 ✓)
+
