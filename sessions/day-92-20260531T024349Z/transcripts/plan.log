@@ -1,0 +1,147 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and understanding what's on the table today.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | head -200 ✓ (3ms)
+  3 tools completed in 3.8s (3 ✓)
+
+Now let me check the current state of things — what the watch test flakiness looks like, what unwrap() density exists in production code, and the current trajectory of work.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'unwrap()' src/commands_project.rs src/symbols.rs src/commands_file.rs 2…  ▶ $ # Check the watch test that appeared in trajectory CI errors (2 lines)  ▶ $ # Check what the last release tag was (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Check the flaky watch test to understand the panic (2 lines)  ▶ $ # Check the last release version (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check if there's a version tag pattern (2 lines)  ▶ $ # Look at handle_watch to understand what happens on /watch … (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check how handle_watch detects bare /watch (2 lines) ✓ (4ms)
+  ▶ $ # Check detect_watch_all_phases to understand what it depend… (2 lines)  ▶ $ sed -n '$(grep -n "fn detect_watch_all_phases" src/watch.rs | head -1 | cut -d: … ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ sed -n '1313,1332p' src/watch.rs ✓ (3ms)
+  11 tools completed in 16.7s (11 ✓)
+
+Now I understand the flaky test: `handle_watch_bare_sets_lint_and_test calls handle_watch("/watch") which calls detect_watch_all_phases() which depends on the current directory having a Cargo.toml`. In CI, the test might run from a temp directory or the detection could fail. Let me now think about the three task slots.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how many unwrap() are in production (non-test) code … (22 lines) ✓ (25ms)
+
+So symbols.rs has 72 production unwrap() calls. That's the real concern. The others are all in test code. Let me check what kind of unwraps they are:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Get a sense of the production unwrap patterns in symbols.r… (10 lines) ✓ (20ms)
+
+Most of these are LazyLock<Regex> with Regex::new().unwrap() — these are compile-time constant regexes that will never fail. These are safe patterns. Let me check the rest:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (9 lines) ✓ (21ms)
+
+Only 7 non-Regex unwraps in production, and those are likely also Regex (on the next line of a multi-line Regex::new(...).unwrap()). The unwrap() density in symbols.rs is actually not a real problem — it's almost all safe Regex::new calls with constant patterns.
+
+Now let me plan the three tasks. Let me think through priorities:
+
+1. **Self-driven (competitive gap):** The assessment flags the unwrap() density as an issue, but upon inspection it's mostly safe. The watch test flakiness is real and in the trajectory. Let me think about what else would move the needle competitively.
+
+2. **Issue #443 (community):** @voku's request to distill learnings into skills. The thread has had good discussion. @Mikhael-Danilov pointed to Microsoft's SkillOpt paper. I already replied on Day 91. The next step would be to start building the pipeline.
+
+3. Self-driven capability: Looking at the assessment, the remaining competitive gaps are mostly architectural (IDE integration, cloud execution). But there are concrete things that could help: the watch test flakiness fix, production code hardening, or new user-facing improvements.
+
+Let me think about what 3 tasks would be most impactful:
+
+**Task 1 (self-driven, competitive):** Fix the watch test flakiness — this has appeared in CI trajectory. The test `handle_watch_bare_sets_lint_and_test depends on detect_watch_all_phases() which depends on finding Cargo.toml` in the current directory. When running in CI, the working directory may vary. This needs to be made robust.
+
+**Task 2 (self-driven, hardening):** Replace production unwrap() calls in a high-impact file with proper error handling. But we just showed `symbols.rs` unwraps are all safe Regex patterns. Let me look at other files.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find files with the most production unwrap() calls (exclud… (23 lines) ✓ (40ms)
+  ▶ $ # Lower threshold (23 lines) ✓ (42ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Only 7 non-Regex unwrap() calls in production code across the entire codebase (all in symbols.rs). That's actually really clean. The assessment's mention of high unwrap() counts was misleading because most are in test code.
+
+Let me think about what would be genuinely impactful. Let me check what competitive features would matter most:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there are any improvements to make around prompt … (2 lines)  ▶ $ # Check what the model registry looks like - is it stale? (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ sed -n '144,200p' src/commands.rs ✓ (3ms)
+  3 tools completed in 4.0s (3 ✓)
+
+Now let me think about what would have the most impact. Here's my plan:
+
+1. **Task 1 (self-driven, reliability):** Fix watch test flakiness — `handle_watch_bare_sets_lint_and_test panics in CI because detect_watch_all_phases() depends on the working directory having a Cargo.toml`. The test should either set up a temp dir with Cargo.toml or mock the project detection.
+
+2. **Task 2 (self-driven, competitive capability):** Something that moves the needle for real developer experience. Let me think about what a developer using yoyo would want... One concrete thing: **smarter auto-detection for /watch**. But that's incremental. Let me think about bigger things...
+
+Looking at the assessment's competitive gaps — the ones that are actually addressable (not architectural) are:
+• Prompt caching optimization
+• Model breadth/registry
+• Better error messages for local models
+
+Actually, let me look at a different angle. What's the biggest friction for a real developer using yoyo right now?
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what recent learnings point to as friction (9 lines) ✓ (24ms)
+  ▶ $ # Check recent discussions for user friction (2 lines) ✓ (3ms)
+  2 tools completed in 7.0s (2 ✓)
+
+OK, I have a clear picture. Let me now plan the 3 tasks.
+
+My reasoning:
+
+1. **Task 1 (self-driven, reliability):** Fix the watch test flakiness. It's in the trajectory as a CI panic. Small, focused, high-value for CI stability.
+
+2. **Task 2 (self-driven, competitive):** Add a /web command for basic web content fetching — wait, let me check if that exists already.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn handle_web\|web scraping\|"/web"' src/commands_web.rs | head -10 ✓ (3ms)
+  ▶ $ wc -l src/commands_web.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (11ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Web already exists. Let me think about what else moves the competitive needle. Let me look at what real developer friction would be most valuable to fix.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the /apply command - how robust is it? (3 lines)  ▶ $ # Check what safety.rs currently detects - is there room for… (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 1.3s (2 ✓)
+
+Let me think about what would genuinely make me more competitive for a real developer. Here's what I'll go with:
+
+Task 1 (self-driven, reliability): Fix the watch test flakiness — `handle_watch_bare_sets_lint_and_test` depends on being in a Rust project directory. The fix is to make the test run from a temp directory with a `Cargo.toml`.
+
+Task 2 (self-driven, competitive/quality): Harden `symbols.rs` production unwraps. While many are Regex::new (safe), 7 remain that could be made safer. More importantly, let me look for a higher-impact self-driven task.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check for something more impactful - what about improving … (6 lines)  ▶ $ # Check what the smart_edit tool does for edit failures (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Let me take a different approach. Let me look at what the most common user-facing issues are — what would a new user hitting yoyo for the first time struggle with?
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check for any TODO/FIXME comments that indicate known issu… (2 lines) ✓ (8ms)
+  ▶ $ # Look at the actual TODO/FIXME comments in production code … (2 lines) ✓ (8ms)
+  ▶ $ # Check if there are any interesting areas for improvement i… (2 lines) ✓ (3ms)
+  3 tools completed in 10.9s (3 ✓)
+
+OK, let me finalize my plan. Here's what I'll do:
+
+**Task 1 (self-driven, reliability):** Fix the flaky watch test. Small, targeted, directly addresses a CI error in the trajectory.
+
+**Task 2 (self-driven, competitive):** Add a --json output mode for non-interactive/piped usage. Wait — let me check if that exists.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'json\|JSON\|OutputFormat' src/cli_config.rs | head -20 ✓ (3ms)
+
+JSON output mode already exists. Good.
+
+Let me think about this differently. What's genuinely the highest-impact work for Day 92?
+
+Looking at the assessment:
+• 9 consecutive successful sessions — stability is strong
+• The hardening sweep (Days 88-91) is paying off
+• Competitive gaps are mostly architectural now
+• Issue #443 is interesting and actionable
+
+For self-driven work, I should push capability forward. Let me look at what would make me more useful as a coding tool:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the context system? Check context loa… (2 lines)  ▶ $ # What about improving the /map command - can it do dependen… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # What about the /lint fix command — can it do auto-fix?  (2 lines) ✓ (3ms)
+  3 tools completed in 3.8s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
