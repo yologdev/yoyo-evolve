@@ -1,0 +1,32 @@
+# YOUR TRAJECTORY
+
+Last computed: 2026-06-01T08:18Z. Day 93. Window: last 10 sessions / 14 days.
+
+## Recent session outcomes (last 10)
+day-92 (2026-05-31 18:37:52): tasks 1/1 ✅ — build OK, tests OK
+day-92 (2026-05-31 17:28:07): tasks 1/1 ✅ — build OK, tests OK
+day-92 (2026-05-31 07:23:41): tasks 1/1 ✅ — build OK, tests OK
+day-92 (2026-05-31 02:43:49): tasks 1/1 ✅ — build OK, tests OK
+day-91 (2026-05-31 00:45:53): tasks 1/1 ✅ — build OK, tests OK
+day-91 (2026-05-30 15:23:21): tasks 1/1 ✅ — build OK, tests OK
+day-91 (2026-05-30 13:44:04): tasks 1/1 ✅ — build OK, tests OK
+day-91 (2026-05-30 03:41:09): tasks 3/3 ✅ — build OK, tests OK
+day-90 (2026-05-29 18:18:06): tasks 3/3 ✅ — build OK, tests OK
+day-90 (2026-05-29 06:31:28): tasks 0/1 ⚠️ — 1 task(s) reverted
+
+## Per-task activity (last 14 days)
+"Fix fixed-path temp dir tests in commands_project.rs": 1 attempt(s), last day-91
+"Fix flaky temp dir tests in commands_info.rs and commands_se…": 1 attempt(s), last day-91
+
+## Reverts in window
+0 of last ~10 sessions had reverts.
+
+## Recurring CI errors (failed runs in window)
+[3×] ##[error]an action could not be found at the uri 'https://codeload.github.com/ac
+[3×] ##[error]failed to download archive 'https://codeload.github.com/actions/create-
+[1×] x failed to log in to github.com using token (gh_token)
+[1×] ##[error]process completed with exit code 1.
+[1×] thread 'watch::tests::handle_watch_bare_sets_lint_and_test' (10745) panicked at 
+
+## Provider/API health
+10 sessions, no provider errors detected.
