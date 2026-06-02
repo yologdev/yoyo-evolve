@@ -1009,10 +1009,118 @@ fn handle_undo_all(history: &mut TurnHistory) -> Option<String> {
 
 // ── /commit ──────────────────────────────────────────────────────────────
 
+/// Parsed commit arguments: flags (`-a`/`--all`, `--ai`/`--generate`) and the remaining message.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CommitArgs {
+    /// Auto-stage tracked modified files before committing (`-a` / `--all`).
+    pub auto_stage: bool,
+    /// Use AI to generate the commit message (`--ai` / `--generate`).
+    pub ai: bool,
+    /// Amend the last commit instead of creating a new one (`--amend`).
+    pub amend: bool,
+    /// The remaining commit message (if any) after stripping flags.
+    pub message: String,
+}
+
+/// Parse the raw argument string after `/commit` into structured [`CommitArgs`].
+///
+/// Recognises `-a`, `--all`, `--ai`, and `--generate` in any position.
+pub(crate) fn parse_commit_args(arg: &str) -> CommitArgs {
+    let mut auto_stage = false;
+    let mut ai = false;
+    let mut amend = false;
+    let mut message_parts: Vec<&str> = Vec::new();
+
+    for token in arg.split_whitespace() {
+        match token {
+            "-a" | "--all" => auto_stage = true,
+            "--ai" | "--generate" => ai = true,
+            "--amend" => amend = true,
+            other => message_parts.push(other),
+        }
+    }
+
+    CommitArgs {
+        auto_stage,
+        ai,
+        amend,
+        message: message_parts.join(" "),
+    }
+}
+
+/// Run `git add -u` to stage all tracked modified/deleted files.
+///
+/// Returns `true` if staging succeeded and there is something staged afterward,
+/// `false` if there are no tracked changes to stage.
+fn auto_stage_tracked() -> bool {
+    // Run `git add -u` — stages modifications and deletions of tracked files
+    if let Err(e) = run_git(&["add", "-u"]) {
+        eprintln!("{RED}  error staging files: {e}{RESET}\n");
+        return false;
+    }
+    // Check whether anything is actually staged now
+    match get_staged_diff() {
+        Some(diff) if !diff.trim().is_empty() => true,
+        _ => {
+            println!("{DIM}  nothing to commit — no tracked files have changes{RESET}\n");
+            false
+        }
+    }
+}
+
+/// Run `git commit --amend` with a new message, including the co-authored trailer.
+fn run_git_amend_with_message(message: &str) -> (bool, String) {
+    let with_trailer = append_co_authored_trailer(message);
+    match std::process::Command::new("git")
+        .args(["commit", "--amend", "-m", &with_trailer])
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let text = if stdout.is_empty() { stderr } else { stdout };
+            (output.status.success(), text)
+        }
+        Err(e) => (false, format!("error: {e}")),
+    }
+}
+
+/// Run `git commit --amend --no-edit` to amend without changing the message.
+fn run_git_amend_no_edit() -> (bool, String) {
+    match std::process::Command::new("git")
+        .args(["commit", "--amend", "--no-edit"])
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let text = if stdout.is_empty() { stderr } else { stdout };
+            (output.status.success(), text)
+        }
+        Err(e) => (false, format!("error: {e}")),
+    }
+}
+
+/// Get the message of the last commit.
+fn get_last_commit_message() -> Option<String> {
+    run_git(&["log", "-1", "--format=%B"])
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
 pub fn handle_commit(input: &str) {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
-    if !arg.is_empty() {
-        let (ok, output) = run_git_commit_with_trailer(arg);
+    let parsed = parse_commit_args(arg);
+
+    // Auto-stage tracked files when `-a`/`--all` is present
+    if parsed.auto_stage && !auto_stage_tracked() {
+        return;
+    }
+
+    if parsed.amend {
+        handle_commit_amend(&parsed);
+    } else if !parsed.message.is_empty() {
+        let (ok, output) = run_git_commit_with_trailer(&parsed.message);
         if ok {
             println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
         } else {
@@ -1024,7 +1132,8 @@ pub fn handle_commit(input: &str) {
                 eprintln!("{RED}  error: not in a git repository{RESET}\n");
             }
             Some(diff) if diff.trim().is_empty() => {
-                println!("{DIM}  nothing staged — use `git add` first{RESET}\n");
+                println!("{DIM}  nothing staged — use `git add` first{RESET}");
+                println!("{DIM}  tip: use /commit -a to auto-stage tracked files{RESET}\n");
             }
             Some(diff) => {
                 let suggested = generate_commit_message(&diff);
@@ -1071,6 +1180,85 @@ pub fn handle_commit(input: &str) {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Handle `--amend` variant of `/commit`.
+///
+/// Behaviour:
+/// - With a message: amend and replace the commit message.
+/// - Without a message but with staged changes: show current message, ask
+///   whether to keep/edit it, then amend.
+/// - Without a message and no staged changes: amend with `--no-edit` (useful
+///   after `git add` of a forgotten file).
+fn handle_commit_amend(parsed: &CommitArgs) {
+    if !parsed.message.is_empty() {
+        // Amend with a new message
+        let (ok, output) = run_git_amend_with_message(&parsed.message);
+        if ok {
+            println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+        } else {
+            eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+        }
+        return;
+    }
+
+    // No explicit message — check for staged changes
+    let has_staged = matches!(get_staged_diff(), Some(diff) if !diff.trim().is_empty());
+
+    if has_staged {
+        // Show current commit message and ask whether to keep or edit
+        let current_msg = get_last_commit_message().unwrap_or_default();
+        println!("{DIM}  Current commit message:{RESET}");
+        println!("    {BOLD}{current_msg}{RESET}");
+        eprint!(
+            "\n  {DIM}({GREEN}k{RESET}{DIM})eep / ({CYAN}e{RESET}{DIM})dit / ({RED}c{RESET}{DIM})ancel: {RESET}"
+        );
+        io::stderr().flush().ok();
+        let mut response = String::new();
+        if io::stdin().read_line(&mut response).is_ok() {
+            let response = response.trim().to_lowercase();
+            match response.as_str() {
+                "k" | "keep" | "" => {
+                    let (ok, output) = run_git_amend_no_edit();
+                    if ok {
+                        println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+                    } else {
+                        eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                    }
+                }
+                "e" | "edit" => {
+                    println!("{DIM}  Enter new commit message:{RESET}");
+                    eprint!("  > ");
+                    io::stderr().flush().ok();
+                    let mut custom_msg = String::new();
+                    if io::stdin().read_line(&mut custom_msg).is_ok() {
+                        let custom_msg = custom_msg.trim();
+                        if custom_msg.is_empty() {
+                            println!("{DIM}  (amend cancelled — empty message){RESET}\n");
+                        } else {
+                            let (ok, output) = run_git_amend_with_message(custom_msg);
+                            if ok {
+                                println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+                            } else {
+                                eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    println!("{DIM}  (amend cancelled){RESET}\n");
+                }
+            }
+        }
+    } else {
+        // No staged changes — amend with --no-edit (e.g. after manually staging)
+        let (ok, output) = run_git_amend_no_edit();
+        if ok {
+            println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+        } else {
+            eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
         }
     }
 }
@@ -1141,16 +1329,16 @@ fn clean_ai_commit_message(raw: &str) -> String {
 /// an empty response.
 pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
+    let parsed = parse_commit_args(arg);
 
-    // Strip flags to see if user also provided an explicit message
-    let explicit = arg
-        .replace("--ai", "")
-        .replace("--generate", "")
-        .trim()
-        .to_string();
-    if !explicit.is_empty() {
+    // Auto-stage tracked files when `-a`/`--all` is present
+    if parsed.auto_stage && !auto_stage_tracked() {
+        return;
+    }
+
+    if !parsed.message.is_empty() {
         // User gave a message alongside --ai — just use it directly
-        let (ok, output) = run_git_commit_with_trailer(&explicit);
+        let (ok, output) = run_git_commit_with_trailer(&parsed.message);
         if ok {
             println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
         } else {
@@ -1166,7 +1354,8 @@ pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
             return;
         }
         Some(d) if d.trim().is_empty() => {
-            println!("{DIM}  nothing staged — use `git add` first{RESET}\n");
+            println!("{DIM}  nothing staged — use `git add` first{RESET}");
+            println!("{DIM}  tip: use /commit -a to auto-stage tracked files{RESET}\n");
             return;
         }
         Some(d) => d,
@@ -1251,7 +1440,7 @@ pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
 /// Returns `true` if the input contains `--ai` or `--generate` flags.
 pub fn wants_ai_commit(input: &str) -> bool {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
-    arg.contains("--ai") || arg.contains("--generate")
+    parse_commit_args(arg).ai
 }
 
 /// Represents a parsed `/pr` subcommand.
@@ -3028,7 +3217,123 @@ mod tests {
         assert!(wants_ai_commit("/commit --ai"));
         assert!(wants_ai_commit("/commit --generate"));
         assert!(wants_ai_commit("/commit --ai some msg"));
+        assert!(wants_ai_commit("/commit --ai -a"));
         assert!(!wants_ai_commit("/commit"));
         assert!(!wants_ai_commit("/commit fix: typo"));
+        assert!(!wants_ai_commit("/commit -a fix: typo"));
+    }
+
+    #[test]
+    fn parse_commit_args_no_flags() {
+        let args = parse_commit_args("");
+        assert!(!args.auto_stage);
+        assert!(!args.ai);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_message_only() {
+        let args = parse_commit_args("fix the bug");
+        assert!(!args.auto_stage);
+        assert!(!args.ai);
+        assert_eq!(args.message, "fix the bug");
+    }
+
+    #[test]
+    fn parse_commit_args_auto_stage_short() {
+        let args = parse_commit_args("-a");
+        assert!(args.auto_stage);
+        assert!(!args.ai);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_auto_stage_long() {
+        let args = parse_commit_args("--all");
+        assert!(args.auto_stage);
+        assert!(!args.ai);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_auto_stage_with_message() {
+        let args = parse_commit_args("-a fix the bug");
+        assert!(args.auto_stage);
+        assert!(!args.ai);
+        assert_eq!(args.message, "fix the bug");
+    }
+
+    #[test]
+    fn parse_commit_args_auto_stage_message_first() {
+        // Flag can appear after message tokens
+        let args = parse_commit_args("fix the bug --all");
+        assert!(args.auto_stage);
+        assert!(!args.ai);
+        assert_eq!(args.message, "fix the bug");
+    }
+
+    #[test]
+    fn parse_commit_args_all_flags() {
+        let args = parse_commit_args("--ai -a fix it");
+        assert!(args.auto_stage);
+        assert!(args.ai);
+        assert_eq!(args.message, "fix it");
+    }
+
+    #[test]
+    fn parse_commit_args_ai_and_all_no_message() {
+        let args = parse_commit_args("-a --generate");
+        assert!(args.auto_stage);
+        assert!(args.ai);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_amend_only() {
+        let args = parse_commit_args("--amend");
+        assert!(args.amend);
+        assert!(!args.auto_stage);
+        assert!(!args.ai);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_amend_with_message() {
+        let args = parse_commit_args("--amend fix typo");
+        assert!(args.amend);
+        assert!(!args.auto_stage);
+        assert_eq!(args.message, "fix typo");
+    }
+
+    #[test]
+    fn parse_commit_args_amend_auto_stage() {
+        let args = parse_commit_args("-a --amend");
+        assert!(args.amend);
+        assert!(args.auto_stage);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_amend_auto_stage_reversed() {
+        let args = parse_commit_args("--amend -a");
+        assert!(args.amend);
+        assert!(args.auto_stage);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_amend_auto_stage_with_message() {
+        let args = parse_commit_args("-a --amend new message");
+        assert!(args.amend);
+        assert!(args.auto_stage);
+        assert_eq!(args.message, "new message");
+    }
+
+    #[test]
+    fn parse_commit_args_amend_message_first() {
+        let args = parse_commit_args("fix the bug --amend");
+        assert!(args.amend);
+        assert!(!args.auto_stage);
+        assert_eq!(args.message, "fix the bug");
     }
 }
