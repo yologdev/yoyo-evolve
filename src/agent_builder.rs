@@ -278,7 +278,7 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         }
         "ollama" => {
             let url = base_url.unwrap_or("http://localhost:11434/v1");
-            ModelConfig::local(url, model)
+            ModelConfig::ollama(url, model)
         }
         "openrouter" => {
             let mut config = ModelConfig::openai(model, model);
@@ -1278,6 +1278,32 @@ mod tests {
             config.headers.get("User-Agent").unwrap(),
             &yoyo_user_agent(),
             "Google config should have User-Agent header"
+        );
+    }
+
+    #[test]
+    fn test_create_model_config_ollama_uses_ollama_compat() {
+        let config = create_model_config("ollama", "llama3", None);
+        assert_eq!(config.provider, "ollama");
+        assert_eq!(config.id, "llama3");
+        assert_eq!(config.base_url, "http://localhost:11434/v1");
+        let compat = config.compat.as_ref().expect("ollama should have compat");
+        assert!(
+            compat.requires_assistant_after_tool_result,
+            "Ollama compat must set requires_assistant_after_tool_result = true"
+        );
+    }
+
+    #[test]
+    fn test_create_model_config_ollama_custom_base_url() {
+        let config = create_model_config("ollama", "mistral", Some("http://myhost:11434/v1"));
+        assert_eq!(config.provider, "ollama");
+        assert_eq!(config.id, "mistral");
+        assert_eq!(config.base_url, "http://myhost:11434/v1");
+        let compat = config.compat.as_ref().expect("ollama should have compat");
+        assert!(
+            compat.requires_assistant_after_tool_result,
+            "Ollama compat must set requires_assistant_after_tool_result = true"
         );
     }
 
