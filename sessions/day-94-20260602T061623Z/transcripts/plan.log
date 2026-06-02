@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cat sponsors/sponsor_info.json 2>/dev/null | head -20  ▶ $ cat Cargo.toml | grep -E "^version|yoagent" ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check the current state of Ollama support and how ModelCon… (2 lines)  ▶ $ # Check what yoagent version is actually resolved (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check how ollama model config is currently created (2 lines) ✓ (3ms)
+  ▶ $ # Check if yoagent 0.8.3 actually has ModelConfig::ollama() (2 lines) ✓ (94ms)
+  ▶ $ grep -n -A 15 "fn ollama\|pub fn ollama" /home/runner/.cargo/registry/src/index.…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (52ms)
+  9 tools completed in 14.0s (9 ✓)
+
+Good. Now I have a clear picture. Let me also check the last journal entry and recent git log.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -10  ▶ $ # Check the last release tag (2 lines) ✓ (3ms)
+ ✓ (10ms)
+  ▶ $ # Check last release (v-tagged release, not day tags) (2 lines) ✓ (4ms)
+  ▶ $ # Check for any release tags (2 lines) ✓ (4ms)
+  ▶ $ # Check for unwrap density in production code (non-test) for… (3 lines)  ▶ $ # Check how many of those are in #[cfg(test)] blocks (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Better approach: count unwraps outside test modules (12 lines) ✓ (19ms)
+  ▶ $ # So symbols.rs has 72 unwraps in production code — that's t… (3 lines) ✓ (6ms)
+  8 tools completed in 16.4s (8 ✓)
+
+The unwrap() calls in symbols.rs production code are almost all Regex::new(...).unwrap() in LazyLock statics — these are infallible on known-good regex patterns. That's actually fine. Not a real bug concern.
+
+Now let me think about what to build. Let me check what the most impactful self-driven work would be.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the current state of ModelConfig::local vs ModelConf… (2 lines) ✓ (3ms)
+  ▶ $ sed -n '282,310p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (3ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now I have a clear picture. Let me plan the session.
+
+**Issue #426** — The fix is simple: change `ModelConfig::local(url, model) to ModelConfig::ollama(url, model) in the ollama branch of create_model_config`. This is a creator-filed issue and has been open since Day 91. Small, high-impact.
+
+For self-driven work, let me look at what would be most competitive. Let me think about what capabilities Claude Code has that yoyo doesn't...
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a way to track self-coded percentage (2 lines) ✓ (5ms)
+  ▶ $ # What about improving competitive position — let me check w… (5 lines) ✓ (4ms)
+  ▶ $ # Check if memories are injected into the system prompt like… (2 lines) ✓ (3ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Good, we do have user-facing memories. Let me think about what would be a high-impact competitive feature...
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what "headless mode" or "non-interactive" support lo… (4 lines) ✓ (4ms)
+  ▶ $ # A key Claude Code feature: --output-format json for struct… (3 lines) ✓ (4ms)
+  2 tools completed in 3.5s (2 ✓)
+
+We already have JSON output. Let me think about what's truly high-impact for Day 94.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving error recovery / resilience? (3 lines) ✓ (4ms)
+
+Let me think strategically about what to build today. The assessment identified several buildable gaps:
+
+1. Issue #426 (Ollama preset) — Creator-filed, upstream fix landed, integration is trivial. High impact for local model users.
+2. Self-coded percentage tracking — The assessment called this "trivial to compute." Fun metric that shows yoyo's self-evolution story.
+3. **Competitive gap: automated PR review** — Could be a GitHub Action. But that's more infra than code.
+
+Let me pick something that closes a real competitive gap. One thing Claude Code does well that we could improve: better context awareness about what's happening. Let me check if we show the user what the agent is doing during tool calls more effectively.
+
+Actually, let me focus on concrete, high-impact tasks:
+
+1. Task 1: Wire Ollama preset (#426) — Creator issue, simple, unblocks local model users
+2. **Task 2: Self-driven capability improvement** — Something competitive
+
+Let me look at what would genuinely help users the most...
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what Claude Code's "permissions" model looks like vs… (4 lines) ✓ (4ms)
+  ▶ $ # What about improving the /init command to generate better … (4 lines) ✓ (3ms)
+  ▶ $ sed -n '565,660p' src/commands_project.rs ✓ (4ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Let me think about what would be most impactful. Looking at the assessment:
+
+**Self-driven priorities:**
+1. Ollama preset (#426) — simple, creator-filed, unblocks real users trying local models. This is the highest-priority community issue.
+2. Self-coded percentage metric — A fun, meaningful stat. But small impact.
+3. Something competitive — What would actually help a developer choose yoyo over Claude Code?
+
+One competitive feature I keep seeing: Claude Code's `--continue` flag to resume the last conversation. Let me check if we have that.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\-\-continue\|continue.*session\|resume.*session\|last.*session" src/cl… ✓ (4ms)
+
+We already have --continue. Good. What else?
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what "max turns" or execution limits we expose (2 lines) ✓ (3ms)
+  ▶ $ # Let me look at a real high-impact competitive feature: (4 lines) ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+OK, we have thinking support. Let me look at what's truly missing and impactful. Let me revisit the assessment's buildable gaps more carefully.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check max_turns -- Claude Code has --max-turns flag (2 lines) ✓ (3ms)
+
+We have --max-turns. Let me think about what REAL competitive improvement would be most impactful...
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ # One important feature: Claude Code can read images from th… (3 lines) ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
