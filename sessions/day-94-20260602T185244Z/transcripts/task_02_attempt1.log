@@ -1,0 +1,205 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the `--all/-a flag for /commit`. Let me start by understanding the current code.
+  ▶ search 'fn handle_commit' in src/commands_git.rs  ▶ search 'nothing staged' in src/commands_git.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/commands_git.rs:1012..1152 ✓ (2ms)
+  3 tools completed in 4.3s (3 ✓)
+
+Now let me also look at handle_commit_ai to understand the full flow:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1142..1242 ✓ (1ms)
+
+Now let me check how wants_ai_commit routes between the two handlers and where it's called from dispatch:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn wants_ai_commit' in src/commands_git.rs  ▶ search 'commit' in src/dispatch.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/commands_git.rs:1252..1277 ✓ (1ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Now let me check the existing tests for commit:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_git.rs ✓ (2ms)
+  ▶ search 'wants_ai_commit|commit.*test|test.*commit' in src/commands_git.rs ✓ (3ms)
+  ▶ search 'wants_ai_commit"' in src/commands_git.rs ✓ (3ms)
+  ▶ search 'fn wants_ai_commit' in src/commands_git.rs ✓ (3ms)
+  ▶ read src/commands_git.rs:3027..3047 ✓ (1ms)
+  5 tools completed in 13.4s (5 ✓)
+
+Now let me check the `run_git function and get_staged_diff` to understand the git helpers:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn run_git\b' in src/git.rs  ▶ search 'fn get_staged_diff' in src/git.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/git.rs:58..108 ✓ (1ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Good. Now I have a clear picture. Let me check the dispatch to understand how the `-a flag should work alongside --ai`:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:680..700 ✓ (1ms)
+
+Now I have a clear plan. Let me implement this:
+
+1. Create a parse_commit_args helper that extracts `-a/--all and --ai/--generate` flags from the commit args, returning the remaining message
+2. Add auto-staging logic using git add -u 
+3. Update both handle_commit and handle_commit_ai to support -a/--all
+4. Add the hint when nothing is staged
+5. Write tests first
+
+Let me start with the tests and helper function:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1684..1714 ✓ (1ms)
+
+Now let me write the implementation. First, the parse_commit_args helper and auto-stage function:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1005..1020 ✓ (1ms)
+
+Now let me add the `parse_commit_args struct and function, and an auto_stage_tracked helper, right before handle_commit`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1008..1013 ✓ (1ms)
+  ▶ read src/commands_git.rs:1009..1012 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+There seems to be a blank line at 1010 that's not showing. Let me check:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1009,1012p' src/commands_git.rs ✓ (5ms)
+
+OK, there's a comment or empty lines. Let me add the helper right before `handle_commit`:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (1 → 55 lines)
+  + /// Parsed commit arguments: flags (`-a`/`--all`, `--ai`/`--generate`) and the remaining message.
+  + #[derive(Debug, PartialEq)]
+  + pub(crate) struct CommitArgs {
+  +     /// Auto-stage tracked modified files before committing (`-a` / `--all`).
+  +     pub auto_stage: bool,
+  +     /// Use AI to generate the commit message (`--ai` / `--generate`).
+  +     pub ai: bool,
+  +     /// The remaining commit message (if any) after stripping flags.
+  +     pub message: String,
+  + }
+  + 
+  + /// Parse the raw argument string after `/commit` into structured [`CommitArgs`].
+  + ///
+  + /// Recognises `-a`, `--all`, `--ai`, and `--generate` in any position.
+  + pub(crate) fn parse_commit_args(arg: &str) -> CommitArgs {
+  +     let mut auto_stage = false;
+  +     let mut ai = false;
+  +     let mut message_parts: Vec<&str> = Vec::new();
+  + 
+  +     for token in arg.split_whitespace() {
+  ... (35 more lines)
+ ✓ (14.7s)
+
+Good — the functions aren't used yet. Now let me update `handle_commit` to use them:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1066..1136 ✓ (1ms)
+
+Now let me rewrite handle_commit to use parse_commit_args:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (65 → 73 lines)
+    pub fn handle_commit(input: &str) {
+        let arg = input.strip_prefix("/commit").unwrap_or("").trim();
+  -     if !arg.is_empty() {
+  -         let (ok, output) = run_git_commit_with_trailer(arg);
+  +     let parsed = parse_commit_args(arg);
+  + 
+  +     // Auto-stage tracked files when `-a`/`--all` is present
+  +     if parsed.auto_stage && !auto_stage_tracked() {
+  +         return;
+  +     }
+  + 
+  +     if !parsed.message.is_empty() {
+  +         let (ok, output) = run_git_commit_with_trailer(&parsed.message);
+            if ok {
+                println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+            } else {
+  ···
+                    eprintln!("{RED}  error: not in a git repository{RESET}\n");
+                }
+                Some(diff) if diff.trim().is_empty() => {
+  ... (6 more lines)
+ ✓ (1m 3s)
+
+Now update handle_commit_ai similarly:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1204..1254 ✓ (1ms)
+  ▶ edit src/commands_git.rs (32 → 33 lines)
+    pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
+        let arg = input.strip_prefix("/commit").unwrap_or("").trim();
+  +     let parsed = parse_commit_args(arg);
+    
+  -     // Strip flags to see if user also provided an explicit message
+  -     let explicit = arg
+  -         .replace("--ai", "")
+  -         .replace("--generate", "")
+  -         .trim()
+  -         .to_string();
+  -     if !explicit.is_empty() {
+  +     // Auto-stage tracked files when `-a`/`--all` is present
+  +     if parsed.auto_stage && !auto_stage_tracked() {
+  +         return;
+  +     }
+  + 
+  +     if !parsed.message.is_empty() {
+            // User gave a message alongside --ai — just use it directly
+  -         let (ok, output) = run_git_commit_with_trailer(&explicit);
+  +         let (ok, output) = run_git_commit_with_trailer(&parsed.message);
+  ... (13 more lines)
+ ✓ (1m 4s)
+  2 tools completed in 1m 24s (2 ✓)
+
+Now update wants_ai_commit to use parse_commit_args for consistency:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1314..1319 ✓ (1ms)
+  ▶ edit src/commands_git.rs (5 → 5 lines)
+    /// Returns `true` if the input contains `--ai` or `--generate` flags.
+    pub fn wants_ai_commit(input: &str) -> bool {
+        let arg = input.strip_prefix("/commit").unwrap_or("").trim();
+  -     arg.contains("--ai") || arg.contains("--generate")
+  +     parse_commit_args(arg).ai
+    }
+ ✓ (1m 3s)
+  2 tools completed in 1m 11s (2 ✓)
+
+Now let me add the tests. Let me find the end of the test module:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:3085..3100 ✓ (1ms)
+  ▶ edit src/commands_git.rs (9 → 76 lines)
+            assert!(wants_ai_commit("/commit --ai"));
+            assert!(wants_ai_commit("/commit --generate"));
+            assert!(wants_ai_commit("/commit --ai some msg"));
+  +         assert!(wants_ai_commit("/commit --ai -a"));
+            assert!(!wants_ai_commit("/commit"));
+            assert!(!wants_ai_commit("/commit fix: typo"));
+  +         assert!(!wants_ai_commit("/commit -a fix: typo"));
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_commit_args_no_flags() {
+  +         let args = parse_commit_args("");
+  +         assert!(!args.auto_stage);
+  +         assert!(!args.ai);
+  +         assert_eq!(args.message, "");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_commit_args_message_only() {
+  +         let args = parse_commit_args("fix the bug");
+  ... (54 more lines)
+ ✓ (1m 3s)
+  2 tools completed in 1m 16s (2 ✓)
+
+Now let's build and test:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (31.2s)
+  2 tools completed in 51.4s (2 ✓)
+
+All 88 tests pass. Let me verify the full pipeline:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (127ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

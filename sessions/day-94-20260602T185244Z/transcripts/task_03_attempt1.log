@@ -1,0 +1,343 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing commit-related code in commands_git.rs, particularly the CommitArgs struct and parse_commit_args function.
+  ▶ search 'struct CommitArgs' in src/commands_git.rs  ▶ search 'fn parse_commit_args' in src/commands_git.rs  ▶ search 'fn handle_commit' in src/commands_git.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/commands_git.rs:1014..1089 ✓ (1ms)
+  ▶ read src/commands_git.rs:1085..1145 ✓ (2ms)
+  5 tools completed in 13.8s (5 ✓)
+
+Now let me look at run_git_commit_with_trailer to understand the git commit mechanics:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn run_git_commit_with_trailer' in src/git.rs  ▶ search 'fn run_git_commit' in src/git.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/git.rs:90..160 ✓ (1ms)
+  3 tools completed in 4.4s (3 ✓)
+
+Now let me see the existing tests for `parse_commit_args`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:3095..3175 ✓ (1ms)
+
+Now let me check how run_git works to understand the test guard:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:1..31 ✓ (1ms)
+
+Good. Now I have a clear picture. Let me plan my implementation:
+
+1. Add amend: bool field to CommitArgs
+2. Add "--amend" parsing to parse_commit_args
+3. Add amend logic in handle_commit
+4. Add tests for the new flag combinations
+5. Add a helper for running amend commits
+
+Let me start with the tests first, then implement.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 11.0s (5 ✓)
+
+Let me first add a helper function for amend commits in git.rs, then modify `commands_git.rs`:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn run_git_commit\b' in src/git.rs ✓ (3ms)
+
+Now let me implement. First, add the amend field to CommitArgs and parse it:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git.rs (8 → 10 lines)
+        pub auto_stage: bool,
+        /// Use AI to generate the commit message (`--ai` / `--generate`).
+        pub ai: bool,
+  +     /// Amend the last commit instead of creating a new one (`--amend`).
+  +     pub amend: bool,
+        /// The remaining commit message (if any) after stripping flags.
+        pub message: String,
+    }
+ ✓ (9.2s)
+  2 tools completed in 17.1s (2 ✓)
+
+Expected — now let me add --amend parsing:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git.rs (19 → 22 lines)
+    pub(crate) fn parse_commit_args(arg: &str) -> CommitArgs {
+        let mut auto_stage = false;
+        let mut ai = false;
+  +     let mut amend = false;
+        let mut message_parts: Vec<&str> = Vec::new();
+    
+        for token in arg.split_whitespace() {
+            match token {
+                "-a" | "--all" => auto_stage = true,
+                "--ai" | "--generate" => ai = true,
+  +             "--amend" => amend = true,
+                other => message_parts.push(other),
+            }
+        }
+  ···
+        CommitArgs {
+            auto_stage,
+            ai,
+  +         amend,
+            message: message_parts.join(" "),
+  ... (2 more lines)
+ ✓ (1m 4s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 16s (4 ✓)
+
+Now let me add the amend logic in handle_commit. Let me first look at the current function more carefully, and also check what git functions are available:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1068..1148 ✓ (1ms)
+
+I need a helper to run git commit with amend. Let me check if run_git is suitable, or if I should add a specific amend function in git.rs. Given the task says to keep changes within `commands_git.rs` only (max 3 files), I'll add a local helper in commands_git.rs that uses run_git from git.rs.
+
+Let me check what's imported:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1..21 ✓ (1ms)
+
+Good, run_git is available via use crate::git::*. Now let me implement the amend logic. I'll need to:
+
+1. Add a helper function run_git_amend that handles the amend-specific git operations
+2. Modify handle_commit to branch on `parsed.amend`
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me add the amend helper functions right before handle_commit:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1066..1071 ✓ (1ms)
+  ▶ edit src/commands_git.rs (5 → 45 lines)
+                false
+  +         }
+  +     }
+  + }
+  + 
+  + /// Run `git commit --amend` with a new message, including the co-authored trailer.
+  + fn run_git_amend_with_message(message: &str) -> (bool, String) {
+  +     let with_trailer = append_co_authored_trailer(message);
+  +     match std::process::Command::new("git")
+  +         .args(["commit", "--amend", "-m", &with_trailer])
+  +         .output()
+  +     {
+  +         Ok(output) => {
+  +             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+  +             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+  +             let text = if stdout.is_empty() { stderr } else { stdout };
+  +             (output.status.success(), text)
+  +         }
+  +         Err(e) => (false, format!("error: {e}")),
+  +     }
+  ... (25 more lines)
+ ✓ (14.4s)
+  2 tools completed in 25.7s (2 ✓)
+
+Expected — they'll be used once I modify `handle_commit. Let me now rewrite handle_commit to support --amend`:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (73 → 75 lines)
+            return;
+        }
+    
+  -     if !parsed.message.is_empty() {
+  +     if parsed.amend {
+  +         handle_commit_amend(&parsed);
+  +     } else if !parsed.message.is_empty() {
+            let (ok, output) = run_git_commit_with_trailer(&parsed.message);
+            if ok {
+                println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+ ✓ (8.9s)
+
+Now I need to add the handle_commit_amend function. Let me add it right after the closing brace of handle_commit:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ search '^/// Maximum diff size' in src/commands_git.rs ✓ (3ms)
+  ▶ read src/commands_git.rs:1183..1193 ✓ (1ms)
+  2 tools completed in 7.6s (2 ✓)
+
+Good. Let me insert handle_commit_amend right after handle_commit ends:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (6 → 86 lines)
+        }
+    }
+    
+  + /// Handle `--amend` variant of `/commit`.
+  + ///
+  + /// Behaviour:
+  + /// - With a message: amend and replace the commit message.
+  + /// - Without a message but with staged changes: show current message, ask
+  + ///   whether to keep/edit it, then amend.
+  + /// - Without a message and no staged changes: amend with `--no-edit` (useful
+  + ///   after `git add` of a forgotten file).
+  + fn handle_commit_amend(parsed: &CommitArgs) {
+  +     if !parsed.message.is_empty() {
+  +         // Amend with a new message
+  +         let (ok, output) = run_git_amend_with_message(&parsed.message);
+  +         if ok {
+  +             println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+  +         } else {
+  +             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+  +         }
+  ... (66 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_git.rs.
+
+Let me see the exact lines around that area:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1183..1193 ✓ (1ms)
+
+There seems to be a blank line issue — line 1187 might have something weird. Let me look at the raw bytes:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1185,1190p' src/commands_git.rs | cat -A ✓ (6ms)
+
+There's a line with Unicode box-drawing characters (a visual separator). Let me use a different approach — I'll insert after handle_commit's closing brace using line numbers:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^}" src/commands_git.rs | head -20 ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `handle_commit_amend` in this scope[0m
+    [1m[94m--> [0msrc/commands_git.rs:1121:9
+     [1m[94m|[0m
+[1m[94m1121[0m [1m[94m|[0m         handle_commit_amend(&parsed);
+     [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m1251[0m [1m[94m|[0m pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
+     [1m[94m|[0m [1m[94m----------------------------------------------------------------------[0m [1m[94msimilarly named function `handle_commit_ai` defined here[0m
+     [1m[94m|[0m
+[1m[96mhelp[0m: a function with a similar name exists
+     [1m[94m|[0m
+[1m[94m1121[0m [91m- [0m        [91mhandle_commit_amend[0m(&parsed);
+[1m[94m1121[0m [92m+ [0m        [92mhandle_commit_ai[0m(&parsed);
+     [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0425`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the file to understand what's missing:
+  ▶ $ grep -n "handle_commit_amend\|fn handle_commit\|^}" src/commands_git.rs | head -… ✓ (4ms)
+
+The handle_commit_amend function is being called at line 1121 but was never successfully inserted. Let me see what's around line 1185 (end of `handle_commit`):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1183..1198 ✓ (1ms)
+
+I also see line 1187 is the problematic unicode separator line. Let me check what's on that line:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1187p' src/commands_git.rs ✓ (3ms)
+  ▶ $ sed -n '1186,1188p' src/commands_git.rs | xxd | head -5 ✓ (49ms)
+  2 tools completed in 7.5s (2 ✓)
+
+It's a visual separator comment. Now I need to insert handle_commit_amend between line 1185 (closing } of handle_commit) and line 1186. Let me use the text around it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1185,1189p' src/commands_git.rs ✓ (3ms)
+  ▶ $ # Get the exact bytes of lines 1186-1188 to use as anchor (8 lines) ✓ (20ms)
+  2 tools completed in 12.9s (2 ✓)
+
+Wait, only 2 lines? Let me check total line count:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_git.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (8ms)
+  ▶ $ python3 -c " (6 lines) ✓ (20ms)
+  2 tools completed in 5.7s (2 ✓)
+
+The line numbering is off because there's a unicode separator line (1187) that read_file shows but python reads differently. Let me just do a direct insertion after handle_commit's closing brace using sed:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Find the exact line number of the closing brace of handle_… (3 lines) ✓ (4ms)
+
+Now let me insert the handle_commit_amend function after line 1185:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/amend_fn.py << 'PYEOF' (105 lines) ✓ (24ms)
+
+Now let me also add the tests for the `--amend` flag. First, let me find the existing tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "parse_commit_args_ai_and_all_no_message" src/commands_git.rs ✓ (8ms)
+  ▶ read src/commands_git.rs:3286..3301 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me add tests for --amend right before the closing } of the test module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (8 → 57 lines)
+            let args = parse_commit_args("-a --generate");
+            assert!(args.auto_stage);
+            assert!(args.ai);
+  +         assert_eq!(args.message, "");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_commit_args_amend_only() {
+  +         let args = parse_commit_args("--amend");
+  +         assert!(args.amend);
+  +         assert!(!args.auto_stage);
+  +         assert!(!args.ai);
+  +         assert_eq!(args.message, "");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_commit_args_amend_with_message() {
+  +         let args = parse_commit_args("--amend fix typo");
+  +         assert!(args.amend);
+  +         assert!(!args.auto_stage);
+  ... (35 more lines)
+ ✓ (14.5s)
+
+Good — just a clippy suggestion. Let me fix it:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (4 → 1 lines)
+  -     let has_staged = match get_staged_diff() {
+  -         Some(diff) if !diff.trim().is_empty() => true,
+  -         _ => false,
+  -     };
+  +     let has_staged = matches!(get_staged_diff(), Some(diff) if !diff.trim().is_empty());
+ ✓ (1m 3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.2s)
+  2 tools completed in 1m 22s (2 ✓)
+
+Clippy passes. Now let me run the tests:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (50.1s)
+
+All 3590 unit tests and 88 integration tests pass. Let me also run the full build:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (128ms)
+
+Everything passes. Now let me verify the tests I added actually run correctly:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parse_commit_args_ame… ✓ (137ms)
+
+All 6 amend tests pass. Let me now check if there are any docs that mention /commit that should be updated:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "/commit" docs/src/ README.md | grep -i "commit" | head -20 ✓ (4ms)
+
+Let me update the docs to mention --amend:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/usage/commands.md:340..350 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (1 → 2 lines)
+    | `/commit [msg]` | Commit staged changes — generates a conventional commit message if no msg provided |
+  + | `/commit --amend [msg]` | Amend last commit — replace message, or keep existing with `--no-edit` |
+ ✓ (46.5s)
+  2 tools completed in 52.1s (2 ✓)
+
+Now let me check the examples section a bit further down:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/usage/commands.md:375..385 ✓ (0ms)
+  ▶ edit docs/src/usage/commands.md (4 → 7 lines)
+    The `/commit` command helps you commit staged changes quickly:
+    - `/commit` (no arguments): reads your staged diff, generates a conventional commit message (e.g., `feat(main): add changes`), and asks for confirmation — press `y` to accept, `n` to cancel, or `e` to edit
+    - `/commit fix: typo in README`: commits directly with your provided message
+  + - `/commit --amend new message`: amend the last commit with a new message
+  + - `/commit --amend`: amend with staged changes — shows current message and asks to keep or edit
+  + - `/commit -a --amend`: auto-stage tracked files and amend the last commit
+    - If nothing is staged, it reminds you to `git add` first
+ ✓ (47.0s)
+  2 tools completed in 54.5s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+

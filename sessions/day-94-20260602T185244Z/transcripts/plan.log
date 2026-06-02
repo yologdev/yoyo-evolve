@@ -1,0 +1,176 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ModelConfig::local\|Mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat journals/JOURNAL.md | head -… ✓ (5ms)
+ ✓ (6ms)
+  4 tools completed in 6.6s (4 ✓)
+
+Now let me check the current state of the Ollama fix more precisely and look at what would be most impactful:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '270,295p' src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,385p' src/agent_buil… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -r 'ModelConfig::ollama' ~/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'fn ollama\|pub fn olla… ✓ (5ms)
+ ✓ (5ms)
+  4 tools completed in 5.6s (4 ✓)
+
+Good — ModelConfig::ollama() exists in yoagent 0.8.3. Now let me think about what to plan for this session.
+
+The assessment is clear:
+
+1. #426 Ollama fix — promised on Day 91, 3+ sessions overdue. One-line change (ModelConfig::local() → ModelConfig::ollama()). Must ship.
+2. Self-driven work — 4+ consecutive safety.rs sessions. Time to pivot to something that widens usefulness. The assessment identifies "structured event stream" and "multi-provider UX polish" as buildable gaps. But let me think about what's most impactful in one task slot...
+3. **What would make yoyo most competitive?** — The assessment notes safety.rs is 1,566 lines. But refactoring it is cleanup, not competitive advantage. Let me think about what real users experience...
+
+Let me check what competitive features would be highest impact:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn compress_tool_output…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me think about what would be most impactful for self-driven work. The assessment notes safety.rs at 1,566 lines and growing — a module split would be a good structural investment. But the assessment also flags that I've been doing safety work for 4+ sessions. Let me look at what else could make yoyo more competitive:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn handle_diff\b' src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'auto_compact\|proactive… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me think about what would genuinely make yoyo more competitive. Looking at the trajectory — 10 consecutive green sessions, clean streak. The biggest "buildable gap" the assessment flags is #426 (overdue promise). After that, what would a real developer choosing between yoyo and Claude Code notice?
+
+One thing Claude Code does well: **context awareness about what changed in the conversation. Another: better file mention handling** — when you mention a file path in your prompt, Claude Code auto-reads it. Let me check if yoyo does this:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'expand_file_mentions\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'expand_file_mentions' s… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Good, yoyo already has @file mentions. Let me think about what's actually the most impactful self-driven task.
+
+Looking at the assessment's "buildable gaps":
+1. #426 Ollama — promised, overdue → Task 1
+2. Safety.rs module split — it's 1,566 lines and growing, good structural investment → could be Task 2
+3. Something that widens usefulness / competitive edge → Task 3
+
+For Task 3, what about improving the multi-provider experience? Or let me think about what developers actually do in their daily workflow that yoyo could do better...
+
+Actually, let me look at what the safety.rs split would entail vs. something more user-facing:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^pub fn\|^fn\|^#\[cfg(t… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs && awk '/^#\… ✓ (5ms)
+  2 tools completed in 6.7s (2 ✓)
+
+So safety.rs is 1,133 lines of logic + 433 lines of tests. The split would be straightforward: extract constants/patterns and the check functions into a submodule. But this is cleanup, not competitive advantage.
+
+Let me think about what would be more valuable. What do real developers hitting yoyo for the first time care about?
+
+Actually, let me revisit the assessment's priorities. The #426 Ollama fix is the clear Task 1. For Tasks 2 and 3, I should focus on something that makes yoyo more useful to real developers. Let me think about what the "structured event stream" gap means — it's a prerequisite for TUI. That's a big architectural piece, not a single-task item.
+
+What about something more immediately useful? Let me check if there's a low-hanging fruit that would improve the developer experience significantly:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn handle_pr\|fn parse_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,25p' src/commands_git.… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 1.7s (2 ✓)
+
+OK, I've done enough research. Let me plan the three tasks:
+
+Task 1: #426 Ollama fix — The overdue promise. ModelConfig::local() → ModelConfig::ollama(). One line in agent_builder.rs, plus a test.
+
+Task 2: Safety.rs module split — Extract the 1,133-line logic into src/safety/ module structure. This is structural debt that needs paying before safety.rs grows further. But per task sizing rules, I should do this incrementally. Task 2 will be: convert safety.rs into safety/mod.rs + extract tests into safety/tests.rs. That's a clean first step.
+
+**Task 3: Self-driven competitive improvement** — What would genuinely move yoyo closer to rivaling Claude Code? Let me think about what users experience...
+
+One thing Claude Code does very well is **automatic context injection** — when you start a conversation, it proactively reads relevant files based on your question. yoyo has project context loading, but could it be smarter? Let me look at another angle: **better error recovery UX**. When a tool fails, what does the user experience?
+
+Actually, I think the most impactful self-driven work would be: **improve the `/pr` workflow to support creating PRs with AI-generated descriptions** — this is a real developer workflow gap. Or add `/diff --explain` which uses the agent to explain what changed. Let me check if that already exists:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'handle_diff_explain\|di… ✓ (3ms)
+
+Already has /diff --explain. Good.
+
+Let me think about what's genuinely missing that a developer would notice. One important gap: `/pr create` with AI-generated description. Let me check:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1260,1400p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1440,1550p' src/commands… ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+OK, `/pr create` already exists. Let me check what it does:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 80 'PrSubcommand::Create… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'PrSubcommand::Create' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1596,1700p' src/commands… ✓ (3ms)
+ ✓ (4ms)
+  3 tools completed in 5.8s (3 ✓)
+
+OK, /pr create with AI description already exists. Good.
+
+Let me settle on the three tasks. The assessment is very clear:
+
+1. Task 1: #426 Ollama fix — ship the promised one-liner
+2. **Task 2: Safety.rs module split (phase 1)** — convert single file to `safety/mod.rs + safety/checks.rs` (extract the check_* functions). This is structural investment before safety grows further.
+3. Task 3: Something competitive — Let me think about what would genuinely help a developer...
+
+Actually, let me reconsider Task 2. The assessment says "4+ consecutive safety sessions." Maybe I should do something NOT safety-related for self-driven work. What about improving something in the developer workflow?
+
+Let me look at a user-facing improvement: **smarter auto-compact messaging. Or better session resume experience**. Or something more impactful...
+
+What about: **`/commit --amend** support? Or **improved /test` with failure analysis**? Let me check what /test does:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/commands_lint… ✓ (4ms)
+
+OK. Let me settle on the plan. I want Task 3 to be something that genuinely improves developer experience. Here's my thinking:
+
+**Task 3: Add `/test --failed` to re-run only failed tests** — This is a common workflow: you run tests, some fail, you fix code, you want to re-run just the failures. Claude Code handles this naturally through conversation context. yoyo's /test always re-runs everything. Adding --failed that captures the last failure list and re-runs just those would be a nice quality-of-life improvement.
+
+Actually, let me think simpler and more impactful. What about something that improves the core prompt/response cycle?
+
+Let me pivot. The assessment mentions: **"competitive landscape has shifted from 'features you haven't built' to 'platforms you can't be.'"** The buildable gaps are: Ollama compat (#426), multi-provider polish, structured events. #426 is Task 1. Multi-provider polish is diffuse. Structured events is too big.
+
+What about: **improving the /commit workflow to support --fixup and `--amend`?** Those are everyday developer operations.
+
+Or: **Add --output json support to make yoyo scriptable?** That's the "non-interactive shadow" from Day 63's lesson.
+
+Actually, let me look at something concrete. The assessment's "first-contact features have outsized impact" lesson from Day 64 is relevant. What's the first thing a new user experiences?
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/banner.rs ✓ (3ms)
+
+OK, banner already shows project context. Let me think about what else matters.
+
+You know what — I'll go with a practical improvement that makes yoyo more useful in real workflows. Let me check what /commit --amend would look like:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn handle_commit\b' src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '840,950p' src/commands_g… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1012,1100p' src/commands… ✓ (4ms)
+  3 tools completed in 5.8s (3 ✓)
+
+OK. Let me now finalize my plan. Here's what I'm going with:
+
+**Task 1: #426 Ollama fix** — one-line change, overdue promise  
+Task 2: Add `--amend` flag to `/commit` — real developer workflow improvement  
+**Task 3: Safety module split (phase 1)** — structural debt before safety.rs grows further
+
+Wait, actually, let me reconsider. The "4+ consecutive safety sessions" guidance in the assessment suggests pivoting AWAY from safety. Task 2 should be something more user-facing and competitive, and Task 3 could be something else user-facing too.
+
+Let me think about what would make the biggest difference to a real developer using yoyo:
+
+1. /commit --amend — useful but niche
+2. Improved context window management UX — showing "you're at 80% context" inline
+3. Better multi-model switching experience
+4. **Auto-stage files before commit** — when /commit finds nothing staged, offer to stage all changes
+
+Actually, the most impactful self-driven improvement I can think of: **add --all / -a flag to /commit that auto-stages tracked files before committing**. This matches `git commit -a behavior and eliminates the most common friction point ("nothing staged — use git add` first"). Combined with the AI commit message generation, this would make /commit a one-step workflow.
+
+And for Task 3, something competitive: **add /commit --amend support** to allow amending the last commit, another everyday git operation.
+
+Both of these together make yoyo's git workflow feel much more professional. Let me write the plan.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (36 lines) ✓ (46.0s)
+  ▶ write session_plan/task_02.md (38 lines) ✓ (45.8s)
+  ▶ write session_plan/task_03.md (47 lines) ✓ (45.0s)
+  ▶ write session_plan/issue_responses.md (3 lines) ✓ (46.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 3m 50s (6 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

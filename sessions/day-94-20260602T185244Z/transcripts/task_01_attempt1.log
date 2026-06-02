@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix #426 by changing the Ollama branch in create_model_config to use `ModelConfig::ollama() instead of ModelConfig::local()`. Let me start by understanding the current code and the available API.
+  ▶ search 'create_model_config' in src/agent_builder.rs  ▶ search '"ollama"' in src/agent_builder.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/agent_builder.rs:263..303 ✓ (1ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Now let me check what ModelConfig::ollama() looks like in yoagent to understand the API:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src -path "*/yoagent-*/src/*" -name "*.rs" | head -20 ✓ (49ms)
+  ▶ $ grep -n "fn ollama\|fn local\|pub struct ModelConfig\|pub struct OpenAiCompat\|r…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (8ms)
+  ▶ $ grep -rn "fn ollama\|pub fn local\|requires_assistant\|pub struct OpenAiCompat\|… ✓ (42ms)
+  ▶ $ grep -n "fn ollama\|fn local\|requires_assistant" ~/.cargo/registry/src/index.cr… ✓ (8ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.3/src/provider/model.rs:75..125 ✓ (1ms)
+  5 tools completed in 14.1s (5 ✓)
+
+Now let me see the ollama() constructor:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.3/src/provider/model.rs:195..235 ✓ (1ms)
+
+Now let me find ModelConfig::ollama() and ModelConfig::local():
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn ollama\|pub fn local" ~/.cargo/registry/src/index.crates.io-1949… ✓ (8ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.3/src/provider/model.rs:275..325 ✓ (1ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.3/src/provider/model.rs:324..344 ✓ (0ms)
+  3 tools completed in 5.9s (3 ✓)
+
+Now I have the full picture. ModelConfig::ollama() sets provider to "ollama" and uses OpenAiCompat::ollama() which has `requires_assistant_after_tool_result: true. The current ModelConfig::local() sets provider to "local" and uses OpenAiCompat::default() which has requires_assistant_after_tool_result: false`.
+
+Let me check the existing tests to understand patterns:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1200..1280 ✓ (2ms)
+
+Now let me write the test first, then make the code change. Let me find where the existing tests end to know where to add mine:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_create_model_config\|fn test_client_headers" src/agent_builder.… ✓ (3ms)
+
+Let me find a good location to add the test — after the google test and before the zai test:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:1275..1290 ✓ (1ms)
+
+Now I'll write the test first and then make the code change. Let me do both:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (3 → 30 lines)
+  +     #[test]
+  +     fn test_create_model_config_ollama_uses_ollama_compat() {
+  +         let config = create_model_config("ollama", "llama3", None);
+  +         assert_eq!(config.provider, "ollama");
+  +         assert_eq!(config.id, "llama3");
+  +         assert_eq!(config.base_url, "http://localhost:11434/v1");
+  +         let compat = config.compat.as_ref().expect("ollama should have compat");
+  +         assert!(
+  +             compat.requires_assistant_after_tool_result,
+  +             "Ollama compat must set requires_assistant_after_tool_result = true"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_create_model_config_ollama_custom_base_url() {
+  +         let config =
+  +             create_model_config("ollama", "mistral", Some("http://myhost:11434/v1"));
+  +         assert_eq!(config.provider, "ollama");
+  +         assert_eq!(config.id, "mistral");
+  +         assert_eq!(config.base_url, "http://myhost:11434/v1");
+  ... (10 more lines)
+ ✓ (1m 1s)
+
+The test was added. Now let me run the tests to see the test fail first (test-first approach):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test test_create_model_config_ollama 2>&1 ✓ (138ms)
+
+Tests fail as expected — provider is "local" instead of `"ollama" and requires_assistant_after_tool_result` would be false. Now let me make the one-line fix:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (4 → 4 lines)
+            "ollama" => {
+                let url = base_url.unwrap_or("http://localhost:11434/v1");
+  -             ModelConfig::local(url, model)
+  +             ModelConfig::ollama(url, model)
+            }
+ ✓ (1m 4s)
+
+Now run the tests again:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test test_create_model_config_ollama 2>&1 ✓ (138ms)
+
+Both tests pass. Now run the full CI checks:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 ✓ (15.4s)
+  ▶ $ cargo build 2>&1 && cargo test 2>&1 | tail -20 ✓ (55.8s)
+  2 tools completed in 1m 15s (2 ✓)
+
+All checks pass. Let me commit:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 94 (17:57): Fix #426 — Use … (15 lines) ✓ (13ms)
+
+Done. Here's what I did:
+
+1. Wrote tests first — two tests (test_create_model_config_ollama_uses_ollama_compat and test_create_model_config_ollama_custom_base_url) that verify the Ollama config has provider: "ollama", correct base URL, and requires_assistant_after_tool_result: true in its compat flags. Confirmed they failed before the fix.
+
+2. One-line fix — changed `ModelConfig::local(url, model) to ModelConfig::ollama(url, model) in the "ollama" branch of create_model_config`. This uses yoagent 0.8.3's first-class Ollama constructor which sets the compat flag that prevents tool-call hangs.
+
+3. All CI checks pass — fmt, clippy (with -D warnings), build, and all 88 tests green (including the 2 new ones).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
