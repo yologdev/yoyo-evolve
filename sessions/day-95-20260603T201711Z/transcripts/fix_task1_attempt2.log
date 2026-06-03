@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement I can make.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Let me survey the codebase to find areas that need improvement:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (31.6s)
+  2 tools completed in 54.0s (2 ✓)
+
+Good, everything passes. Now let me look at the source files to find the most impactful improvement:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|HACK\|XXX… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "unwrap()" src/ --inclu… ✓ (6ms)
+  3 tools completed in 12.6s (3 ✓)
+
+Let me look at some key areas where improvements would be most impactful. Let me check the tool output handling - it's a common bottleneck:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "clone()" src/ --includ… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.clone()" src/prompt.… ✓ (4ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Let me look at some functional areas where there are real code quality issues or missing functionality:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "panic!\|expect(" src/ … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_char_boundary\|trun… ✓ (10ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Let me look at a few key modules for improvement opportunities:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 36s)
+
+Excellent analysis. The most impactful improvement would be fixing the false positives in safety.rs - specifically the word boundary issues where destructive commands like halt, shutdown, reboot match inside normal words (like "halting", "rebooting", etc.), and adding the missing || splitter in bare truncation checks. Let me also look at the check_bare_truncation and system command checks more closely:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '260,330p' src/safety.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_at_word_boundary"… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,185p' src/safety.rs ✓ (3ms)
+  3 tools completed in 6.7s (3 ✓)
+
+I see - is_at_word_boundary only checks the start boundary but not the end boundary. So halt in halting or asphalt would match: in halting, halt is at word boundary (beginning of word), and in echo "halting", halting contains halt at a word boundary since the preceding char is " or space. Let me check more carefully:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/t… (47 lines) ✓ (66ms)
+
+So halting and rebooting are indeed false positives. The is_at_word_boundary function only checks the character before the match but not the character after. And `echo the shutdown process` also matches falsely since "shutdown" is at a word boundary (preceded by space), even though it's being used as a noun inside an echo.
+
+However, check_system_commands is specifically about detecting dangerous commands. The echo cases might be false positives, but the primary issue is that halting matches as halt because we don't check the end boundary. Let me now look at the bare truncation issue and plan the improvement:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "check_bare_truncation\|… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '872,920p' src/safety.rs ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me look at what would be the most impactful, well-scoped improvement. I'll focus on:
+
+1. **Add `is_at_word_boundary_end function** to check end-of-word boundaries (prevents halting` matching halt, rebooting matching reboot)
+2. **Add || splitting to `check_bare_truncation** (currently misses false || > config.yaml`)
+3. Add appropriate tests for these fixes and edge cases
+
+Let me also check for other places where end-of-word boundary would help:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_at_word_boundary" sr… ✓ (3ms)
+
+Now let me see which specific uses need end-of-word boundary checking. The system commands are the most important:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,320p' src/safety.rs ✓ (3ms)
+
+Now let me look at what other checks use word boundary and would benefit from end-boundary:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,460p' src/safety.rs ✓ (3ms)
+
+For disk commands like fdisk, parted, mkfs - these typically ARE always commands, not natural language words. But for shutdown, reboot, halt - these are commonly used as normal words in echo statements.
+
+Let me also check `check_database_destruction`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,380p' src/safety.rs ✓ (3ms)
+
+Now I have a clear picture. Let me plan the improvement:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 16.7s (7 ✓)
+
+Now let me implement the changes:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '159,172p' src/safety.rs ✓ (3ms)
+  ▶ edit src/safety.rs (8 → 29 lines)
+        }
+        let prev = s.as_bytes().get(pos.wrapping_sub(1));
+        matches!(prev, Some(b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'('))
+  + }
+  + 
+  + /// Check if the end of a matched pattern is at a word boundary.
+  + /// Returns true if the character after the pattern is a separator or end-of-string.
+  + /// This prevents "halt" from matching inside "halting" or "reboot" inside "rebooting".
+  + fn is_at_word_boundary_end(s: &str, end_pos: usize) -> bool {
+  +     if end_pos >= s.len() {
+  +         return true;
+  +     }
+  +     let next = s.as_bytes().get(end_pos);
+  +     matches!(
+  +         next,
+  +         Some(b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b')' | b'"' | b'\'')
+  +     )
+  + }
+  + 
+  + /// Check both start and end word boundaries for a pattern match.
+  ... (5 more lines)
+ ✓ (14.4s)
+  3 tools completed in 30.2s (3 ✓)
+
+Good, expected - I need to use them now. Let me fix `check_system_commands`:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/safety.rs (7 → 11 lines)
+        for (pattern, reason) in &system_cmds {
+            if let Some(pos) = cmd_lower.find(pattern) {
+  -             if is_at_word_boundary(cmd_lower, pos) {
+  +             // Use whole-word matching for single-word commands that are also
+  +             // common English words (halt, shutdown, reboot, poweroff).
+  +             // Multi-word patterns like "init 0" and "systemctl stop" already
+  +             // have natural end boundaries (the space + next word).
+  +             if is_whole_word(cmd_lower, pos, pattern.len()) {
+                    return Some((*reason).into());
+                }
+            }
+ ✓ (1m 3s)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 20s (4 ✓)
+
+Now fix check_bare_truncation to split on ||:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

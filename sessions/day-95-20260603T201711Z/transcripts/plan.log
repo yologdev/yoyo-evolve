@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found" ✓ (2ms)
+ ✓ (6ms)
+  2 tools completed in 1.3s (2 ✓)
+
+No community issues. Let me check the competitive landscape and recent work to make the best plan.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (14ms)
+ ✓ (38ms)
+  ▶ $ git log --oneline --since="2026-05-28" | head -40  ▶ $ git tag --sort=-creatordate | head -5 ✓ (4ms)
+ ✓ (6ms)
+  4 tools completed in 6.5s (4 ✓)
+
+Let me check recent changes to understand what's been done this session and what the biggest competitive gaps are:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what --allowed-tools and JSON output enhancements we… (2 lines)  ▶ $ # Check the flaky test (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Look at the flaky test (2 lines) ✓ (4ms)
+  ▶ $ # Look at how WATCH_COMMAND is managed — is it OnceLock or s… (2 lines) ✓ (4ms)
+  ▶ $ # Check with_clean_watch_state (2 lines) ✓ (3ms)
+  5 tools completed in 9.3s (5 ✓)
+
+Now let me think about the best tasks for this session. The assessment identified:
+
+1. Flaky watch test — a concrete bug in CI
+2. **Loop-until-done autonomy** — a major competitive gap (Cursor has `/loop`, I don't)
+3. Unwrap reduction — latent panic risks in production code
+
+No community issues, no sponsor issues. All 3 slots are self-driven.
+
+Let me check what a /loop command would look like and what's feasible:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's already any loop-related code (2 lines) ✓ (7ms)
+
+There's already a /loop command! Let me check its implementation:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_run.rs  ▶ $ head -80 src/commands_run.rs ✓ (7ms)
+ ✓ (38ms)
+  ▶ $ grep -n "pub fn handle_loop\|fn handle_loop\|fn parse_loop" src/commands_run.rs ✓ (8ms)
+  ▶ $ sed -n '190,320p' src/commands_run.rs ✓ (4ms)
+  4 tools completed in 8.2s (4 ✓)
+
+Good — /loop already exists! So the assessment's "loop autonomy" gap is partially closed. Let me look at what competitive gaps remain that I haven't addressed:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what features Cursor's /loop has that ours doesn't (7 lines) ✓ (4ms)
+  ▶ $ # Check how handle_watch works for "bare" /watch - what coul… (2 lines) ✓ (3ms)
+  ▶ $ sed -n '1342,1440p' src/watch.rs ✓ (4ms)
+  ▶ $ # Check detect_watch_all_phases (2 lines) ✓ (3ms)
+  ▶ $ sed -n '1323,1342p' src/watch.rs ✓ (3ms)
+  5 tools completed in 22.7s (5 ✓)
+
+OK. The flaky test — `handle_watch_bare_sets_lint_and_test — calls handle_watch("/watch") which calls detect_watch_all_phases() which calls detect_project_type`. In CI, the global watch state should be isolated by `#[serial] and with_clean_watch_state`. The panic in CI was likely a genuine flake from test ordering or panic unwinding. Let me focus on higher-impact work.
+
+Let me think about the most impactful tasks:
+
+1. **Fix the flaky watch test** — small, concrete, stabilizes CI
+2. Reduce unwrap() in production code — improve reliability, prevent panics
+3. A competitive feature — what would make the biggest difference?
+
+Let me look at what would be most impactful competitively. The assessment mentions session checkpointing, web search grounding. Let me think about what's achievable in 20 minutes per task.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what web/search features exist (2 lines) ✓ (3ms)
+  ▶ $ wc -l src/commands_web.rs ✓ (7ms)
+  ▶ $ # Is there a /search web command? (2 lines) ✓ (3ms)
+  ▶ $ # What about /websearch or similar?   (2 lines) ✓ (9ms)
+  4 tools completed in 10.0s (4 ✓)
+
+No built-in web search. That's a significant gap vs Gemini CLI's Google Search grounding. But building a proper web search integration in one 20-minute task is ambitious. Let me think about what's most impactful and scoped properly.
+
+Let me look at another angle — what about the production unwrap() issue:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Count unwrap() in production code (excluding tests) (3 lines) ✓ (3ms)
+  ▶ $ # How many of those are in test modules? (18 lines) ✓ (24ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Interesting — all the unwrap() calls in those files are actually in test code, not production. Let me check more broadly:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find unwrap() calls in production code across all source f… (31 lines) ✓ (53ms)
+
+So 72 of the 81 production unwrap() calls are in symbols.rs (the multi-language symbol extractor) — that's a well-tested, stable module. The remaining 9 are spread across 4 files. Not a high-priority issue.
+
+Let me focus on what would make the biggest competitive difference. Looking at the assessment again:
+
+• **Session checkpointing** — I have /save//load but no auto-archive
+• Web search — no built-in search, only curl 
+• Parallel tool execution — Claude Code has this
+• Conversation checkpointing — Gemini CLI has this
+
+Let me think about what's both impactful and achievable in 20 minutes:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a /web search capability we could add (6 lines) ✓ (9ms)
+  ▶ $ # Check the auto_save_on_exit function (2 lines) ✓ (3ms)
+  ▶ $ sed -n '399,440p' src/commands_session.rs ✓ (3ms)
+  3 tools completed in 10.4s (3 ✓)
+
+OK, I have session auto-save. Let me now think about the three most impactful tasks.
+
+After reviewing everything:
+
+Task 1: Fix the flaky watch test — It's a concrete CI issue that appeared in the trajectory. Quick fix, stabilizes CI.
+
+Task 2: Add web search capability — /web search <query> using DuckDuckGo's HTML search. This closes a real competitive gap against Gemini CLI's Google Search grounding. The agent can already curl, but a built-in search command is much more ergonomic and discoverable.
+
+**Task 3: Add /loop until-fail mode** — Currently `/loop has Count(N)` and UntilPass. A third mode UntilFail would run until something breaks — useful for stress testing, finding flaky tests, etc. Small, well-scoped addition.
+
+Actually, wait — let me reconsider task 3. Let me think about what's more impactful...
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about conversation bookmarking/checkpointing? (3 lines) ✓ (3ms)
+  ▶ $ sed -n '688,760p' src/commands_session.rs ✓ (3ms)
+  2 tools completed in 3.3s (2 ✓)
+
+I have bookmarks already. Let me focus on the most impactful things. The web search is the biggest competitive gap I can close. Let me plan it properly:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how /web command is dispatched (2 lines) ✓ (3ms)
+  ▶ $ # Check what commands_web.rs exports (2 lines) ✓ (3ms)
+  2 tools completed in 2.7s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
