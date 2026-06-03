@@ -1,0 +1,93 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --allowed-tools whitelist flag. Let me start by understanding the existing code structure.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 33s)
+
+Good, I have a clear picture. Let me now look at the exact code at each location to make precise edits.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'KNOWN_FLAGS' in src/cli.rs  ▶ search 'disallowed_tools' in src/cli.rs  ▶ search 'disallowed_tools' in src/cli_config.rs ✓ (5ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  ▶ read src/cli.rs:100..150  ▶ read src/cli.rs:660..705  ▶ read src/cli.rs:905..960 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (3ms)
+  6 tools completed in 5.5s (6 ✓)
+
+Now let me look at the agent_builder.rs locations:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'disallowed_tools' in src/agent_builder.rs ✓ (3ms)
+  ▶ read src/agent_builder.rs:400..450 ✓ (1ms)
+  ▶ read src/agent_builder.rs:449..489 ✓ (1ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Now let me look at the `build_side_agent and test_agent_config`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:700..735  ▶ read src/agent_builder.rs:830..905 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me check where AgentConfig is constructed in main.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'disallowed_tools' in src/main.rs ✓ (3ms)
+  ▶ read src/main.rs:670..682  ▶ read src/main.rs:943..955  ▶ read src/main.rs:1419..1431 ✓ (1ms)
+ ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 5.7s (4 ✓)
+
+Now let me look at the Config struct in cli_config.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:95..135 ✓ (0ms)
+
+Now I need to also check if there are any test config construction sites in main.rs that I need to update:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'allowed_tools' in src/main.rs ✓ (3ms)
+
+Now I also need to check the existing tests for disallowed_tools in cli.rs to understand the pattern:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:2773..2828 ✓ (2ms)
+
+Now I have complete understanding. Let me check one more thing — the `test_no_tools_with_disallowed_tools_builds_ok` test in agent_builder.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:2025..2045 ✓ (1ms)
+
+Now let me also check the build_architect_agent and build_editor_agent for completeness:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn build_architect_agent|fn build_editor_agent' in src/agent_builder.rs ✓ (3ms)
+  ▶ search 'pub fn build_architect|pub fn build_editor|pub fn build_side' in src/agent_builder.rs ✓ (3ms)
+  ▶ search 'fn build_side_agent|fn build_architect_agent|fn build_editor…' in src/agent_builder.rs ✓ (3ms)
+  ▶ search 'fn build_side|fn build_architect|fn build_editor' in src/agent_builder.rs ✓ (3ms)
+  ▶ search 'side_agent|architect_agent|editor_agent' in src/agent_builder.rs ✓ (3ms)
+  ▶ search 'fn rebuild_preserving|fn build_side|fn build_architect|fn bu…' in src/agent_builder.rs ✓ (3ms)
+  ▶ $ grep -n "pub fn\|pub(crate) fn\|fn build\|fn rebuild" src/agent_builder.rs | hea… ✓ (6ms)
+  7 tools completed in 18.9s (7 ✓)
+
+Let me check architect and editor:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:651..696 ✓ (1ms)
+
+Good — build_editor_agent creates an AgentConfig at line 694 using `..self` or explicit fields, and I already saw lines 700-718. Now let me check build_side_agent:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:608..658 ✓ (1ms)
+
+Good — `build_side_agent and build_architect_agent don't create new AgentConfig` structs, so they don't need the field. Only build_editor_agent at line 694 does.
+
+Now I have everything I need. Let me also check if there's validation logic in parse_args (checking if both are set):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:935..938 ✓ (1ms)
+
+Good. Now let me plan and execute all the changes:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 11.4s (5 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

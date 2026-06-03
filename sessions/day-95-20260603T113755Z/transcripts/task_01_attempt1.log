@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the changes.
+  ▶ search 'build_json_output' in src/main.rs  ▶ search 'run_single_prompt' in src/main.rs  ▶ search 'run_piped_prompt' in src/main.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/main.rs:129..159  ▶ read src/main.rs:156..306 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/main.rs:305..405 ✓ (1ms)
+  ▶ read src/main.rs:404..504 ✓ (1ms)
+  7 tools completed in 12.3s (7 ✓)
+
+Now let me look at the existing test to understand the current structure and the Usage type:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:925..1045 ✓ (1ms)
+  ▶ read src/main.rs:1053..1233 ✓ (2ms)
+  ▶ read src/main.rs:1232..1282 ✓ (1ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Now let me check the imports and Instant usage:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1..51 ✓ (1ms)
+  ▶ read src/main.rs:80..130 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Good, Instant is already imported. Now let me understand the full picture. I need to:
+
+1. Add `duration: std::time::Duration and num_turns: usize params to build_json_output`
+2. Include cache_read_input_tokens, cache_creation_input_tokens, duration_ms, and num_turns in the JSON
+3. Update all call sites
+4. Update all tests
+
+Let me check if there are `num_turns` already tracked or if I need to count assistant messages:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'num_turns' in src/main.rs ✓ (2ms)
+
+Now let me look at how prompt_start is used and where `build_json_output` is called. I already have a good picture. Let me also check the agent messages to understand how to count turns:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'agent\.messages' in src/main.rs ✓ (2ms)
+  ▶ search 'agent\.messages\(\)|agent\.finish\(\)"' in src/prompt.rs ✓ (3ms)
+  ▶ search 'finish\(\)' in src/prompt.rs ✓ (3ms)
+  3 tools completed in 6.9s (3 ✓)
+
+The task says to count assistant messages for num_turns. Since we don't have access to `agent.messages() inside build_json_output`, and the task suggests a simpler approach with a counter, let me think about what's simplest.
+
+Looking at the call sites in run_single_prompt and `run_piped_mode, the prompt_start Instant` is already present. I need to pass duration and num_turns to build_json_output. For num_turns, the simplest approach from the task: count assistant messages from agent.messages() after the prompt completes. But build_json_output doesn't have access to the agent.
+
+The cleanest approach: compute num_turns at each call site and pass it in. Let me check the Message type:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src -path "*/yoagent-*/src/agent.rs" 2>/dev/null | head -… ✓ (57ms)
+  ▶ $ grep -n "pub fn messages" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (13ms)
+  ▶ $ grep -n "pub struct AgentMessage\|pub enum AgentMessage\|role\|Role" ~/.cargo/re… ✓ (4ms)
+  ▶ $ grep -rn "pub struct AgentMessage\|pub enum AgentMessage\|role.*:" ~/.cargo/regi… ✓ (6ms)
+  ▶ $ grep -rn "AgentMessage" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/y… ✓ (4ms)
+  ▶ $ grep -rn "pub enum AgentMessage\|pub struct AgentMessage\|^pub enum AgentMessage… ✓ (6ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.3/src/types.rs:130..150 ✓ (1ms)
+  7 tools completed in 35.2s (7 ✓)
+
+So agent.messages() returns &[AgentMessage], and each has a .role() method. I can count those with role "assistant". But since I need to do this at the call sites in run_single_prompt and run_piped_mode, and we don't have easy access to the agent there after the prompt completes (we do actually — agent is still in scope)... let me look more carefully.
+
+Actually, looking at the code, agent is a &mut Agent parameter in both run_single_prompt and run_piped_mode. After the prompt runs and `finish() is called (which happens inside run_prompt`), I can count assistant messages from agent.messages().
+
+But wait — there's a subtlety. The `run_prompt function calls finish()` internally. Let me verify:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:37..97 ✓ (1ms)
+
+Good. finish() is called inside `finish_prompt_epilogue. After run_prompt` returns, the agent's messages are up to date. So at the call sites in run_single_prompt and run_piped_mode, after the prompt completes, I can count assistant messages from agent.messages().
+
+Now let me plan the implementation:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 11.7s (5 ✓)
+
+Let me also add a helper function for counting turns from agent messages. Let me first check if AgentMessage is accessible from main.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use yoagent' in src/main.rs ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

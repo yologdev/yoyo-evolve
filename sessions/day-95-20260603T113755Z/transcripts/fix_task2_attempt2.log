@@ -1,0 +1,350 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --allowed-tools whitelist flag. Let me start by understanding the existing code structure.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 15.1s (6 ✓)
+
+Let me examine the relevant files first:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'disallowed_tools' in src/cli_config.rs ✓ (2ms)
+  ▶ read src/cli_config.rs:100..140 ✓ (0ms)
+  ▶ search 'KNOWN_FLAGS' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:100..160 ✓ (1ms)
+  4 tools completed in 9.7s (4 ✓)
+
+Now let me find where disallowed_tools is parsed in parse_args:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'disallowed_tools' in src/cli.rs ✓ (4ms)
+  ▶ read src/cli.rs:905..955 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now let me look at the agent_builder.rs for AgentConfig and disallowed_tools:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'disallowed_tools' in src/agent_builder.rs ✓ (3ms)
+  ▶ read src/agent_builder.rs:395..475 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me look at the collect_repeatable_flag function and how it's used:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn collect_repeatable_flag' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:328..348 ✓ (1ms)
+  2 tools completed in 7.5s (2 ✓)
+
+Now let me see how AgentConfig is constructed in main.rs or wherever Config is converted to AgentConfig:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'disallowed_tools' in src/main.rs ✓ (3ms)
+  ▶ read src/main.rs:660..690 ✓ (0ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me check the other construction sites in main.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:935..965 ✓ (0ms)
+  ▶ read src/main.rs:1410..1440 ✓ (1ms)
+  2 tools completed in 13.0s (2 ✓)
+
+Now let me check how `Config is fully structured in main.rs` to see if it has fields that AgentConfig doesn't:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1384..1444 ✓ (1ms)
+
+Good. Now I have full understanding of the pattern. Let me also look at the parse_args return value structure to understand where both allowed_tools and the conflict check should go:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:883..908 ✓ (1ms)
+
+Now let me also check if there's a place earlier in parse_args where conflicts are checked:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Cannot use both' in src/cli.rs ✓ (3ms)
+  ▶ search 'return None.*conflict\|eprintln.*both\|stderr.*conflict' in src/cli.rs ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Let me see how errors are handled in parse_args:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ search 'return None' in src/cli.rs ✓ (3ms)
+  ▶ search 'fn parse_args' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:598..613 ✓ (1ms)
+  3 tools completed in 7.7s (3 ✓)
+
+Let me see what happens right before the Config construction where the result is assigned, to understand the pattern for returning None:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:855..905 ✓ (1ms)
+
+Now let me also check where parse_args return None for errors to understand the error pattern:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ search 'eprintln!.*Error' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:718..728 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Good, the pattern is eprintln! + std::process::exit(1) for hard errors. Now I have everything I need. Let me implement the changes.
+
+### Step 1: Add `allowed_tools` to `Config` in `cli_config.rs`
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli_config.rs (2 → 3 lines)
+  +     pub allowed_tools: Vec<String>,
+        pub disallowed_tools: Vec<String>,
+        pub no_tools: bool,
+ ✓ (9.1s)
+  2 tools completed in 14.5s (2 ✓)
+
+Expected. Now let me add it to all the Config construction sites.
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+### Step 2: Add parsing in cli.rs
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, add --allowed-tools to KNOWN_FLAGS:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (1 → 2 lines)
+  +     "--allowed-tools",
+        "--disallowed-tools",
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/cli.rs. Include more surrounding context to make the match unique.
+  ▶ read src/cli.rs:143..153 ✓ (1ms)
+  ▶ edit src/cli.rs (4 → 5 lines)
+        "--quiet",
+        "-q",
+  +     "--allowed-tools",
+        "--disallowed-tools",
+        "--no-tools",
+ ✓ (8.9s)
+  3 tools completed in 14.5s (2 ✓, 1 ✗)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0063][0m[1m: missing field `allowed_tools` in initializer of `cli_config::Config`[0m
+   [1m[94m--> [0msrc/cli.rs:877:27
+    [1m[94m|[0m
+[1m[94m877[0m [1m[94m|[0m     let mut result = Some(Config {
+    [1m[94m|[0m                           [1m[91m^^^^^^[0m [1m[91mmissing `allowed_tools`[0m
+
+[1mFor more information about this error, try `rustc --explain E0063`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[E0063][0m[1m: missing field `allowed_tools` in initializer of `cli_config::Config`[0m
+    [1m[94m--> [0msrc/main.rs:1389:9
+     [1m[94m|[0m
+[1m[94m1389[0m [1m[94m|[0m         Config {
+     [1m[94m|[0m         [1m[91m^^^^^^[0m [1m[91mmissing `allowed_tools`[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix all the compilation errors by adding the allowed_tools field everywhere it's needed and completing the full implementation.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 23.1s (7 ✓)
+
+Let me first see the current state of the files to understand what's already been changed:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/cli_config.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/cli.rs ✓ (5ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Good - cli_config.rs and cli.rs have partial changes (field added, flag added to KNOWN_FLAGS). Now I need to:
+1. Add allowed_tools parsing and conflict check in cli.rs parse_args
+2. Add allowed_tools field to Config construction in `cli.rs`
+3. Fix Config construction in main.rs test helpers
+4. Add to AgentConfig and filtering in agent_builder.rs
+5. Wire Config→AgentConfig in main.rs
+6. Add tests
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me see the area in parse_args where disallowed_tools is parsed to add allowed_tools nearby:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:908..968 ✓ (1ms)
+
+Now I need to add allowed_tools field to the Config construction and add the conflict check. Let me add the field right before disallowed_tools:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 8 lines)
+            auto_watch: crate::config::parse_auto_watch_from_config(&file_config),
+  +         allowed_tools: collect_repeatable_flag(args, "--allowed-tools")
+  +             .iter()
+  +             .flat_map(|v| v.split(','))
+  +             .map(|s| s.trim().to_string())
+  +             .filter(|s| !s.is_empty())
+  +             .collect(),
+            disallowed_tools: {
+ ✓ (9.0s)
+
+Good progress. Now I need to add the conflict check after the Config is constructed, and fix the remaining compilation errors. Let me add the conflict check right after the `result` is built:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:943..948 ✓ (1ms)
+  ▶ edit src/cli.rs (5 → 15 lines)
+            no_tools: args.iter().any(|a| a == "--no-tools"),
+            lite,
+        });
+  + 
+  +     // Conflict check: --allowed-tools and --disallowed-tools are mutually exclusive
+  +     if let Some(ref config) = result {
+  +         if !config.allowed_tools.is_empty() && !config.disallowed_tools.is_empty() {
+  +             eprintln!(
+  +                 "{RED}error:{RESET} Cannot use both --allowed-tools and --disallowed-tools"
+  +             );
+  +             std::process::exit(1);
+  +         }
+  +     }
+    
+        // Auto-lite detection: when context window ≤16K, automatically enable lite mode
+ ✓ (9.0s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 21.1s (4 ✓)
+
+Fix main.rs test helper:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1424..1434 ✓ (1ms)
+  ▶ edit src/main.rs (1 → 2 lines)
+  +             allowed_tools: vec![],
+                disallowed_tools: vec![],
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/main.rs. Include more surrounding context to make the match unique.
+  ▶ search 'disallowed_tools: vec' in src/main.rs ✓ (3ms)
+  ▶ read src/main.rs:946..951 ✓ (1ms)
+  ▶ edit src/main.rs (4 → 5 lines)
+                fallback_model: None,
+                auto_watch: true,
+  +             allowed_tools: vec![],
+                disallowed_tools: vec![],
+                no_tools: false,
+ ✓ (9.0s)
+  5 tools completed in 23.9s (4 ✓, 1 ✗)
+
+Wait — that first error is from line 948 in main.rs, which is the `AgentConfig construction, not the Config` construction. Let me check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:925..950 ✓ (1ms)
+
+Right — the test_agent_config in main.rs already got allowed_tools added (from the previous attempt), but AgentConfig doesn't have that field yet. I need to do agent_builder.rs first. But there's also the test_config() for Config that's still missing it. Let me fix both — first the test_config() for Config:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1421..1431 ✓ (1ms)
+  ▶ edit src/main.rs (6 → 7 lines)
+                auto_watch: true,
+  +             allowed_tools: vec![],
+                disallowed_tools: vec![],
+                no_tools: false,
+                lite: false,
+ ✓ (8.9s)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 17.4s (3 ✓)
+
+Now add allowed_tools to AgentConfig in agent_builder.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+The error is clear: AgentConfig in agent_builder.rs doesn't have the allowed_tools field yet. Let me add it and the filtering logic, plus update all construction sites.
+  ▶ read src/agent_builder.rs:407..413 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (3 → 4 lines)
+        pub auto_watch: bool,
+  +     pub allowed_tools: Vec<String>,
+        pub disallowed_tools: Vec<String>,
+        pub no_tools: bool,
+ ✓ (9.0s)
+  2 tools completed in 20.1s (2 ✓)
+
+Now I need to add allowed_tools: vec![] to every AgentConfig construction site. Let me find them all:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'disallowed_tools: vec!\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'disallowed_tools: vec!\… ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+There are many sites. The most efficient approach is rename_symbol won't work here since I need to add a new line, not rename. Let me use sed to add allowed_tools: vec![], before every disallowed_tools: vec![], in these files:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/            disallowed… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/        disallowed_too… ✓ (4ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now check main.rs — it already has allowed_tools: vec![] in both spots from the previous attempt. Let me verify:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'allowed_tools' src/main… ✓ (3ms)
+
+Line 675 is where Config→AgentConfig wiring happens. I need to add `allowed_tools: config.allowed_tools` there too:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:673..679 ✓ (0ms)
+  ▶ edit src/main.rs (2 → 3 lines)
+            auto_watch: config.auto_watch,
+  +         allowed_tools: config.allowed_tools,
+            disallowed_tools: config.disallowed_tools,
+ ✓ (9.1s)
+  2 tools completed in 14.1s (2 ✓)
+
+More sites in commands.rs. Let me find all remaining:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'disallowed_tools: vec!… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'disallowed_tools:' src… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'disallowed_tools' src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'allowed_tools' src/com… ✓ (3ms)
+  4 tools completed in 10.4s (4 ✓)
+
+These don't have allowed_tools yet:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/            disallowed… ✓ (4ms)
+
+Now let me check for any other files that might have AgentConfig constructions:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'disallowed_tools:' src… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'disallowed_tools:' src… ✓ (7ms)
+  2 tools completed in 5.8s (2 ✓)
+
+There are also sites in src/tools.rs (line 1008) and src/agent_builder.rs test (line 2051). Let me check:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'allowed_tools' src/tool… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/            disallowed… ✓ (4ms)
+  2 tools completed in 9.0s (2 ✓)
+
+Now the test in agent_builder.rs line 2051:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:2047..2057 ✓ (1ms)
+
+This one uses ..test_agent_config() which should already have allowed_tools: vec![] from the sed. It's fine since it only overrides specific fields.
+
+Now add the filtering logic in configure_agent. Let me read the current filtering area:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:453..483 ✓ (1ms)
+
+I need to add allowed_tools filtering BEFORE the disallowed_tools filtering:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (1 → 10 lines)
+  +             // Filter to only allowed tools (--allowed-tools whitelist)
+  +             if !self.allowed_tools.is_empty() {
+  +                 tools.retain(|t| self.allowed_tools.contains(&t.name().to_string()));
+  +                 eprintln!(
+  +                     "{DIM}  🔒 Allowed tools: {}{RESET}",
+  +                     self.allowed_tools.join(", ")
+  +                 );
+  +             }
+  + 
+                // Filter out disallowed tools (--disallowed-tools flag or --lite)
+ ✓ (1m 1s)
+
+Now let's build and test:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (128ms)
+
+Build passes. Now let me run clippy:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.2s)
+
+  ✓ Watch passed after fix (attempt 2)
+

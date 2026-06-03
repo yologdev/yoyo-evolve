@@ -1,0 +1,306 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the code, then implement the required changes.
+  ▶ search 'build_json_output' in src/main.rs  ▶ search 'run_single_prompt' in src/main.rs  ▶ search 'run_piped_prompt' in src/main.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/main.rs:125..160 ✓ (1ms)
+  ▶ read src/main.rs:156..366 ✓ (2ms)
+  5 tools completed in 7.4s (5 ✓)
+
+Now let me see the piped mode section:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:365..485 ✓ (1ms)
+
+Now let me check the Usage struct and agent.messages() to understand the types:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src -path "*/yoagent-*/src/*" -name "*.rs" 2>/dev/null | … ✓ (54ms)
+  ▶ $ grep -rn "pub struct Usage" ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null ✓ (5ms)
+  ▶ $ grep -A 15 "pub struct Usage" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (40ms)
+  3 tools completed in 6.7s (3 ✓)
+
+Now let me check the Message struct to understand how to count turns:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub struct Message" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (8ms)
+  ▶ $ grep -rn "pub struct Message" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b… ✓ (4ms)
+  ▶ $ grep -rn "Message" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagen… ✓ (4ms)
+  ▶ $ grep -A 30 "pub enum Message {" ~/.cargo/registry/src/index.crates.io-1949cf8c6b… ✓ (40ms)
+  4 tools completed in 10.4s (4 ✓)
+
+Good. Now let me check the messages() method:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn messages" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoa… ✓ (4ms)
+
+Now let me look at the existing tests to understand the full picture:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:920..1040 ✓ (2ms)
+
+Now let me see the remaining tests for build_json_output:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1050..1200 ✓ (2ms)
+  ▶ read src/main.rs:1199..1299 ✓ (2ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now I have a complete picture. Let me also check the imports at the top of main.rs:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1..51 ✓ (1ms)
+  ▶ read src/main.rs:50..120 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Good, Instant is already imported. Now let me check the remaining lines (the `main` function and call sites):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:484..684 ✓ (2ms)
+  ▶ read src/main.rs:683..743 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I have a complete understanding. Let me implement the changes:
+
+1. Add `duration: Duration and num_turns: usize parameters to build_json_output`
+2. Add `cache_read_input_tokens and cache_creation_input_tokens` to usage in the JSON
+3. Add duration_ms and num_turns to the JSON
+4. Update all call sites
+5. Update all tests
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 12.4s (4 ✓)
+
+First, let me check what std::time::Duration is — it's already available since `Instant is imported. Let me modify build_json_output`:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (23 → 29 lines)
+        usage: &Usage,
+        is_error: bool,
+        session_changes: &SessionChanges,
+  +     duration: std::time::Duration,
+  +     num_turns: usize,
+    ) -> String {
+        let cost_usd = estimate_cost(usage, model);
+        let json_obj = serde_json::json!({
+  ···
+            "usage": {
+                "input_tokens": usage.input,
+                "output_tokens": usage.output,
+  +             "cache_read_input_tokens": usage.cache_read,
+  +             "cache_creation_input_tokens": usage.cache_write,
+            },
+            "cost_usd": cost_usd,
+  +         "duration_ms": duration.as_millis() as u64,
+  +         "num_turns": num_turns,
+            "is_error": is_error,
+            "session": session_changes.to_json_summary(),
+  ... (1 more lines)
+ ✓ (8.5s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 17.0s (3 ✓)
+
+Now I need to update all call sites. Let me count num_turns from the agent's messages. Let me check how to access messages:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "agent\.messages\(\)" src/main.rs | head -10 ✓ (4ms)
+  ▶ $ grep -n "Message::Assistant" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (3ms)
+  2 tools completed in 7.2s (2 ✓)
+
+The Message enum has Assistant variant. I need a helper to count assistant messages. But we don't have access to the agent inside build_json_output — we need to pass the count. Let me look at how messages are structured:
+
+The approach from the task description is simpler: pass num_turns as a count. For the call sites, I can count the agent's assistant messages. But actually, since run_single_prompt and `run_piped_mode` don't easily expose the message count (the agent is used but we'd need to count assistant messages), let me use a simpler approach: count from the `session_total` usage or count assistant messages.
+
+Actually, looking more carefully at the code, the agent is available in both functions. I can count assistant messages after the prompt runs. Let me write a small helper and update each call site.
+
+Let me look at all 4 call sites in the non-test code:
+
+1. Line ~283 (error path in single_prompt, image mode)
+2. Line ~328 (error path in single_prompt, text mode)  
+3. Line ~359 (success path in single_prompt)
+4. Line ~477 (piped mode)
+
+For the duration, prompt_start already exists in both functions. For num_turns, I need to count assistant messages from the agent.
+
+Let me add a helper function and update all call sites:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (6 → 15 lines)
+  + /// Count the number of assistant turns in the agent's message history.
+  + fn count_assistant_turns(agent: &Agent) -> usize {
+  +     agent
+  +         .messages()
+  +         .iter()
+  +         .filter(|m| matches!(m.as_llm(), Some(yoagent::Message::Assistant { .. })))
+  +         .count()
+  + }
+  + 
+    /// Handle `--prompt / -p` single-shot mode: run one prompt (optionally with an
+    /// image), print the result (or write to `--output`), and return. Calls
+    /// `std::process::exit` on fatal errors (bad image, API failure with no
+ ✓ (8.9s)
+
+Now let me update the 4 call sites. Let me see the exact code:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:278..308 ✓ (1ms)
+  ▶ edit src/main.rs (10 → 12 lines)
+                                    &session_total,
+                                    true,
+                                    &session_changes,
+  +                                 prompt_start.elapsed(),
+  +                                 count_assistant_turns(agent),
+                                )
+                            );
+ ✓ (8.9s)
+  2 tools completed in 14.9s (2 ✓)
+
+Now fix the second call site (text-only error path):
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:332..352 ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 7 arguments but 5 arguments were supplied[0m
+   [1m[94m--> [0msrc/main.rs:339:21
+    [1m[94m|[0m
+[1m[94m339[0m [1m[94m|[0m                       build_json_output(
+    [1m[94m|[0m [1m[94m _____________________[0m[1m[91m^^^^^^^^^^^^^^^^^[0m[1m[94m-[0m
+[1m[94m340[0m [1m[94m|[0m [1m[94m|[0m                         &final_response,
+[1m[94m341[0m [1m[94m|[0m [1m[94m|[0m                         &agent_config.model,
+[1m[94m342[0m [1m[94m|[0m [1m[94m|[0m                         &session_total,
+[1m[94m343[0m [1m[94m|[0m [1m[94m|[0m                         true,
+[1m[94m344[0m [1m[94m|[0m [1m[94m|[0m                         &session_changes
+[1m[94m345[0m [1m[94m|[0m [1m[94m|[0m                     )
+    [1m[94m|[0m [1m[94m|_____________________-[0m [1m[94mtwo arguments of type `std::time::Duration` and `usize` are missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/main.rs:129:4
+    [1m[94m|[0m
+[1m[94m129[0m [1m[94m|[0m fn build_json_output(
+    [1m[94m|[0m    [1m[92m^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m135[0m [1m[94m|[0m     duration: std::time::Duration,
+    [1m[94m|[0m     [1m[94m-----------------------------[0m
+[1m[94m136[0m [1m[94m|[0m     num_turns: usize,
+    [1m[94m|[0m     [1m[94m----------------[0m
+[1m[96mhelp[0m: provide the arguments
+    [1m[94m|[0m
+[1m[94m339[0m [1m[94m|[0m                     build_json_output(
+[1m[94m...[0m
+[1m[94m343[0m [1m[94m|[0m                         true,
+[1m[94m344[0m [92m~ [0m                        &session_changes[92m,[0m
+[1m[94m345[0m [92m+                         /* std::time::Duration */,[0m
+[1m[94m346[0m [92m+                         /* usize */,[0m
+    [1m[94m|[0m
+
+[1m[91merr...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the file at the failing call sites and tests:
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep "^error" | head -20 ✓ (8.7s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -40 ✓ (8.7s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep "^error\[E0061\]"  ✓ (8.8s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep "error\[E0061\]" ✓ (8.8s)
+  4 tools completed in 50.1s (4 ✓)
+
+12 call sites total need fixing. Let me get all line numbers:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -E "^\s+-->" | grep "build… ✓ (8.7s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -E "^\s+-->" ✓ (8.5s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep "\-\->" ✓ (8.6s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep "this function takes 7" ✓ (8.8s)
+  ▶ $ grep -n "build_json_output(" src/main.rs ✓ (8ms)
+  5 tools completed in 43.9s (5 ✓)
+
+Line 292 is already fixed (has the new args). Let me fix lines 339, 370, 488, and all the test call sites. Let me read each one:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:335..351 ✓ (1ms)
+  ▶ edit src/main.rs (7 → 9 lines)
+                            &agent_config.model,
+                            &session_total,
+                            true,
+  -                         &session_changes
+  +                         &session_changes,
+  +                         prompt_start.elapsed(),
+  +                         count_assistant_turns(agent),
+                        )
+ ✓ (8.8s)
+  ▶ read src/main.rs:368..380 ✓ (1ms)
+  ▶ edit src/main.rs (7 → 9 lines)
+                    &agent_config.model,
+                    &session_total,
+                    false,
+  -                 &session_changes
+  +                 &session_changes,
+  +                 prompt_start.elapsed(),
+  +                 count_assistant_turns(agent),
+                )
+ ✓ (8.8s)
+  ▶ read src/main.rs:488..500 ✓ (1ms)
+  ▶ edit src/main.rs (7 → 9 lines)
+                    &session_total,
+                    should_exit_error,
+                    &session_changes,
+  +                 prompt_start.elapsed(),
+  +                 count_assistant_turns(agent),
+                )
+ ✓ (8.9s)
+  6 tools completed in 50.1s (6 ✓)
+
+Good, all 4 runtime call sites are done. Now I need to fix all the test call sites. Let me do them all at once by reading the test section and applying changes:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:960..990 ✓ (1ms)
+
+I'll use a sub-agent to fix all remaining test call sites efficiently:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 48s)
+
+Let me just fix all the test call sites directly:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "build_json_output(" src/main.rs ✓ (8ms)
+
+Let me fix each remaining test call site. Lines 970, 1014, 1106, 1138, 1217, 1248, 1282, 1318:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:968..978 ✓ (0ms)
+
+That one was already fixed by the sub-agent. Let me check what's still broken:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | grep "error\[E0061\]" | head -20 ✓ (7.2s)
+  ▶ $ cargo build 2>&1 | tail -30 ✓ (129ms)
+  2 tools completed in 9.5s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+Two remaining call sites at lines 1282 and 1318 need the two new arguments. Let me fix them:
+  ▶ read src/main.rs:1280..1285 ✓ (1ms)
+  ▶ read src/main.rs:1316..1321 ✓ (1ms)
+  ▶ edit src/main.rs (4 → 4 lines)
+  -         let result = build_json_output(&response, "test-model", &usage, false, &changes);
+  +         let result = build_json_output(&response, "test-model", &usage, false, &changes, std::time::Duration::from_millis(1234), 3);
+            let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    
+            // session key must exist
+ ✓ (8.6s)
+  3 tools completed in 17.7s (3 ✓)
+
+One more at line 1318:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1317..1320 ✓ (0ms)
+  ▶ edit src/main.rs (3 → 3 lines)
+    
+  -         let result = build_json_output(&response, "test-model", &usage, false, &changes);
+  +         let result = build_json_output(&response, "test-model", &usage, false, &changes, std::time::Duration::from_millis(1234), 3);
+            let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+ ✓ (58.4s)
+  2 tools completed in 1m 3s (2 ✓)
+
+Compilation passed, now let me check for test failures:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 ✓ (14.9s)
+  ▶ $ cargo test 2>&1 | tail -20

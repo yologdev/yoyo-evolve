@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create a focused session plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (4ms)
+  2 tools completed in 3.9s (2 ✓)
+
+No community issues today. All 3 slots are self-driven. Let me look at what will have the most impact based on the assessment.
+
+Let me check a few things to inform my planning:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "output.format\|output-f… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "OutputFormat" src/cli_c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '65,85p' src/cli_config.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "OutputFormat::Json\|Out… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,200p' src/main.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '395,480p' src/main.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_json_output\|fn b… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '129,155p' src/main.rs ✓ (3ms)
+  9 tools completed in 19.5s (9 ✓)
+
+Now let me check the assessment's mention of structured JSON output more carefully. The assessment identifies **"structured output for CI/programmatic use"** as the most actionable competitive gap. Let me look at what Claude Code provides in comparison:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dangerously\|skip.permi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yes\|allow\|permission\… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allowed_tools\|allowedT… ✓ (4ms)
+  3 tools completed in 21.5s (3 ✓)
+
+Good. Now let me understand the key gaps. The assessment highlights:
+
+1. **Structured JSON output** as the most actionable competitive gap — --json exists but is limited; no tool call details, no --allowed-tools equivalent
+2. `symbols.rs` at 3,679 lines — the largest file 
+3. `commands_git.rs` at 3,339 lines — growing large
+4. Byte-slicing safety annotations — 15 remaining sites
+
+Let me think about highest-impact tasks. The structured JSON output for CI/headless mode is the most actionable competitive gap identified. Let me look at what's currently in the JSON output vs what Claude Code provides:
+
+Claude Code's --json output includes: result, is_error, `duration_ms, duration_api_ms, num_turns, session_id, total_cost_usd`, plus per-turn cost breakdowns and tool usage. Our build_json_output is missing: duration_ms, num_turns, `cache_read_tokens, cache_creation_tokens`, tool call details.
+
+Let me also check the `--allowed-tools` equivalent:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allowed_tools\|KNOWN_FL… ✓ (4ms)
+
+We have --disallowed-tools but not --allowed-tools. Claude Code has --allowedTools as a whitelist approach. This is important for CI/headless use where you want to restrict what the agent can do.
+
+Now let me plan the 3 tasks. Given the assessment, here's my thinking:
+
+1. **Task 1: Enrich JSON output for CI/headless mode** — Add duration_ms, num_turns, cache_read_tokens, cache_creation_tokens to build_json_output. This is the most actionable competitive gap. Touches `main.rs` only.
+
+2. Task 2: Add `--allowed-tools` flag — Whitelist complement to --disallowed-tools. Important for CI/headless mode security. Touches cli.rs and agent_builder.rs.
+
+3. Task 3: Split `symbols.rs` — Extract language-specific symbol extractors. But this is 3,679 lines and would be a large refactor. Better to do one extraction at a time. Let me think about which one…
+
+Actually, let me reconsider. The assessment says the most actionable competitive gap is structured output + better headless mode. Let me focus the session on that theme — making yoyo better as a CI/scripted tool.
+
+Let me check what --allowed-tools would look like:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,960p' src/cli.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "disallowed_tools" src/a… ✓ (4ms)
+  3 tools completed in 17.8s (3 ✓)
+
+Good. Now let me think about the 3 most impactful tasks:
+
+**Task 1: Enrich `--json output** — Add duration_ms, num_turns, cache_read_tokens, cache_creation_tokens` to build_json_output. This makes yoyo viable for CI pipelines. Touches only main.rs.
+
+**Task 2: Add --allowed-tools flag** — Whitelist complement. Essential for CI security. Touches cli.rs and agent_builder.rs.
+
+Task 3: What else is high-impact? Let me think about what else would make yoyo better for CI/headless use...
+
+Actually, let me check if there's a `--max-turns` flag:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "max.turns\|max_turns\|E… ✓ (4ms)
+
+Good, --max-turns exists. How about the exit code behavior? Let me check what happens on errors:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "process::exit\|exit_cod… ✓ (4ms)
+
+OK, exit codes are somewhat handled. Let me focus on the most impactful things. Let me reconsider the three tasks:
+
+1. Enrich JSON output — biggest competitive gap, directly actionable
+2. Add `--allowed-tools` — important for CI/headless security
+3. For the third, let me consider something from the self-assessment bugs: the byte-slicing safety annotations are important (15 remaining sites), but they're not user-facing. The `symbols.rs` split would be a big refactor. 
+
+What about something more user-facing? Let me look at what other competitive gaps exist...
+
+The assessment mentions "Image/screenshot understanding" — I have --add for images but it's limited. That's a big gap but hard to close in one task.
+
+What about improving the /commit experience? That was just extended with -a and --amend. Maybe consolidate.
+
+Actually, for Task 3, let me do something practical: **Add exit code documentation and --exit-code behavior for CI**. In CI pipelines, exit codes matter a lot. Let me check what the current behavior is:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "exit_code\|should_exit\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '478,490p' src/main.rs ✓ (3ms)
+  2 tools completed in 3.4s (2 ✓)
+
+OK, exit codes: 0=success, 1=error, 2=checkpoint. That's reasonable.
+
+For Task 3, let me think about what else matters. Let me look at something the assessment mentioned: cache tokens aren't in the JSON output. That's useful for cost tracking.
+
+Actually, I think the strongest third task is: **Add --no-input / --non-interactive mode refinements for CI.** But honestly, the JSON enrichment and allowed-tools are the two highest-impact things. For the third task, let me pick the byte-slicing safety audit — it's a recurring class bug that has caused production crashes (Days 50, 95), and the assessment found 15 more sites.
+
+Wait, the assessment says those 15 sites use find() from ASCII searches and are "technically safe but missing // SAFETY annotations." That's just annotation work, not high-impact.
+
+Let me look at the third task differently. What about extracting one language from symbols.rs? That's the largest file at 3,679 lines:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_.*symbols\|f… ✓ (4ms)
+
+That's a lot of language extractors. But splitting this is a multi-task refactor. Let me think about what would be a good, self-contained third task.
+
+Actually, you know what would be really impactful? **Structured error output in --json mode.** Right now when a tool fails in JSON mode, the error is in stderr and the JSON just has `is_error: true`. Claude Code's JSON mode includes tool call details, errors with context, etc. But that's deeply intertwined with the streaming pipeline.
+
+Let me go with something cleaner for Task 3. The JSON output enrichment could include adding tool call counts and total duration — that's actually part of the same "make JSON output CI-grade" theme but focused on different fields. Let me just make Task 1 comprehensive.
+
+For Task 3, let me pick: **Add `// SAFETY:` annotations to remaining byte-slice sites + fix any genuinely unsafe ones.** Wait, the assessment says they're all technically safe. That's low-value.
+
+Better third task: **Add --timeout flag for CI/headless.** Claude Code supports session-level timeouts. We have YOYO_SESSION_BUDGET_SECS but no CLI flag for it.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "timeout\|TIMEOUT\|sessi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_budget\|SESSION… ✓ (4ms)
+  2 tools completed in 4.4s (2 ✓)
+
+The timeout is env-var only. Adding --timeout as a CLI flag would be a nice CI feature. But this touches `cli.rs, cli_config.rs, and prompt_budget.rs` — 3 files, acceptable.
+
+Actually wait, that's a bit of plumbing and might not be as impactful. Let me think about this differently.
+
+The assessment says: "The most actionable competitive gap for a local CLI tool: structured output for CI/programmatic use and better headless mode."
+
+Let me make 3 focused tasks around this theme:
+
+1. Enrich JSON output (main.rs) — add duration, turns, cache tokens, tool call summary
+2. Add `--allowed-tools` whitelist flag (cli.rs, agent_builder.rs) — CI security
+3. Add `--timeout` CLI flag (cli.rs, cli_config.rs, prompt_budget.rs) — CI time control
+
+This is a coherent session: "Make yoyo CI-grade." All three tasks directly close the identified gap.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (52 lines) ✓ (42.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct Usage\|pub.*cach… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct Usage\|pub.*cach… ✓ (4ms)
+  3 tools completed in 52.0s (3 ✓)
+
+Good — Usage has cache_read and cache_write fields. Let me update the task to be more precise:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (52 lines)
+    
+    Claude Code's `--json` output includes significantly more metadata that CI pipelines depend on:
+    - `duration_ms` — wall-clock time for the entire prompt
+  - - `duration_api_ms` — time spent in API calls
+  - - `num_turns` — how many agent turns were used
+  + - `num_turns` — how many agent turns were used  
+    - `cache_read_input_tokens` and `cache_creation_input_tokens` — cache statistics
+  - - `tool_use` — summary of tools called
+    
+    ## Implementation
+    
+  - 1. Add a `std::time::Instant` at the start of `run_single_prompt` and `run_piped_prompt`. Pass the elapsed duration to `build_json_output`.
+  + 1. Add a `std::time::Instant` at the start of `run_single_prompt` and `run_piped_prompt` (before any work is done). Pass the elapsed duration to `build_json_output`.
+    
+  - 2. Extend `build_json_output` signature to accept `duration: Duration` and `num_turns: Option<usize>`.
+  + 2. Extend `build_json_output` signature to accept `duration: std::time::Duration`.
+    
+  - 3. Compute `num_turns` from the agent's messages after `finish().await` — count messages with role "assistant" that contain tool_use blocks (each such message is a "turn").
+  + 3. Compute `num_turns` from the agent's messages after `finish().await`: count messages with role "assistant". The `agent.messages()` returns the message list — count entries where role is assistant. (Check the actual yoagent `Message` type for the exact field name.)
+    
+  ... (19 more lines)
+ ✓ (42.1s)
+  ▶ write session_plan/task_02.md (61 lines) ✓ (44.6s)
+  2 tools completed in 1m 48s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
