@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll quickly verify the changes and write my verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (17.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_step_x_of_y_inco… ✓ (161ms)
+  2 tools completed in 22.4s (2 ✓)
+
+Let me review the quality of the change:
+
+1. Task match: The task was "read own source, identify most impactful improvement, implement it." The change fixes a real UTF-8 safety bug in step_x_of_y_incomplete — the old code used text[i..i + 5] with byte-level iteration, which could panic on multi-byte UTF-8 characters. This is explicitly called out in the project's Safety Rules as a known class of bug. The fix replaces byte indexing with `str::find()` which is UTF-8-safe.
+
+2. Correctness: The new implementation correctly uses str::find for searching and only indexes with ASCII-length offsets ("step " is 5 ASCII bytes, digit strings have byte length == char count). The logic is preserved.
+
+3. Tests: New test covers the exact scenario (multi-byte characters before/around "step X of Y" patterns), and all 88 tests pass.
+
+4. No docs needed: This is an internal function fix, not a user-facing behavior change.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (43.3s)
+
+**Verdict: PASS** — The change fixes a genuine UTF-8 panic risk in step_x_of_y_incomplete by replacing unsafe byte indexing with str::find, adds proper regression tests for multi-byte characters, and all tests pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

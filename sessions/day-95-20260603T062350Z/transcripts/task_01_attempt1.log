@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.6s)
+  2 tools completed in 19.3s (2 ✓)
+
+Good - code is clean. Let me look for areas with real impact. Let me examine some of the larger, more critical files for improvement opportunities.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 8s)
+
+Excellent analysis. The #1 finding is a real production crash bug - `step_x_of_y_incomplete` does byte-level iteration on LLM output that routinely contains non-ASCII characters (em-dashes, smart quotes, emoji). Let me verify this and fix it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'step_x_of_y_incomplete\… ✓ (4ms)
+  ▶ read src/repl.rs:1225..1325 ✓ (1ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Now I see the bug clearly. Line 1256: &text[i..i + 5] — `i is incremented by 1 byte at a time (line 1287), but text` could contain multi-byte UTF-8 characters. If i lands in the middle of a multi-byte character, `&text[i..i + 5] will panic because i` is not a char boundary.
+
+This function operates on text which is already lowercased (tail_lower from line 1215), but LLM output can contain emoji, em-dashes, smart quotes, etc. Let me also check the looks_incomplete caller:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1079..1219 ✓ (1ms)
+
+Now I can see the full picture. Let me write a test first that demonstrates the panic, then fix it.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.3s (4 ✓)
+
+Let me first find existing tests for this function:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'step_x_of_y_incomplete\… ✓ (4ms)
+  ▶ read src/repl.rs:1920..1950 ✓ (1ms)
+  ▶ read src/repl.rs:1949..1979 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.2s (4 ✓)
+
+Now let me write a test that demonstrates the panic, and then fix the function. First, let me add the test:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (8 → 34 lines)
+            assert_eq!(step_x_of_y_incomplete("step 5 of 5"), Some(false));
+            assert_eq!(step_x_of_y_incomplete("step 7 of 5"), Some(false));
+            assert_eq!(step_x_of_y_incomplete("no steps here"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_step_x_of_y_incomplete_non_ascii() {
+  +         // LLM output routinely contains em-dashes, smart quotes, emoji, etc.
+  +         // These are multi-byte UTF-8 characters. Byte-level iteration would
+  +         // panic when indexing lands inside a multi-byte char boundary.
+  +         assert_eq!(
+  +             step_x_of_y_incomplete("here's — step 2 of 5 remaining"),
+  +             Some(true)
+  +         );
+  +         assert_eq!(
+  +             step_x_of_y_incomplete("✓ done — step 5 of 5 complete"),
+  +             Some(false)
+  +         );
+  +         assert_eq!(
+  +             step_x_of_y_incomplete("→ step 3/7: update the "config""),
+  ... (10 more lines)
+ ✓ (8.7s)
+
+The smart quotes in the test string are being interpreted as Rust string delimiters. Let me fix that:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (4 → 4 lines)
+            assert_eq!(
+  -             step_x_of_y_incomplete("→ step 3/7: update the "config""),
+  +             step_x_of_y_incomplete("→ step 3/7: update the \u{201C}config\u{201D}"),
+                Some(true)
+            );
+ ✓ (58.3s)
+
+Let me check the full test output:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_step_x_of_y_inco… ✓ (132ms)
+
+The test confirms the bug. The panic is at line 1256: `&text[i..i + 5] where i=7 is inside the —` character (bytes 7..10). Now let me fix the function:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now fix the function. The correct approach is to use `str::find` to search for "step " — it respects UTF-8 and returns byte offsets that are guaranteed to be on char boundaries:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (46 → 49 lines)
+    fn step_x_of_y_incomplete(text: &str) -> Option<bool> {
+        // Search for patterns like "step 2 of 5", "step 3/7", "step 1 of 4 complete"
+        let mut found = false;
+  -     let mut i = 0;
+  -     let bytes = text.as_bytes();
+  -     while i + 5 < bytes.len() {
+  -         // Look for "step "
+  -         if i + 5 <= bytes.len() && &text[i..i + 5] == "step " {
+  -             let after_step = &text[i + 5..];
+  -             // Parse X
+  -             let x_digits: String = after_step
+  -                 .chars()
+  -                 .take_while(|c| c.is_ascii_digit())
+  -                 .collect();
+  -             if !x_digits.is_empty() {
+  -                 if let Ok(x) = x_digits.parse::<u32>() {
+  -                     let rest = &after_step[x_digits.len()..];
+  -                     // Look for " of " or "/"
+  -                     let y_str = if let Some(r) = rest.strip_prefix(" of ") {
+  -                         Some(r)
+  ... (55 more lines)
+ ✓ (1m 0s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (7.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (47.0s)
+  6 tools completed in 2m 29s (6 ✓)
+
+All 88 tests pass (1 ignored). Let me also verify the specific tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_step_x_of_y_inco… ✓ (161ms)
+
+Both tests pass. The non-ASCII test that was crashing before now works correctly.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me commit:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/repl.rs ✓ (5ms)
+  2 tools completed in 2.8s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

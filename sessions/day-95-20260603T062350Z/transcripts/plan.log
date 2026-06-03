@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create a focused plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 1.9s (2 ✓)
+
+No community issues. Let me check what's been happening recently and what the competitive landscape looks like more carefully.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -100 journals/JOURNAL.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat DAY_COUNT  ▶ $ git log --oneline -20 ✓ (13ms)
+ ✓ (49ms)
+ ✓ (54ms)
+  3 tools completed in 3.2s (3 ✓)
+
+Now let me check the last release to assess if a new release is warranted:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git tag --sort=-v:refname | head -5  ▶ $ git log --oneline v0.3.2..HEAD | wc -l  ▶ $ git log --oneline v0.3.2..HEAD | head -30 ✓ (5ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ git tag | grep '^v' | sort -V | tail -5 ✓ (4ms)
+  ▶ $ git tag | head -20 ✓ (4ms)
+  5 tools completed in 13.9s (5 ✓)
+
+No version tags — only day tags. Let me check the Cargo.toml version and the release skill/changelog to understand release state:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep '^version' Cargo.toml | head -1  ▶ $ head -30 CHANGELOG.md ✓ (4ms)
+ ✓ (40ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me think carefully about what to build. The assessment reveals:
+
+1. **No community issues** — all 3 slots are self-driven
+2. **10-session success streak** — stable codebase, good time for capability work
+3. **Biggest competitive gap vs Claude Code**: "Auto mode" — CC has fully autonomous mode that chains tool calls without human confirmation. yoyo has auto-continue but no hands-off autonomy mode.
+4. Flaky watch test — low severity but worth addressing
+5. **1,410 unwrap() calls** — potential panic sources
+
+Let me look at the specific competitive gap around auto mode more closely, and also check what the flaky test issue is about:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto_continue\|auto-continue\|AutoContinue" src/cli.rs src/cli_config.r…  ▶ $ grep -n "handle_watch_bare_sets_lint_and_test" src/watch.rs ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ sed -n '1955,2010p' src/watch.rs ✓ (4ms)
+  3 tools completed in 5.2s (3 ✓)
+
+Let me look at what auto mode would actually involve — this is the biggest competitive gap. Let me check what yoyo currently does for confirmation behavior:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "confirm\|auto.mode\|automode\|auto_mode\|YOYO_AUTO\|dangerousAutoApprov… ✓ (5ms)
+  ▶ $ grep -n "auto_approve\|always_approved\|--yes" src/main.rs | head -30 ✓ (4ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now I have a clear picture. Let me think about what would be the most impactful tasks for Day 95:
+
+**Task 1 (Self-driven, competitive gap):** The flaky handle_watch_bare_sets_lint_and_test test has appeared in CI. It's in the trajectory. While it's a [1×] occurrence, flaky tests erode trust and this one keeps being mentioned. Fix the race condition properly.
+
+**Task 2 (Self-driven, biggest competitive capability):** The assessment mentions "Auto mode" as a major CC competitive gap. yoyo has --yes for auto-approve and auto-continue, but no single flag that combines them into a "fully autonomous" mode like CC's auto mode. Add --auto flag that enables auto-approve + sets high auto-continue limit + suppresses confirmations, making yoyo usable in autonomous pipelines.
+
+Task 3 (Self-driven, quality): The 1,410 unwrap() calls are a systematic panic risk. Do a focused sweep of the highest-risk file — prompt.rs (the hot path for every interaction) — converting dangerous unwraps to proper error handling.
+
+Let me check the scope of each more precisely:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c 'unwrap()' src/prompt.rs src/repl.rs src/main.rs src/agent_builder.rs sr…  ▶ $ # Check what with_clean_watch_state does - the flaky test gu… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ sed -n '1450,1490p' src/watch.rs  ▶ $ # Check how watch state is stored - what globals are involve… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 5.4s (4 ✓)
+
+Now let me understand the flaky test better. The test calls handle_watch("/watch") which needs to detect the project type:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_watch\b" src/watch.rs  ▶ $ sed -n '1395,1450p' src/watch.rs ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ sed -n '1342,1400p' src/watch.rs ✓ (4ms)
+  3 tools completed in 4.2s (3 ✓)
+
+The race condition in the flaky test is interesting — #[serial] and with_clean_watch_state should be sufficient for the WATCH_COMMANDS global. The panic in CI might be from detect_watch_all_phases() or some other global state. Let me check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn detect_watch_all_phases" src/watch.rs  ▶ $ sed -n '1277,1340p' src/watch.rs ✓ (3ms)
+ ✓ (8ms)
+  2 tools completed in 1.8s (2 ✓)
+
+The test uses handle_watch("/watch") which calls detect_watch_all_phases() → `detect_project_type(&dir). This depends on current_dir()` and the filesystem state. The test should be stable in this project since we always have a Cargo.toml. The [1×] panic in CI is probably a transient issue. Let me reconsider — the flaky test is very low priority (1 occurrence in 10+ sessions).
+
+Let me focus on higher-impact work. The auto mode competitive gap is the biggest one and would be the most impactful. Let me also think about what else would be high-value:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's already any --auto flag or mode concept (2 lines) ✓ (4ms)
+  ▶ $ # Check what the Config struct looks like (2 lines) ✓ (4ms)
+  ▶ $ grep -B 1 -A 50 "pub struct Config" src/cli_config.rs ✓ (41ms)
+  ▶ $ grep "auto_approve\|auto_commit\|auto_continue\|max_auto_continues\|print_mode\|… ✓ (9ms)
+  4 tools completed in 11.2s (4 ✓)
+
+Let me see the full Config struct properly:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '73,115p' src/cli_config.rs ✓ (3ms)
+  ▶ $ sed -n '80,120p' src/cli_config.rs ✓ (4ms)
+  ▶ $ grep -n "pub " src/cli_config.rs | head -40 ✓ (4ms)
+  ▶ $ sed -n '106,120p' src/cli_config.rs ✓ (3ms)
+  4 tools completed in 10.3s (4 ✓)
+
+Good. Now I have the full picture. Let me plan three high-impact tasks:
+
+Task 1 — Auto mode (`--auto`): Add --auto CLI flag that enables fully autonomous operation: auto-approves all tool use (`--yes`), sets high auto-continue limit (25), and prints a clear "running in auto mode" banner. This closes the biggest competitive gap vs Claude Code. Touches: cli.rs, `cli_config.rs, main.rs`.
+
+**Task 2 — OSC 8 hyperlinks for file references**: When yoyo prints file paths (in tool output, search results, diffs), emit OSC 8 terminal hyperlinks so they're clickable in supported terminals. This closes the "OSC 8 hyperlinks" gap noted against Codex. Touches: format/mod.rs, format/output.rs.
+
+**Task 3 — Unwrap sweep in prompt.rs**: The 37 unwrap() calls in prompt.rs (the hot path for every interaction) are potential panic sources. Convert the riskiest ones to proper error handling. Touches: prompt.rs only.
+
+Actually, let me reconsider Task 2. OSC 8 is interesting but narrow. Let me think about what would have the most user impact...
+
+The auto mode is clearly the biggest competitive gap. For task 2, let me think about what else is high-impact. Looking at the assessment again:
+
+• Session archiving — CC and Codex both have session archive/unarchive. yoyo has save/load but no formal archive management.
+• Dynamic workflows — too broad for one task
+• Background session re-attach — complex, needs design work
+
+Session archiving feels like a solid, scoped task that closes a gap vs both CC and Codex. Let me check what session management looks like now:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_save\|fn handle_load\|fn auto_save\|fn last_session\|fn handl… ✓ (4ms)
+  ▶ $ sed -n '441,480p' src/commands_session.rs ✓ (4ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Session save/load is basic — just save/load to/from a single file path. No archiving, no listing, no session management. This is a meaningful gap. But it's potentially a larger task.
+
+Let me settle on something more focused for task 3. The unwrap() sweep in prompt.rs is good, concrete work that prevents panics. Actually, looking at this more carefully, 37 unwraps in prompt.rs is significant but let me verify which are actually dangerous:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '\.unwrap()' src/prompt.rs | head -40 ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
