@@ -1,0 +1,307 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current codebase structure around skill loading and the banner, then implement the changes.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.4s (7 ✓)
+
+Let me examine the current skill loading code:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'SkillSet' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:730..790 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me look at the SkillSet API to understand available methods:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src -path '*/yoagent-*/src/skills*' 2>/dev/null | head -2… ✓ (53ms)
+  ▶ $ grep -n 'pub fn\|pub struct\|pub enum\|fn merge\|fn load\|fn count\|fn len\|fn n…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.3/src/skills.rs ✓ (4ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Now let me read the merge method more closely:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.8.3/src/skills.rs:98..148 ✓ (1ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me look at the banner:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/banner.rs ✓ (2ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 8.4s (3 ✓)
+
+Now let me look at how Config is structured and how skills flow through to main.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct Config' in src/cli_config.rs ✓ (2ms)
+  ▶ read src/cli_config.rs:81..181 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me look at where Config is constructed to see where skills go in:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Config \{' in src/cli.rs ✗ (2ms)
+    │ Search error: grep: Unmatched \{
+  ▶ search 'skills,' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:855..905 ✓ (1ms)
+  3 tools completed in 8.1s (2 ✓, 1 ✗)
+
+Good. Now let me also check how custom commands discovery works to follow the same pattern:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search '\.yoyo/commands' in src/commands.rs ✓ (3ms)
+
+Now I have all the context I need. Let me also check if there's a dirs or home_dir utility in the project:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search 'home_dir\|HOME.*env\|dirs::' in src ✓ (9ms)
+
+Good, they use std::env::var("HOME"). Now let me check what the `format` module imports look like (for YELLOW):
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::format' in src/cli.rs ✓ (3ms)
+  ▶ search 'use crate::format' in src/banner.rs ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me check what's in the format module for the YELLOW constant:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub const YELLOW' in src/format/mod.rs ✓ (3ms)
+  ▶ search 'YELLOW' in src/format/mod.rs ✓ (3ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me also check how `print_banner is called — is it from main.rs`?
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ search 'print_banner' in src ✓ (8ms)
+  ▶ read src/repl.rs:610..620 ✓ (0ms)
+  ▶ read src/repl.rs:610..670 ✓ (1ms)
+  3 tools completed in 7.7s (3 ✓)
+
+I see — skills are already displayed in print_startup_info at line 630-632. The task asks me to add info specifically about auto-loaded skills in the banner. Let me now look more closely at how print_banner vs print_startup_info work. The banner is the header, and print_startup_info shows config details after it.
+
+Let me now understand the full picture and implement. The task says:
+1. In src/cli.rs parse_args: auto-discover .yoyo/skills/ and ~/.yoyo/skills/
+2. In src/banner.rs: add a line showing auto-loaded skill count
+
+Looking at the architecture, the banner in `print_banner() shows the basic info, and then print_startup_info() in repl.rs` shows the config details including skills count. The banner function doesn't have access to the skills data. 
+
+The best approach: add a public function in banner.rs that can format the auto-loaded skills info line, and display it in print_startup_info (which already has access to skills). Also, track the count of auto-discovered skills so we can display it separately.
+
+Let me implement this now:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+First, let me implement the auto-discovery logic in src/cli.rs:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:740..770 ✓ (1ms)
+
+Now I'll replace the skills loading block with the auto-discovery logic:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (13 → 18 lines)
+        let skill_dirs = collect_repeatable_flag(args, "--skills");
+    
+  -     let skills = if skill_dirs.is_empty() {
+  +     let mut skills = if skill_dirs.is_empty() {
+            SkillSet::empty()
+        } else {
+            match SkillSet::load(&skill_dirs) {
+  ···
+                }
+            }
+        };
+  + 
+  +     // Auto-discover skills from ~/.yoyo/skills/ (user-global) and .yoyo/skills/ (project-local).
+  +     // Later loads override earlier ones on name conflict, so project-local wins over global,
+  +     // and --skills flag wins over both (since flag skills are already in `skills`).
+  +     let auto_skill_count = auto_discover_skills(&mut skills);
+ ✓ (8.6s)
+
+Expected — I need to implement the function. Let me also check if the auto_skill_count variable is needed anywhere. Let me look at how Config is built further down:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_skill_count\|auto_discovered' in src/cli.rs ✓ (3ms)
+
+I need to store the count somewhere accessible. Let me check if there's a pattern for storing state like the verbose flag:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ search 'enable_verbose\|VERBOSE' in src/cli.rs ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `auto_discover_skills` in this scope[0m
+   [1m[94m--> [0msrc/cli.rs:760:28
+    [1m[94m|[0m
+[1m[94m760[0m [1m[94m|[0m     let auto_skill_count = auto_discover_skills(&mut skills);
+    [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^^^^^^^^^[0m [1m[91mnot found in this scope[0m
+
+[1mFor more information about this error, try `rustc --explain E0425`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the code and implement the missing auto_discover_skills function plus the banner changes.
+  ▶ read src/cli.rs:743..768 ✓ (1ms)
+
+Now let me check if auto_skill_count is used anywhere downstream:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_skill_count' in src/cli.rs ✓ (3ms)
+
+It's only assigned but never used. I need to: (1) implement auto_discover_skills, (2) store the count for the banner, and (3) add the banner line. Let me first check the full scope of what needs doing by looking at the end of parse_args to understand what's returned:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:877..917 ✓ (1ms)
+
+Now let me look at the VERBOSE pattern to understand how to store a global counter:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:26..41 ✓ (1ms)
+
+Now let me look at the existing print_startup_info in repl.rs more closely, since that's where skills count is shown:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:628..643 ✓ (1ms)
+
+Good. Now I have a clear plan. Let me implement everything:
+
+1. Add auto_discover_skills function in `cli.rs`
+2. Add a OnceLock<usize> for auto-discovered skill count in cli.rs 
+3. Update banner to show auto-loaded skills info
+4. Update repl.rs to show auto-discovered count detail
+5. Add unit test
+
+Let me implement all of this now:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1..11 ✓ (1ms)
+  ▶ read src/cli.rs:26..56 ✓ (1ms)
+  ▶ read src/cli.rs:55..65 ✓ (1ms)
+  3 tools completed in 8.8s (3 ✓)
+
+Now let me add the auto_discover_skills function and the AUTO_DISCOVERED_SKILL_COUNT static. I'll add them right after the VERBOSE section:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (15 → 86 lines)
+    /// Check if verbose output is enabled.
+    pub fn is_verbose() -> bool {
+        *VERBOSE.get_or_init(|| false)
+  + }
+  + 
+  + /// Number of skills auto-discovered from `~/.yoyo/skills/` and `.yoyo/skills/`.
+  + /// Set once during `parse_args`; read by the banner to show auto-loaded count.
+  + static AUTO_DISCOVERED_SKILL_COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+  + 
+  + /// Return the number of skills that were auto-discovered (0 if none or not yet parsed).
+  + pub fn auto_discovered_skill_count() -> usize {
+  +     *AUTO_DISCOVERED_SKILL_COUNT.get_or_init(|| 0)
+  + }
+  + 
+  + /// Auto-discover skills from `~/.yoyo/skills/` (user-global) and `.yoyo/skills/` (project-local).
+  + ///
+  + /// Merges discovered skills into `skills`. The merge order ensures:
+  + ///   1. `--skills` flag directories (already in `skills`) have highest precedence.
+  + ///   2. `.yoyo/skills/` (project-local) overrides `~/.yoyo/skills/` (global).
+  + ///   3. `~/.yoyo/skills/` (global) is lowest precedence among auto-discovered.
+  ... (57 more lines)
+ ✓ (13.8s)
+
+Good progress — the function compiles, just unused vars. I need to: (1) use the count variable or prefix with underscore, (2) actually use auto_discovered_skill_count() in the banner/repl. Let me fix the unused variable first, then add the banner display:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (1 → 1 lines)
+  -     let auto_skill_count = auto_discover_skills(&mut skills);
+  +     let _auto_skill_count = auto_discover_skills(&mut skills);
+ ✓ (13.7s)
+
+Now I need to use auto_discovered_skill_count() somewhere. Let me add the banner display in `src/banner.rs` and the repl info line:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/banner.rs (2 → 10 lines)
+  -     println!("{DIM}  Type /help for commands, /quit to exit{RESET}\n");
+  +     println!("{DIM}  Type /help for commands, /quit to exit{RESET}");
+  + 
+  +     // Show auto-loaded skill count if any were found
+  +     let auto_count = crate::cli::auto_discovered_skill_count();
+  +     if auto_count > 0 {
+  +         println!("{DIM}  \u{1F9E0} {auto_count} skill(s) auto-loaded from .yoyo/skills/{RESET}");
+  +     }
+  + 
+  +     println!();
+    }
+ ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.7s)
+  2 tools completed in 1m 19s (2 ✓)
+
+Clippy passes. Now let me run the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (30.4s)
+
+All tests pass. Now let me also update the print_startup_info in repl.rs to show auto-discovered detail alongside the existing skills line:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:628..638 ✓ (0ms)
+  ▶ edit src/repl.rs (3 → 11 lines)
+        if !agent_config.skills.is_empty() {
+  -         println!("{DIM}  skills: {} loaded{RESET}", agent_config.skills.len());
+  +         let total = agent_config.skills.len();
+  +         let auto = crate::cli::auto_discovered_skill_count();
+  +         if auto > 0 && auto < total {
+  +             println!("{DIM}  skills: {total} loaded ({auto} auto-discovered){RESET}");
+  +         } else if auto > 0 {
+  +             println!("{DIM}  skills: {total} loaded (auto-discovered){RESET}");
+  +         } else {
+  +             println!("{DIM}  skills: {total} loaded{RESET}");
+  +         }
+        }
+ ✓ (1m 0s)
+  2 tools completed in 1m 7s (2 ✓)
+
+Now let me add the unit test. Let me find the test section in cli.rs:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/cli.rs ✓ (3ms)
+  ▶ search 'mod tests"' in src/cli.rs ✓ (3ms)
+  ▶ search 'mod tests' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:1067..1082 ✓ (1ms)
+  4 tools completed in 13.1s (4 ✓)
+
+Let me find the end of the tests module to add the new test:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^}' src/cli.rs | tail -… ✓ (4ms)
+
+The tests module ends at line 3191. Let me see what's near the end:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:3175..3195 ✓ (1ms)
+
+Now let me add the unit test for auto_discover_skills:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (18 → 90 lines)
+                result.is_none(),
+                "parse_args should return None when both --allowed-tools and --disallowed-tools are provided"
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_auto_discover_skills_with_temp_dir() {
+  +         // Create a temp directory with .yoyo/skills/ containing a minimal skill
+  +         let tmp = tempfile::TempDir::new().unwrap();
+  +         let skills_dir = tmp.path().join(".yoyo/skills/greet");
+  +         std::fs::create_dir_all(&skills_dir).unwrap();
+  +         std::fs::write(
+  +             skills_dir.join("SKILL.md"),
+  +             "---\nname: greet\ndescription: Say hello\n---\n\n# Greet\n\nSay hello.",
+  +         )
+  +         .unwrap();
+  + 
+  +         // Load from the temp dir using SkillSet::load_dir (same API auto_discover_skills uses)
+  +         let project_set =
+  +             SkillSet::load_dir(tmp.path().join(".yoyo/skills"), "project").unwrap();
+  ... (57 more lines)
+ ✓ (14.1s)
+
+Fair enough — that expression is always true. Let me fix it:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 2 lines)
+            // We can't assert exact count since it depends on cwd, but it shouldn't panic
+  -         assert!(count == 0 || count > 0);
+  +         let _ = count; // just verify it ran without panicking
+ ✓ (1m 1s)
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: Watch fix: 'cargo clippy --all-targets -- -D warnings && car…
+

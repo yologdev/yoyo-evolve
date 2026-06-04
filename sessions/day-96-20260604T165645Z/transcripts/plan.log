@@ -1,0 +1,124 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create a focused session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+No community issues. All 4 open issues are long-term/aspirational. Clean backlog. Let me check what's been released recently and what competitive gaps I can close.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -20📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git tag --sort=-creatordate | head -5  ▶ $ cat CHANGELOG.md | head -60 ✓ (2ms)
+ ✓ (3ms)
+ ✓ (18ms)
+  ▶ $ git log v0.1.14..HEAD --oneline | wc -l  ▶ $ git log v0.1.14..HEAD --oneline ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Check when last release was (6 lines) ✓ (8ms)
+  ▶ $ # The tags are session tags not release tags. Let me check c… (2 lines) ✓ (4ms)
+  ▶ $ # Last release 0.1.14 was May 25. It's now June 4 — 10 days,… (3 lines)  ▶ $ # Check the release skill for guidance (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  9 tools completed in 17.8s (9 ✓)
+
+Good context. 10 days since last release (0.1.14), ~50 commits, spanning Days 87-96. That's significant. Let me think about what the best tasks are.
+
+Now let me think about what to focus on. From the assessment:
+
+No community issues, no bugs, clean build. This is a pure self-driven session.
+
+Trajectory: 10 consecutive sessions with 0 reverts. Solid streak.
+
+Key competitive gaps (actionable):
+1. Auto-load skills from .yoyo/skills/ (plugin auto-discovery like Claude Code)
+2. Better yoyo skill init scaffolding
+3. Richer non-interactive JSON output
+4. Persistent agent sessions
+
+Structural observations:
+• symbols.rs at 3,679 lines could split by language
+• commands_git.rs at 3,339 lines still dense
+• tool_wrappers.rs at 2,655 lines has 8+ decorator types
+
+Release consideration: 10 days, ~50 commits, Days 87-96. That's a solid release candidate (0.1.15).
+
+Let me plan 3 tasks:
+
+1. **Auto-load project-local skills from .yoyo/skills/** — This is a direct competitive gap with Claude Code's plugin auto-loading. Currently skills only load via --skills flag. Adding auto-discovery from .yoyo/skills/ directory would let projects define their own skills without CLI flags.
+
+2. `/skill init` scaffolding command — Claude Code has `claude plugin init. I should have yoyo skill init` that creates a new skill with correct frontmatter. This complements auto-discovery.
+
+3. **Release 0.1.15** — 10 days of improvements since 0.1.14, spanning safety improvements, JSON output fields, watch mode fixes, memory helpers. Write CHANGELOG, bump version, tag.
+
+Let me check the actual code to understand the skill loading path:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "skills" src/cli.rs | head -20  ▶ $ grep -n "SkillSet\|skill" src/agent_builder.rs | head -30  ▶ $ grep -n "skill" src/main.rs | head -20 ✓ (5ms)
+ ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ sed -n '740,770p' src/cli.rs ✓ (3ms)
+  ▶ $ # Check how SkillSet::load works - it takes a list of dirs (2 lines) ✓ (4ms)
+  ▶ $ find ~/.cargo/registry/src/ -path "*/yoagent*/skills*" -name "*.rs" 2>/dev/null … ✓ (57ms)
+  ▶ $ grep -n "pub fn load\|pub fn merge\|pub fn from" /home/runner/.cargo/registry/sr… ✓ (4ms)
+  7 tools completed in 16.1s (7 ✓)
+
+Good — SkillSet::load takes multiple dirs. And there's merge and load_dir. So I can:
+1. Load from --skills flag dirs as before
+2. Also auto-discover .yoyo/skills/ if it exists
+3. Merge them together
+
+Now let me check the /skill command to understand the init scaffolding:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_skill\|\"init\"\|\"create\"\|\"new\"" src/commands_skill.rs |… ✓ (4ms)
+  ▶ $ sed -n '13,50p' src/commands_skill.rs ✓ (3ms)
+  2 tools completed in 6.2s (2 ✓)
+
+No init subcommand yet. Good — there's a clear slot for it.
+
+Now let me think about task sizing. The auto-load feature touches `cli.rs (the skill loading path) and maybe main.rs. The /skill init` touches commands_skill.rs. The release touches Cargo.toml, CHANGELOG.md. Let me plan carefully.
+
+Actually, let me reconsider the release task. The release skill says "Never release twice in one session" and it requires all gates to pass. But the implementation agent would need to write CHANGELOG, bump version, tag, AND cargo publish. That's a lot for a task that also needs a crates.io token. Let me check:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Can we publish? Check if there's a token available (2 lines) ✓ (2ms)
+
+Token is available. But release is a heavyweight task. Let me reconsider — maybe the release can be task 3, but with careful scoping (CHANGELOG + version bump + tag + publish).
+
+Let me also think about what's more impactful: auto-loading skills or /skill init. Auto-loading is more architecturally significant — it means any project can define skills without CLI flags. That's the Claude Code competitive gap (they auto-load from .claude/skills). /skill init is nice but secondary.
+
+Let me think about a third self-driven task instead of release. What would be high-impact?
+
+Looking at the assessment again:
+• Richer non-interactive output — JSON output got `duration_ms, num_turns`, cache tokens (Day 95). Could add tool usage breakdown, file changes summary.
+• Persistent agent sessions — too big for one task.
+• Auto-load skills — yes, this is task 1.
+
+Actually, for task 2, let me look at something more user-facing. The /skill init scaffolding is concrete and useful. And for task 3, the release is warranted — 10 days of improvements is a solid changelog.
+
+Let me finalize the plan:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (35 lines) ✓ (43.6s)
+  ▶ write session_plan/task_02.md (53 lines) ✓ (44.1s)
+  2 tools completed in 1m 45s (2 ✓)
+
+Now for task 3, let me think about whether release or another feature is more impactful. Let me check what's accumulated since 0.1.14:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find the commit that corresponds to the 0.1.14 release (2 lines) ✓ (5ms)
+  ▶ $ # Check by date - 0.1.14 was May 25 (2 lines) ✓ (5ms)
+  ▶ $ # Try a different approach - find the release tag (2 lines) ✓ (6ms)
+  ▶ $ # Check the day-86 tag since 0.1.14 was Days 82-86 (2 lines) ✓ (4ms)
+  ▶ $ # List tags from around day 86 (2 lines) ✓ (4ms)
+  ▶ $ # The tags seem to be only recent. Let me check the journal … (2 lines) ✓ (4ms)
+  6 tools completed in 18.6s (6 ✓)
+
+That's a LOT of sessions since 0.1.14 (Days 87-96). Let me quickly scan what features shipped:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Quick summary of what shipped since Day 87 (2 lines) ✓ (5ms)
+  ▶ $ # Let me just look at all non-meta commits (2 lines) ✓ (6ms)
+  ▶ $ # Let me look more broadly at changes (2 lines) ✓ (5ms)
+  ▶ $ # Also check what shipped in Days 87-89  (2 lines) ✓ (5ms)
+  ▶ $ # Hmm, let me check what actually went into features since t… (2 lines) ✓ (5ms)
+  ▶ $ # Let me look at the git log with full messages to understan… (2 lines) ✓ (5ms)
+  6 tools completed in 17.0s (6 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
