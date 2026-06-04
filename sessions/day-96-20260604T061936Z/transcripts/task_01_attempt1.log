@@ -1,0 +1,195 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure in src/memory.rs and src/watch.rs, then implement the changes.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (45.7s)
+
+Good, I have the full picture. Let me also look at the exact existing code and there are also load_memories_from and save_memories_to variants (for testing with custom paths).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub fn\|fn load_memories\|fn save_memories\|fn add_memory\|fn memory_fi… ✓ (6ms)
+  ▶ read src/memory.rs:1..101 ✓ (2ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me look at the watch.rs fix loop success path:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1192..1292 ✓ (2ms)
+
+Now let me check what the existing tests look like and the current_timestamp function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:435..465 ✓ (2ms)
+  ▶ read src/memory.rs:457..537 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me check what's at the end of the tests section and the end of the file:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/memory.rs && tail -5 src/memory.rs ✓ (3ms)
+
+Now let me check the imports at the top of watch.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1..21 ✓ (1ms)
+
+Good. Now I have all the context I need. Let me implement this step by step.
+
+**Plan:**
+1. Add auto_remember and auto_remember_to (testable variant) and build_fix_memory_note to src/memory.rs
+2. Add tests for those functions
+3. Add the auto-memory call in src/watch.rs after the fix succeeds
+4. Run all checks
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 16.0s (5 ✓)
+
+Let me start with the memory.rs additions. I'll add the new functions right after add_memory:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/memory.rs:66..86 ✓ (0ms)
+  ▶ edit src/memory.rs (3 → 50 lines)
+  + /// Build a concise note describing a successful watch-fix recovery.
+  + pub fn build_fix_memory_note(watch_cmd: &str, attempt: u32) -> String {
+  +     format!(
+  +         "Watch fix: '{}' failed, fixed on attempt {}",
+  +         watch_cmd, attempt
+  +     )
+  + }
+  + 
+  + /// Automatically remember a note if it's not a near-duplicate of an existing memory.
+  + ///
+  + /// Loads memories from disk, checks for duplicates (substring match on first 50 chars),
+  + /// saves if new, and prints a dim confirmation. Returns `true` if a memory was saved.
+  + pub fn auto_remember(note: &str) -> bool {
+  +     auto_remember_to(note, &memory_file_path())
+  + }
+  + 
+  + /// Testable variant of [`auto_remember`] that writes to a specific path.
+  + pub fn auto_remember_to(note: &str, path: &Path) -> bool {
+  +     let mut memory = load_memories_from(path);
+  + 
+  ... (30 more lines)
+ ✓ (14.3s)
+  3 tools completed in 30.7s (3 ✓)
+
+Expected — the functions aren't used yet. I need to also use them in watch.rs. But first, I should be careful about string indexing. Let me fix the potential UTF-8 issue in the dedup and display truncation:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (30 → 31 lines)
+    pub fn auto_remember_to(note: &str, path: &Path) -> bool {
+        let mut memory = load_memories_from(path);
+    
+  -     // Dedup: compare the first 50 chars (or the whole note if shorter) against existing entries.
+  -     let prefix_len = note.len().min(50);
+  -     let prefix = &note[..prefix_len];
+  -     let is_dup = memory
+  -         .entries
+  -         .iter()
+  -         .any(|e| e.note.get(..prefix_len.min(e.note.len())) == Some(prefix));
+  +     // Dedup: compare the first 50 chars (or whole note if shorter) against existing entries.
+  +     // Use char-boundary-safe truncation to avoid panics on multi-byte UTF-8.
+  +     let prefix: String = note.chars().take(50).collect();
+  +     let is_dup = memory.entries.iter().any(|e| {
+  +         let existing_prefix: String = e.note.chars().take(50).collect();
+  +         existing_prefix == prefix
+  +     });
+        if is_dup {
+            return false;
+        }
+  ... (17 more lines)
+ ✓ (14.4s)
+
+Still the dead code warnings — expected. Let me now add the watch.rs call so the functions are used, then add tests. Let me do both in parallel:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now add the auto-memory call in watch.rs. I need to insert it right before break; in the success path:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (4 → 5 lines)
+    use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
+    use crate::commands_project::detect_project_type;
+    use crate::format::*;
+  + use crate::memory::{auto_remember, build_fix_memory_note};
+    use crate::prompt::run_prompt_auto_retry;
+ ✓ (14.0s)
+
+Now add the actual call in the success path:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (6 → 8 lines)
+                    eprintln!(
+                        "{GREEN}  ✓ Watch passed{phase_label} after fix (attempt {attempt}){RESET}"
+                    );
+  +                 let note = build_fix_memory_note(watch_cmd, attempt);
+  +                 auto_remember(&note);
+                    phase_passed = true;
+                    break;
+ ✓ (9.5s)
+
+The loop variable attempt is usize (from 1..=MAX_WATCH_FIX_ATTEMPTS). Let me check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep 'MAX_WATCH_FIX_ATTEMPTS' src/watch.rs | head -5 ✓ (3ms)
+
+It's usize. Let me change the function signature to accept usize instead — simpler than casting:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (7 → 7 lines)
+    /// Build a concise note describing a successful watch-fix recovery.
+  - pub fn build_fix_memory_note(watch_cmd: &str, attempt: u32) -> String {
+  + pub fn build_fix_memory_note(watch_cmd: &str, attempt: usize) -> String {
+        format!(
+            "Watch fix: '{}' failed, fixed on attempt {}",
+            watch_cmd, attempt
+ ✓ (1m 4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (121ms)
+  2 tools completed in 1m 10s (2 ✓)
+
+Build passes. Now let me add the tests:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Let me find the right place to insert tests — at the end of the test module:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:1116..1126 ✓ (1ms)
+  ▶ read src/memory.rs:1155..1175 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I'll add the tests right before the closing }:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (8 → 71 lines)
+            assert!(is_exact_word("uses docker here", "docker", 5));
+            assert!(!is_exact_word("dockerized app", "docker", 0)); // not bounded on right
+            assert!(!is_exact_word("mydocker", "docker", 2)); // not bounded on left
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_fix_memory_note() {
+  +         let note = build_fix_memory_note("cargo test", 1);
+  +         assert_eq!(note, "Watch fix: 'cargo test' failed, fixed on attempt 1");
+  + 
+  +         let note = build_fix_memory_note("cargo clippy && cargo test", 3);
+  +         assert_eq!(
+  +             note,
+  +             "Watch fix: 'cargo clippy && cargo test' failed, fixed on attempt 3"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_auto_remember_creates_entry() {
+  +         let path = temp_memory_path("auto_remember_create");
+  ... (48 more lines)
+ ✓ (1m 4s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 9s (2 ✓)
+
+Now let me run the full check suite:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,170 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement error-driven file suggestions. Let me start by understanding the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_file.rs  ▶ search 'fn build_watch_fix_prompt' in src/watch.rs ✓ (5ms)
+ ✓ (2ms)
+  ▶ read src/watch.rs:1031..1111 ✓ (2ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Now let me look at the end of commands_file.rs to find a good place to add the new function, and also look at existing tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_file.rs && ta…  ▶ search '#\[cfg\(test\)\]' in src/commands_file.rs ✓ (2ms)
+ ✓ (4ms)
+  ▶ search '#\[cfg\(test"' in src/commands_file.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'mod tests' src/commands… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'mod tests' src/watch.rs ✓ (3ms)
+  5 tools completed in 12.4s (4 ✓, 1 ✗)
+
+Now let me look at the test module boundary and find a good insertion point in commands_file.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:990..1010 ✓ (2ms)
+
+Let me check what's available for regex in the project:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'regex' Cargo.toml && gr… ✓ (4ms)
+
+Good, regex is available. Let me also check the existing imports in commands_file.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:1..11 ✓ (1ms)
+
+Now let me check how the function gets imported in watch.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep 'commands_file' src/watch.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/watch.rs ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I have a clear picture. Let me implement the solution:
+
+1. Add `extract_file_paths_from_output to src/commands_file.rs`
+2. Add tests for it
+3. Call it from build_watch_fix_prompt in src/watch.rs
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 13.7s (5 ✓)
+
+Let me start by adding the function and tests to commands_file.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_file.rs (10 → 84 lines)
+  + }
+  + 
+  + /// Extract file paths referenced in compiler/linter error output.
+  + ///
+  + /// Recognises common formats:
+  + /// - Rust:       `--> src/foo.rs:42:10` or `src/foo.rs:42:10`
+  + /// - TypeScript: `src/foo.ts(42,10)` or `src/foo.ts:42:10`
+  + /// - Python:     `File "src/foo.py", line 42`
+  + /// - Go:         `./foo.go:42:10`
+  + /// - Generic:    `path/file.ext:LINE`
+  + ///
+  + /// Results are deduplicated, sorted, and filtered to only files that
+  + /// exist on disk.
+  + pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+  +     use regex::Regex;
+  +     use std::collections::BTreeSet;
+  +     use std::path::Path;
+  + 
+  +     // Lazy-build patterns.  We accept some overlap — the BTreeSet
+  +     // deduplicates anyway.
+  ... (57 more lines)
+ ✓ (14.3s)
+  2 tools completed in 34.6s (2 ✓)
+
+The function isn't used yet. Let me add the tests first, then wire it up in watch.rs. Let me first find where to add the tests within the test module:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:1078..1088 ✓ (1ms)
+  ▶ read src/commands_file.rs:1083..1103 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me add the tests right after the imports in the test module:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_file.rs (2 → 109 lines)
+  +     // --- extract_file_paths_from_output tests (regex matching only) ---
+  + 
+  +     #[test]
+  +     fn extract_paths_rust_error() {
+  +         let output = "error[E0308]: mismatched types\n  --> src/main.rs:42:10\n";
+  +         let paths = extract_file_path_candidates(output);
+  +         assert!(paths.contains(&"src/main.rs".to_string()), "got: {paths:?}");
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_paths_rust_multiple() {
+  +         let output = "\
+  + error[E0308]: mismatched types
+  +   --> src/foo.rs:10:5
+  +   --> src/bar.rs:20:3
+  + ";
+  +         let paths = extract_file_path_candidates(output);
+  +         assert!(paths.contains(&"src/foo.rs".to_string()));
+  +         assert!(paths.contains(&"src/bar.rs".to_string()));
+  +     }
+  ... (89 more lines)
+ ✓ (14.3s)
+  3 tools completed in 38.0s (3 ✓)
+
+Two issues: the function is dead code in the main binary (not used in watch.rs yet), and I have an unused variable. Let me fix the unused variable and wire up the watch.rs usage:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (1 → 1 lines)
+  -         let output = "  --> Cargo.toml:1:1\n";
+  +         let _output = "  --> Cargo.toml:1:1\n";
+ ✓ (14.3s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 24.1s (3 ✓)
+
+Now let me wire it up in watch.rs. I need to import the function and use it in build_watch_fix_prompt:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1..16 ✓ (1ms)
+  ▶ edit src/watch.rs (1 → 2 lines)
+  + use crate::commands_file::extract_file_paths_from_output;
+    use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
+ ✓ (14.3s)
+  2 tools completed in 20.6s (2 ✓)
+
+Expected — I need to use it in the function body now. Let me edit build_watch_fix_prompt:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1083..1103 ✓ (1ms)
+
+I'll add the file-path extraction right before the final return, appending to whichever format string we produce:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (15 → 25 lines)
+    
+  -     if let Some(summary) = structured_section {
+  +     let base = if let Some(summary) = structured_section {
+            format!(
+                "Your changes caused {cmd_type} failures. Here's the output from `{watch_cmd}`:\n\
+                 ```\n{truncated}\n```\n\n\
+  ···
+                 ```\n{truncated}\n```\n\
+                 Please fix the issues.{source_context}{hint}"
+            )
+  +     };
+  + 
+  +     // Enrich the prompt with file paths extracted from the error output
+  +     // so the agent knows exactly which files to focus on.
+  +     let error_files = extract_file_paths_from_output(output);
+  +     if error_files.is_empty() {
+  +         base
+  +     } else {
+  +         let file_list = error_files.join(", ");
+  +         format!("{base}\n\nFiles referenced in errors: {file_list}. Focus your fixes on these files.")
+  ... (2 more lines)
+ ✓ (1m 3s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.9s)
+  4 tools completed in 1m 27s (4 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

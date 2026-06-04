@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (5ms)
+  2 tools completed in 12.6s (2 ✓)
+
+No community issues. Let me check the current state — recent git log, last release, and the flaky test mentioned in the assessment.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -15📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git tag --sort=-creatordate | head -5  ▶ $ git log --oneline v0.23.0..HEAD | wc -l ✓ (4ms)
+ ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ git tag --sort=-creatordate | grep '^v' | head -5  ▶ $ # Check the flaky test mentioned in assessment (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check if it uses with_clean_watch_state (2 lines)  ▶ $ # Check for releases (3 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check if auto-memory / session persistence exists (2 lines)  ▶ $ # Check the serial test attribute - is it from a crate? (3 lines) ✓ (4ms)
+ ✓ (13ms)
+  ▶ $ # The test uses with_clean_watch_state and #[serial] — so th… (6 lines)  ▶ $ # Let me look at recent auto-memory / session insights featu… (6 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Let me look at what handle_watch does when called with jus… (2 lines) ✓ (4ms)
+  ▶ $ # Check detect_watch_all_phases to see if it can panic (2 lines)  ▶ $ sed -n '$(grep -n "fn detect_watch_all_phases" src/watch.rs | head -1 | cut -d: … ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ sed -n '1323,1342p' src/watch.rs ✓ (3ms)
+  15 tools completed in 29.2s (15 ✓)
+
+Now let me think about the most impactful tasks for this session. Based on the assessment:
+
+1. No community issues — all 3 slots are self-driven
+2. **10 consecutive successes** — good momentum
+3. Assessment highlights: auto-memory as #1 actionable gap, flaky test, symbols.rs at 3,679 lines
+
+Let me think about what matters most competitively:
+
+1. **Auto-memory / session persistence** — This is the #1 gap identified. Claude Code automatically saves build commands and debugging insights across sessions. Currently yoyo requires manual `/remember`. Adding automatic learning extraction after significant events (successful fixes, error recovery) would be a genuine competitive improvement.
+
+2. Fix the flaky test — The `handle_watch_bare_sets_lint_and_test` test panicked in CI. Even though it uses #[serial] and `with_clean_watch_state`, there could be another issue. Let me check more deeply.
+
+3. Richer context loading — Auto-detect and load relevant files based on the task.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check what the actual panic was. The test looks cor… (5 lines)  ▶ $ # Check if there are auto-continue settings that could be us… (2 lines) ✓ (4ms)
+ ✓ (12ms)
+  ▶ $ # Check auto_save_on_exit to understand current session pers… (2 lines) ✓ (4ms)
+  ▶ $ # Check the memory module for the remember command implement… (2 lines) ✓ (3ms)
+  ▶ $ # Check total lines in memory.rs (2 lines)  ▶ $ # Look at what memories get injected into the system prompt … (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  6 tools completed in 14.8s (6 ✓)
+
+Good. Now I have a clear picture. Let me plan 3 high-impact tasks:
+
+**Task 1: Auto-memory — automatically capture learnings after watch-mode fixes and error recovery.**
+This is the #1 gap from the assessment. Claude Code does this. Currently yoyo only saves memories manually via /remember. We can auto-capture after successful watch-fix loops (what was broken, what fixed it) and store them in project memory.
+
+**Task 2: Fix the flaky `handle_watch_bare_sets_lint_and_test` test.**
+The assessment identified this as a recurring CI error. Even though it has #[serial] and `with_clean_watch_state, it could still be flaky if detect_watch_all_phases` relies on filesystem state that varies.
+
+**Task 3: Context-aware file suggestions — auto-detect relevant files based on error output.**
+This improves "richer context loading" from the assessment. When watch mode catches errors, suggest which files to /add based on the error output. This is a practical UX improvement.
+
+Let me reconsider — task 2 might be too small and task 3 might overlap with task 1. Let me think about what's most impactful.
+
+Actually, looking more carefully at the assessment:
+
+• Auto-memory is the biggest competitive gap (slot 1)
+• The flaky test is a real CI issue that appeared in trajectory (slot 2 — but small, could combine)
+• Richer context loading / smarter /add suggestions is actionable (slot 3)
+
+But actually the flaky test is probably not worth a full task slot. Let me look at what else matters.
+
+Looking at the assessment's "Most actionable gaps":
+1. Session persistence / auto-memory ✓ (task 1)
+2. Improved /apply for patch files
+3. Richer context loading
+4. Background agent orchestration
+5. Native sandboxing
+
+Let me also consider: **the symbols.rs file is 3,679 lines** — the largest in the codebase. Splitting it by language would be a good structural improvement. But the assessment says "could benefit from splitting" — it's not blocking anything.
+
+Let me go with:
+
+1. **Auto-memory: capture build/test fix insights automatically** — biggest competitive gap
+2. **Fix flaky watch test** — CI stability, plus harden against global state leakage
+3. Smart error-driven file suggestions — when errors reference files, suggest them for context
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the current watch fix loop to understand where auto-… (2 lines)  ▶ $ # Check how memories get formatted for prompt (2 lines) ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ # Check run_watch_after_prompt to see where the fix loop suc… (2 lines) ✓ (5ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Now I have enough context. Let me write the task plans.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (44 lines) ✓ (45.4s)
+  ▶ write session_plan/task_02.md (30 lines) ✓ (45.2s)
+  ▶ write session_plan/task_03.md (40 lines) ✓ (45.9s)
+  ▶ write session_plan/issue_responses.md (12 lines) ✓ (44.7s)
+  ▶ $ git add session_plan/ && git commit -m "Day 96 (05:30): session plan" || true ✓ (4ms)
+  ▶ $ git add -f session_plan/ && git commit -m "Day 96 (05:30): session plan" || true ✓ (10ms)
+  6 tools completed in 3m 57s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 96 Session Plan — 3 Tasks
+
+### Task 1: Auto-memory after watch-fix recovery
+Files: src/watch.rs, src/memory.rs
+Gap: #1 competitive gap (Claude Code auto-saves debugging insights). When the watch-fix loop successfully recovers from a build/test failure, automatically save a memory entry describing what happened. Deduplicates to avoid flooding. Lightweight — just 2-3 lines in the success path plus a helper function in memory.rs.
+
+### Task 2: Harden flaky watch tests
+Files: src/watch.rs
+Gap: CI stability (trajectory shows 1 panic). Extract `detect_watch_all_phases_for_dir(dir)` so tests can pass an explicit directory instead of relying on CWD. Make test assertions resilient to minor detection differences.
+
+### Task 3: Error-driven file suggestions in watch-fix prompts
+Files: src/watch.rs, src/commands_file.rs
+Gap: "Richer context loading" (#3 actionable gap). Parse file paths from compiler error output (Rust, TypeScript, Python, Go formats) and append them to the watch-fix prompt so the agent focuses on the right files.
+
+No community issues to respond to. All slots are self-driven competitive improvements.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
