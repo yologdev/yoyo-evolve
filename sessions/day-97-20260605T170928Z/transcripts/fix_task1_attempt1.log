@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of commands_web.rs and then implement the required functionality.
+  ▶ read src/commands_web.rs ✓ (5ms)
+
+Let me see the parts I missed (the middle of the file):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:100..300 ✓ (2ms)
+  ▶ read src/commands_web.rs:300..500 ✓ (2ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now I have a good understanding of the file. Let me implement the web search functionality. I need to add:
+
+1. WebSearchResult struct
+2. web_search() function
+3. format_search_results() function
+4. `web_search_and_read()` convenience function
+5. Tests with mock HTML fixtures
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:470..520 ✓ (1ms)
+
+Now let me add the web search functionality right before the #[cfg(test)] block:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (3 → 325 lines)
+  + // ---------------------------------------------------------------------------
+  + // Web search via DuckDuckGo HTML endpoint
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// A single web search result.
+  + pub(crate) struct WebSearchResult {
+  +     pub title: String,
+  +     pub url: String,
+  +     pub snippet: String,
+  + }
+  + 
+  + /// Simple percent-encoding for URL query parameters.
+  + /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  + fn url_encode(s: &str) -> String {
+  +     let mut out = String::with_capacity(s.len() * 2);
+  +     for b in s.bytes() {
+  +         match b {
+  +             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+  +                 out.push(b as char);
+  +             }
+  ... (305 more lines)
+ ✓ (14.9s)
+
+The functions are flagged as dead code because they're pub(crate) but not used elsewhere yet. This is expected since Tasks 2 and 3 will consume them. Let me check if there are already any references to these functions or if I need to add #[allow(dead_code)] annotations. Let me also add tests now and make sure the code compiles cleanly.
+
+The dead_code warnings are because clippy treats pub(crate) items as dead if they're not referenced from outside the module. Since Tasks 2 and 3 haven't been implemented yet, I need to either make them used or allow dead code. Let me add #[allow(dead_code)] on the items that are purely for future consumption, since the task says they're pub(crate) for Tasks 2 and 3.
+
+Actually, looking more carefully - the tests in the same module will reference these functions, so tests should count. The issue is that clippy doesn't count `#[cfg(test)] usage for dead_code`. Let me add a module-level allow or individual ones.
+
+Let me add targeted #[allow(dead_code)] annotations on each item that's not yet used outside tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (6 → 7 lines)
+    /// A single web search result.
+  + #[allow(dead_code)]
+    pub(crate) struct WebSearchResult {
+        pub title: String,
+        pub url: String,
+ ✓ (14.8s)
+
+Let me add `#[allow(dead_code)]` to all the functions. They'll be used by Tasks 2 and 3:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (3 → 4 lines)
+    /// Simple percent-encoding for URL query parameters.
+    /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  + #[allow(dead_code)]
+    fn url_encode(s: &str) -> String {
+ ✓ (15.0s)
+
+Let me add all the remaining #[allow(dead_code)] annotations at once:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (2 → 3 lines)
+    /// Decode a percent-encoded string (e.g. from a URL query parameter).
+  + #[allow(dead_code)]
+    fn url_decode(s: &str) -> String {
+ ✓ (15.0s)
+
+Let me do all the remaining ones in bulk:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (1 → 2 lines)
+  + #[allow(dead_code)]
+    pub(crate) fn extract_ddg_url(href: &str) -> String {
+ ✓ (14.9s)
+  ▶ edit src/commands_web.rs (1 → 2 lines)
+  + #[allow(dead_code)]
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+ ✓ (15.4s)
+  ▶ edit src/commands_web.rs (1 → 2 lines)
+  + #[allow(dead_code)]
+    fn extract_inner_text(html: &str) -> String {
+ ✓ (15.3s)
+  ▶ edit src/commands_web.rs (1 → 2 lines)
+  + #[allow(dead_code)]
+    pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+ ✓ (15.4s)
+  ▶ edit src/commands_web.rs (2 → 3 lines)
+    /// Format search results as a clean numbered text block.
+  + #[allow(dead_code)]
+    pub(crate) fn format_search_results(results: &[WebSearchResult]) -> String {
+ ✓ (15.4s)
+  ▶ edit src/commands_web.rs (1 → 5 lines)
+  + /// Perform a web search via DuckDuckGo and return structured results.
+  + ///
+  + /// Uses `curl` to hit the DuckDuckGo HTML endpoint and parses the response.
+  + #[allow(dead_code)]
+    pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+ ✓ (15.4s)
+  ▶ edit src/commands_web.rs (4 → 5 lines)
+    /// Convenience: run a web search and return formatted text.
+    ///
+    /// Returns a human-/agent-readable string on both success and failure.
+  + #[allow(dead_code)]
+    pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
+ ✓ (15.4s)
+  7 tools completed in 2m 11s (7 ✓)
+
+Good, now just the clippy manual_strip issue. Let me fix `extract_attr`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (6 → 6 lines)
+        // Attribute value may be quoted with " or '
+  -     let (quote, rest) = if after.starts_with('"') {
+  -         ('"', &after[1..])
+  -     } else if after.starts_with('\'') {
+  -         ('\'', &after[1..])
+  +     let (quote, rest) = if let Some(stripped) = after.strip_prefix('"') {
+  +         ('"', stripped)
+  +     } else if let Some(stripped) = after.strip_prefix('\'') {
+  +         ('\'', stripped)
+        } else {
+ ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.2s)
+  2 tools completed in 1m 30s (2 ✓)
+
+Clippy passes. Now let me add the tests. Let me see what's currently at the end of the test module:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:810..860 ✓ (2ms)
+
+Now let me see the end of the file:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1090..1140 ✓ (1ms)
+
+Now let me add all the web search tests before the closing } of the test module:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (18 → 307 lines)
+            assert!(!is_valid_url("./relative/path.txt"));
+            assert!(!is_valid_url(""));
+            assert!(!is_valid_url("http://x")); // too short, no dot
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // Web search tests
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_web_search_result_construction() {
+  +         let result = WebSearchResult {
+  +             title: "Rust Programming Language".to_string(),
+  +             url: "https://www.rust-lang.org/".to_string(),
+  +             snippet: "A language empowering everyone to build reliable software.".to_string(),
+  +         };
+  +         assert_eq!(result.title, "Rust Programming Language");
+  +         assert_eq!(result.url, "https://www.rust-lang.org/");
+  +         assert_eq!(
+  +             result.snippet,
+  ... (274 more lines)
+ ✓ (10.4s)
+
+The # character inside the raw string is confusing the raw string literal delimiter. I need to use a different raw string delimiter:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (20 → 20 lines)
+            let mut html = String::from("<div>");
+            for i in 0..25 {
+                html.push_str(&format!(
+  -                 r#"<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F{i}">Result {i}</a>
+  -                 <a class="result__snippet" href="#">Snippet {i}</a>"#
+  +                 "<a class=\"result__a\" href=\"//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F{i}\">Result {i}</a>\n\
+  +                  <a class=\"result__snippet\" href=\"x\">Snippet {i}</a>\n"
+                ));
+            }
+            html.push_str("</div>");
+ ✓ (10.2s)
+
+The issue is in the last test with href="#">. Let me use r##"..."## raw strings:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (7 → 7 lines)
+        #[test]
+        fn test_parse_ddg_results_with_bold_in_snippet() {
+            // DDG often wraps search terms in <b> tags within snippets
+  -         let html = r#"
+  +         let html = r##"
+    <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com">Test Page</a>
+    <a class="result__snippet" href="#">This is a <b>test</b> snippet with <b>bold</b> words.</a>
+  - "#;
+  + "##;
+ ✓ (1m 10s)
+
+Also fix the no_snippet test which has the same issue:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'test_parse_ddg_results_no_snippet' in src/commands_web.rs ✓ (3ms)
+  ▶ read src/commands_web.rs:1346..1361 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+That one doesn't have # in href, so it's fine. Let me build and test:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -10 ✓ (142ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_web 2>… ✓ (121ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_web 2>&1 ✓ (155ms)
+  3 tools completed in 6.5s (3 ✓)
+

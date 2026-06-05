@@ -1,0 +1,259 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement web search capability in commands_web.rs. Let me start by understanding the existing code structure.
+  ▶ $ wc -l src/commands_web.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ head -80 src/commands_web.rs ✓ (10ms)
+ ✓ (41ms)
+  ▶ read src/commands_web.rs ✓ (6ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now let me see the key functions - fetch_url, `handle_web`, and what's already exported:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub(crate) fn|pub fn|pub(crate) struct|pub(crate) const' in src/commands_web.rs ✓ (3ms)
+  ▶ search '^pub' in src/commands_web.rs ✓ (3ms)
+  2 tools completed in 8.2s (2 ✓)
+
+Let me see the fetch_url function to understand the curl pattern:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:225..265 ✓ (2ms)
+
+Now I have a solid understanding of the existing codebase. Let me also quickly check how the file is used elsewhere and look at the test module boundary:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:680.. ✓ (1ms)
+
+Let me also quickly check what a real DuckDuckGo HTML response looks like to make sure my parsing will be accurate:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ curl -sL --max-time 10 -A "Mozilla/5.0 (compatible; yoyo-agent/0.1)" "https://ht… ✓ (820ms)
+  ▶ $ curl -sL --max-time 10 -A "Mozilla/5.0 (compatible; yoyo-agent/0.1)" "https://ht… ✓ (96ms)
+  ▶ $ curl -sL --max-time 10 -A "Mozilla/5.0 (compatible; yoyo-agent/0.1)" "https://ht… ✓ (71ms)
+  ▶ $ curl -sL --max-time 10 -A "Mozilla/5.0 (compatible; yoyo-agent/0.1)" "https://ht… ✓ (79ms)
+  ▶ $ curl -sL --max-time 10 -A "Mozilla/5.0 (compatible; yoyo-agent/0.1)" "https://ht… ✓ (72ms)
+  5 tools completed in 19.2s (5 ✓)
+
+It seems DuckDuckGo is detecting the bot and showing a CAPTCHA page. Let me try with a different user agent:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ curl -sL --max-time 10 -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (K… ✓ (79ms)
+  ▶ $ curl -sL --max-time 10 -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (K… ✓ (90ms)
+  2 tools completed in 6.3s (2 ✓)
+
+DuckDuckGo is blocking in this CI environment. That's fine — the task says to build the parsing with mock HTML fixtures for tests. Let me look at what the actual DDG HTML structure looks like by checking documentation/known structure:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Try lite version (2 lines) ✓ (132ms)
+
+The CI environment gets CAPTCHA-blocked. That's expected for automated environments. The important thing is that the known DDG HTML structure is well-documented. Let me build the implementation based on the documented structure of DDG HTML results. The key classes are:
+
+• Results in `<div class="result results_links results_links_deep web-result">` 
+• Links in <a class="result__a" href="...">
+• Snippets in <a class="result__snippet"> or similar
+
+Now let me implement. I'll write the code with tests using mock HTML fixtures:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 21.0s (7 ✓)
+
+Now let me find the exact insertion point — I'll add the search functions right after fetch_url and before handle_web:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:248..263 ✓ (1ms)
+
+Now let me also look at the decode_html_entities function that already exists:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'decode_html_entities' in src/commands_web.rs ✓ (3ms)
+
+Good — it's in crate::format. Let me also check the `use` at the top to understand what's imported:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1..5 ✓ (1ms)
+
+Now I'll implement. Let me add the search functions right after fetch_url (line 253) and before handle_web (line 255):
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (4 → 298 lines)
+        Ok(body)
+  + }
+  + 
+  + // ---------------------------------------------------------------------------
+  + // Web search via DuckDuckGo HTML endpoint
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// A single web search result.
+  + #[derive(Debug, Clone)]
+  + pub(crate) struct WebSearchResult {
+  +     pub title: String,
+  +     pub url: String,
+  +     pub snippet: String,
+  + }
+  + 
+  + /// URL-encode a query string for use in a search URL.
+  + ///
+  + /// Encodes spaces as `+` and percent-encodes other special characters.
+  + fn url_encode_query(query: &str) -> String {
+  +     let mut encoded = String::with_capacity(query.len() * 2);
+  ... (278 more lines)
+ ✓ (14.9s)
+
+The code compiles structurally but clippy warns about dead code since nothing uses these functions yet. The tests will fix that, and they'll also be the consumers. Let me add the tests now:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 10.4s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: struct `WebSearchResult` is never constructed[0m
+   [1m[94m--> [0msrc/commands_web.rs:261:19
+    [1m[94m|[0m
+[1m[94m261[0m [1m[94m|[0m pub(crate) struct WebSearchResult {
+    [1m[94m|[0m                   [1m[91m^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `url_encode_query` is never used[0m
+   [1m[94m--> [0msrc/commands_web.rs:270:4
+    [1m[94m|[0m
+[1m[94m270[0m [1m[94m|[0m fn url_encode_query(query: &str) -> String {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `extract_ddg_url` is never used[0m
+   [1m[94m--> [0msrc/commands_web.rs:293:4
+    [1m[94m|[0m
+[1m[94m293[0m [1m[94m|[0m fn extract_ddg_url(href: &str) -> Option<String> {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `percent_decode` is never used[0m
+   [1m[94m--> [0msrc/commands_web.rs:315:4
+    [1m[94m|[0m
+[1m[94m315[0m [1m[94m|[0m fn percent_decode(input: &str) -> String {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `extract_attr` is never used[0m
+   [1m[94m--> [0msrc/commands_web.rs:340:4
+    [1m[94m|[0m
+[1m[94m340[0m [1m[94m|[0m fn extract_attr(tag_content: &str, attr_name: &str) -> Option<String> {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `parse_ddg_html` is never used[0m
+   [1m[94m--> [0msrc/commands_web.rs:362:15
+    [1m[94m|[0m
+[1m[94m362[0m [1m[94m|[0m pub(crate) fn parse_ddg_html(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+    [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `strip_i...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+The issue is clear — all the new functions/structs are `pub(crate)` but nothing outside the module uses them yet, and the test module uses super::* but clippy checks the non-test build first. The fix is to add tests that exercise these functions (which was the plan — the previous session hit the token limit before writing tests), and for the private helpers, mark them #[cfg(test)]-visible or just ensure the pub(crate) functions are called from tests.
+
+Let me look at the current state of the file:
+  ▶ $ wc -l src/commands_web.rs ✓ (8ms)
+  ▶ $ grep -n "^#\[cfg(test)\]" src/commands_web.rs ✓ (8ms)
+  ▶ read src/commands_web.rs:1090.. ✓ (1ms)
+  3 tools completed in 7.4s (3 ✓)
+
+The real fix: these pub(crate) functions aren't used by any other module yet (Task 2 and Task 3 will consume them). The cleanest way to satisfy clippy while keeping the code ready for those tasks is to:
+
+1. Add #[cfg(test)] tests that exercise every function (the actual deliverable from the task spec)
+2. For the non-test build, the pub(crate) functions need at least one non-test caller OR we need #[allow(dead_code)] temporarily
+
+Since Tasks 2 & 3 will add the real callers, let me add a single #[allow(dead_code)] on the block, plus comprehensive tests.
+
+Let me first see the exact structure around the new code:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:254..264 ✓ (1ms)
+  ▶ read src/commands_web.rs:545..560 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+I'll add #[allow(dead_code)] to each new item since they're `pub(crate)` waiting for Task 2/3 consumers, and add comprehensive tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (3 → 4 lines)
+    /// A single web search result.
+    #[derive(Debug, Clone)]
+  + #[allow(dead_code)] // pub(crate): consumed by Task 2 (agent tool) and Task 3 (slash command)
+    pub(crate) struct WebSearchResult {
+ ✓ (15.0s)
+
+The #[allow(dead_code)] on the struct only silences the struct itself. I need to silence all the functions too. The cleanest approach: wrap the whole search block in a module or add individual allows. Let me just add #[allow(dead_code)] to each function — there are 8 private helpers and 4 pub(crate) functions:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^fn \|^pub(crate) fn " src/commands_web.rs | head -20 ✓ (4ms)
+
+I need to add #[allow(dead_code)] to lines 271, 294, 316, 341, 363, 458, 490, 519, 543. Let me do them all at once with targeted edits:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:268..273 ✓ (1ms)
+  ▶ edit src/commands_web.rs (2 → 3 lines)
+    /// Encodes spaces as `+` and percent-encodes other special characters.
+  + #[allow(dead_code)] // used by web_search; callers land in Task 2/3
+    fn url_encode_query(query: &str) -> String {
+ ✓ (15.0s)
+  2 tools completed in 22.5s (2 ✓)
+
+This one-by-one approach is tedious. Let me instead add the tests (which will use all these functions) and that will resolve the dead_code warnings. The #[cfg(test)] usage in tests makes functions "used" from clippy's perspective when building with --all-targets. Let me add all the tests at once:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1088..1098 ✓ (1ms)
+  ▶ read src/commands_web.rs:1095..1100 ✓ (1ms)
+  ▶ edit src/commands_web.rs (3 → 300 lines)
+            assert!(!is_valid_url("http://x")); // too short, no dot
+  +     }
+  + 
+  +     // --- Web search tests (mock HTML, no network) ---
+  + 
+  +     #[test]
+  +     fn test_web_search_result_construction() {
+  +         let r = WebSearchResult {
+  +             title: "Rust Programming Language".to_string(),
+  +             url: "https://www.rust-lang.org/".to_string(),
+  +             snippet: "A language empowering everyone...".to_string(),
+  +         };
+  +         assert_eq!(r.title, "Rust Programming Language");
+  +         assert_eq!(r.url, "https://www.rust-lang.org/");
+  +         assert!(!r.snippet.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_url_encode_query_simple() {
+  +         assert_eq!(url_encode_query("rust"), "rust");
+  ... (280 more lines)
+ ✓ (15.0s)
+  3 tools completed in 1m 0s (3 ✓)
+
+The problem is that clippy checks the non-test binary target first, and in that target, these `pub(crate) functions have no callers. The #[cfg(test)]` test module only makes them "used" in the test build. With -D dead_code (implied by -D warnings), this fails for the main binary target.
+
+I need to add #[allow(dead_code)] to the remaining functions. Let me do them all at once efficiently:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^fn extract_ddg_url\|^fn percent_decode\|^fn extract_attr\|^pub(crate) … ✓ (9ms)
+  ▶ $ sed -n '293,296p' src/commands_web.rs ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Let me add #[allow(dead_code)] to all the remaining functions at once using sed:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Add #[allow(dead_code)] before each function that needs it (6 lines) ✓ (4ms)
+
+Actually, let me take a different approach — use a single #[allow(dead_code)] at the module level for the whole search block. But we can't do module-level allow cleanly. Let me instead just do all the seds at once, being careful about line number shifts:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Reset and do it properly (3 lines) ✓ (5ms)
+
+Let me take a cleaner approach — read the full block I inserted, add the allows properly, and write it back:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ git checkout src/commands_web.rs ✓ (9ms)
+
+Good, back to clean state. Now let me write the whole block properly in one go, with #[allow(dead_code)] on everything that needs it:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:250..255 ✓ (1ms)
+  ▶ read src/commands_web.rs:254..257 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me also check what the last test in the test module looks like to know where to append:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:799..804 ✓ (1ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

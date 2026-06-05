@@ -1,0 +1,170 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the relevant files.
+  ▶ search 'pub fn handle_web' in src/commands_web.rs  ▶ search 'fn handle_web_search' in src/commands_web.rs  ▶ search '"web"' in src/commands.rs ✓ (5ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/commands_web.rs:256..316  ▶ search 'command_arg_hint' in src/commands.rs  ▶ search 'command_arg_completions' in src/commands.rs ✓ (4ms)
+ ✓ (5ms)
+ ✓ (3ms)
+  6 tools completed in 7.7s (6 ✓)
+
+Now let me read the relevant sections in commands.rs for the completions and the help data:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:213..288  ▶ search '"web"' in src/help_data.rs  ▶ search 'pub fn web_search' in src/commands_web.rs ✓ (5ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ search 'fn web_search' in src/commands_web.rs  ▶ read src/help_data.rs:1045..1075 ✓ (1ms)
+ ✓ (3ms)
+  5 tools completed in 6.4s (5 ✓)
+
+Now let me read the rest of command_arg_completions to see the pattern, and find the short description line:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:287..337  ▶ read src/help_data.rs:1317..1322 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now I have the full picture. Let me also check for `WebSearchResult and the web_search` function signature, and the imports in commands_web.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1..21  ▶ read src/commands_web.rs:755..775 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Now let me check if there are any existing `WEB_SUBCOMMANDS` or similar:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'WEB_SUBCOMMANDS' in src/commands_web.rs ✓ (3ms)
+
+Good. Now I have all the context. Let me make the three changes:
+
+1. `commands_web.rs`: Modify handle_web to route search subcommand, add `handle_web_search function, add WEB_SUBCOMMANDS` constant
+2. `commands.rs`: Update `command_arg_hint and command_arg_completions for web`
+3. **`help_data.rs`**: Update both the detailed help and short description
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (45 → 84 lines)
+  + /// Subcommands for `/web` tab-completion.
+  + pub const WEB_SUBCOMMANDS: &[&str] = &["search"];
+  + 
+    pub fn handle_web(input: &str) {
+  -     let url = input.trim_start_matches("/web").trim();
+  +     let arg = input.trim_start_matches("/web").trim();
+    
+  -     if url.is_empty() {
+  -         println!("{DIM}  usage: /web <url>");
+  -         println!("  Fetch a web page and display readable text content.");
+  -         println!(
+  -             "  Example: /web https://doc.rust-lang.org/book/ch01-01-installation.html{RESET}\n"
+  -         );
+  +     if arg.is_empty() {
+  +         println!("{DIM}  usage: /web <url>          — fetch a web page");
+  +         println!("         /web search <query> — search the web{RESET}\n");
+  +         return;
+  +     }
+  + 
+  +     if arg.starts_with("search ") || arg.starts_with("search\t") || arg == "search" {
+  ... (47 more lines)
+ ✓ (14.9s)
+
+Expected — WEB_SUBCOMMANDS isn't used yet. Let me update `commands.rs` next:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "web" => Some("<url>"),
+  +         "web" => Some("<url> | search <query>"),
+ ✓ (14.7s)
+
+Now add the completion entry:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (3 → 4 lines)
+            "/revisit" => {
+                filter_candidates(crate::commands_revisit::REVISIT_SUBCOMMANDS, &partial_lower)
+            }
+  +         "/web" => filter_candidates(crate::commands_web::WEB_SUBCOMMANDS, &partial_lower),
+ ✓ (1m 5s)
+
+Now update the help text in help_data.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (1 → 1 lines)
+  -         "web" => Some("Fetch a web page"),
+  +         "web" => Some("Fetch a web page or search the web"),
+ ✓ (1m 6s)
+  ▶ edit src/help_data.rs (10 → 14 lines)
+            "web" => Some(
+  -             "/web <url> — Fetch and display web page content\n\n\
+  +             "/web <url> | /web search <query> — Fetch a web page or search the web\n\n\
+                 Usage:\n\
+  -              \x20 /web <url>    Fetch a URL and display readable text\n\n\
+  +              \x20 /web <url>           Fetch a URL and display readable text\n\
+  +              \x20 /web search <query>  Search the web via DuckDuckGo\n\n\
+                 Downloads the web page and extracts clean readable text,\n\
+  -              stripping HTML tags and scripts.\n\n\
+  +              stripping HTML tags and scripts. Search returns titles,\n\
+  +              URLs, and snippets for each result.\n\n\
+                 Examples:\n\
+                 \x20 /web https://docs.rs/serde/latest\n\
+  -              \x20 /web https://rust-lang.org",
+  +              \x20 /web https://rust-lang.org\n\
+  +              \x20 /web search rust async tutorial\n\
+  +              \x20 /web search \"tokio vs async-std\"",
+            ),
+ ✓ (1m 4s)
+  2 tools completed in 2m 21s (2 ✓)
+
+Now let's run the full check:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (32.7s)
+  2 tools completed in 54.1s (2 ✓)
+
+All passing. Now let me also remove the `#[allow(dead_code)] on web_search` since it's now used:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[allow\(dead_code\)\]' in src/commands_web.rs ✓ (3ms)
+  ▶ search 'allow.*dead_code' in src/commands_web.rs ✓ (3ms)
+  2 tools completed in 8.2s (2 ✓)
+
+The web_search function at line 797 still has #[allow(dead_code)]. Let me check if clippy would warn — actually clippy passed clean, so these allow annotations are fine. Let me verify the web_search one since it's now used:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:795..800 ✓ (0ms)
+
+Since web_search is now used by handle_web_search, let's remove the unnecessary #[allow(dead_code)]:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:796..799 ✓ (1ms)
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Uses `curl` to hit the DuckDuckGo HTML endpoint and parses the response.
+  - #[allow(dead_code)]
+    pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+ ✓ (1m 7s)
+  2 tools completed in 1m 13s (2 ✓)
+
+Now run the final verification:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (49.4s)
+
+All checks pass. Let me verify the changes are complete by reviewing what was done:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands.rs src/com… ✓ (12ms)
+  2 tools completed in 7.5s (2 ✓)
+
+All changes are complete and verified. Here's a summary of what was done:
+
+### Changes Made
+
+1. **`src/commands_web.rs** — Modified handle_web to route /web search <query>`:
+   • Added WEB_SUBCOMMANDS constant (&["search"]) for tab-completion
+   • Modified handle_web to detect search subcommand and route to new handle_web_search
+   • Updated empty-arg usage text to show both URL and search usage
+   • Added handle_web_search function that calls `web_search()`, displays numbered results with color formatting (title in bold, URL in cyan, snippet in dim), and shows a tip to use /web <url> to read results
+   • Removed unnecessary `#[allow(dead_code)] from web_search` since it's now actively used
+
+2. **`src/commands.rs`** — Updated command completions:
+   • `command_arg_hint("web") now returns "<url> | search <query>"`
+   • `command_arg_completions("/web", ...) now filters against WEB_SUBCOMMANDS`
+
+3. **`src/help_data.rs`** — Updated help text:
+   • Short description: "Fetch a web page or search the web"
+   • Detailed help: documents both /web <url> and /web search <query> with examples
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

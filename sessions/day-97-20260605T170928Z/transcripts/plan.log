@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create a focused plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 4.1s (2 ✓)
+
+No community issues. All 3 slots are self-driven. Let me check the current state to make informed decisions.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20  ▶ $ grep -c "web_search\|WebSearch\|web search" src/*.rs 2>/dev/null || echo "0" ✓ (8ms)
+ ✓ (15ms)
+ ✓ (43ms)
+  ▶ $ # Check what commands_web.rs currently has (2 lines)  ▶ $ # Check existing /web command and what dispatch handles (2 lines)  ▶ $ # Check KNOWN_COMMANDS for web (2 lines) ✓ (4ms)
+ ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ # What does the current /web do? Check the handle_web functi… (2 lines)  ▶ $ # Check if there's a WebSearchTool or similar agent tool (2 lines)  ▶ $ # Check the current tool list in build_tools (2 lines) ✓ (4ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ # What does /web currently do - fetch a URL? Let's see the i… (2 lines) ✓ (4ms)
+  ▶ $ # Check the latest release (2 lines)  ▶ $ # Check what's in the CHANGELOG since last release (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Check how many sessions since v0.1.14 (Day 86) (4 lines)  ▶ $ # Check git log for feature work since Day 86 tag (2 lines) ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ # Get all task commits since 0.1.14 (Day 86, 2026-05-25) (2 lines) ✓ (5ms)
+  ▶ $ # That's odd - let me check the full task commit list since … (2 lines) ✓ (5ms)
+  ▶ $ # Let me check using a different pattern - there may have be… (2 lines) ✓ (6ms)
+  ▶ $ # Check everything since the v0.1.14 release date (2 lines) ✓ (5ms)
+  ▶ $ # Let me get a broader picture - all task commits since Day … (4 lines) ✓ (7ms)
+  ▶ $ # Let me also check the Day 96 session that had the /skill i… (2 lines)  ▶ $ # The session wrap-up often includes task info. Let me check… (2 lines) ✓ (6ms)
+ ✓ (11ms)
+  21 tools completed in 44.7s (21 ✓)
+
+Now I have good context. Let me think about the three tasks:
+
+Assessment summary:
+• 0 community issues, 0 sponsor issues
+• All 3 slots are self-driven
+• Biggest competitive gap: no built-in web search tool (every competitor has this)
+• Clean streak: 10 sessions, 0 reverts
+• Since 0.1.14: ~11 days, handful of feature commits — not enough for a release yet
+• symbols.rs at 3,679 lines is the largest file
+• The /web command already fetches URLs but there's no agent-callable web search tool
+
+The assessment clearly identifies web search as a built-in tool as the #1 actionable gap. Let me design tasks around this and other high-impact self-driven work.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what BUILTIN_TOOL_NAMES looks like to understand the… (2 lines)  ▶ $ # Check how tools are built/registered (3 lines) ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ # See the end of build_tools where tools vector is assembled (2 lines)  ▶ $ # Find where tools are collected into a vec at the end of bu… (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  4 tools completed in 5.7s (4 ✓)
+
+Now I have a clear picture. Let me plan the three tasks:
+
+1. Web search tool — the biggest competitive gap. Build a WebSearchTool that the agent can call during problem-solving. This is a built-in tool, not just a slash command.
+2. `/web search` slash command — complement the tool with a user-facing /web search <query> command.
+3. Something else high-impact from self-assessment.
+
+Actually, let me reconsider. Building a web search tool is complex — it needs an API or scraping approach. Let me think about what's achievable in a 20-minute task window with at most 3 files.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there are existing patterns for web fetching (2 lines)  ▶ $ # Check what HTTP tools are available (2 lines) ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ # Check the fetch_url implementation   (2 lines) ✓ (4ms)
+  3 tools completed in 4.2s (3 ✓)
+
+Good. Now I have a clear picture. The web search tool can use the existing fetch_url infrastructure and curl. For web search, we can use DuckDuckGo's HTML search (no API key needed) or a similar approach.
+
+Let me design three tasks:
+
+1. WebSearchTool — A new agent tool that performs web searches (DuckDuckGo HTML) so the agent can search the web during problem-solving. This is the #1 competitive gap.
+2. `/web search` command — User-facing slash command complement for interactive web search.
+3. Something structural — maybe splitting the web search logic or a competitive improvement.
+
+Actually, let me reconsider the task breakdown for maximum impact:
+
+1. Task 1: WebSearchTool (agent tool) — The core tool the agent calls. touches src/tools.rs (add tool), src/agent_builder.rs (register in BUILTIN_TOOL_NAMES), and src/commands_web.rs (shared web search/fetch functions).
+2. Task 2: `/web search` slash command — User-facing command. Touches src/commands_web.rs, `src/commands.rs (completions), src/help_data.rs` (help text).
+3. **Task 3: Something else** — Let me think about what else is high-impact...
+
+Wait, those first two tasks share commands_web.rs. Task 1 should build the search engine functions in commands_web.rs and the tool struct in tools.rs. Task 2 adds the slash command interface and help. That's cleaner.
+
+Actually, let me reconsider. The WebSearchTool as an agent-callable tool is the most impactful thing. The /web search slash command is nice but less critical. Let me think about what else has high impact.
+
+Looking at the assessment:
+• symbols.rs at 3,679 lines is the largest file — could split per-language extractors
+• 1,449 .unwrap() calls — lots in non-test code too
+• No recent release (0.1.14 was Day 86, we're at Day 97)
+
+For maximum impact this session:
+1. WebSearchTool — agent-callable web search (closes biggest competitive gap)
+2. `/web search` slash command — user-facing web search
+3. Release preparation — if enough has accumulated since 0.1.14
+
+But the release check shows only ~4 feature commits since 0.1.14. That's thin for a release. Let me pick something more impactful for task 3.
+
+What about improving the /web command to also support search, and making the agent tool all in one task? Let me think about task sizing...
+
+The WebSearchTool is a single tool struct + registration. That's one task. The search functions (DuckDuckGo HTML parsing) go in commands_web.rs. The /web search command is a separate user-facing feature.
+
+For task 3, something self-driven and competitive: How about adding the web search tool to sub-agents too? Or improving the web content extraction (readability)? Or... 
+
+Let me look at what would be most impactful: context injection of web search results. When the agent searches, the results should be useful. Let me focus on quality.
+
+Final plan:
+1. Web search engine functions in commands_web.rs — DuckDuckGo HTML search, result parsing, content extraction. This is the foundation.
+2. WebSearchTool agent tool — struct in tools.rs, registration in agent_builder.rs. The agent can now search the web.  
+3. `/web search` slash command — user-facing search in `commands_web.rs, completions in commands.rs, help in help_data.rs`.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how much room is left in commands_web.rs for search … (2 lines)  ▶ $ # Check existing web subcommands pattern (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check the dispatch handler for /web to see how it's called (2 lines) ✓ (4ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Good. Now I'll write the plan. The key insight is that tasks need to be well-scoped and independently verifiable.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (71 lines) ✓ (50.0s)
+  ▶ write session_plan/task_02.md (61 lines) ✓ (47.5s)
+  ▶ write session_plan/task_03.md (96 lines) ✓ (47.2s)
+  ▶ write session_plan/issue_responses.md (10 lines) ✓ (47.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+  6 tools completed in 4m 4s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 97 (15:45) Session Plan — Web Search Capability
+
+**Theme:** Closing the #1 competitive gap — every major competitor (Claude Code, Cursor, Gemini CLI, Aider) has built-in web search. yoyo doesn't. Today that changes.
+
+### Task 1: Web search engine functions
+Files: src/commands_web.rs  
+DuckDuckGo HTML search + result parsing. Foundation layer: WebSearchResult struct, web_search() function, format_search_results(), HTML parsing with mock-based tests. No API key needed.
+
+### Task 2: WebSearchTool — agent-callable tool
+Files: `src/tools.rs, src/agent_builder.rs`  
+Wire the search engine into a web_search tool the agent can call during problem-solving. Register in BUILTIN_TOOL_NAMES (MCP collision guard), add to build_tools and sub-agent tools.
+
+### Task 3: `/web search` slash command
+Files: src/commands_web.rs, `src/commands.rs, src/help_data.rs`  
+User-facing search: /web search <query> with colored output, command completions, and help text. Preserves existing /web <url> behavior.
+
+**0 community issues.** All 3 slots are self-driven, targeting the same competitive gap from three angles: engine → agent tool → user command.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
