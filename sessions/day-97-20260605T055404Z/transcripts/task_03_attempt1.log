@@ -1,0 +1,187 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: showing a session resume hint at startup when an auto-saved session exists.
+
+Let me start by understanding the relevant code.
+  ▶ read src/banner.rs  ▶ read src/cli_config.rs ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me find the REPL startup path in `main.rs`:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'print_banner' in src/main.rs  ▶ search 'run_repl' in src/main.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ search 'banner' in src/main.rs ✓ (2ms)
+  ▶ search 'print_banner' in src (*.rs) ✓ (8ms)
+  4 tools completed in 7.4s (4 ✓)
+
+The banner is printed in repl.rs. Let me look at the context around line 616 in repl.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:610..640 ✓ (1ms)
+  ▶ read src/repl.rs:639..679 ✓ (1ms)
+  ▶ read src/repl.rs:678..708 ✓ (1ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Interesting! There's already a session hint at lines 681-686. Let me look more closely at what it does:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'last_session_exists' in src ✓ (8ms)
+  ▶ read src/commands_session.rs:390..400 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+OK, so the existing hint at line 682-686 is simple — it just checks if the file exists and shows a static message. The task asks me to enhance this with:
+1. A relative time display (how old the session is)
+2. Filtering out stale sessions (>7 days)
+3. A cleaner format
+
+The task says to put the logic in banner.rs as session_resume_hint() -> Option<String>, and call it from main.rs. But the actual call site is in repl.rs. Let me re-read the task more carefully...
+
+The task says "In src/main.rs, in the REPL startup path (after print_banner but before run_repl)". But `print_banner is called inside print_startup_info which is called from run_repl`. The existing hint is already inside print_startup_info in repl.rs.
+
+The cleanest approach is: put the session_resume_hint() function in banner.rs (as specified), and replace the existing simple hint in repl.rs with a call to the new function. This achieves the task's goal while working with the actual code structure.
+
+Let me now implement this. First, tests and the function in banner.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/banner.rs:1..6 ✓ (0ms)
+
+Now let me add the session_resume_hint function and tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/banner.rs (4 → 5 lines)
+    
+    use crate::cli_config::VERSION;
+    use crate::format::{BOLD, CYAN, DIM, RESET};
+  + use crate::format::YELLOW;
+ ✓ (13.9s)
+
+YELLOW is already imported elsewhere, let me check:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'YELLOW' in src/banner.rs ✓ (2ms)
+
+I'll add the function first, which will use YELLOW, so the import will be needed. Let me add the function and tests together:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/banner.rs:178..188 ✓ (0ms)
+
+Now let me add session_resume_hint and a testable helper right before the tests module:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/banner.rs (7 → 52 lines)
+    /// This replaces the terse error when running interactively (REPL mode) without setup.
+    pub fn print_welcome() {
+        print!("{}", get_welcome_text());
+  + }
+  + 
+  + /// Format a duration as a human-friendly relative time string.
+  + ///
+  + /// Returns "just now" (<1min), "Xm ago" (<1h), "Xh ago" (<24h), "Xd ago" (<7d).
+  + pub(crate) fn format_session_age(elapsed_secs: u64) -> String {
+  +     if elapsed_secs < 60 {
+  +         "just now".to_string()
+  +     } else if elapsed_secs < 3600 {
+  +         format!("{}m ago", elapsed_secs / 60)
+  +     } else if elapsed_secs < 86400 {
+  +         format!("{}h ago", elapsed_secs / 3600)
+  +     } else {
+  +         format!("{}d ago", elapsed_secs / 86400)
+  +     }
+  + }
+  + 
+  ... (31 more lines)
+ ✓ (14.1s)
+
+The functions aren't used yet from outside — I need to add the tests and wire up the call. Let me add tests first, then wire it into repl.rs. Let me add tests to the test module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/banner.rs:232..252 ✓ (1ms)
+  ▶ read src/banner.rs:408..413 ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me add the session resume hint tests at the end of the test module:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/banner.rs (5 → 54 lines)
+                welcome.contains("bedrock"),
+                "welcome text should mention bedrock"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_session_age() {
+  +         assert_eq!(format_session_age(0), "just now");
+  +         assert_eq!(format_session_age(30), "just now");
+  +         assert_eq!(format_session_age(59), "just now");
+  +         assert_eq!(format_session_age(60), "1m ago");
+  +         assert_eq!(format_session_age(300), "5m ago");
+  +         assert_eq!(format_session_age(3599), "59m ago");
+  +         assert_eq!(format_session_age(3600), "1h ago");
+  +         assert_eq!(format_session_age(7200), "2h ago");
+  +         assert_eq!(format_session_age(86399), "23h ago");
+  +         assert_eq!(format_session_age(86400), "1d ago");
+  +         assert_eq!(format_session_age(259200), "3d ago");
+  +     }
+  + 
+  ... (34 more lines)
+ ✓ (14.0s)
+
+Functions are detected as unused because they're only used in tests (which is `#[cfg(test)] gated). I need to wire up the call from repl.rs` first. Let me update repl.rs to use the new function:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:678..688 ✓ (1ms)
+  ▶ edit src/repl.rs (6 → 6 lines)
+        // Hint about previous session if one exists and --continue wasn't used
+  -     if !repl_config.continue_session && commands::last_session_exists() {
+  -         println!(
+  -             "{DIM}  💡 Previous session found. Use {YELLOW}--continue{RESET}{DIM} or {YELLOW}/load .yoyo/last-session.json{RESET}{DIM} to resume.{RESET}\n"
+  -         );
+  +     if !repl_config.continue_session {
+  +         if let Some(hint) = crate::banner::session_resume_hint() {
+  +             println!("{hint}\n");
+  +         }
+        }
+ ✓ (13.9s)
+  2 tools completed in 24.2s (2 ✓)
+
+`last_session_exists` is now unused. I should keep it — it's a general utility and has its own test. Let me check if it's only imported in commands.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'last_session_exists' in src/commands.rs ✓ (2ms)
+
+It's only re-exported in commands.rs which was the only consumer. Let me remove the re-export:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:552..557 ✓ (0ms)
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -     handle_search, last_session_exists, reset_compact_thrash, Bookmarks,
+  +     handle_search, reset_compact_thrash, Bookmarks,
+ ✓ (13.7s)
+  2 tools completed in 18.4s (2 ✓)
+
+The function itself is now dead. It has a test, but it's still flagged as unused. Since I'm replacing it with a better approach, I should keep it but mark it as `pub(crate) or just allow it. Actually, looking at it — last_session_exists is a trivial one-liner that just checks path existence. My new session_resume_hint` subsumes it completely (it checks existence AND staleness AND formats a hint). Let me just remove the unused warning by making it pub(crate) which should still be visible to tests:
+
+Actually, the simplest approach: the function and its test still exist in commands_session.rs. Clippy is complaining it's never used from non-test code. Let me just keep it as pub(crate) — wait, it's already pub. The issue is no non-test code calls it anymore. Let me check if the test imports it:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:1087..1097 ✓ (0ms)
+
+The test calls it via super::*. The function is pub but clippy reports it as dead code because no non-test code references it. I should keep the function available since it's a useful utility — let me make my `session_resume_hint_at` call it internally so it stays used, or better yet, I'll just adjust my code to not duplicate the path check logic. Actually the cleanest solution: leave last_session_exists alone but use it from session_resume_hint. Let me think about this differently.
+
+Actually, my session_resume_hint_at already subsumes last_session_exists — it does `fs::metadata().ok()?` which returns None when the file doesn't exist. The old function is genuinely dead. I can either:
+1. Remove last_session_exists and its test
+2. Add #[allow(dead_code)]
+
+But the task says "Never delete existing tests." So I shouldn't remove the test. Let me just have session_resume_hint internally use last_session_exists as an early check so it stays alive. Actually that's silly — session_resume_hint_at already handles the non-existence case via the ? operator.
+
+The simplest approach: keep last_session_exists as pub(crate) and reference it somewhere, or just... actually, looking at this again — the rule says "Never delete existing tests." But the last_session_exists function is genuinely dead now. The function itself isn't a test. Let me check if the test exercises some broader behavior...
+
+The test just verifies last_session_exists() doesn't panic. My new code replaces this functionality with something better. I should leave the function and test but suppress the warning:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:390..395 ✓ (1ms)
+
+I'll keep the function but allow dead_code since it's a utility that may be useful again:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (2 → 3 lines)
+    /// Check whether a previous auto-saved session exists at `.yoyo/last-session.json`.
+  + #[allow(dead_code)]
+    pub fn last_session_exists() -> bool {
+ ✓ (1m 1s)
+
+Now let me run the full check:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.6s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

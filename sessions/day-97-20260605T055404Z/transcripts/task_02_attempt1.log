@@ -1,0 +1,69 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll find and fix the fragile test. Let me start by looking at the relevant test code.
+  ▶ $ grep -n "detect_watch_all_phases_returns_separate_commands" src/watch.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+  ▶ read src/watch.rs:2020..2070 ✓ (2ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now let me see the existing detect_watch_all_phases_for_dir_rust_project test to follow the same pattern:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:2065..2090 ✓ (1ms)
+  ▶ read src/watch.rs:2089..2104 ✓ (1ms)
+  2 tools completed in 6.7s (2 ✓)
+
+The existing detect_watch_all_phases_for_dir_rust_project test is essentially identical in assertions. The fragile test just needs to be converted to use the `_for_dir` variant with a temp directory. Let me replace it:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (26 → 34 lines)
+  -     #[serial]
+        #[test]
+        fn detect_watch_all_phases_returns_separate_commands() {
+  -         // In a Rust project (CWD), should return 2 separate commands.
+  -         // NOTE: depends on CWD being a project directory with a detectable type.
+  -         // Assertions are lenient — accept clippy or cargo check for lint phase.
+  -         let phases = detect_watch_all_phases();
+  +         // Use a temp directory with Cargo.toml so the test doesn't depend on CWD.
+  +         let tmp = std::env::temp_dir().join("yoyo_test_watch_phases_separate");
+  +         let _ = std::fs::create_dir_all(&tmp);
+  +         std::fs::write(
+  +             tmp.join("Cargo.toml"),
+  +             "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+  +         )
+  +         .expect("failed to write temp Cargo.toml");
+  + 
+  +         let phases = detect_watch_all_phases_for_dir(&tmp);
+            assert!(phases.is_some(), "should detect phases in a Rust project");
+            let phases = phases.unwrap();
+            assert_eq!(
+  ... (8 more lines)
+ ✓ (1m 0s)
+
+Now let me check if #[serial] is still needed — if removing it leaves unused imports:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "serial" src/watch.rs | head -20 ✓ (3ms)
+
+Good — serial is still used by many other tests, so the import stays. Now let me run the checks:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test detect_watch_all_phas… ✓ (151ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (31.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (119ms)
+  4 tools completed in 53.6s (4 ✓)
+
+All checks pass. Let me commit:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done. The fix was straightforward — same pattern as the Day 96 fix for `handle_watch_bare_sets_lint_and_test`:
+
+1. Replaced `detect_watch_all_phases() (CWD-dependent) with detect_watch_all_phases_for_dir(&tmp) using a temp directory containing a Cargo.toml`
+2. Removed the #[serial] attribute since the test no longer touches shared state
+3. Added cleanup via remove_dir_all
+
+The test now creates its own isolated Rust project directory instead of depending on CWD being a Rust project — no more CI flakes from this one.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

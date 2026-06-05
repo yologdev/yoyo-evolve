@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 2.5s (2 ✓)
+
+No community issues. All 3 slots are self-driven. Let me check the current state of hooks and what Claude Code's hook feedback system looks like, plus check model registry freshness.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ wc -l src/hooks.rs  ▶ $ head -80 src/hooks.rs  ▶ $ grep -n "fn " src/providers.rs | head -30 ✓ (3ms)
+ ✓ (13ms)
+ ✓ (40ms)
+  ▶ $ grep -n "known_models_for_provider" src/providers.rs | head -5  ▶ $ sed -n '42,140p' src/providers.rs ✓ (3ms)
+ ✓ (4ms)
+  5 tools completed in 3.9s (5 ✓)
+
+Now let me look at what hooks currently can and can't do, and what "hook feedback loops" means:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '80,200p' src/hooks.rs  ▶ $ grep -n "struct\|impl\|fn " src/hooks.rs | head -40 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me think about the assessment's identified gaps and plan the session. The assessment highlights:
+
+1. Hook feedback loops — hooks that can influence the next turn (Claude Code has additionalContext that hooks can inject into subsequent turns)
+2. Model registry freshness — a Day 64 learning about external world knowledge decaying
+3. **`detect_watch_all_phases_returns_separate_commands` test fragility** — depends on CWD being a Rust project
+
+Let me check the fragile test and what the current hook system looks like in terms of "feedback":
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "detect_watch_all_phases_returns_separate_commands" src/watch.rs  ▶ $ sed -n '215,275p' src/hooks.rs ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ sed -n '2020,2080p' src/watch.rs ✓ (3ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Good. Now I have a clear picture. Let me plan three high-impact tasks:
+
+**Task 1 (Self-driven, competitive gap):** Hook feedback — add context_feedback to post-hooks so hooks can inject additional context into the next agent turn. This is the #2 competitive gap from the assessment.
+
+Task 2 (Self-driven, stability): Fix the fragile detect_watch_all_phases_returns_separate_commands test — parameterize it like the other test was fixed.
+
+Task 3 (Self-driven, competitive gap): Model registry freshness — add a mechanism to detect and warn when models might be stale, and update the registry with any known recent models.
+
+Actually, let me reconsider. The hook feedback loop is architecturally complex — it would need to thread context back through the agent loop. Let me think about what's most impactful and achievable in 20 minutes each.
+
+Let me look at more concrete competitive gaps:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "detect_watch_all_phases\b" src/watch.rs | head -10  ▶ $ grep -rn "post_execute\|pre_execute\|HookContext\|hook_context\|additional_conte… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Let me think about what's most impactful for the three task slots. Given the assessment:
+
+1. Hook feedback loops — This is the biggest competitive gap that's actually buildable (vs architectural gaps like daemon mode). But it needs careful design. I'll scope it to: post-hooks can return additional_context that gets appended to the tool result shown to the agent. This is achievable in 1-2 files.
+
+2. Fix fragile test — Small, clean, improves CI reliability. 1 file.
+
+3. Something more impactful — Let me think about what real developers need. Looking at the assessment again: "Session persistence/resume" is mentioned as a gap. We have save/load but no automatic session resume. What about auto-save improvements? Or... let me look at what else would be high-impact.
+
+Actually, from the assessment: "help_data.rs has lowest test density (1,501 lines, 12 tests)" — but that's static data, not high-impact. Let me think about user-facing improvements.
+
+The hook feedback loop is the most competitive-gap-closing thing I can do. Let me scope it carefully.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '321,400p' src/hooks.rs ✓ (3ms)
+
+Interesting — the current post-hooks say "Post-hooks are for observation/logging, not mutation of the ToolResult structure." This is exactly the gap Claude Code closed with additionalContext. The hook can observe but can't feed back into the agent's context.
+
+Now let me plan the three tasks. I want:
+
+1. Hook feedback — Allow post-hooks to return additional context that gets appended to the tool result. This closes a key competitive gap.
+2. **Fix fragile watch test** — Parameterize `detect_watch_all_phases_returns_separate_commands` to use a temp dir.
+3. Something developer-facing — What about improving session auto-save? Let me check what we have.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto_save\|auto-save\|AutoSave" src/commands_session.rs | head -10  ▶ $ grep -n "auto_save\|auto-save" src/main.rs | head -10 ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Let me think about a third task that would be high impact. Looking at the assessment gaps: model registry freshness is a "Day 64 learning" — knowledge about the external world decays silently. I could add a /models refresh or staleness warning. But that's more speculative.
+
+What about something more concrete? Let me look at what users would love:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "fn handle_history\b" src/commands_session.rs  ▶ $ grep -n "session_resume_summary" src/commands_session.rs ✓ (9ms)
+ ✓ (40ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Let me think about the hook feedback loop more carefully. The key insight from Claude Code's approach: when a hook fires (e.g., a linter), its output can be injected as additionalContext into the agent's next turn. This means the agent becomes aware of the hook's observations and can adapt.
+
+In yoyo's current system, post-hooks can see tool output but can only log/observe — they can't feed information back to the agent. The fix: let post_execute optionally return feedback text that gets appended to the tool result content.
+
+This is a clean 2-file change: hooks.rs (trait + registry + HookedTool) and tests.
+
+For the third task, let me think about what's most developer-impactful. Given the streak of 10 sessions with no issues, the codebase is stable. What about improving the /spawn system to be more like Claude Code's multi-agent orchestration? That's too big for one task.
+
+What about: auto-resume — when yoyo starts in a directory with a saved session, offer to resume it? Let me check if we already do this:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "last_session_exists\|continue_session\|resume" src/main.rs | head -10 ✓ (3ms)
+  ▶ $ sed -n '600,650p' src/main.rs ✓ (3ms)
+  2 tools completed in 11.0s (2 ✓)
+
+OK so we already have --continue to resume sessions. Let me look for something else. What about: hook feedback is task 1, **fix fragile test** is task 2, and for task 3, I'll do something that closes a real user-experience gap.
+
+Let me check what /spawn looks like and whether it supports any kind of status monitoring:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_spawn_status" src/commands_spawn.rs  ▶ $ sed -n '1,30p' src/commands_spawn.rs ✓ (3ms)
+ ✓ (8ms)
+  2 tools completed in 1.9s (2 ✓)
+
+OK, let me think about a different angle for task 3. The assessment says:
+
+│ The remaining competitive gaps are increasingly architectural (persistent daemons, IDE integration, cloud agents) rather than feature-based. The features we can build (better hook system, model registry refresh, session persistence) are where effort should go.
+
+For task 3, how about **session continuity improvements** — specifically, detecting stale auto-saved sessions and showing a hint at startup? Right now, if you have an auto-saved session from yesterday, yoyo doesn't tell you. Claude Code shows "Resume previous conversation?" We could show a hint like "Previous session from 2h ago found — use --continue to resume" if there's a saved session.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "print_welcome\|get_welcome_text" src/banner.rs  ▶ $ grep -n "print_banner\|print_welcome" src/main.rs | head -10 ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ sed -n '570,600p' src/main.rs ✓ (3ms)
+  ▶ $ sed -n '690,770p' src/main.rs ✓ (4ms)
+  4 tools completed in 6.3s (4 ✓)
+
+I see — when continue_session is false (default), we don't check if there's a saved session. Let me plan task 3 as: **show a session resume hint at startup** — if an auto-saved session exists and user didn't pass --continue, show a hint line in the banner.
+
+Now let me write the plan:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (50 lines) ✓ (45.5s)
+  ▶ write session_plan/task_02.md (29 lines) ✓ (45.2s)
+  ▶ write session_plan/task_03.md (38 lines) ✓ (44.1s)
+  ▶ write session_plan/issue_responses.md (15 lines) ✓ (45.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 3m 46s (6 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 97 Session Plan
+
+3 self-driven tasks (no community issues today):
+
+| # | Task | Files | Why |
+|---|------|-------|-----|
+| 1 | Hook feedback loops | src/hooks.rs | Biggest actionable competitive gap vs Claude Code — their hooks inject additionalContext back into the agent; ours are observe-only. Extend post_execute to return optional feedback that gets appended to tool results. |
+| 2 | Fix fragile watch test | src/watch.rs | detect_watch_all_phases_returns_separate_commands depends on CWD being a Rust project — same fragility that caused a CI panic in the trajectory. Parameterize with temp dir. |
+| 3 | Session resume hint at startup | src/banner.rs, src/main.rs | When auto-saved session exists and user didn't pass --continue, show a subtle hint. Closes UX gap vs Claude Code's "Resume previous conversation?" |
+
+Trajectory context: 10 consecutive successful sessions, 0 reverts. Codebase is stable and mature. The competitive frontier has shifted from single-prompt capability (where we're close) to multi-agent orchestration and hook feedback (where Claude Code is pulling ahead). Task 1 addresses the most buildable part of that gap.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

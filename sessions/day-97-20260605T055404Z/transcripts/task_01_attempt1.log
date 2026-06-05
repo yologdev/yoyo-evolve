@@ -1,0 +1,509 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current src/hooks.rs to understand the existing hook system.
+  ▶ read src/hooks.rs ✓ (6ms)
+
+Let me read the middle section too (the HookedTool, AuditHook, ShellHook, and other implementations):
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:100..500 ✓ (3ms)
+  ▶ read src/hooks.rs:198..598 ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me see the HookedTool implementation and the rest:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:300..450 ✓ (1ms)
+
+Now let me read the remaining test section:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:597..877 ✓ (2ms)
+
+Now I have a complete picture of the file. Let me plan the changes:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 20.7s (8 ✓)
+
+Let me start implementing. First, I need to understand the `run_command` method better since I need to modify it for ShellHook to capture stderr:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:177..217 ✓ (0ms)
+
+Good. stderr is already piped but not captured. I need to change run_command to also return captured stderr. Let me also check the UppercaseHook and TagHook test hooks:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:497..557 ✓ (1ms)
+
+Now I have the full picture. Let me also check what PostHookResult type the run_post_hooks needs to return so HookedTool can use it:
+
+Now I'll implement the changes. The key changes:
+
+1. Add PostHookResult struct
+2. Change Hook::post_execute to return Result<PostHookResult, String>
+3. Change `HookRegistry::run_post_hooks to return PostHookResult` (collecting feedback)
+4. Update AuditHook (observe-only, no feedback)
+5. Change ShellHook::run_command to return stderr, and `ShellHook::post_execute` to use it as feedback
+6. Update HookedTool::execute to inject feedback into tool result
+7. Update all test hooks
+
+Let me do this step by step:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+**Step 1: Add PostHookResult struct**
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (6 → 41 lines)
+  + /// Result returned by a post-hook, carrying both the (possibly modified) output
+  + /// and optional feedback that will be injected into the agent's context.
+  + ///
+  + /// Feedback is additional context from the hook — e.g. linter warnings, security
+  + /// scan results — that the agent should see on its next turn. It's separate from
+  + /// the tool output itself so hooks can add information without modifying what the
+  + /// tool actually returned.
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub struct PostHookResult {
+  +     /// The (possibly modified) tool output, threaded through the hook chain.
+  +     pub output: String,
+  +     /// Optional feedback to inject into the agent's context. `None` means the hook
+  +     /// has nothing extra to say; the tool result passes through unchanged.
+  +     pub feedback: Option<String>,
+  + }
+  + 
+  + impl PostHookResult {
+  +     /// Convenience: wrap output with no feedback.
+  +     pub fn passthrough(output: &str) -> Self {
+  +         Self {
+  ... (22 more lines)
+ ✓ (14.0s)
+
+Expected — I need to wire it in. Let me continue with all the changes:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.7s (2 ✓)
+
+**Step 2: Update the Hook trait's post_execute default**
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (9 → 14 lines)
+  -     /// Post-execute: can inspect/log the result. Return modified output or pass through.
+  +     /// Post-execute: can inspect/modify the result and optionally return feedback.
+  +     ///
+  +     /// The `output` field in [`PostHookResult`] threads through the hook chain (each
+  +     /// hook sees the previous hook's output). The `feedback` field is collected across
+  +     /// all hooks and concatenated — it's injected into the agent's context as an
+  +     /// additional `Content::Text` block after the tool result.
+        fn post_execute(
+            &self,
+            _tool_name: &str,
+            _params: &serde_json::Value,
+            output: &str,
+  -     ) -> Result<String, String> {
+  -         Ok(output.to_string())
+  +     ) -> Result<PostHookResult, String> {
+  +         Ok(PostHookResult::passthrough(output))
+        }
+ ✓ (8.2s)
+
+Good, the trait change is propagating errors to implementors. Let me update them all:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+**Step 3: Update HookRegistry::run_post_hooks to return PostHookResult with collected feedback**
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (14 → 30 lines)
+        /// Run all post-hooks in order, threading output through each.
+  -     /// Returns the final (possibly modified) output, or Err if a hook fails.
+  +     /// Collects feedback from all hooks. Returns the final (possibly modified) output
+  +     /// plus any concatenated feedback, or Err if a hook fails.
+        pub fn run_post_hooks(
+            &self,
+            tool_name: &str,
+            params: &serde_json::Value,
+            output: &str,
+  -     ) -> Result<String, String> {
+  +     ) -> Result<PostHookResult, String> {
+            let mut current = output.to_string();
+  +         let mut all_feedback: Vec<String> = Vec::new();
+            for hook in &self.hooks {
+  -             current = hook.post_execute(tool_name, params, &current)?;
+  +             let result = hook.post_execute(tool_name, params, &current)?;
+  +             current = result.output;
+  +             if let Some(fb) = result.feedback {
+  +                 if !fb.is_empty() {
+  +                     all_feedback.push(fb);
+  ... (14 more lines)
+ ✓ (8.3s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 12.4s (2 ✓)
+
+**Step 4: Update AuditHook::post_execute** (observe-only, no feedback)
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (15 → 16 lines)
+            tool_name: &str,
+            params: &serde_json::Value,
+            output: &str,
+  -     ) -> Result<String, String> {
+  +     ) -> Result<PostHookResult, String> {
+            // Only log if audit mode is enabled
+            if is_audit_enabled() {
+                // We don't have precise duration here (the HookedTool wrapper measures it),
+  ···
+                // Log with duration=0 — the actual timing is handled by the event stream.
+                audit_log_tool_call(tool_name, params, 0, true);
+            }
+  -         Ok(output.to_string())
+  +         // AuditHook is observe-only — no feedback
+  +         Ok(PostHookResult::passthrough(output))
+        }
+ ✓ (8.1s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 10.2s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0053][0m[1m: method `post_execute` has an incompatible type for trait[0m
+   [1m[94m--> [0msrc/hooks.rs:304:10
+    [1m[94m|[0m
+[1m[94m304[0m [1m[94m|[0m     ) -> Result<String, String> {
+    [1m[94m|[0m          [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mexpected `hooks::PostHookResult`, found `std::string::String`[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: type in trait
+   [1m[94m--> [0msrc/hooks.rs:76:10
+    [1m[94m|[0m
+[1m[94m 76[0m [1m[94m|[0m     ) -> Result<PostHookResult, String> {
+    [1m[94m|[0m          [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m= [0m[1mnote[0m: expected signature `fn(&hooks::ShellHook, &_, &serde_json::Value, &_) -> std::result::Result<[1m[35mhooks::PostHookResult[0m, _>`
+               found signature `fn(&hooks::ShellHook, &_, &serde_json::Value, &_) -> std::result::Result<[1m[35mstd::string::String[0m, _>`
+[1m[96mhelp[0m: change the output type to match the trait
+    [1m[94m|[0m
+[1m[94m304[0m [91m- [0m    ) -> [91mResult<String, String>[0m {
+[1m[94m304[0m [92m+ [0m    ) -> [92mstd::result::Result<hooks::PostHookResult, std::string::String>[0m {
+    [1m[94m|[0m
+
+[1m[91merror[E0053][0m[1m: method `post_execute` has an incompatible type for trait[0m
+   [1m[94m--> [0msrc/hooks.rs:565:14
+    [1m[94m|[0m
+[1m[94m565[0m [1m[94m|[0m         ) -> Result<String, String> {
+    [1m[94m|[0m              [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mexpected `hooks::PostHookResult`, found `std::string::String`[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: type in trait
+   [1m[94m--> [0msrc/hooks.rs:76:10
+    [1m[94m|[0m
+[1m[94m 76[0m [1m[94m|[0m     ) -> Result<PostHookResult, String> {
+    [1m[94m|[0m          [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m= [0m[1mnote[0m: expected signature `fn(&hooks::tests::UppercaseHook, &...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the file to understand what still needs updating:
+  ▶ read src/hooks.rs ✓ (5ms)
+
+Now let me see the three remaining broken areas: ShellHook::post_execute, UppercaseHook, TagHook, HookedTool::execute, and test assertions:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:290..320 ✓ (1ms)
+  ▶ read src/hooks.rs:319..329 ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me see the HookedTool::execute and the run_command method:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:230..310 ✓ (1ms)
+
+Now let me see the HookedTool::execute:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:390..450 ✓ (1ms)
+
+Now let me see the test hooks that need updating:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:550..630 ✓ (1ms)
+
+Now let me also check what test assertions reference run_post_hooks return values:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:490..510 ✓ (1ms)
+
+Also check the ShellHook post_execute test assertions:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:810..830 ✓ (0ms)
+  ▶ read src/hooks.rs:843..873 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me also check the AuditHook test:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:680..700 ✓ (1ms)
+
+Good. Now I have a complete picture of all the places that need fixing. There are 6 areas:
+
+1. ShellHook::run_command — needs to return stderr too
+2. ShellHook::post_execute — return type and capture stderr as feedback
+3. UppercaseHook test hook — return type
+4. TagHook test hook — return type
+5. HookedTool::execute — inject feedback into tool result
+6. **Test assertions** — update to use PostHookResult comparisons
+
+Let me make all the fixes now:
+
+Fix 1: ShellHook::run_command — return stderr along with exit code
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (36 → 45 lines)
+        /// Run the shell command with the given environment variables.
+  -     /// Returns Ok(exit code) or Err on timeout/spawn failure.
+  -     fn run_command(&self, env_vars: &[(&str, &str)]) -> Result<i32, String> {
+  +     /// Returns Ok((exit_code, stderr_output)) or Err on timeout/spawn failure.
+  +     /// Stderr is captured so post-hooks can use it as feedback to the agent.
+  +     fn run_command(&self, env_vars: &[(&str, &str)]) -> Result<(i32, String), String> {
+  +         use std::io::Read;
+            use std::process::Command;
+            use std::time::Duration;
+    
+  ···
+    
+            loop {
+                match child.try_wait() {
+  -                 Ok(Some(status)) => return Ok(status.code().unwrap_or(1)),
+  +                 Ok(Some(status)) => {
+  +                     // Capture stderr output for feedback
+  +                     let mut stderr_buf = String::new();
+  +                     if let Some(mut stderr) = child.stderr.take() {
+  +                         let _ = stderr.read_to_string(&mut stderr_buf);
+  ... (6 more lines)
+ ✓ (8.2s)
+
+Right, the pre_execute also calls run_command and needs updating for the new return type. Let me fix both:
+
+Fix 2: ShellHook pre_execute — adapt to new run_command signature
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (5 → 5 lines)
+            match self.run_command(&env_vars) {
+  -             Ok(0) => Ok(None), // Success — proceed with tool execution
+  -             Ok(code) => Err(format!("Pre-hook '{}' exited with code {code}", self.name)),
+  +             Ok((0, _)) => Ok(None), // Success — proceed with tool execution
+  +             Ok((code, _)) => Err(format!("Pre-hook '{}' exited with code {code}", self.name)),
+                Err(e) => Err(e),
+            }
+ ✓ (8.2s)
+
+**Fix 3: ShellHook::post_execute — return PostHookResult with stderr as feedback**
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (24 → 36 lines)
+            tool_name: &str,
+            params: &serde_json::Value,
+            output: &str,
+  -     ) -> Result<String, String> {
+  +     ) -> Result<PostHookResult, String> {
+            if self.phase != HookPhase::Post || !self.matches_tool(tool_name) {
+  -             return Ok(output.to_string());
+  +             return Ok(PostHookResult::passthrough(output));
+            }
+    
+            let params_str = params.to_string();
+  ···
+                ("TOOL_OUTPUT", truncated_output.as_str()),
+            ];
+    
+  -         // Post-hooks observe but don't modify — always pass through original output
+  +         // Post-hooks pass through original output; stderr becomes feedback
+            match self.run_command(&env_vars) {
+  -             Ok(_) | Err(_) => Ok(output.to_string()),
+  +             Ok((_, stderr)) => {
+  ... (14 more lines)
+ ✓ (8.3s)
+
+Good, down to test hooks and test assertions. Let me fix all of them now:
+
+**Fix 4: UppercaseHook test — update return type**
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (15 → 15 lines)
+                _tool_name: &str,
+                _params: &serde_json::Value,
+                output: &str,
+  -         ) -> Result<String, String> {
+  -             Ok(output.to_uppercase())
+  +         ) -> Result<PostHookResult, String> {
+  +             Ok(PostHookResult::passthrough(&output.to_uppercase()))
+            }
+        }
+ ✓ (8.3s)
+
+**Fix 5: TagHook test — update return type**
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (17 → 17 lines)
+                _tool_name: &str,
+                _params: &serde_json::Value,
+                output: &str,
+  -         ) -> Result<String, String> {
+  -             Ok(format!("{output}:{}", self.tag))
+  +         ) -> Result<PostHookResult, String> {
+  +             Ok(PostHookResult::passthrough(&format!("{output}:{}", self.tag)))
+            }
+        }
+ ✓ (8.2s)
+
+Good progress — now just test assertions and `with_feedback` usage. Let me fix all the test assertions at once:
+
+Fix 6: Update test assertions to use PostHookResult
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (7 → 7 lines)
+            let registry = HookRegistry::new();
+            let params = serde_json::json!({});
+            let result = registry.run_post_hooks("bash", &params, "hello world");
+  -         assert_eq!(result, Ok("hello world".to_string()));
+  +         assert_eq!(result, Ok(PostHookResult::passthrough("hello world")));
+        }
+ ✓ (8.3s)
+  ▶ edit src/hooks.rs (1 → 1 lines)
+  -         assert_eq!(result, Ok("HELLO".to_string()));
+  +         assert_eq!(result, Ok(PostHookResult::passthrough("HELLO")));
+ ✓ (8.3s)
+  ▶ edit src/hooks.rs (1 → 1 lines)
+  -         assert_eq!(result, Ok("start:first:second:third".to_string()));
+  +         assert_eq!(result, Ok(PostHookResult::passthrough("start:first:second:third")));
+ ✓ (8.6s)
+  3 tools completed in 30.5s (3 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+Let me fix all remaining issues at once. There are 4 test assertions still using Ok(String) instead of Ok(PostHookResult), plus the unused with_feedback function.
+  ▶ read src/hooks.rs:713..718 ✓ (1ms)
+  ▶ read src/hooks.rs:844..849 ✓ (1ms)
+  ▶ read src/hooks.rs:875..880 ✓ (1ms)
+  ▶ read src/hooks.rs:891..896 ✓ (0ms)
+  4 tools completed in 8.7s (4 ✓)
+
+Now fix all four assertions and the unused function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (1 → 1 lines)
+  -         assert_eq!(post, Ok("file1.rs\nfile2.rs".to_string()));
+  +         assert_eq!(post, Ok(PostHookResult::passthrough("file1.rs\nfile2.rs")));
+ ✓ (8.5s)
+
+There are two `Ok("file1.rs\nfile2.rs"...` — I fixed the first (line 715, audit hook test), but there's another at line 846 (shell hook post passthrough test). Let me fix the remaining three:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:845..848 ✓ (1ms)
+  ▶ edit src/hooks.rs (3 → 3 lines)
+            let result = hook.post_execute("bash", &params, "file1.rs\nfile2.rs");
+  -         assert_eq!(result, Ok("file1.rs\nfile2.rs".to_string()));
+  +         assert_eq!(result, Ok(PostHookResult::passthrough("file1.rs\nfile2.rs")));
+        }
+ ✓ (8.8s)
+  ▶ edit src/hooks.rs (2 → 2 lines)
+            let result = hook.post_execute("read_file", &params, "content");
+  -         assert_eq!(result, Ok("content".to_string()));
+  +         assert_eq!(result, Ok(PostHookResult::passthrough("content")));
+ ✓ (8.6s)
+  ▶ edit src/hooks.rs (2 → 2 lines)
+            let result = hook.post_execute("bash", &params, "output");
+  -         assert_eq!(result, Ok("output".to_string()));
+  +         assert_eq!(result, Ok(PostHookResult::passthrough("output")));
+ ✓ (14.2s)
+  4 tools completed in 42.1s (4 ✓)
+
+One remaining issue: with_feedback is unused. It's used internally by ShellHook::post_execute (which constructs PostHookResult directly), and it's a public API for external hook implementors. But clippy flags it since nothing in the crate calls it yet. I need to either use it in a test or add a #[cfg(test)] usage. The cleanest fix: use it in the `HookedTool::execute` method or in a new test. Let me add a test that exercises it — this is the "hook with feedback" test from the task spec anyway:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:440..455 ✓ (0ms)
+  ▶ read src/hooks.rs:455..475 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+I need to update the HookedTool::execute to inject feedback AND add a test that uses with_feedback. Let me do both:
+
+First, update HookedTool::execute to inject feedback:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (13 → 17 lines)
+  -         // Run post-hooks (they can inspect/modify the output)
+  +         // Run post-hooks (they can inspect/modify the output and provide feedback)
+            match self
+                .hooks
+                .run_post_hooks(self.inner.name(), &params, &output_text)
+            {
+  -             Ok(_modified) => {
+  -                 // Post-hooks ran successfully. We pass through the original result
+  -                 // unchanged — post-hooks are for observation/logging, not mutation
+  -                 // of the ToolResult structure (which may contain non-text content).
+  -                 Ok(result)
+  +             Ok(post_result) => {
+  +                 let mut final_result = result;
+  +                 // If any post-hook returned feedback, append it as additional context
+  +                 if let Some(feedback) = post_result.feedback {
+  +                     final_result.content.push(Content::Text {
+  +                         text: format!("\n[Hook feedback]\n{feedback}"),
+  +                     });
+  +                 }
+  +                 Ok(final_result)
+  ... (3 more lines)
+ ✓ (14.2s)
+
+Now just the with_feedback dead code issue. Let me find the end of the test module and add a test that uses it — this also covers the "hook with feedback" requirement from the task:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:935..955 ✓ (1ms)
+  ▶ read src/hooks.rs:954..959 ✓ (0ms)
+  ▶ edit src/hooks.rs (5 → 91 lines)
+                names_no, names_yes,
+                "Tool names should be identical with/without audit"
+  +         );
+  +     }
+  + 
+  +     // --- PostHookResult feedback tests ---
+  + 
+  +     /// A test hook that returns feedback alongside the output.
+  +     struct FeedbackHook {
+  +         feedback: String,
+  +     }
+  +     impl Hook for FeedbackHook {
+  +         fn name(&self) -> &str {
+  +             "feedback"
+  +         }
+  +         fn post_execute(
+  +             &self,
+  +             _tool_name: &str,
+  +             _params: &serde_json::Value,
+  +             output: &str,
+  ... (71 more lines)
+ ✓ (14.4s)
+  3 tools completed in 31.6s (3 ✓)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+
+
+The issue is that with_feedback is only used in test code, but clippy checks the non-test build first where it's unused. The fix: the function is pub and intended as API for hook implementors, but since nothing in the main crate uses it yet, I need to suppress the warning.
+  ▶ read src/hooks.rs:34..44 ✓ (1ms)
+  ▶ edit src/hooks.rs (2 → 3 lines)
+        /// Convenience: wrap output with feedback.
+  +     #[allow(dead_code)] // Public API for hook implementors; used in tests
+        pub fn with_feedback(output: &str, feedback: String) -> Self {
+ ✓ (1m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.0s)
+  3 tools completed in 1m 24s (3 ✓)
+
+Clippy passes. Now run tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (31.6s)
+
+All 88 tests pass, 0 failures. Let me also run fmt:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (759ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (749ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now verify everything passes together:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 8s)
+
+All four checks pass: fmt ✓, clippy ✓, build ✓, test ✓ (88 passed). Now commit:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Committed. The change is self-contained in `src/hooks.rs` — no doc updates needed since hooks are internal architecture (not user-facing commands or CLI flags), and the CLAUDE.md architecture section already describes hooks accurately with the existing hooks.rs entry mentioning "Hook trait, HookRegistry, AuditHook, HookedTool wrapper, maybe_hook helper."
+
+  ✓ Watch passed after fix (attempt 3)
+
