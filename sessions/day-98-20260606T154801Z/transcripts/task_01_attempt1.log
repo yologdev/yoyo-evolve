@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement inline diffs for edit_file operations. Let me start by understanding the current code structure.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 19.1s (8 ✓)
+
+Let me explore the relevant code sections in parallel:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct PromptState' in src/prompt.rs ✓ (3ms)
+  ▶ search 'ToolExecutionStart|ToolExecutionEnd|handle_tool_execution' in src/prompt.rs ✓ (3ms)
+  ▶ search 'ToolExecution|tool_execution|ToolStart|ToolEnd' in src/prompt.rs ✓ (3ms)
+  ▶ search 'edit_file|ToolUse|tool_name|audit_inflight' in src/prompt.rs ✓ (3ms)
+  ▶ search 'AgentEvent|StreamEvent|ToolCall|tool_use"' in src/prompt.rs ✓ (3ms)
+  ▶ search 'AgentEvent"' in src/prompt.rs ✓ (3ms)
+  ▶ search 'AgentEvent' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:555..665 ✓ (2ms)
+  8 tools completed in 18.5s (8 ✓)
+
+Now let me find the PromptEventState struct and its methods:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct PromptEventState' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:136..216 ✓ (1ms)
+  ▶ read src/prompt.rs:215..395 ✓ (2ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Now I see the picture. The diff is already shown at `ToolExecutionStart` time (lines 257-265) as a preview — but only when NOT in verbose mode. The task says to show the diff AFTER execution succeeds, which is important for `--auto-edit/--yes` modes where the ConfirmTool is bypassed.
+
+Let me check what format_edit_diff looks like:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn format_edit_diff' in src ✓ (10ms)
+  ▶ read src/format/diff.rs:60..140 ✓ (1ms)
+  ▶ read src/format/diff.rs:139..169 ✓ (0ms)
+  3 tools completed in 10.1s (3 ✓)
+
+Good. Now let me check the current behavior: in `handle_tool_execution_start` the diff is shown (lines 257-265) during the start phase. But when `--auto-edit or --yes` is active, is the ConfirmTool bypassed? Let me check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_edit|auto-edit' in src/tool_wrappers.rs ✓ (2ms)
+  ▶ search 'auto_edit' in src ✓ (10ms)
+  ▶ read src/tools.rs:865..895 ✓ (1ms)
+  3 tools completed in 6.8s (3 ✓)
+
+So when auto_edit or auto_approve is true, the ConfirmTool wrapper is bypassed — the edit just runs directly. But the ToolExecutionStart event still fires and the diff IS shown at that point (lines 257-264).
+
+Wait, let me re-read the task description more carefully:
+
+│ When `--auto-edit or --yes` is active, file operations bypass the ConfirmTool entirely. The user sees only ✓ after an edit_file call — no indication of WHAT changed.
+
+Hmm, but the code at lines 257-265 already shows a diff at ToolExecutionStart. Let me verify: does the diff display in handle_tool_execution_start work regardless of auto-edit mode? It seems like it does — the diff is shown before the tool runs, not inside the ConfirmTool.
+
+But there's a subtle issue: the diff shown at ToolExecutionStart is a PREVIEW (before execution). If the edit fails or the SmartEdit tool fuzzy-matches and adjusts the edit, the actual result could differ. More importantly, the task says:
+
+│ Even in normal confirmation mode, the diff is shown BEFORE execution (as a preview). After execution, there's no diff shown.
+
+So the goal is to show the diff AFTER successful execution. Let me think about what to implement:
+
+1. In handle_tool_execution_end, when edit_file succeeds, retrieve the cached params and show a compact post-execution diff.
+2. To avoid showing the diff twice (both at start and end), I should only show the post-execution diff and potentially skip the start-time diff... but the task says "Add a post-execution diff display" and the start-time diff serves as a preview/confirmation. Let me re-read the task.
+
+The task says to show the diff in `handle_tool_execution_end, in the success branch. This means showing it after the ✓ line. The existing diff at ToolExecutionStart` is for the confirmation prompt. The post-execution diff confirms what actually happened.
+
+Actually, looking at this more carefully — in auto-edit mode, the ConfirmTool is bypassed so there's no confirmation prompt shown. But the ToolExecutionStart event still fires and already shows the diff (lines 257-265). So the user DOES see the diff already, even in auto-edit mode.
+
+But wait — the ConfirmTool shows an interactive diff and asks for approval. When bypassed, the diff in ToolExecutionStart is still shown. So the claim in the task that "The user sees only ✓" might not be entirely accurate about the current state. Let me trace through more carefully.
+
+The format_tool_summary for edit_file shows a one-line summary. Then lines 257-265 show the diff. Then the `✓` appears at the end. So actually diffs ARE shown already...
+
+Let me check whether the ConfirmTool has its own separate diff display that would be IN ADDITION to the ToolExecutionStart display:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:375..475 ✓ (2ms)
+
+OK. Now I understand the full picture. The ConfirmTool shows a diff preview AND asks for confirmation. When auto-edit is active, the ConfirmTool is bypassed entirely. The `handle_tool_execution_start` code (lines 257-265) always shows a diff — but only for edit_file, not when it's wrapped in ConfirmTool.
+
+Wait — actually the `ToolExecutionStart` event fires BEFORE the ConfirmTool prompt. Let me think about this differently.
+
+The flow is:
+1. Agent calls edit_file
+2. ToolExecutionStart event fires → handle_tool_execution_start runs, shows the diff preview
+3. The tool executes (which includes ConfirmTool if not auto-edit)
+4. ToolExecutionEnd event fires → shows ✓ or ✗
+
+So actually the diff IS shown at step 2 regardless of auto-edit mode. The task's claim might be slightly off, but the overall goal is clear: show a compact diff at step 4 (after execution succeeds) so the user sees what actually happened.
+
+Actually, I realize there may be a timing issue. Let me check: when the ConfirmTool wraps the edit, does the `ToolExecutionStart` event fire before the confirmation prompt? If so, the diff would be shown, the user confirms, and then ✓ appears. But in auto-edit, the same flow happens minus the confirmation prompt. So the diff IS already visible.
+
+However, the task is clear about what to implement. Let me just implement it as described — a post-execution diff in handle_tool_execution_end. This is useful because it confirms what was actually done.
+
+Let me now look at the existing format_edit_diff to understand what's already imported:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::format' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:1..31 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me check what format::* re-exports to make sure format_edit_diff is accessible:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub use|format_edit_diff' in src/format/mod.rs ✓ (3ms)
+  ▶ search 'pub use' in src/format/mod.rs ✓ (3ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Good — format_edit_diff is re-exported through pub use diff::*.
+
+Now let me also check the truncate_diff_preview:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn truncate_diff_preview' in src/format/diff.rs ✓ (3ms)
+
+Good. Now I have a clear understanding. Let me implement this:
+
+1. Add edit_params: HashMap<String, serde_json::Value> to `PromptEventState`
+2. In handle_tool_execution_start, cache edit_file params
+3. In handle_tool_execution_end, if tool is edit_file and success, show compact diff
+4. Add tests
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

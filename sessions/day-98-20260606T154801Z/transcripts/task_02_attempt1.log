@@ -1,0 +1,314 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement auto_edit config file support in .yoyo.toml. Let me start by understanding the existing patterns.
+  ▶ search 'parse_auto_watch_from_config' (*.rs)  ▶ search 'SETTABLE_KEYS' (*.rs) ✓ (24ms)
+ ✓ (22ms)
+  ▶ read src/config.rs:450..480  ▶ read src/config.rs:540..570 ✓ (1ms)
+ ✓ (1ms)
+  4 tools completed in 5.0s (4 ✓)
+
+Good, I can see the patterns. Now let me look at the auto_edit flag in cli.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_edit' (*.rs) ✓ (23ms)
+
+Now let me see the relevant section of parse_args in cli.rs where config file values are read:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:570..600 ✓ (1ms)
+
+Now let me find where file_config is loaded and auto_watch is read:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:975..1015 ✓ (2ms)
+
+Now let me check the test section for config parsing:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:1315..1355 ✓ (1ms)
+
+Now let me look at the existing test for auto_edit in cli.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:3265..3300 ✓ (1ms)
+
+Good, I have all the context. Now let me look at the SETTABLE_KEYS test to see if I need to add there:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:1666..1686 ✓ (1ms)
+
+Now let me also check the validate_config_value to understand what I need there:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:569..619 ✓ (1ms)
+  ▶ read src/config.rs:618..668 ✓ (1ms)
+  ▶ read src/config.rs:667..687 ✓ (1ms)
+  3 tools completed in 8.2s (3 ✓)
+
+I have the full picture. Now let me implement all changes. I'll start with the tests and parser in `config.rs`, then the cli.rs integration.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 21.6s (7 ✓)
+
+Let me start implementing. First, add the parser function in config.rs after `parse_auto_commit_from_config`:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (4 → 17 lines)
+  + /// Check whether auto-edit is enabled in the config.
+  + ///
+  + /// Reads `auto_edit` from the given config map. Defaults to `false`
+  + /// when the key is absent — auto-edit must be explicitly opted into
+  + /// via `auto_edit = true` in `.yoyo.toml`. When enabled, file edits
+  + /// are auto-approved without confirmation (bash commands still confirm).
+  + pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  +     match config.get("auto_edit").map(|v| v.as_str()) {
+  +         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  +         _ => false, // default: disabled
+  +     }
+  + }
+  + 
+    /// Check whether lite mode is enabled in the config.
+    ///
+    /// Reads `lite` from the given config map. Defaults to `false`
+ ✓ (14.9s)
+  + /// Check whether auto-edit is enabled in the config.
+  + ///
+  + /// Reads `auto_edit` from the given config map. Defaults to `false`
+  + /// when the key is absent — auto-edit must be explicitly opted into
+  + /// via `auto_edit = true` in `.yoyo.toml`. When enabled, file edits
+  + /// are auto-approved without confirmation (bash commands still confirm).
+  + pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  +     match config.get("auto_edit").map(|v| v.as_str()) {
+  ... (8 more lines)
+  2 tools completed in 24.2s (2 ✓)
+
+Expected — it's not used yet. Let me continue with all changes before running checks.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Now add auto_edit to SETTABLE_KEYS:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (1 → 5 lines)
+        ("auto_watch", "auto-enable watch mode on start (true/false)"),
+  +     (
+  +         "auto_edit",
+  +         "auto-approve file edits without confirmation (true/false)",
+  +     ),
+ ✓ (14.7s)
+        ("auto_watch", "auto-enable watch mode on start (true/false)"),
+  +     (
+  +         "auto_edit",
+  +         "auto-approve file edits without confirmation (true/false)",
+  +     ),
+  ▶ todo ✓ (0ms)
+  3 tools completed in 27.9s (3 ✓)
+
+Now add auto_edit to validate_config_value:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/config.rs (10 → 20 lines)
+                    "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                    _ => Err(format!(
+                        "invalid auto_commit value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+  +         "auto_edit" => {
+  +             let lower = value.to_ascii_lowercase();
+  +             match lower.as_str() {
+  +                 "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+  +                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
+  +                 _ => Err(format!(
+  +                     "invalid auto_edit value '{value}' — use true or false"
+                    )),
+                }
+            }
+ ✓ (14.2s)
+                    "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                    _ => Err(format!(
+                        "invalid auto_commit value '{value}' — use true or false"
+  +                 )),
+  +             }
+  +         }
+  +         "auto_edit" => {
+  +             let lower = value.to_ascii_lowercase();
+  ... (8 more lines)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 25.3s (3 ✓)
+
+Now wire it into cli.rs. Let me update the auto_edit line in `parse_args`:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+I need to see where file_config is available relative to auto_edit:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn parse_output_flags' (src/cli.rs) ✓ (16ms)
+  ▶ search 'OutputFlags' (src/cli.rs) ✓ (16ms)
+  ▶ search 'struct.*Flags|auto_edit.*=.*args' (src/cli.rs) ✓ (16ms)
+  3 tools completed in 7.1s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `parse_auto_edit_from_config` is never used[0m
+   [1m[94m--> [0msrc/config.rs:478:8
+    [1m[94m|[0m
+[1m[94m478[0m [1m[94m|[0m pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the code to understand what's missing — the function was added to config.rs but never wired into cli.rs.
+  ▶ search 'auto_edit.*args.*auto-edit' (src/cli.rs) ✓ (16ms)
+  ▶ search 'auto_edit' (src/cli.rs) ✓ (16ms)
+  ▶ search 'auto-edit' (src/cli.rs) ✓ (15ms)
+  3 tools completed in 10.9s (3 ✓)
+
+Hmm, the cli.rs references seem to have been lost. Let me check the full state:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git diff --stat📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (13ms)
+  ▶ $ git diff src/config.rs ✓ (12ms)
+  2 tools completed in 5.1s (2 ✓)
+
+The config.rs changes are good. Now I need to wire `parse_auto_edit_from_config into cli.rs`. Let me find the auto_edit handling there:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'auto_edit\|auto-edit' src/cli.rs | head -30 ✓ (4ms)
+
+Good, cli.rs still has the auto_edit code. Now I need to see where the `file_config is available relative to line 579 where auto_edit` is computed:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:530..545 ✓ (1ms)
+  ▶ read src/cli.rs:574..594 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+I can see the function signature to check if file_config is a parameter:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn parse_output_flags|fn.*output.*flags|fn.*OutputFlags' (src/cli.rs) ✓ (16ms)
+  ▶ $ grep -n 'fn.*file_config\|OutputFlags' src/cli.rs | head -10 ✓ (4ms)
+  2 tools completed in 6.6s (2 ✓)
+
+The function `parse_output_flags takes file_config` as a parameter, so I can use it. Now I just need to OR in the config file value:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 6 lines)
+        // --auto-edit: auto-approve file edits, still confirm shell commands
+        // --yes implies --auto-edit (approves everything including edits)
+  -     let auto_edit = args.iter().any(|a| a == "--auto-edit") || auto_approve;
+  +     // Also enabled via auto_edit = true in .yoyo.toml
+  +     let auto_edit = args.iter().any(|a| a == "--auto-edit")
+  +         || auto_approve
+  +         || crate::config::parse_auto_edit_from_config(file_config);
+ ✓ (1m 5s)
+        // --auto-edit: auto-approve file edits, still confirm shell commands
+        // --yes implies --auto-edit (approves everything including edits)
+  -     let auto_edit = args.iter().any(|a| a == "--auto-edit") || auto_approve;
+  +     // Also enabled via auto_edit = true in .yoyo.toml
+  +     let auto_edit = args.iter().any(|a| a == "--auto-edit")
+  +         || auto_approve
+  +         || crate::config::parse_auto_edit_from_config(file_config);
+
+Now let me add tests. First, tests for parse_auto_edit_from_config in config.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:1345..1365 ✓ (1ms)
+  ▶ read src/config.rs:1364..1384 ✓ (1ms)
+  ▶ read src/config.rs:1383..1398 ✓ (1ms)
+  3 tools completed in 16.8s (3 ✓)
+
+Now I'll add the auto_edit tests right after the auto_watch tests and before auto_commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (5 → 53 lines)
+            assert!(validate_config_value("auto_watch", "maybe").is_err());
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_edit_defaults_to_false() {
+  +         let config = std::collections::HashMap::new();
+  +         assert!(!parse_auto_edit_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_edit_respects_false() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("auto_edit".to_string(), "false".to_string());
+  +         assert!(!parse_auto_edit_from_config(&config));
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_edit_respects_off() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("auto_edit".to_string(), "off".to_string());
+  ... (32 more lines)
+ ✓ (1m 4s)
+            assert!(validate_config_value("auto_watch", "maybe").is_err());
+  +     }
+  + 
+  +     #[test]
+  +     fn auto_edit_defaults_to_false() {
+  +         let config = std::collections::HashMap::new();
+  +         assert!(!parse_auto_edit_from_config(&config));
+  +     }
+  ... (13 more lines)
+
+Now let me also add a test to the SETTABLE_KEYS completeness check:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:1738..1748 ✓ (1ms)
+  ▶ read src/config.rs:1747..1752 ✓ (1ms)
+  ▶ edit src/config.rs (2 → 6 lines)
+            assert!(keys.contains(&"no_color"), "SETTABLE_KEYS missing no_color");
+  +         assert!(
+  +             keys.contains(&"auto_edit"),
+  +             "SETTABLE_KEYS missing auto_edit"
+  +         );
+        }
+ ✓ (1m 4s)
+            assert!(keys.contains(&"no_color"), "SETTABLE_KEYS missing no_color");
+  +         assert!(
+  +             keys.contains(&"auto_edit"),
+  +             "SETTABLE_KEYS missing auto_edit"
+  +         );
+        }
+  3 tools completed in 1m 13s (3 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.3s)
+
+Clippy passes. Now tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (50.5s)
+
+All 88 tests pass, clippy clean. Let me verify the specific new tests ran:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test auto_edit 2>&1 ✓ (1.1s)
+
+All 8 auto_edit tests pass (4 existing + 4 new in config.rs + the SETTABLE_KEYS assertion). Now commit:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (7 lines) ✓ (19ms)
+
+Done. Here's a summary of what I did:
+
+### Changes
+
+**`src/config.rs`:**
+1. Added parse_auto_edit_from_config() — follows the exact same pattern as parse_auto_watch_from_config, matching true/`1/yes/on, defaulting to false`
+2. Added "auto_edit" to SETTABLE_KEYS array so /config set auto_edit true works
+3. Added "auto_edit" case to validate_config_value() for proper validation
+4. Added 5 tests: `auto_edit_defaults_to_false, auto_edit_respects_false, auto_edit_respects_off, auto_edit_explicit_true, validate_auto_edit_values`
+5. Added auto_edit assertion to `settable_keys_contains_display_settings`
+
+`src/cli.rs`:
+• Updated the auto_edit computation in `parse_output_flags to OR in parse_auto_edit_from_config(file_config)`, so config file, CLI flag, and --yes all enable auto-edit
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (88 tests, 0 failures). 🎉
+
+  ✓ Watch passed after fix (attempt 1)
+

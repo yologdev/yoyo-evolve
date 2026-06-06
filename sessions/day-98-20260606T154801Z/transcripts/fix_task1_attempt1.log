@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the required changes.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 13.4s (7 ✓)
+
+Let me explore the relevant code:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct PromptState' in src/prompt.rs ✓ (3ms)
+  ▶ search 'handle_tool_execution_start\|handle_tool_execution_end\|Tool…' in src/prompt.rs ✓ (3ms)
+  ▶ read src/prompt.rs:1..121 ✓ (2ms)
+  ▶ read src/prompt.rs:120..220 ✓ (2ms)
+  ▶ read src/prompt.rs:219..319 ✓ (1ms)
+  ▶ read src/prompt.rs:318..418 ✓ (2ms)
+  6 tools completed in 13.9s (6 ✓)
+
+Now let me look at the existing diff-related functions:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn render_diff\|pub fn format_edit_diff\|fn render_diff\…' in src/format/diff.rs ✓ (3ms)
+  ▶ read src/format/diff.rs:60..140 ✓ (1ms)
+  ▶ read src/format/diff.rs:139..169 ✓ (0ms)
+  3 tools completed in 5.9s (3 ✓)
+
+Now let me check how format_edit_diff is used (especially the `truncate_diff_preview`):
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'format_edit_diff\|truncate_diff_preview' in src/prompt.rs ✓ (3ms)
+
+Now let me check how format_edit_diff and truncate_diff_preview are exported from the format module:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'format_edit_diff\|truncate_diff_preview' in src/format/mod.rs ✓ (3ms)
+  ▶ search 'pub use.*diff' in src/format/mod.rs ✓ (3ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Good, the diff module is re-exported via pub use diff::*. Now let me understand what the task requires:
+
+1. In PromptEventState, add a field edit_params: HashMap<String, serde_json::Value> to cache edit_file params by tool_call_id
+2. In handle_tool_execution_start, if tool_name == "edit_file", store the params
+3. In handle_tool_execution_end, if tool_name == "edit_file" and !is_error, retrieve the cached params and display a compact diff
+4. Clean up cached params regardless of success/failure
+5. Add tests
+
+The current code in handle_tool_execution_start already shows a diff BEFORE execution (lines 257-265). But the task asks for showing a diff AFTER execution (in handle_tool_execution_end), specifically for auto-edit/auto-approve mode where the confirmation flow is skipped.
+
+Let me check what happens with auto-edit mode:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_edit\|auto-edit' in src (*.rs) ✓ (10ms)
+
+Now I understand the full picture. When --auto-edit or --yes is active, file edit tools bypass the ConfirmTool, so the preview diff shown in handle_tool_execution_start is the only indication of what changed. But the task is asking for a POST-execution diff display to confirm what actually happened.
+
+Let me now implement the changes:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Now let me implement step by step. First, add the edit_params field to `PromptEventState`:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (5 → 8 lines)
+        turn_number: usize,
+        /// Whether we've seen text output in this prompt
+        had_text: bool,
+  +     /// Cached edit_file params (old_text, new_text) for post-execution diff display.
+  +     /// Keyed by tool_call_id. Stored at ToolExecutionStart, consumed at ToolExecutionEnd.
+  +     edit_params: HashMap<String, serde_json::Value>,
+    }
+ ✓ (9.4s)
+
+Now add the initialization in new():
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (2 → 3 lines)
+                turn_number: 0,
+                had_text: false,
+  +             edit_params: HashMap::new(),
+ ✓ (14.7s)
+
+That's expected — the field isn't used yet. Let me now add the caching in handle_tool_execution_start and the diff display in handle_tool_execution_end.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now cache edit_file params in handle_tool_execution_start. I need to store the args right after the audit_inflight insert:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (3 → 7 lines)
+            // Track for audit log
+            self.audit_inflight
+                .insert(tool_call_id.clone(), (tool_name.clone(), args.clone()));
+  +         // Cache edit_file params for post-execution diff display
+  +         if tool_name == "edit_file" {
+  +             self.edit_params.insert(tool_call_id.clone(), args.clone());
+  +         }
+ ✓ (1m 4s)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 1m 9s (3 ✓)
+
+Now add the diff display in handle_tool_execution_end. The diff should be shown after the ✓ line in the success branch for edit_file:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:345..395 ✓ (3ms)
+
+Now I'll add the post-execution diff display. It should be placed after the ✓ line and the existing write_file zero-bytes warning, but before the verbose output. The diff should only be shown when NOT in verbose mode (since verbose mode already shows the full output). Let me also make sure to clean up the edit_params entry regardless of success/failure.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (42 → 59 lines)
+  +         // Always clean up cached edit params (success or failure)
+  +         let cached_edit = self.edit_params.remove(&tool_call_id);
+  + 
+            if is_error {
+                self.batch_failed += 1;
+                println!(" {RED}✗{RESET}{dur_str}");
+  ···
+                        .unwrap_or(false);
+                    if wrote_zero {
+                        eprintln!("{YELLOW}    ⚠ write_file wrote 0 bytes — file is now empty{RESET}");
+  +                 }
+  +             }
+  +             // Show post-execution diff for edit_file (what actually changed)
+  +             if tool_name == "edit_file" && !is_verbose() {
+  +                 if let Some(params) = cached_edit {
+  +                     let old_text = params.get("old_text").and_then(|v| v.as_str()).unwrap_or("");
+  +                     let new_text = params.get("new_text").and_then(|v| v.as_str()).unwrap_or("");
+  +                     if !old_text.is_empty() || !new_text.is_empty() {
+  +                         let diff = format_edit_diff(old_text, new_text);
+  +                         if !diff.is_empty() {
+  ... (7 more lines)
+ ✓ (1m 4s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 7s (2 ✓)
+
+Now let me verify the build compiles:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (130ms)
+
+Good, it compiles. Let me check clippy:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.8s)
+
+Now let me add tests. Let me check the existing test structure in prompt.rs:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/prompt.rs ✓ (3ms)
+  ▶ search '#\[test\]\|mod tests"' in src/prompt.rs ✓ (3ms)
+  2 tools completed in 3.4s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
