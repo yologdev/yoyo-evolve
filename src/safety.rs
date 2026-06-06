@@ -158,12 +158,16 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
 }
 
 /// Check if a character position is at a word boundary (start of a command/token).
+/// Includes `/` as a boundary so full-path invocations like `/usr/bin/rm` are caught.
 fn is_at_word_boundary(s: &str, pos: usize) -> bool {
     if pos == 0 {
         return true;
     }
     let prev = s.as_bytes().get(pos.wrapping_sub(1));
-    matches!(prev, Some(b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'('))
+    matches!(
+        prev,
+        Some(b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b'/')
+    )
 }
 
 /// Check if the end of a matched pattern is at a word boundary.
@@ -204,6 +208,7 @@ fn check_rm_destruction(cmd: &str) -> Option<String> {
             if has_r {
                 // Check for " /" at end of command (bare root) or " / " (root as arg)
                 // Also check "~" and "$HOME" as standalone args
+                // Also check "." and ".." — recursive delete of cwd or parent is almost always destructive
                 let tokens: Vec<&str> = after_rm.split_whitespace().collect();
                 for token in &tokens {
                     if *token == "/"
@@ -217,6 +222,8 @@ fn check_rm_destruction(cmd: &str) -> Option<String> {
                         || *token == "${HOME}"
                         || *token == "${HOME}/"
                         || *token == "${HOME}/*"
+                        || *token == "."
+                        || *token == ".."
                     {
                         let severity = if has_f { "force-" } else { "" };
                         return Some(format!(
@@ -1587,5 +1594,35 @@ mod tests {
         assert!(analyze_bash_command("systemctl unmask nginx").is_none());
         // Safe: systemctl status (read-only)
         assert!(analyze_bash_command("systemctl status nginx").is_none());
+    }
+
+    #[test]
+    fn test_analyze_full_path_rm() {
+        // Full-path invocations like /usr/bin/rm should be caught
+        assert!(analyze_bash_command("/usr/bin/rm -rf /").is_some());
+        assert!(analyze_bash_command("/bin/rm -rf /").is_some());
+        assert!(analyze_bash_command("/usr/bin/rm -rf ~").is_some());
+        assert!(analyze_bash_command("/usr/bin/rm -rf $HOME").is_some());
+        // Full-path rm of cwd
+        assert!(analyze_bash_command("/usr/bin/rm -rf .").is_some());
+        // Safe: full-path rm of a specific file (no -r, no dangerous target)
+        assert!(analyze_bash_command("/usr/bin/rm temp.txt").is_none());
+    }
+
+    #[test]
+    fn test_analyze_rm_rf_cwd_and_parent() {
+        // rm -rf . (current directory) is almost always destructive
+        assert!(analyze_bash_command("rm -rf .").is_some());
+        // rm -rf .. (parent directory) is almost always destructive
+        assert!(analyze_bash_command("rm -rf ..").is_some());
+        // With sudo
+        assert!(analyze_bash_command("sudo rm -rf .").is_some());
+        assert!(analyze_bash_command("sudo rm -rf ..").is_some());
+        // Force without recursive on . is not caught by rm destruction check
+        // (no -r flag means check_rm_destruction won't flag it)
+        assert!(analyze_bash_command("rm -f .").is_none());
+        // With both -r and -f
+        assert!(analyze_bash_command("rm -rf .").is_some());
+        assert!(analyze_bash_command("rm -r .").is_some());
     }
 }
