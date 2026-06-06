@@ -12,6 +12,7 @@
 //! live in `tool_wrappers`.
 
 use crate::cli;
+use crate::cli_config::is_auto_edit;
 use crate::commands_project;
 use crate::commands_todo;
 use crate::commands_web;
@@ -866,8 +867,10 @@ pub fn build_tools(
         })
     };
 
-    // Build write_file and edit_file with optional confirmation prompts
-    let write_tool: Box<dyn AgentTool> = if auto_approve {
+    // Build write_file and edit_file with optional confirmation prompts.
+    // In auto_edit mode, file operations are auto-approved but bash still confirms.
+    let auto_edit = is_auto_edit();
+    let write_tool: Box<dyn AgentTool> = if auto_approve || auto_edit {
         maybe_guard(Box::new(WriteFileTool::new()), dir_restrictions)
     } else {
         maybe_guard(
@@ -879,7 +882,7 @@ pub fn build_tools(
             dir_restrictions,
         )
     };
-    let edit_tool: Box<dyn AgentTool> = if auto_approve {
+    let edit_tool: Box<dyn AgentTool> = if auto_approve || auto_edit {
         maybe_guard(Box::new(EditFileTool::new()), dir_restrictions)
     } else {
         maybe_guard(
@@ -889,7 +892,7 @@ pub fn build_tools(
     };
 
     // Build rename_symbol tool with optional confirmation (it writes files)
-    let rename_tool: Box<dyn AgentTool> = if auto_approve {
+    let rename_tool: Box<dyn AgentTool> = if auto_approve || auto_edit {
         Box::new(RenameSymbolTool)
     } else {
         maybe_confirm(Box::new(RenameSymbolTool), &always_approved, permissions)
