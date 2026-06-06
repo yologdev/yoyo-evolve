@@ -162,6 +162,9 @@ struct PromptEventState {
     turn_number: usize,
     /// Whether we've seen text output in this prompt
     had_text: bool,
+    /// Cached edit_file params (old_text, new_text) for post-execution diff display.
+    /// Keyed by tool_call_id. Stored at ToolExecutionStart, consumed at ToolExecutionEnd.
+    edit_params: HashMap<String, serde_json::Value>,
 }
 
 impl PromptEventState {
@@ -188,6 +191,7 @@ impl PromptEventState {
             batch_start: None,
             turn_number: 0,
             had_text: false,
+            edit_params: HashMap::new(),
         }
     }
 
@@ -242,6 +246,10 @@ impl PromptEventState {
         // Track for audit log
         self.audit_inflight
             .insert(tool_call_id.clone(), (tool_name.clone(), args.clone()));
+        // Cache edit_file params for post-execution diff display
+        if tool_name == "edit_file" {
+            self.edit_params.insert(tool_call_id.clone(), args.clone());
+        }
         let summary = format_tool_summary(&tool_name, &args);
         if tool_name == "sub_agent" {
             // Distinctive header for sub-agent delegation
@@ -322,6 +330,9 @@ impl PromptEventState {
             audit_log_tool_call(&audit_tool, &audit_args, duration_ms, !is_error);
         }
 
+        // Always clean up cached edit params (success or failure)
+        let cached_edit = self.edit_params.remove(&tool_call_id);
+
         if is_error {
             self.batch_failed += 1;
             println!(" {RED}✗{RESET}{dur_str}");
@@ -354,6 +365,26 @@ impl PromptEventState {
                     .unwrap_or(false);
                 if wrote_zero {
                     eprintln!("{YELLOW}    ⚠ write_file wrote 0 bytes — file is now empty{RESET}");
+                }
+            }
+            // Show post-execution diff for edit_file (what actually changed)
+            if tool_name == "edit_file" && !is_verbose() {
+                if let Some(params) = cached_edit {
+                    let old_text = params
+                        .get("old_text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let new_text = params
+                        .get("new_text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if !old_text.is_empty() || !new_text.is_empty() {
+                        let diff = format_edit_diff(old_text, new_text);
+                        if !diff.is_empty() {
+                            let diff = truncate_diff_preview(&diff, 10);
+                            eprintln!("{diff}");
+                        }
+                    }
                 }
             }
             if is_verbose() {

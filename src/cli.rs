@@ -576,7 +576,10 @@ fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) ->
 
     // --auto-edit: auto-approve file edits, still confirm shell commands
     // --yes implies --auto-edit (approves everything including edits)
-    let auto_edit = args.iter().any(|a| a == "--auto-edit") || auto_approve;
+    // Also enabled via auto_edit = true in .yoyo.toml
+    let auto_edit = args.iter().any(|a| a == "--auto-edit")
+        || auto_approve
+        || crate::config::parse_auto_edit_from_config(file_config);
 
     let print_system_prompt = args.iter().any(|a| a == "--print-system-prompt");
 

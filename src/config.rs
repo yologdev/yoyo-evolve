@@ -469,6 +469,19 @@ pub fn parse_auto_commit_from_config(config: &std::collections::HashMap<String, 
     }
 }
 
+/// Check whether auto-edit is enabled in the config.
+///
+/// Reads `auto_edit` from the given config map. Defaults to `false`
+/// when the key is absent — auto-edit must be explicitly opted into
+/// via `auto_edit = true` in `.yoyo.toml`. When enabled, file edits
+/// are auto-approved without confirmation (bash commands still confirm).
+pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+    match config.get("auto_edit").map(|v| v.as_str()) {
+        Some("true") | Some("1") | Some("yes") | Some("on") => true,
+        _ => false, // default: disabled
+    }
+}
+
 /// Check whether lite mode is enabled in the config.
 ///
 /// Reads `lite` from the given config map. Defaults to `false`
@@ -549,6 +562,10 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     ("max_turns", "maximum agent turns per prompt"),
     ("auto_watch", "auto-enable watch mode on start (true/false)"),
     (
+        "auto_edit",
+        "auto-approve file edits without confirmation (true/false)",
+    ),
+    (
         "auto_commit",
         "auto-commit file changes after each agent turn (true/false)",
     ),
@@ -620,6 +637,16 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
                 "false" | "0" | "no" | "off" => Ok("false".to_string()),
                 _ => Err(format!(
                     "invalid auto_commit value '{value}' — use true or false"
+                )),
+            }
+        }
+        "auto_edit" => {
+            let lower = value.to_ascii_lowercase();
+            match lower.as_str() {
+                "true" | "1" | "yes" | "on" => Ok("true".to_string()),
+                "false" | "0" | "no" | "off" => Ok("false".to_string()),
+                _ => Err(format!(
+                    "invalid auto_edit value '{value}' — use true or false"
                 )),
             }
         }
@@ -1365,6 +1392,54 @@ env = { API_KEY = "secret" }
     }
 
     #[test]
+    fn auto_edit_defaults_to_false() {
+        let config = std::collections::HashMap::new();
+        assert!(!parse_auto_edit_from_config(&config));
+    }
+
+    #[test]
+    fn auto_edit_respects_false() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("auto_edit".to_string(), "false".to_string());
+        assert!(!parse_auto_edit_from_config(&config));
+    }
+
+    #[test]
+    fn auto_edit_respects_off() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("auto_edit".to_string(), "off".to_string());
+        assert!(!parse_auto_edit_from_config(&config));
+    }
+
+    #[test]
+    fn auto_edit_explicit_true() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("auto_edit".to_string(), "true".to_string());
+        assert!(parse_auto_edit_from_config(&config));
+    }
+
+    #[test]
+    fn validate_auto_edit_values() {
+        assert_eq!(
+            validate_config_value("auto_edit", "true"),
+            Ok("true".to_string())
+        );
+        assert_eq!(
+            validate_config_value("auto_edit", "false"),
+            Ok("false".to_string())
+        );
+        assert_eq!(
+            validate_config_value("auto_edit", "yes"),
+            Ok("true".to_string())
+        );
+        assert_eq!(
+            validate_config_value("auto_edit", "no"),
+            Ok("false".to_string())
+        );
+        assert!(validate_config_value("auto_edit", "maybe").is_err());
+    }
+
+    #[test]
     fn auto_commit_defaults_to_false() {
         let config = std::collections::HashMap::new();
         assert!(!parse_auto_commit_from_config(&config));
@@ -1671,6 +1746,10 @@ env = { API_KEY = "secret" }
         assert!(keys.contains(&"no_bell"), "SETTABLE_KEYS missing no_bell");
         assert!(keys.contains(&"quiet"), "SETTABLE_KEYS missing quiet");
         assert!(keys.contains(&"no_color"), "SETTABLE_KEYS missing no_color");
+        assert!(
+            keys.contains(&"auto_edit"),
+            "SETTABLE_KEYS missing auto_edit"
+        );
     }
 
     // === Config-file path resolution tests (moved from cli.rs) ===
