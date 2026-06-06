@@ -209,6 +209,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--fallback",
     "--audit",
     "--auto-commit",
+    "--auto-edit",
     "--print-system-prompt",
     "--print",
     "--quiet",
@@ -513,6 +514,7 @@ fn parse_model_config(
 struct OutputFlags {
     verbose: bool,
     auto_approve: bool,
+    auto_edit: bool,
     auto_commit: bool,
     no_update_check: bool,
     json_output: bool,
@@ -572,11 +574,16 @@ fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) ->
             .map(|v| v == "true")
             .unwrap_or(false);
 
+    // --auto-edit: auto-approve file edits, still confirm shell commands
+    // --yes implies --auto-edit (approves everything including edits)
+    let auto_edit = args.iter().any(|a| a == "--auto-edit") || auto_approve;
+
     let print_system_prompt = args.iter().any(|a| a == "--print-system-prompt");
 
     OutputFlags {
         verbose,
         auto_approve,
+        auto_edit,
         auto_commit,
         no_update_check,
         json_output,
@@ -970,6 +977,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         mcp_server_configs: mcp.mcp_server_configs,
         openapi_specs: mcp.openapi_specs,
         auto_approve: of.auto_approve,
+        auto_edit: of.auto_edit,
         auto_commit: of.auto_commit,
         permissions,
         dir_restrictions,
@@ -3256,5 +3264,36 @@ command = "server-two"
         let count = auto_discover_skills(&mut skills);
         // We can't assert exact count since it depends on cwd, but it shouldn't panic
         let _ = count; // just verify it ran without panicking
+    }
+
+    #[test]
+    fn test_parse_auto_edit_flag() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args = vec!["yoyo".to_string(), "--auto-edit".to_string()];
+        let config = parse_args(&args).expect("should parse");
+        assert!(config.auto_edit, "--auto-edit should set auto_edit");
+        assert!(
+            !config.auto_approve,
+            "--auto-edit alone should not set auto_approve"
+        );
+    }
+
+    #[test]
+    fn test_auto_edit_and_yes_independent() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        // --yes implies --auto-edit
+        let args = vec!["yoyo".to_string(), "--yes".to_string()];
+        let config = parse_args(&args).expect("should parse");
+        assert!(config.auto_approve, "--yes should set auto_approve");
+        assert!(
+            config.auto_edit,
+            "--yes should imply auto_edit (approves everything)"
+        );
+
+        // --auto-edit alone does NOT imply --yes
+        let args2 = vec!["yoyo".to_string(), "--auto-edit".to_string()];
+        let config2 = parse_args(&args2).expect("should parse");
+        assert!(config2.auto_edit);
+        assert!(!config2.auto_approve, "--auto-edit should not imply --yes");
     }
 }

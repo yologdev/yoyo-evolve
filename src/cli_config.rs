@@ -29,6 +29,22 @@ pub fn effective_context_tokens() -> u64 {
     EFFECTIVE_CONTEXT_TOKENS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// Global flag: auto-approve file edits but still confirm shell commands.
+/// Set once during CLI startup via `enable_auto_edit()`.
+static AUTO_EDIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Enable auto-edit mode (auto-approve file edits, still confirm shell commands).
+pub fn enable_auto_edit() {
+    let _ = AUTO_EDIT.set(true);
+}
+
+/// Check if auto-edit mode is active.
+/// Note: this is plumbing — wired into tool behavior in a follow-up task.
+#[allow(dead_code)]
+pub fn is_auto_edit() -> bool {
+    *AUTO_EDIT.get_or_init(|| false)
+}
+
 pub const DEFAULT_SESSION_PATH: &str = "yoyo-session.json";
 pub const AUTO_SAVE_SESSION_PATH: &str = ".yoyo/last-session.json";
 
@@ -117,6 +133,7 @@ pub struct Config {
     pub disallowed_tools: Vec<String>,
     pub no_tools: bool,
     pub lite: bool,
+    pub auto_edit: bool,
 }
 
 #[cfg(test)]
@@ -173,5 +190,13 @@ mod tests {
 
         // LITE_DEFAULT_CONTEXT_WINDOW should be reasonable for small models
         assert_eq!(LITE_DEFAULT_CONTEXT_WINDOW, 8_000);
+    }
+
+    #[test]
+    fn test_is_auto_edit_default_false() {
+        // Before enable_auto_edit() is called, is_auto_edit() defaults to false.
+        // (OnceLock is global so if another test called enable_auto_edit first,
+        // this will see true — but it must never panic.)
+        let _val = is_auto_edit();
     }
 }

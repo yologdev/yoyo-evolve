@@ -549,6 +549,10 @@ fn apply_config_flags(config: &Config) -> bool {
         enable_verbose();
     }
 
+    if config.auto_edit {
+        crate::cli_config::enable_auto_edit();
+    }
+
     if config.audit {
         enable_audit_log();
     }
@@ -1408,6 +1412,7 @@ mod tests {
             mcp_server_configs: vec![],
             openapi_specs: vec![],
             auto_approve: false,
+            auto_edit: false,
             auto_commit: false,
             permissions: cli::PermissionConfig::default(),
             dir_restrictions: cli::DirectoryRestrictions::default(),
