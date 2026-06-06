@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the flaky test by making it cwd-independent. Let me start by examining the relevant test code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_watch_bare_sets_… ✓ (6ms)
+  ▶ read src/watch.rs:1926..2046 ✓ (2ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me look at the already-fixed test detect_watch_all_phases_returns_separate_commands and see how similar tests handle the cwd pattern. Let me also check the handle_watch_lint_sets_lint_only_command test since it likely has the same issue:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:2045..2075 ✓ (1ms)
+
+Now let me look at the with_clean_watch_state helper:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn with_clean_watch_sta… ✓ (3ms)
+  ▶ read src/watch.rs:1497..1512 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I understand the pattern. The flaky tests (handle_watch_bare_sets_lint_and_test, `handle_watch_all_sets_combined_command, and handle_watch_lint_sets_lint_only_command`) all call handle_watch(...) which internally calls detect_watch_all_phases() which reads env::current_dir(). They need to be in a temp dir with a Cargo.toml to be deterministic.
+
+Let me apply the fix:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (33 → 47 lines)
+        fn handle_watch_all_sets_combined_command() {
+            with_clean_watch_state(|| {
+  -             // Run /watch all — since we're in a Rust project, it should set separate phases
+  +             // Create a temp Rust project so the test doesn't depend on CWD
+  +             let tmp = std::env::temp_dir().join("yoyo_test_watch_all_combined");
+  +             let _ = std::fs::create_dir_all(&tmp);
+  +             std::fs::write(
+  +                 tmp.join("Cargo.toml"),
+  +                 "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+  +             )
+  +             .expect("write temp Cargo.toml");
+  + 
+  +             let orig = std::env::current_dir().expect("get cwd");
+  +             std::env::set_current_dir(&tmp).expect("set cwd to temp");
+  + 
+                handle_watch("/watch all");
+                let cmd = get_watch_command();
+                assert!(
+  ···
+                    "second phase should be test: {}",
+  ... (7 more lines)
+ ✓ (1m 5s)
+
+Now fix handle_watch_lint_sets_lint_only_command:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (20 → 34 lines)
+        fn handle_watch_lint_sets_lint_only_command() {
+            with_clean_watch_state(|| {
+  -             // Run /watch lint — since we're in a Rust project, it should set clippy only
+  +             // Create a temp Rust project so the test doesn't depend on CWD
+  +             let tmp = std::env::temp_dir().join("yoyo_test_watch_lint_only");
+  +             let _ = std::fs::create_dir_all(&tmp);
+  +             std::fs::write(
+  +                 tmp.join("Cargo.toml"),
+  +                 "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+  +             )
+  +             .expect("write temp Cargo.toml");
+  + 
+  +             let orig = std::env::current_dir().expect("get cwd");
+  +             std::env::set_current_dir(&tmp).expect("set cwd to temp");
+  + 
+                handle_watch("/watch lint");
+                let cmd = get_watch_command();
+                assert!(
+  ···
+                    !cmd.contains("cargo test"),
+  ... (7 more lines)
+ ✓ (1m 3s)
+
+Now fix `handle_watch_bare_sets_lint_and_test`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (29 → 40 lines)
+        fn handle_watch_bare_sets_lint_and_test() {
+            with_clean_watch_state(|| {
+  -             // Run bare /watch — should now set lint+test as separate phases.
+  -             // NOTE: This test depends on detect_project_type(CWD), so it detects
+  -             // whatever project type the CWD is. In CI that's a Rust project.
+  -             // We make assertions lenient to tolerate minor detection differences.
+  +             // Create a temp Rust project so the test doesn't depend on CWD
+  +             let tmp = std::env::temp_dir().join("yoyo_test_watch_bare");
+  +             let _ = std::fs::create_dir_all(&tmp);
+  +             std::fs::write(
+  +                 tmp.join("Cargo.toml"),
+  +                 "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+  +             )
+  +             .expect("write temp Cargo.toml");
+  + 
+  +             let orig = std::env::current_dir().expect("get cwd");
+  +             std::env::set_current_dir(&tmp).expect("set cwd to temp");
+  + 
+                handle_watch("/watch");
+                let cmd = get_watch_command();
+  ... (10 more lines)
+ ✓ (1m 2s)
+
+Now let's run the checks:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (157ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (30.6s)
+  3 tools completed in 53.5s (3 ✓)
+
+All 88 tests pass. Now let me verify the specific tests individually:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test handle_watch_bare 2>&… ✓ (137ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test handle_watch_all 2>&1… ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test handle_watch_lint 2>&… ✓ (136ms)
+  3 tools completed in 17.8s (3 ✓)
+
+All three tests pass. Now let me verify they also pass from a non-Rust directory:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && cargo test --manifest-path /home/runner/work/yoyo-evolve/yoyo-evolve/… ✓ (139ms)
+  ▶ $ cd /tmp && cargo test --manifest-path /home/runner/work/yoyo-evolve/yoyo-evolve/… ✓ (135ms)
+  ▶ $ cd /tmp && cargo test --manifest-path /home/runner/work/yoyo-evolve/yoyo-evolve/… ✓ (137ms)
+  3 tools completed in 9.5s (3 ✓)
+
+All three tests pass from /tmp (a non-Rust directory). The fix is solid. Let me commit:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (15 lines) ✓ (15ms)
+
+Done. Fixed three cwd-dependent watch tests by giving each a temp directory with a Cargo.toml, matching the pattern from Days 96-97. The tests now pass regardless of where cargo test runs from.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
