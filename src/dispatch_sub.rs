@@ -14,6 +14,28 @@ use crate::format::*;
 use crate::providers::default_model_for_provider;
 use yoagent::skills::SkillSet;
 
+/// Remove a flag and its value from an args slice.
+///
+/// Scans `args` for occurrences of `flag` (e.g. `"--skills"`) and drops
+/// both the flag and the following argument (its value).  Args that are
+/// not the flag pass through unchanged.
+fn strip_flag_with_value(args: &[String], flag: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == flag {
+            skip_next = true;
+            continue;
+        }
+        out.push(arg.clone());
+    }
+    out
+}
+
 /// Build a `/command ...` string from shell args, preserving multi-word tokens.
 ///
 /// Shell args like `["yoyo", "grep", "fn main", "src/"]` become `/grep "fn main" src/`.
@@ -190,8 +212,9 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 return Some(None);
             }
             "skill" => {
-                let input = quote_args_as_command(args);
                 let skill_dirs = collect_repeatable_flag(args, "--skills");
+                let filtered = strip_flag_with_value(args, "--skills");
+                let input = quote_args_as_command(&filtered);
                 let skills = if skill_dirs.is_empty() {
                     SkillSet::empty()
                 } else {
@@ -1140,5 +1163,58 @@ mod tests {
         let key = resolve_api_key(&args, "anthropic");
         assert_eq!(key, Some("sk-from-flag".to_string()));
         std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn test_strip_flag_with_value_removes_skills_flag() {
+        let args: Vec<String> = vec!["skill", "list", "--skills", "./skills"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let filtered = strip_flag_with_value(&args, "--skills");
+        assert_eq!(filtered, vec!["skill", "list"]);
+    }
+
+    #[test]
+    fn test_strip_flag_with_value_preserves_other_args() {
+        let args: Vec<String> = vec!["skill", "show", "my-skill", "--skills", "./skills"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let filtered = strip_flag_with_value(&args, "--skills");
+        assert_eq!(filtered, vec!["skill", "show", "my-skill"]);
+    }
+
+    #[test]
+    fn test_strip_flag_with_value_no_flag_unchanged() {
+        let args: Vec<String> = vec!["skill", "list"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let filtered = strip_flag_with_value(&args, "--skills");
+        assert_eq!(filtered, vec!["skill", "list"]);
+    }
+
+    #[test]
+    fn test_strip_flag_with_value_multiple_flags() {
+        let args: Vec<String> = vec!["skill", "list", "--skills", "./a", "--skills", "./b"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let filtered = strip_flag_with_value(&args, "--skills");
+        assert_eq!(filtered, vec!["skill", "list"]);
+    }
+
+    #[test]
+    fn test_skill_subcommand_strips_skills_flag_from_input() {
+        // Simulates what the "skill" match arm does: strip --skills, then
+        // build the /command string that handle_skill receives.
+        let args: Vec<String> = vec!["skill", "list", "--skills", "./skills"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let filtered = strip_flag_with_value(&args, "--skills");
+        let input = quote_args_as_command(&filtered);
+        assert_eq!(input, "/list");
     }
 }
