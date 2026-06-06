@@ -31,18 +31,16 @@ pub fn effective_context_tokens() -> u64 {
 
 /// Global flag: auto-approve file edits but still confirm shell commands.
 /// Set once during CLI startup via `enable_auto_edit()`.
-static AUTO_EDIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static AUTO_EDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Enable auto-edit mode (auto-approve file edits, still confirm shell commands).
 pub fn enable_auto_edit() {
-    let _ = AUTO_EDIT.set(true);
+    AUTO_EDIT.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Check if auto-edit mode is active.
-/// Note: this is plumbing — wired into tool behavior in a follow-up task.
-#[allow(dead_code)]
 pub fn is_auto_edit() -> bool {
-    *AUTO_EDIT.get_or_init(|| false)
+    AUTO_EDIT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub const DEFAULT_SESSION_PATH: &str = "yoyo-session.json";
@@ -193,10 +191,13 @@ mod tests {
     }
 
     #[test]
-    fn test_is_auto_edit_default_false() {
-        // Before enable_auto_edit() is called, is_auto_edit() defaults to false.
-        // (OnceLock is global so if another test called enable_auto_edit first,
-        // this will see true — but it must never panic.)
-        let _val = is_auto_edit();
+    fn test_auto_edit_toggle() {
+        // AtomicBool starts false; enable flips to true; can reset for other tests.
+        // Note: other tests may have set this, so just verify enable works.
+        enable_auto_edit();
+        assert!(is_auto_edit());
+        // Reset for other tests (AtomicBool allows this, unlike OnceLock).
+        AUTO_EDIT.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(!is_auto_edit());
     }
 }
