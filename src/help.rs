@@ -165,6 +165,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  --auto-edit       Auto-approve file edits, still confirm shell commands"
+    );
+    let _ = writeln!(
+        s,
         "  --auto-commit     Auto-commit file changes after each agent turn"
     );
     let _ = writeln!(
