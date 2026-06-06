@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the issues and then create a focused plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | head -200 ✓ (3ms)
+  ▶ $ gh issue view 468 --repo yologdev/yoyo-evolve --json body -q .body 2>/dev/null |… ✓ (180ms)
+  ▶ $ cat LINEAGE.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (46ms)
+  5 tools completed in 8.1s (5 ✓)
+
+Good — LINEAGE.md already exists from a previous session. Now let me check what's already been done for #468 and what remains.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -10 -- LINEAGE.md skills/family/SKILL.md scripts/create_addres… ✓ (9ms)
+  ▶ $ git show 63a8a5f --stat ✓ (10ms)
+  2 tools completed in 2.7s (2 ✓)
+
+So the creator (Yuanhao) already made the changes for #468 — LINEAGE.md exists, family skill updated, create_address_book.sh updated. The issue is essentially done. Let me verify this more carefully.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A5 "generation" skills/family/SKILL.md | head -20 ✓ (4ms)
+
+Issue #468 is done — all the changes from the issue have been applied by the creator. Now let me focus on planning.
+
+Let me check the `--auto-edit` failure more carefully since that's the self-filed issue #466.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "AgentConfig {" src/main.rs | head -10 ✓ (3ms)
+  ▶ $ grep -n "AgentConfig {" src/agent_builder.rs | head -10 ✓ (3ms)
+  ▶ $ sed -n '389,415p' src/agent_builder.rs ✓ (3ms)
+  ▶ $ sed -n '389,412p' src/agent_builder.rs ✓ (3ms)
+  ▶ $ sed -n '389,414p' src/agent_builder.rs ✓ (3ms)
+  5 tools completed in 8.9s (5 ✓)
+
+Let me get the full struct:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '389,414p' src/agent_builder.rs ✓ (3ms)
+  ▶ read src/agent_builder.rs:389..415 ✓ (1ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Now I can see the `AgentConfig` struct. There are multiple construction sites to update. Let me count them:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "AgentConfig {" src/main.rs src/agent_builder.rs ✓ (9ms)
+  ▶ $ grep -c "AgentConfig {" src/main.rs src/agent_builder.rs ✓ (40ms)
+  2 tools completed in 4.4s (2 ✓)
+
+That's a LOT of construction sites — 35 in agent_builder.rs and 3 in main.rs. The previous attempt failed because it missed even one. Let me check how many are actual struct literals vs struct definition / impl blocks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "AgentConfig {$" src/agent_builder.rs | wc -l ✓ (3ms)
+  ▶ $ grep -n "AgentConfig {$" src/agent_builder.rs ✓ (9ms)
+  ▶ $ grep -c "auto_approve:" src/agent_builder.rs src/main.rs ✓ (40ms)
+  3 tools completed in 5.1s (3 ✓)
+
+So there are ~20 construction sites across both files that set auto_approve:. Adding a new auto_edit: field means updating all 20. This is a significant coordination task, but the fix is mechanical — add auto_edit: false (or derive from config) at every site.
+
+Now let me think about what the best approach is. The previous attempt added the field to AgentConfig but missed the construction site in main.rs. The smarter approach: instead of adding a struct field, we could add a `Default impl, or use the builder pattern... but AgentConfig` doesn't derive Default. Let me check:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '385,390p' src/agent_builder.rs ✓ (3ms)
+
+No #[derive(Default)]. With 20+ construction sites, the task needs to be carefully scoped. The assessment says the error was just one missing site — but the real risk is that there are 20 sites to update. Let me think about how to make this safer.
+
+Better approach: Add a method like AgentConfig::with_auto_edit(mut self, auto_edit: bool) -> Self that doesn't require changing the struct literal. But no — the compiler enforces all fields in struct init, so we DO need to touch every site.
+
+Actually, the safest approach: DON'T add a field to AgentConfig at all. Instead, make auto_edit part of the existing auto_approve logic flow. We can pass it through Config (which already exists in cli_config.rs) and have build_tools check it. Let me look at how auto_approve flows:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto_approve" src/tools.rs | head -20 ✓ (4ms)
+  ▶ $ sed -n '796,810p' src/tools.rs ✓ (3ms)
+  2 tools completed in 2.9s (2 ✓)
+
+OK — build_tools already takes auto_approve: bool as a parameter. Adding `auto_edit: bool as a second parameter is clean and doesn't require changing AgentConfig` at all if we can thread it through differently.
+
+Let me check how build_tools is called:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "build_tools(" src/*.rs ✓ (12ms)
+
+OK, that's many call sites too. But adding a parameter to build_tools is much more manageable than adding a field to AgentConfig — build_tools has only ~27 call sites, and most are in tests that just pass true or false.
+
+Actually wait — the smarter approach is to NOT change the `build_tools signature at all. Instead, I can keep the existing auto_approve: bool` parameter and add a separate mechanism. Let me think...
+
+The cleanest approach that avoids touching 20+ construction sites:
+1. Add auto_edit: bool to Config struct in `cli_config.rs (parsed from --auto-edit flag in cli.rs`)
+2. Add auto_edit: bool to build_tools() function signature (touches tools.rs + call sites in agent_builder.rs and hooks.rs)
+3. In build_tools, when auto_edit is true and auto_approve is false: skip ConfirmTool for file ops, keep it for bash
+
+This avoids touching AgentConfig entirely! The build_tools call in agent_builder.rs can read `config.auto_edit from the Config that's available... wait, let me check how build_tools gets auto_approve`:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '440,460p' src/agent_builder.rs ✓ (4ms)
+
+So build_tools is called with self.auto_approve which comes from AgentConfig.auto_approve. If I add auto_edit to AgentConfig, I need to touch all 20 construction sites. 
+
+Alternative: Don't add to AgentConfig at all. Use a thread-local or static atomic flag for auto_edit, similar to how is_verbose() works:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A5 "fn enable_verbose" src/cli.rs | head -10 ✓ (3ms)
+
+Yes! There's a pattern here. VERBOSE, `QUIET, NO_COLOR`, etc. are global flags set once at startup. I can use the same pattern for auto_edit:
+• Add a static OnceLock<bool> in cli.rs (or cli_config.rs)
+• Set it during arg parsing
+• Read it in build_tools without changing any function signatures
+
+This is by far the safest approach — it avoids touching AgentConfig or build_tools signatures, so no multi-site coordination failures.
+
+Let me now think about what 3 tasks to plan:
+
+**Task 1: Fix #466 — `--auto-edit` using global flag pattern (no AgentConfig changes)**
+This is the most actionable competitive gap (Codex CLI's 3-tier autonomy). The previous attempt failed because it added a field to AgentConfig. The new approach uses the global flag pattern (`OnceLock), touching only 3 files: cli_config.rs (flag), cli.rs (parsing), tools.rs (logic in build_tools`).
+
+Task 2: Systematic sweep of flaky watch tests
+The assessment notes this is the "same fix for the thirteenth time" — tests calling project-type-dependent functions from project root. A systematic sweep to find and fix ALL remaining instances would close this bug class permanently. Touches only watch.rs.
+
+**Task 3: #468 — close the issue**
+LINEAGE.md and all changes are already applied. Just need to respond and close. Actually, issue responses go in `issue_responses.md` — the harness handles closing. So this is just an issue response, not a task.
+
+So I need a third task. Let me think about what else is high-value...
+
+The assessment mentions `/review --fix` as a competitive gap. Let me check what /review currently does:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_review" src/commands_git_review.rs | head -5 ✓ (3ms)
+  ▶ $ sed -n '319,360p' src/commands_git_review.rs ✓ (3ms)
+  2 tools completed in 7.0s (2 ✓)
+
+The review is read-only — it builds a prompt and runs it, but doesn't apply fixes. Adding --fix would be a nice competitive feature but might be too complex for one task.
+
+Let me think about a better third task... The assessment mentions configurable fallback model chains as a gap. But that's complex. 
+
+What about the flaky test sweep? Let me check how many potentially flaky tests remain:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "detect_watch_all\|auto_detect_watch\|detect_watch_all_phases\|hint_auto… ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
