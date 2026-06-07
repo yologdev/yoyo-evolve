@@ -1,0 +1,348 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 3.4s (6 ✓)
+
+Let me start by reading the relevant files to understand the current patterns.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs ✓ (1ms)
+
+Now let me look at the dispatch.rs to see how commands are routed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1..101 ✓ (1ms)
+  ▶ read src/dispatch.rs:100..180 ✓ (1ms)
+  ▶ read src/dispatch.rs:179..279 ✓ (1ms)
+  3 tools completed in 12.3s (3 ✓)
+
+Now let me see the dispatch_command function to see where commands are handled:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'CommandRoute::Teach =>' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:855..885 ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now let me look at `commands_config.rs` to see the pattern for mode commands like /teach:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn handle_teach' in src/commands_config.rs ✓ (2ms)
+  ▶ read src/commands_config.rs:899..939 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Let me also look at how mode states are set (e.g., set_teach_mode):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_config.rs:1..41 ✓ (1ms)
+  ▶ read src/commands_config.rs:40..80 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now I have a clear picture of the patterns. Let me also check how commands are re-exported:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub use.*commands_config"' in src/commands.rs ✓ (2ms)
+  ▶ search 'use crate::commands"' in src/dispatch.rs ✓ (2ms)
+  ▶ search '^use crate::commands"' in src/dispatch.rs ✓ (2ms)
+  ▶ search 'use crate::commands' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:14..24 ✓ (0ms)
+  5 tools completed in 13.6s (5 ✓)
+
+Now let me look at main.rs to see how modules are declared:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'mod commands_config' in src/main.rs ✓ (2ms)
+
+Good. Let me also check how commands re-exports from commands_config:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_config' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:39..64 ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Good. Now I have a full picture of the pattern. Let me implement this step by step.
+
+**Step 1: Add EffortLevel enum + global state to `src/cli_config.rs`**
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/cli_config.rs (3 → 57 lines)
+  + // ── Effort level ──
+  + 
+  + /// Graduated effort presets controlling response depth and thoroughness.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum EffortLevel {
+  +     Low,
+  +     Medium,
+  +     High,
+  + }
+  + 
+  + impl EffortLevel {
+  +     /// Human-readable label for display.
+  +     pub fn label(&self) -> &'static str {
+  +         match self {
+  +             Self::Low => "low",
+  +             Self::Medium => "medium",
+  +             Self::High => "high",
+  +         }
+  +     }
+  + 
+  ... (37 more lines)
+ ✓ (11.1s)
+  + // ── Effort level ──
+  + 
+  + /// Graduated effort presets controlling response depth and thoroughness.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum EffortLevel {
+  +     Low,
+  +     Medium,
+  +     High,
+  ... (13 more lines)
+  2 tools completed in 25.8s (2 ✓)
+
+Expected — these are unused until I wire them up in the other files. Let me continue with step 2 and 3, then it'll all compile together.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 2.0s (2 ✓)
+
+**Step 2: Add handle_effort() to src/commands_config.rs**
+
+Let me find a good insertion point — after handle_teach:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_config.rs:924..934 ✓ (0ms)
+
+I'll add handle_effort between handle_teach and the mcp_help_text function. First I need to check what's imported:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_config.rs:1..16 ✓ (0ms)
+
+Now add the handle_effort function:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (6 → 50 lines)
+  + // ── Effort level command ──
+  + 
+  + /// Handle the `/effort` REPL command.
+  + pub fn handle_effort(input: &str) {
+  +     use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+  + 
+  +     let arg = input.strip_prefix("/effort").unwrap_or("").trim();
+  +     if arg.is_empty() {
+  +         let level = effort_level();
+  +         let icon = match level {
+  +             EffortLevel::Low => "⚡",
+  +             EffortLevel::Medium => "⚖️",
+  +             EffortLevel::High => "🔬",
+  +         };
+  +         println!("{BOLD}  {icon} Effort level: {}{RESET}\n", level.label());
+  +         return;
+  +     }
+  +     match arg {
+  +         "low" | "lo" | "l" => {
+  +             set_effort_level(EffortLevel::Low);
+  ... (27 more lines)
+ ✓ (11.1s)
+  + // ── Effort level command ──
+  + 
+  + /// Handle the `/effort` REPL command.
+  + pub fn handle_effort(input: &str) {
+  +     use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+  + 
+  +     let arg = input.strip_prefix("/effort").unwrap_or("").trim();
+  +     if arg.is_empty() {
+  ... (13 more lines)
+
+Good — all still "unused" because the dispatch isn't wired yet. Let me do Step 3.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 2.1s (2 ✓)
+
+**Step 3: Wire /effort into src/dispatch.rs**
+
+First, add `Effort to the CommandRoute` enum:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (3 → 4 lines)
+        Tips,
+  +     Effort,
+        /// Input starts with `/` but doesn't match any known command.
+        UnknownSlash,
+ ✓ (6.9s)
+        Tips,
+  +     Effort,
+        /// Input starts with `/` but doesn't match any known command.
+        UnknownSlash,
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0004][0m[1m: non-exhaustive patterns: `dispatch::CommandRoute::Effort` not covered[0m
+    [1m[94m--> [0msrc/dispatch.rs:320:11
+     [1m[94m|[0m
+[1m[94m 320[0m [1m[94m|[0m     match route_command(ctx.input) {
+     [1m[94m|[0m           [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mpattern `dispatch::CommandRoute::Effort` not covered[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: `dispatch::CommandRoute` defined here
+    [1m[94m--> [0msrc/dispatch.rs:30:17
+     [1m[94m|[0m
+[1m[94m  30[0m [1m[94m|[0m pub(crate) enum CommandRoute {
+     [1m[94m|[0m                 [1m[92m^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m 122[0m [1m[94m|[0m     Effort,
+     [1m[94m|[0m     [1m[94m------[0m [1m[94mnot covered[0m
+     [1m[94m= [0m[1mnote[0m: the matched value is of type `dispatch::CommandRoute`
+[1m[96mhelp[0m: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+     [1m[94m|[0m
+[1m[94m1058[0m [92m~ [0m        CommandRoute::NotACommand => CommandResult::NotACommand[92m,[0m
+[1m[94m1059[0m [92m~         dispatch::CommandRoute::Effort => todo!()[0m,
+     [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0004`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+  ▶ search 'CommandRoute::Teach =>' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:855..870 ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+I need to add the Effort arm to the match and also add the routing in `route_command_prefix`. Let me first add the match arm:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 8 lines)
+            CommandRoute::Teach => {
+                commands::handle_teach(ctx.input);
+  +             CommandResult::Continue
+  +         }
+  +         CommandRoute::Effort => {
+  +             crate::commands_config::handle_effort(ctx.input);
+                CommandResult::Continue
+            }
+ ✓ (11.1s)
+            CommandRoute::Teach => {
+                commands::handle_teach(ctx.input);
+  +             CommandResult::Continue
+  +         }
+  +         CommandRoute::Effort => {
+  +             crate::commands_config::handle_effort(ctx.input);
+                CommandResult::Continue
+            }
+
+Now I need to add the routing for /effort in route_command_prefix:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:258..268 ✓ (0ms)
+  ▶ edit src/dispatch.rs (7 → 8 lines)
+                "extended" => CommandRoute::Extended,
+                "side" => CommandRoute::Side,
+                "quick" => CommandRoute::Quick,
+  +             "effort" => CommandRoute::Effort,
+                _ => CommandRoute::UnknownSlash,
+ ✓ (11.1s)
+                "extended" => CommandRoute::Extended,
+                "side" => CommandRoute::Side,
+                "quick" => CommandRoute::Quick,
+  +             "effort" => CommandRoute::Effort,
+                _ => CommandRoute::UnknownSlash,
+  2 tools completed in 17.3s (2 ✓)
+
+The system_hint method is defined but not yet used (it's for future prompt integration). I need to either use it somewhere or suppress the warning. Since the task says "the prompt integration can follow", I'll add an `#[allow(dead_code)]` on the method:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (3 → 4 lines)
+        /// System prompt hint appended when this effort level is active.
+        /// Returns empty string for medium (default behavior, no extra hint).
+  +     #[allow(dead_code)] // Used by prompt integration (follow-up task)
+        pub fn system_hint(&self) -> &'static str {
+ ✓ (49.7s)
+        /// System prompt hint appended when this effort level is active.
+        /// Returns empty string for medium (default behavior, no extra hint).
+  +     #[allow(dead_code)] // Used by prompt integration (follow-up task)
+        pub fn system_hint(&self) -> &'static str {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.1s)
+  2 tools completed in 1m 5s (2 ✓)
+
+Clippy passes. Now let me run tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (25.1s)
+
+All passing. Now let me add proper tests for the new feature:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 2.8s (2 ✓)
+
+**Step 4: Add tests**
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:225..255 ✓ (0ms)
+  ▶ read src/cli_config.rs:254..259 ✓ (0ms)
+  ▶ edit src/cli_config.rs (5 → 40 lines)
+            // Reset for other tests (AtomicBool allows this, unlike OnceLock).
+            AUTO_EDIT.store(false, std::sync::atomic::Ordering::Relaxed);
+            assert!(!is_auto_edit());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_effort_level_label() {
+  +         assert_eq!(EffortLevel::Low.label(), "low");
+  +         assert_eq!(EffortLevel::Medium.label(), "medium");
+  +         assert_eq!(EffortLevel::High.label(), "high");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_effort_level_system_hint() {
+  +         // Low and High have non-empty hints; Medium is empty (default behavior)
+  +         assert!(!EffortLevel::Low.system_hint().is_empty());
+  +         assert!(EffortLevel::Medium.system_hint().is_empty());
+  +         assert!(!EffortLevel::High.system_hint().is_empty());
+  +         assert!(EffortLevel::Low.system_hint().contains("concise"));
+  +         assert!(EffortLevel::High.system_hint().contains("thorough"));
+  ... (20 more lines)
+ ✓ (50.1s)
+            // Reset for other tests (AtomicBool allows this, unlike OnceLock).
+            AUTO_EDIT.store(false, std::sync::atomic::Ordering::Relaxed);
+            assert!(!is_auto_edit());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_effort_level_label() {
+  +         assert_eq!(EffortLevel::Low.label(), "low");
+  ... (13 more lines)
+  3 tools completed in 1m 3s (3 ✓)
+
+Now let me also add a test for the routing in dispatch.rs. Let me check if there are existing routing tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/dispatch.rs ✓ (2ms)
+  ▶ search 'mod tests"' in src/dispatch.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:1068..1118 ✓ (1ms)
+  4 tools completed in 10.9s (4 ✓)
+
+Good, there are existing routing tests. Let me add a test for /effort routing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1712..1742 ✓ (0ms)
+  ▶ edit src/dispatch.rs (11 → 19 lines)
+                    "Exact match failed for: {input:?}"
+                );
+            }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_route_effort() {
+  +         assert_eq!(route_command("/effort"), CommandRoute::Effort);
+  +         assert_eq!(route_command("/effort low"), CommandRoute::Effort);
+  +         assert_eq!(route_command("/effort high"), CommandRoute::Effort);
+  +         assert_eq!(route_command("/effort medium"), CommandRoute::Effort);
+        }
+    }
+ ✓ (50.0s)
+                    "Exact match failed for: {input:?}"
+                );
+            }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_route_effort() {
+  +         assert_eq!(route_command("/effort"), CommandRoute::Effort);
+  ... (5 more lines)
+  2 tools completed in 56.5s (2 ✓)
+
+Now let me also add a test in commands_config.rs for `handle_effort`. Let me find the test module there:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_config.rs ✓ (2ms)
+  ▶ read src/commands_config.rs:1100..1130 ✓ (1ms)
+  ▶ read src/commands_config.rs:1610..1620 ✓ (0ms)
+  3 tools completed in 7.8s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+

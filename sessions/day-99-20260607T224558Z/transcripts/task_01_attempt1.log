@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll remove the false #[allow(dead_code)] annotations from commands_web.rs. Let me start by finding the exact lines.
+  ▶ $ grep -n '#\[allow(dead_code)\]' src/commands_web.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (43ms)
+  ▶ $ grep -n '#\[allow(dead_code)\]' src/commands_web.rs ✓ (33ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Let me see the full output and the context around each annotation:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n -B0 -A1 '#\[allow(dead_code)\]' src/commands_web.rs ✓ (32ms)
+
+Good, I can see all 9 annotations. Now let me remove them all:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -i '/^#\[allow(dead_code)\]$/d' src/commands_web.rs ✓ (3ms)
+
+Verify they're all gone:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '#\[allow(dead_code)\]' src/commands_web.rs; echo "Exit: $?" ✓ (2ms)
+
+All 9 removed. Now run the checks:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -20 ✓ (11.7s)
+  ▶ $ cargo build 2>&1 | tail -5 ✓ (5.5s)
+  ▶ $ cargo test 2>&1 | tail -20 ✓ (38.2s)
+  3 tools completed in 1m 3s (3 ✓)
+
+All checks pass — build, clippy, fmt, and all 88 tests. The functions were indeed all reachable, so the #[allow(dead_code)] annotations were false suppressions.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 99 (21:58): Remove false #[allow(dead_code)] an… ✓ (14ms)
+
+Done. Removed all 9 false #[allow(dead_code)] annotations from src/commands_web.rs. The functions (WebSearchResult, url_encode, url_decode, `extract_ddg_url, extract_attr, extract_inner_text, parse_ddg_results, format_search_results, web_search_and_read) are all reachable through the web_search_and_read` call chain from tools.rs, so the annotations were unnecessary noise. Clean build, clean clippy, all 88 tests pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

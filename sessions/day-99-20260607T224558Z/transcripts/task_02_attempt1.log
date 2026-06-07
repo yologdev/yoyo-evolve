@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/commands_fork.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allow(dead_code)" src/h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allow(dead_code)" src/t… ✓ (5ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  3 tools completed in 2.3s (3 ✓)
+
+Now let me look at the specific lines to make precise edits:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "current_branch_name" s…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs:33..43  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:655..700 ✓ (0ms)
+ ✓ (1ms)
+ ✓ (5ms)
+  3 tools completed in 2.5s (3 ✓)
+
+Good. Now I have all the context I need. Let me make the edits:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_fork.rs (5 → 0 lines)
+  - /// Return the name of the current conversation branch, if any.
+  - #[allow(dead_code)]
+  - pub fn current_branch_name() -> Option<String> {
+  -     with_branch_store(|store| store.current.clone())
+  - }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (2 → 1 lines)
+  -     #[allow(dead_code)] // Public API for hook implementors; used in tests
+        pub fn with_feedback(output: &str, feedback: String) -> Self {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 1 lines)
+  - #[allow(dead_code)] // record_failure / record_success called only via RecoveryHintTool
+    impl ToolFailureTracker {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (2 → 1 lines)
+  - #[allow(dead_code)] // Public API — wired in a follow-up task
+    pub(crate) struct RecoveryHintTool {
+ ✓ (11.1s)
+  - /// Return the name of the current conversation branch, if any.
+  - #[allow(dead_code)]
+  - pub fn current_branch_name() -> Option<String> {
+  -     with_branch_store(|store| store.current.clone())
+  - }
+ ✓ (15.1s)
+  -     #[allow(dead_code)] // Public API for hook implementors; used in tests
+        pub fn with_feedback(output: &str, feedback: String) -> Self {
+ ✓ (19.1s)
+  - #[allow(dead_code)] // record_failure / record_success called only via RecoveryHintTool
+    impl ToolFailureTracker {
+ ✓ (23.1s)
+  - #[allow(dead_code)] // Public API — wired in a follow-up task
+    pub(crate) struct RecoveryHintTool {
+  4 tools completed in 26.4s (4 ✓)
+
+The issue says with_feedback IS used by `ShellHook` at line ~985. Let me verify:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_feedback" src/hook… ✓ (2ms)
+
+It IS used at line 984 and in tests. The compiler is complaining because with -D warnings, dead_code for the binary target doesn't see test-only usage... but wait, line 984 is in ShellHook which should be in the normal code path. Let me check if `ShellHook` itself is gated or if there's something conditional:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '970,995p' src/hooks.rs ✓ (2ms)
+
+I see — the usage at line 984 is inside a #[cfg(test)] block. Let me check ShellHook:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ShellHook" src/hooks.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_feedback" src/ -r ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '280,340p' src/hooks.rs ✓ (3ms)
+  3 tools completed in 5.6s (3 ✓)
+
+I see — ShellHook::post_execute constructs PostHookResult directly with struct literal, not via with_feedback. The only actual non-test usage is in the FeedbackHook test struct at line 984 which is inside #[cfg(test)]. So with_feedback IS genuinely only used in tests.
+
+The task says to remove the annotation because it's used. But the compiler says otherwise. The correct fix is to keep the annotation or use #[cfg(test)] on the function. Since the task instruction says to remove the annotation, but the compiler disagrees, the right thing is to keep the code compiling. Let me put the annotation back but adjust it:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs:35..41 ✓ (0ms)
+
+The compiler is right — with_feedback is only used in test code. I need to keep the #[allow(dead_code)] on it, or the build will fail. The task was wrong about this one. Since the task rule says "must compile without dead_code warnings" and the function IS only used in tests, I should keep the annotation. Let me restore it but with a more accurate comment:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/hooks.rs (2 → 3 lines)
+        /// Convenience: wrap output with feedback.
+  +     #[allow(dead_code)] // used in tests
+        pub fn with_feedback(output: &str, feedback: String) -> Self {
+ ✓ (50.7s)
+        /// Convenience: wrap output with feedback.
+  +     #[allow(dead_code)] // used in tests
+        pub fn with_feedback(output: &str, feedback: String) -> Self {
+
+Now let me run the full verification:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (37.7s)
+  3 tools completed in 1m 7s (3 ✓)
+
+All checks pass. Let me verify the changes are correct:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (5ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Wait — I notice ToolFailureTracker annotation was also removed. Let me confirm that's still fine (it compiled cleanly). The #[allow(dead_code)] on impl ToolFailureTracker was removed and the build passes, meaning it IS used. Let me double-check that the diff for tool_wrappers shows both removals:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/tool_wrappers.rs ✓ (4ms)
+
+Hmm, only the RecoveryHintTool annotation was removed. The ToolFailureTracker one at line 659 should also have been removed. Let me check:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allow(dead_code)" src/t… ✓ (3ms)
+
+That one is still there! My earlier edit didn't take effect because the auto-check failure message may have been confusing. Let me look at the actual current content:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:656..664 ✓ (0ms)
+
+OK, so that one is still there. The earlier edit DID match but since the auto-check failed (due to the hooks.rs issue at that point), I need to verify whether it was actually applied. Looking at the git diff, only the `RecoveryHintTool line was removed from tool_wrappers.rs. The ToolFailureTracker` one is still present. Let me remove it:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (3 → 2 lines)
+    
+  - #[allow(dead_code)] // record_failure / record_success called only via RecoveryHintTool
+    impl ToolFailureTracker {
+ ✓ (49.9s)
+    
+  - #[allow(dead_code)] // record_failure / record_success called only via RecoveryHintTool
+    impl ToolFailureTracker {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (24.7s)
+  3 tools completed in 1m 36s (3 ✓)
+
+All checks pass. Let me verify the final diff:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+
+Now let me commit:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Done. Here's what I did:
+
+1. `src/commands_fork.rs` — Removed the genuinely dead current_branch_name() function (6 lines). It was defined but never called anywhere in the codebase.
+
+2. `src/hooks.rs` — Updated the #[allow(dead_code)] comment on with_feedback to be more accurate. The task said to remove it because it's "used by ShellHook", but the compiler confirmed it's only used in test code (the FeedbackHook test struct). ShellHook constructs PostHookResult directly via struct literal, not via with_feedback. Kept the annotation to avoid a -D warnings failure, but corrected the misleading comment.
+
+3. **`src/tool_wrappers.rs** — Removed both #[allow(dead_code)]` annotations:
+   • ToolFailureTracker impl — the `new() method IS used (imported in tools.rs`), and record_failure/record_success are called by RecoveryHintTool
+   • RecoveryHintTool struct — IS used by with_recovery_hints() function
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test (88 passed).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "allow(dead_code)" src/hooks.rs | head -20 ✓ (5ms)
+  ▶ read src/hooks.rs:34..42 ✓ (0ms)
+  ▶ edit src/hooks.rs (3 → 2 lines)
+        /// Convenience: wrap output with feedback.
+  -     #[allow(dead_code)] // used in tests
+        pub fn with_feedback(output: &str, feedback: String) -> Self {
+ ✓ (11.3s)
+        /// Convenience: wrap output with feedback.
+  -     #[allow(dead_code)] // used in tests
+        pub fn with_feedback(output: &str, feedback: String) -> Self {
+  3 tools completed in 19.5s (3 ✓)
+
+The compiler is saying with_feedback is dead code. Let me check where it's actually used:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "with_feedback" src/📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (35ms)
+
+So it IS used at line 984. The issue is that the compiler sees it as dead because it's within the same crate and there might be a conditional compilation issue. Let me check if line 984 is behind a #[cfg(test)]:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hooks.rs:975..995 ✓ (0ms)
+  ▶ $ grep -n "#\[cfg(test)\]" src/hooks.rs ✓ (33ms)
+  2 tools completed in 6.6s (2 ✓)
+
+So line 984 is inside the #[cfg(test)] module (which starts at line 490). The with_feedback method is only used in tests. The task description says "IS used (by ShellHook at line ~985)" but that's incorrect — the ShellHook usage is inside the test module.
+
+However, the task explicitly says to remove the annotation. Since the compiler requires it, and the task says the evaluator wants it removed, perhaps the approach should be to use #[cfg(test)] on the method itself — but that won't work cleanly either.
+
+Let me re-read the task more carefully. The task says the ShellHook at line ~985 uses it. But looking at the actual code, line 984 is inside `#[cfg(test)]`. The evaluator says "the method is genuinely used by ShellHook at line 985" — but that's within test code.
+
+Given the evaluator's instruction is to remove the annotation, and the compiler disagrees, I need to check if maybe there's a non-test ShellHook that should use it. Let me look at the `ShellHook` implementation outside tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "ShellHook" src/hooks.rs | head -20 ✓ (3ms)
+  ▶ read src/hooks.rs:281..321 ✓ (0ms)
+  ▶ read src/hooks.rs:320..350 ✓ (0ms)
+  3 tools completed in 8.2s (3 ✓)
+
+I see — the real ShellHook::post_execute constructs PostHookResult directly (lines 335-338) rather than using with_feedback. So with_feedback truly is only used in tests. The task description was slightly inaccurate about the non-test usage.
+
+Given that:
+1. The evaluator says to remove the `#[allow(dead_code)]` annotation
+2. But the compiler requires it because the method is only used in test code
+
+The right approach is to keep the annotation but perhaps the evaluator's real concern is different. Let me re-read the evaluator feedback: "The task explicitly requires removing the #[allow(dead_code)] annotation from src/hooks.rs line ~37 (the with_feedback method), but the implementation only shortened the comment while keeping the annotation intact."
+
+So the previous attempt changed the comment but kept the annotation. I need to make it compile without the annotation. The cleanest way is to make ShellHook actually use with_feedback:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (16 → 15 lines)
+            // Post-hooks pass through original output; stderr becomes feedback
+            match self.run_command(&env_vars) {
+                Ok((_, stderr)) => {
+  -                 let feedback = if stderr.trim().is_empty() {
+  -                     None
+  +                 if stderr.trim().is_empty() {
+  +                     Ok(PostHookResult::passthrough(output))
+                    } else {
+  -                     Some(stderr.trim().to_string())
+  -                 };
+  -                 Ok(PostHookResult {
+  -                     output: output.to_string(),
+  -                     feedback,
+  -                 })
+  +                     Ok(PostHookResult::with_feedback(
+  +                         output,
+  +                         stderr.trim().to_string(),
+  +                     ))
+  +                 }
+                }
+  ... (2 more lines)
+ ✓ (49.6s)
+            // Post-hooks pass through original output; stderr becomes feedback
+            match self.run_command(&env_vars) {
+                Ok((_, stderr)) => {
+  -                 let feedback = if stderr.trim().is_empty() {
+  -                     None
+  +                 if stderr.trim().is_empty() {
+  +                     Ok(PostHookResult::passthrough(output))
+                    } else {
+  ... (13 more lines)
+
+Now let's verify this compiles and the annotation is removed:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 ✓ (98ms)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 ✓ (12.3s)
+  ▶ $ cargo test 2>&1 | tail -20 ✓ (25.0s)
+  3 tools completed in 44.3s (3 ✓)
+
+All checks pass. Let me also verify the other two files still have their annotations removed properly:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "allow(dead_code)" src/commands_fork.rs src/hooks.rs src/tool_wrappers.r… ✓ (16ms)
+
+All #[allow(dead_code)] annotations have been removed from all three files. Let me also verify the dead current_branch_name() function was removed from commands_fork.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "current_branch_name" src/commands_fork.rs ✓ (7ms)
+
+Everything is clean. Let me do a final comprehensive check:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings && cargo build && cargo t… ✓ (36.9s)
+
+All checks pass. Here's a summary of the fix:
+
+The issue: The evaluator rejected the previous implementation because the #[allow(dead_code)] annotation on with_feedback in src/hooks.rs was kept (only the comment was shortened). The task required removing it entirely.
+
+The fix: The with_feedback method was only called from test code (inside #[cfg(test)]), not from the production `ShellHook::post_execute implementation. The real ShellHook was constructing PostHookResult` with struct literal syntax instead of using the with_feedback convenience method. I refactored `ShellHook::post_execute to actually use PostHookResult::with_feedback() (and passthrough()) instead of manual struct construction. This makes with_feedback` genuinely used in non-test code, allowing the #[allow(dead_code)] annotation to be removed while keeping the code compiling cleanly.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
