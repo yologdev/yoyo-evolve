@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (7ms)
+
+Let me read the source code to identify the most impactful improvement I can make.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/main.rs | head -100 ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de… ✓ (5ms)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (45.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "saved_state" src/prompt… ✓ (3ms)
+  ▶ read src/prompt.rs:745..830 ✓ (1ms)
+  ▶ read src/prompt.rs:829..869 ✓ (1ms)
+  6 tools completed in 1m 7s (6 ✓)
+
+Now let me look at the second occurrence:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1000..1050 ✓ (1ms)
+
+Now I understand the issue clearly. When saved_state is None (because save_messages() failed), the retry loop silently skips state restoration, causing message duplication on each retry. Also, `restore_messages errors are silently discarded with let _ =`. Let me fix both occurrences:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (9 → 24 lines)
+        for attempt in 0..=MAX_RETRIES {
+            // On retry, restore pre-prompt state so we don't duplicate the user message
+            if attempt > 0 {
+  -             if let Some(ref json) = saved_state {
+  -                 let _ = agent.restore_messages(json);
+  +             match &saved_state {
+  +                 Some(json) => {
+  +                     if let Err(e) = agent.restore_messages(json) {
+  +                         eprintln!(
+  +                             "{DIM}  ⚠ Could not restore state for retry: {e}{RESET}"
+  +                         );
+  +                         // Cannot safely retry — would duplicate messages in context
+  +                         break;
+  +                     }
+  +                 }
+  +                 None => {
+  +                     // Cannot safely retry without saved state — would duplicate user message
+  +                     eprintln!(
+  +                         "{DIM}  ⚠ Skipping retry: no saved state to restore{RESET}"
+  +                     );
+  ... (5 more lines)
+ ✓ (1m 4s)
+        for attempt in 0..=MAX_RETRIES {
+            // On retry, restore pre-prompt state so we don't duplicate the user message
+            if attempt > 0 {
+  -             if let Some(ref json) = saved_state {
+  -                 let _ = agent.restore_messages(json);
+  +             match &saved_state {
+  +                 Some(json) => {
+  +                     if let Err(e) = agent.restore_messages(json) {
+  ... (13 more lines)
+
+Now fix the second occurrence (the run_prompt_with_content_and_changes function):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1025..1040 ✓ (1ms)
+  ▶ edit src/prompt.rs (9 → 24 lines)
+        for attempt in 0..=MAX_RETRIES {
+            // On retry, restore pre-prompt state so we don't duplicate the user message
+            if attempt > 0 {
+  -             if let Some(ref json) = saved_state {
+  -                 let _ = agent.restore_messages(json);
+  +             match &saved_state {
+  +                 Some(json) => {
+  +                     if let Err(e) = agent.restore_messages(json) {
+  +                         eprintln!(
+  +                             "{DIM}  ⚠ Could not restore state for retry: {e}{RESET}"
+  +                         );
+  +                         // Cannot safely retry — would duplicate messages in context
+  +                         break;
+  +                     }
+  +                 }
+  +                 None => {
+  +                     // Cannot safely retry without saved state — would duplicate user message
+  +                     eprintln!(
+  +                         "{DIM}  ⚠ Skipping retry: no saved state to restore{RESET}"
+  +                     );
+  ... (5 more lines)
+ ✓ (1m 5s)
+        for attempt in 0..=MAX_RETRIES {
+            // On retry, restore pre-prompt state so we don't duplicate the user message
+            if attempt > 0 {
+  -             if let Some(ref json) = saved_state {
+  -                 let _ = agent.restore_messages(json);
+  +             match &saved_state {
+  +                 Some(json) => {
+  +                     if let Err(e) = agent.restore_messages(json) {
+  ... (13 more lines)
+  2 tools completed in 1m 12s (2 ✓)
+
+Now let me also fix the ContextOverflow handler where saved_state is used with the same pattern:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let _ = agent.restore_m… ✓ (3ms)
+  ▶ read src/prompt.rs:828..838 ✓ (1ms)
+  ▶ edit src/prompt.rs (3 → 7 lines)
+                    if let Some(ref json) = saved_state {
+  -                     let _ = agent.restore_messages(json);
+  +                     if let Err(e) = agent.restore_messages(json) {
+  +                         eprintln!(
+  +                             "{DIM}  ⚠ Could not restore state for overflow recovery: {e}{RESET}"
+  +                         );
+  +                     }
+                    }
+ ✓ (1m 3s)
+                    if let Some(ref json) = saved_state {
+  -                     let _ = agent.restore_messages(json);
+  +                     if let Err(e) = agent.restore_messages(json) {
+  +                         eprintln!(
+  +                             "{DIM}  ⚠ Could not restore state for overflow recovery: {e}{RESET}"
+  +                         );
+  +                     }
+                    }
+  3 tools completed in 1m 11s (3 ✓)
+
+Now let's run the build and tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (7.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (48.1s)
+  3 tools completed in 1m 17s (3 ✓)
+
+All tests pass. Let me verify the final state of the changes:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (6ms)
+
+Now let me commit this change:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (14 lines) ✓ (13ms)
+
+The improvement is complete. Here's what I did:
+
+**Problem identified:** In src/prompt.rs, the retry loops in both run_prompt_with_changes and run_prompt_with_content_and_changes had a bug where:
+1. If agent.save_messages() failed (returning None for saved_state), retries would proceed without restoring state, causing the user message to be duplicated in the agent's context on every retry attempt
+2. If agent.restore_messages() failed, the error was silently discarded with let _ =, and the retry would proceed with corrupted state
+
+This could lead to wasted tokens (6x duplicate messages after max retries), potential infinite retry loops from context overflow, and corrupted session history.
+
+Fix: Changed both retry loops to:
+• **Break out of the retry loop** if saved_state is None (can't safely retry)
+• Break out of the retry loop if `restore_messages()` returns an error (can't safely retry)
+• Log the error in the ContextOverflow handler instead of silently ignoring it
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
