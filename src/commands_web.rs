@@ -517,7 +517,6 @@ pub fn handle_copy(input: &str, messages: &[yoagent::AgentMessage]) {
 // ---------------------------------------------------------------------------
 
 /// A single web search result.
-#[allow(dead_code)]
 pub(crate) struct WebSearchResult {
     pub title: String,
     pub url: String,
@@ -526,7 +525,6 @@ pub(crate) struct WebSearchResult {
 
 /// Simple percent-encoding for URL query parameters.
 /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
-#[allow(dead_code)]
 fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
     for b in s.bytes() {
@@ -545,7 +543,6 @@ fn url_encode(s: &str) -> String {
 }
 
 /// Decode a percent-encoded string (e.g. from a URL query parameter).
-#[allow(dead_code)]
 fn url_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -576,7 +573,6 @@ fn url_decode(s: &str) -> String {
 ///
 /// We extract the `uddg=` value and percent-decode it. If the href doesn't
 /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
-#[allow(dead_code)]
 pub(crate) fn extract_ddg_url(href: &str) -> String {
     // Look for uddg= parameter
     if let Some(pos) = href.find("uddg=") {
@@ -600,7 +596,6 @@ pub(crate) fn extract_ddg_url(href: &str) -> String {
 ///
 /// Given `<a class="result__a" href="/l/?uddg=...">`, calling
 /// `extract_attr(tag, "href")` returns the value inside the quotes.
-#[allow(dead_code)]
 fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
     // Search for attr_name= (case-insensitive for the attr name)
     let needle = format!("{attr_name}=");
@@ -624,7 +619,6 @@ fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
 
 /// Extract text content between an opening tag at position 0 and its closing tag.
 /// Returns the inner text with HTML tags stripped.
-#[allow(dead_code)]
 fn extract_inner_text(html: &str) -> String {
     // Strip all tags from the fragment
     let mut out = String::with_capacity(html.len());
@@ -665,7 +659,6 @@ fn extract_inner_text(html: &str) -> String {
 ///   <a class="result__snippet" href="...">Snippet text</a>
 /// </div>
 /// ```
-#[allow(dead_code)]
 pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
     let max_results = max_results.min(20);
     let mut results = Vec::new();
@@ -767,7 +760,6 @@ pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearch
 }
 
 /// Format search results as a clean numbered text block.
-#[allow(dead_code)]
 pub(crate) fn format_search_results(results: &[WebSearchResult]) -> String {
     if results.is_empty() {
         return "No results found.".to_string();
@@ -842,7 +834,6 @@ pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearc
 /// Convenience: run a web search and return formatted text.
 ///
 /// Returns a human-/agent-readable string on both success and failure.
-#[allow(dead_code)]
 pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
     match web_search(query, max_results) {
         Ok(results) => format_search_results(&results),
