@@ -1,0 +1,107 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the community issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 2.6s (2 ✓)
+
+No community issues. Let me check the journal for recent context and think about what matters most.
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -100 journals/JOURNAL.md  ▶ $ cat DAY_COUNT ✓ (42ms)
+ ✓ (49ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me check recent git activity and the last release version to decide about a release:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git tag --sort=-v:refname | head -5  ▶ $ git log --oneline -20 ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ git tag --sort=-v:refname | grep '^v' | head -5  ▶ $ # Check what's in the assessment about commands_info.rs — it… (5 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what commands_info.rs contains to understand potenti… (2 lines)  ▶ $ # Check how many tests we have (2 lines) ✓ (4ms)
+ ✓ (19.8s)
+  ▶ $ # Check for the diff preview feature gap — how does ConfirmT… (3 lines)  ▶ $ # Check the current CHANGELOG to see what's accumulated sinc… (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # Check what's been added since v0.1.14 (Days 82-86), we're … (9 lines) ✓ (8ms)
+  ▶ $ # No v* tags - releases are done differently. Let me check (5 lines) ✓ (7ms)
+  ▶ $ # We're still at 0.1.14. Let me count changes since the 0.1.… (6 lines) ✓ (5ms)
+  ▶ $ # Interesting - there are many sessions between Day 86 and D… (4 lines) ✓ (6ms)
+  ▶ $ git log --oneline | grep "Day 9[0-5]\|Day 8[7-9]" | head -60 ✓ (5ms)
+  ▶ $ git log --oneline | grep -E "^[a-f0-9]+ Day (8[7-9]|9[0-5])" | head -40 ✓ (5ms)
+  ▶ $ git log --oneline | head -80 ✓ (6ms)
+  15 tools completed in 1m 14s (15 ✓)
+
+Interesting — there's a big gap in the git log between Day 83 and Day 96. Let me check if the sessions happened on a different branch or something:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # The journal entries show sessions for Days 84-95 exist in … (13 lines) ✓ (3ms)
+  ▶ $ # Let me understand what ConfirmTool already does for diff p… (2 lines) ✓ (4ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now I have a good picture. Let me think about the three best tasks:
+
+1. Extract `commands_evolution.rs` from `commands_info.rs` — The evolution-related functions (EvolutionSession, parse_evolution_tag, session_stats, CiRun, fetch_ci_runs, format_ci_runs, handle_evolution, generate_tips, handle_tips) are a clearly separable concern. This is a clean refactor that reduces a 2,697-line file.
+
+2. **`/diff --preview` for pending changes** — Claude Code shows a visual diff of what it's about to change. yoyo already has format_edit_diff_preview in ConfirmTool, but there's no command to preview all uncommitted changes in a formatted, agent-friendly way. However, /diff already exists. The more competitive gap is actually: the ability to show the agent's proposed changes before they're applied in auto-edit mode. But that's deep in the agent loop.
+
+Let me reconsider. The assessment identifies these actionable gaps:
+• /diff inline review (preview mode)
+• Session resume robustness
+• Structured error output
+• `/test` with coverage
+
+Actually, the biggest self-driven win I can ship tonight is something practical. Let me look at what would make yoyo most competitive for real developers:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /diff currently does (3 lines) ✓ (5ms)
+  ▶ $ # Let me think about what will make the biggest real impact (7 lines) ✓ (4ms)
+  ▶ $ sed -n '19,80p' src/commands_project.rs ✓ (3ms)
+  3 tools completed in 11.8s (3 ✓)
+
+Good. Now let me focus on concrete, high-impact planning. Here's my thinking:
+
+**Task 1 (Self-driven, competitive):** Extract commands_evolution.rs from commands_info.rs — the evolution-related functions (EvolutionSession, CiRun, session_stats, parse_evolution_tag, handle_evolution, generate_tips, handle_tips, plus all CI-related helpers) are a clearly separable ~800-line block. This is the grain-gets-finer pattern from Day 65 — commands_info.rs at 2,697 lines has too many distinct responsibilities.
+
+Task 2 (Self-driven, competitive): Add /context messages subcommand — show a summary of the current conversation: how many turns, what tools were called, which files were touched, approximate token count per message. This is a developer UX feature that helps users understand what their agent is working with. Claude Code has conversation awareness; yoyo should too.
+
+Task 3 (Self-driven, competitive): Add a --dry-run flag that makes file-writing tools show what they would do without actually doing it. This directly addresses the "diff preview" gap — Claude Code shows proposed changes before applying. With --dry-run, yoyo would show the edit/write/create operations as diffs but not execute them. This is a meaningful competitive step.
+
+Actually, let me reconsider task 3. --dry-run is complex and touches the tool layer deeply. Let me think of something tighter.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about adding /context messages - let me see how many … (5 lines) ✓ (3ms)
+  ▶ $ sed -n '484,540p' src/commands_session.rs ✓ (3ms)
+  2 tools completed in 5.8s (2 ✓)
+
+OK — /history and /history detail already exist and show per-message summaries. So /context messages would overlap.
+
+Let me think differently. What's the most impactful *competitive* feature I can build tonight in 3 tasks?
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check: does yoyo have any "plan" or "think before acting" … (2 lines) ✓ (3ms)
+  ▶ $ head -30 src/commands_plan.rs ✓ (38ms)
+  2 tools completed in 11.5s (2 ✓)
+
+OK, /plan exists. Let me focus on truly actionable, self-driven tasks:
+
+1. **Extract evolution/CI commands from commands_info.rs** — clean structural improvement
+2. Add conversation checkpoint auto-save — session resume robustness (the assessment identifies this gap)
+3. Something that makes a real competitive difference...
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /test command to show structured … (4 lines) ✓ (4ms)
+  ▶ $ sed -n '391,450p' src/commands_session.rs ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Auto-save exists but only on exit. There's no periodic checkpoint. But adding periodic checkpoints would touch the REPL loop which is complex. Let me think about the most impactful 3 tasks that are each scoped to ≤3 files and ≤20 minutes.
+
+Here's my final plan:
+
+Task 1: Extract commands_evolution.rs from commands_info.rs — move EvolutionSession, parse_evolution_tag, session_stats, CiRun, all CI helpers, handle_evolution, generate_tips, handle_tips into a new module. ~800 lines out, clean separation.
+
+Task 2: Add periodic conversation auto-checkpoint — every N turns (e.g., 5), auto-save the conversation to .yoyo/last-session.json. Currently only saves on exit, so a crash/kill loses everything. This directly addresses the "session resume robustness" gap from the assessment. Touches `repl.rs` (add checkpoint call after each turn) and commands_session.rs (make auto_save reusable).
+
+Task 3: Add /context summary subcommand — a one-line overview: turn count, token usage, files touched, tools used, elapsed time. Developers need a quick pulse check during long sessions. Touches `commands_project.rs` (add the subcommand handler).
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (44 lines) ✓ (45.6s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

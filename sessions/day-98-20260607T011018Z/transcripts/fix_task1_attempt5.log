@@ -1,0 +1,113 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this extraction task. Let me start by understanding the current code structure.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 17.1s (6 ✓)
+
+Let me first find the structures and functions I need to extract:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct EvolutionSession' in src/commands_info.rs ✓ (2ms)
+  ▶ search '^(pub )?(fn |struct |enum |const |use |#\[)' in src/commands_info.rs ✓ (2ms)
+  ▶ search '^(pub )?fn |^(pub )?struct |^(pub )?enum |^(pub )?const |^us…' in src/commands_info.rs ✓ (2ms)
+  ▶ $ grep -n 'pub fn \|fn \|pub struct \|struct \|pub enum \|pub const ' src/commands… ✓ (6ms)
+  ▶ $ grep -n 'pub fn \|fn \|pub struct \|struct \|pub enum \|pub const ' src/commands… ✓ (4ms)
+  5 tools completed in 12.5s (5 ✓)
+
+Now let me read the full sections I need to extract. Let me start from line 911:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..34 ✓ (1ms)
+  ▶ read src/commands_info.rs:905..1435 ✓ (4ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me see what's between line 1007 and 1353 (handle_evolution, CI stuff):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1007..1217 ✓ (2ms)
+  ▶ read src/commands_info.rs:1216..1356 ✓ (2ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me see what generate_tips uses (its full imports):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1352..1442 ✓ (1ms)
+
+Now let me identify which tests belong to the evolution/tips items. Let me find all tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '    fn test_' src/commands_info.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ $ grep -n '^\s*fn test_' src/commands_info.rs ✓ (9ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Let me get just the test function names with line numbers:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn test_' src/commands_info.rs ✓ (9ms)
+  ▶ $ grep -n '    fn test_' src/commands_info.rs | cat ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+The tests to move are:
+• test_parse_evolution_tag_* (lines 1682-1720)
+• test_parse_journal_titles* (lines 1722-1763)
+• `test_parse_evolution_count_*` (lines 1765-1785)
+• test_session_stats_* (lines 1787-1853)
+• test_handle_evolution_no_panic (line 1846)
+• test_parse_ci_runs_* (lines 1855-1937)
+• test_format_ci_status_icons (line 1939)
+• test_format_ci_runs_* (lines 1949-1982)
+• test_fetch_ci_runs_* (line 1984)
+• test_parse_iso8601_to_epoch_* (lines 1993-2024)
+• `test_format_ci_time_ago_*` (line 2025)
+• test_generate_tips_* (lines 2520-2595)
+• test_discovery_tips_* (line 2587)
+
+Let me read the exact test blocks I need to move:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1682..2040 ✓ (3ms)
+
+Now let me read the tips tests:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2520..2620 ✓ (1ms)
+
+Now let me check dispatch.rs for the relevant routing:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_evolution|handle_tips' in src/dispatch.rs ✓ (2ms)
+  ▶ search 'handle_evolution|handle_tips' in src ✓ (8ms)
+  ▶ $ grep -rn 'handle_evolution\|handle_tips' src/ ✓ (42ms)
+  3 tools completed in 6.7s (3 ✓)
+
+Good. So handle_evolution and handle_tips are:
+1. Defined in commands_info.rs
+2. Re-exported from commands.rs (via use crate::commands_info::*)
+3. Called from dispatch.rs via commands::handle_evolution and commands::handle_tips
+4. Called from dispatch_sub.rs via crate::commands_info::handle_evolution
+
+Let me check the imports in commands.rs:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'commands_info' src/commands.rs ✓ (8ms)
+  ▶ read src/commands.rs:20..40 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now I have a clear picture. Let me check main.rs for the mod declarations:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '^mod ' src/main.rs ✓ (8ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 14.1s (3 ✓)
+
+Now I have all the information. Let me delegate the actual extraction to a sub-agent for the heavy lifting:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (6m 5s)
+
+Let me read all the relevant sections myself and create the file:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:908..1430 ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

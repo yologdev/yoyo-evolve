@@ -1,0 +1,97 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll extract the evolution/CI and tips functions from commands_info.rs into a new commands_evolution.rs file. Let me start by understanding the current code structure.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 19.4s (8 ✓)
+
+Let me first read the full commands_info.rs to understand the structure and find the exact boundaries of what needs to be extracted.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_info.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ $ grep -n "^pub\|^fn\|^struct\|^enum\|^use\|^#\[cfg(test)\]\|^mod " src/commands_i… ✓ (4ms)
+  ▶ $ grep -n "^#\[cfg(test)\]\|^mod tests" src/commands_info.rs ✓ (8ms)
+  3 tools completed in 8.1s (3 ✓)
+
+So the items to extract start at line 911 (`struct EvolutionSession`). Let me find the exact boundaries.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:905..915 ✓ (1ms)
+  ▶ read src/commands_info.rs:1425..1440 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now I need to find which tests belong to the evolution/tips functions. Let me look at all tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_\|fn evolution_\|fn tips_\|fn ci_\|fn parse_" src/commands_info… ✓ (4ms)
+
+Now I need to identify which tests relate to the evolution/tips functions. Let me read the test section to find the exact boundaries:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (37.4s)
+
+Now let me read the exact code blocks I need to move. Let me do this efficiently:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..21 ✓ (1ms)
+
+Now let me read the evolution/CI/tips code blocks to extract (lines 909-1429):
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:909..1430 ✓ (4ms)
+
+Now let me check what generate_tips and handle_evolution reference from commands_info.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "version_line\|DISCOVERY_TIPS\|get_watch_command\|load_goal\|format_cost… ✓ (4ms)
+  ▶ $ grep -n "DISCOVERY_TIPS" src/commands_info.rs ✓ (9ms)
+  ▶ read src/commands_info.rs:1330..1355 ✓ (1ms)
+  3 tools completed in 9.7s (3 ✓)
+
+Now let me check what handle_evolution references from other modules:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1199..1359 ✓ (2ms)
+
+Now let me check what the tests reference. Let me read the test block for evolution/CI:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1680..2050 ✓ (3ms)
+
+Now let me also read the tips tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2519..2604 ✓ (1ms)
+
+Good. Now let me check the dispatch.rs to see what it imports:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_evolution\|handle_tips\|commands_info" src/dispatch.rs ✓ (10ms)
+  ▶ $ grep -n "handle_evolution\|handle_tips" src/dispatch.rs ✓ (8ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Wait, it's using the commands:: prefix. Let me check how these are re-exported:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_evolution\|handle_tips" src/commands.rs ✓ (9ms)
+  ▶ read src/commands.rs:15..45 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I understand the structure. The re-exports go through commands.rs. I need to:
+1. Create commands_evolution.rs
+2. Move the code from commands_info.rs
+3. Update the re-export in commands.rs to point to commands_evolution for the moved items
+4. Add mod commands_evolution in main.rs
+
+Let me also check if any other files reference these functions directly from commands_info:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "commands_info::.*\(handle_evolution\|handle_tips\|parse_evolution\|Evo… ✓ (44ms)
+  ▶ read src/dispatch_sub.rs:261..266 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good, one direct reference in dispatch_sub.rs. Now let me check for any other direct refs:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "parse_evolution_tag\|EvolutionSession\|CiRun\|parse_ci_runs\|fetch_ci_… ✓ (12ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
