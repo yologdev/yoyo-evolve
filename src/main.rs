@@ -163,6 +163,45 @@ fn count_assistant_turns(agent: &Agent) -> usize {
         .count()
 }
 
+/// Emit the final response in the appropriate output mode.
+///
+/// Three modes:
+/// - `print_mode`: raw text to stdout (for shell scripting)
+/// - `json_output`: JSON envelope to stdout (for structured consumers)
+/// - otherwise: write to `output_path` file (or print if no path given)
+#[allow(clippy::too_many_arguments)]
+fn emit_output(
+    response: &PromptOutcome,
+    model: &str,
+    usage: &Usage,
+    is_error: bool,
+    session_changes: &SessionChanges,
+    output_path: &Option<String>,
+    json_output: bool,
+    print_mode: bool,
+    duration: std::time::Duration,
+    num_turns: usize,
+) {
+    if print_mode {
+        print!("{}", response.text);
+    } else if json_output {
+        println!(
+            "{}",
+            build_json_output(
+                response,
+                model,
+                usage,
+                is_error,
+                session_changes,
+                duration,
+                num_turns,
+            )
+        );
+    } else {
+        write_output_file(output_path, &response.text);
+    }
+}
+
 /// Handle `--prompt / -p` single-shot mode: run one prompt (optionally with an
 /// image), print the result (or write to `--output`), and return. Calls
 /// `std::process::exit` on fatal errors (bad image, API failure with no
@@ -284,24 +323,18 @@ async fn run_single_prompt(
                 .await;
                 if should_exit_error {
                     format::maybe_ring_bell(prompt_start.elapsed());
-                    if print_mode {
-                        print!("{}", final_response.text);
-                    } else if json_output {
-                        println!(
-                            "{}",
-                            build_json_output(
-                                &final_response,
-                                &agent_config.model,
-                                &session_total,
-                                true,
-                                &session_changes,
-                                prompt_start.elapsed(),
-                                count_assistant_turns(agent),
-                            )
-                        );
-                    } else {
-                        write_output_file(output_path, &final_response.text);
-                    }
+                    emit_output(
+                        &final_response,
+                        &agent_config.model,
+                        &session_total,
+                        true,
+                        &session_changes,
+                        output_path,
+                        json_output,
+                        print_mode,
+                        prompt_start.elapsed(),
+                        count_assistant_turns(agent),
+                    );
                     std::process::exit(1);
                 }
                 final_response
@@ -331,24 +364,18 @@ async fn run_single_prompt(
         .await;
         if should_exit_error {
             format::maybe_ring_bell(prompt_start.elapsed());
-            if print_mode {
-                print!("{}", final_response.text);
-            } else if json_output {
-                println!(
-                    "{}",
-                    build_json_output(
-                        &final_response,
-                        &agent_config.model,
-                        &session_total,
-                        true,
-                        &session_changes,
-                        prompt_start.elapsed(),
-                        count_assistant_turns(agent),
-                    )
-                );
-            } else {
-                write_output_file(output_path, &final_response.text);
-            }
+            emit_output(
+                &final_response,
+                &agent_config.model,
+                &session_total,
+                true,
+                &session_changes,
+                output_path,
+                json_output,
+                print_mode,
+                prompt_start.elapsed(),
+                count_assistant_turns(agent),
+            );
             std::process::exit(1);
         }
         final_response
@@ -364,24 +391,18 @@ async fn run_single_prompt(
     .await;
 
     format::maybe_ring_bell(prompt_start.elapsed());
-    if print_mode {
-        print!("{}", response.text);
-    } else if json_output {
-        println!(
-            "{}",
-            build_json_output(
-                &response,
-                &agent_config.model,
-                &session_total,
-                false,
-                &session_changes,
-                prompt_start.elapsed(),
-                count_assistant_turns(agent),
-            )
-        );
-    } else {
-        write_output_file(output_path, &response.text);
-    }
+    emit_output(
+        &response,
+        &agent_config.model,
+        &session_total,
+        false,
+        &session_changes,
+        output_path,
+        json_output,
+        print_mode,
+        prompt_start.elapsed(),
+        count_assistant_turns(agent),
+    );
     if CHECKPOINT_TRIGGERED.load(Ordering::SeqCst) {
         std::process::exit(2);
     }
@@ -484,24 +505,18 @@ async fn run_piped_mode(
     }
 
     format::maybe_ring_bell(prompt_start.elapsed());
-    if print_mode {
-        print!("{}", response.text);
-    } else if json_output {
-        println!(
-            "{}",
-            build_json_output(
-                &response,
-                &agent_config.model,
-                &session_total,
-                should_exit_error,
-                &session_changes,
-                prompt_start.elapsed(),
-                count_assistant_turns(agent),
-            )
-        );
-    } else {
-        write_output_file(output_path, &response.text);
-    }
+    emit_output(
+        &response,
+        &agent_config.model,
+        &session_total,
+        should_exit_error,
+        &session_changes,
+        output_path,
+        json_output,
+        print_mode,
+        prompt_start.elapsed(),
+        count_assistant_turns(agent),
+    );
     if should_exit_error {
         std::process::exit(1);
     }
