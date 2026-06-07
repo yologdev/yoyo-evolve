@@ -760,8 +760,19 @@ pub async fn run_prompt_with_changes(
     for attempt in 0..=MAX_RETRIES {
         // On retry, restore pre-prompt state so we don't duplicate the user message
         if attempt > 0 {
-            if let Some(ref json) = saved_state {
-                let _ = agent.restore_messages(json);
+            match &saved_state {
+                Some(json) => {
+                    if let Err(e) = agent.restore_messages(json) {
+                        eprintln!("{DIM}  ⚠ Could not restore state for retry: {e}{RESET}");
+                        // Cannot safely retry — would duplicate messages in context
+                        break;
+                    }
+                }
+                None => {
+                    // Cannot safely retry without saved state — would duplicate user message
+                    eprintln!("{DIM}  ⚠ Skipping retry: no saved state to restore{RESET}");
+                    break;
+                }
             }
         }
 
@@ -813,7 +824,11 @@ pub async fn run_prompt_with_changes(
                 eprintln!("{DIM}  ({error_msg}){RESET}");
 
                 if let Some(ref json) = saved_state {
-                    let _ = agent.restore_messages(json);
+                    if let Err(e) = agent.restore_messages(json) {
+                        eprintln!(
+                            "{DIM}  ⚠ Could not restore state for overflow recovery: {e}{RESET}"
+                        );
+                    }
                 }
                 if let Some((before_count, before_tokens, after_count, after_tokens)) =
                     crate::commands_session::compact_agent(agent)
@@ -1016,8 +1031,19 @@ pub async fn run_prompt_with_content_and_changes(
     for attempt in 0..=MAX_RETRIES {
         // On retry, restore pre-prompt state so we don't duplicate the user message
         if attempt > 0 {
-            if let Some(ref json) = saved_state {
-                let _ = agent.restore_messages(json);
+            match &saved_state {
+                Some(json) => {
+                    if let Err(e) = agent.restore_messages(json) {
+                        eprintln!("{DIM}  ⚠ Could not restore state for retry: {e}{RESET}");
+                        // Cannot safely retry — would duplicate messages in context
+                        break;
+                    }
+                }
+                None => {
+                    // Cannot safely retry without saved state — would duplicate user message
+                    eprintln!("{DIM}  ⚠ Skipping retry: no saved state to restore{RESET}");
+                    break;
+                }
             }
         }
 
