@@ -1,0 +1,195 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 19s)
+
+Good analysis. Let me look deeper at the specific duplication sites to verify these findings and pick the best one.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emit_output\|print_mode… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_watch_setup\|auto_… ✓ (4ms)
+  2 tools completed in 11.0s (2 ✓)
+
+Let me now look at the output emission duplication more carefully - that seems like the highest-impact refactor.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:125..175 ✓ (1ms)
+  ▶ read src/main.rs:270..400 ✓ (1ms)
+  ▶ read src/main.rs:470..520 ✓ (1ms)
+  3 tools completed in 6.0s (3 ✓)
+
+Now I see the clear duplication. The `if print_mode { ... } else if json_output { ... } else { write_output_file(...) }` pattern appears 4 times. Let me also check for other improvement opportunities while I'm at it.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "unwrap()" src/tools.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unwrap()" src/tools.rs … ✓ (4ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Most of those unwraps in the 1300+ line range are in test functions. Let me verify:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/too… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs ✓ (2ms)
+  2 tools completed in 5.0s (2 ✓)
+
+So lines 1062+ are test code. The production unwraps are at lines 1128, 1189, 1199, 1204, 1216, 1218. Let me check what those are:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1120..1135 ✓ (1ms)
+
+Those are all in tests. OK, so the unwrap issue is not the most impactful. Let me focus on the emit_output extraction — that's the clearest, most impactful dedup.
+
+Actually, let me also think about whether there's something even more impactful — a user-facing improvement or a missing test for critical functionality. Let me check what's less tested:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/*.rs; do tests=$(gr… ✓ (204ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/*.rs; do tests=$(gr… ✓ (315ms)
+  2 tools completed in 9.8s (2 ✓)
+
+Let me go with the emit_output extraction. This is a clean, testable refactor that eliminates a 4-way code duplication in `main.rs`. Let me read the full context to make the change carefully.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1..511 ✓ (5ms)
+
+Now I have a clear picture. Let me also look at what `output_path is (is it always Option<&str> or &str`?):
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:166..206 ✓ (1ms)
+  ▶ read src/main.rs:399..429 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Good. Now I have the full picture. The `emit_output` function needs these params:
+• `response: &PromptOutcome` (for the text)
+• model: &str
+• usage: &Usage
+• `is_error: bool`
+• session_changes: &SessionChanges
+• output_path: &Option<String>
+• json_output: bool
+• print_mode: bool
+• duration: Duration
+• num_turns: usize
+
+Let me write the refactor:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:155..160 ✓ (1ms)
+
+Now let me implement the refactor. First, write the test, then the function, then replace the 4 call sites.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:940..1020 ✓ (1ms)
+  ▶ read src/main.rs:1019..1069 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me also check what write_output_file does:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn write_output_fil… ✓ (3ms)
+  ▶ read src/prompt_utils.rs:32..52 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Good. Now I have the full picture. Let me implement this properly.
+
+Plan:
+1. Add an emit_output helper function that consolidates the 3-way branch (print_mode / json_output / write_output_file)
+2. Replace all 4 occurrences of the pattern
+3. Write a test for the new function
+4. Run checks
+
+Let me first also look at the auto-watch duplication since I can fix both in the same commit:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:220..250 ✓ (1ms)
+  ▶ read src/main.rs:435..465 ✓ (1ms)
+  ▶ read src/repl.rs:680..705 ✓ (1ms)
+  3 tools completed in 6.8s (3 ✓)
+
+I can see the pattern. Let me focus on the most impactful change: extracting `emit_output`. The auto-watch duplication is slightly different between call sites (different messages, println! vs `eprintln!, trailing \n`), making it less clean to extract without changing behavior.
+
+Let me implement the emit_output extraction now:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (8 → 47 lines)
+            .iter()
+            .filter(|m| matches!(m.as_llm(), Some(yoagent::Message::Assistant { .. })))
+            .count()
+  + }
+  + 
+  + /// Emit the final response in the appropriate output mode.
+  + ///
+  + /// Three modes:
+  + /// - `print_mode`: raw text to stdout (for shell scripting)
+  + /// - `json_output`: JSON envelope to stdout (for structured consumers)
+  + /// - otherwise: write to `output_path` file (or print if no path given)
+  + #[allow(clippy::too_many_arguments)]
+  + fn emit_output(
+  +     response: &PromptOutcome,
+  +     model: &str,
+  +     usage: &Usage,
+  +     is_error: bool,
+  +     session_changes: &SessionChanges,
+  +     output_path: &Option<String>,
+  +     json_output: bool,
+  ... (23 more lines)
+ ✓ (14.1s)
+            .iter()
+            .filter(|m| matches!(m.as_llm(), Some(yoagent::Message::Assistant { .. })))
+            .count()
+  + }
+  + 
+  + /// Emit the final response in the appropriate output mode.
+  + ///
+  + /// Three modes:
+  ... (13 more lines)
+
+Good, the function is added but not used yet. Now replace the 4 call sites. Let me do them one by one:
+
+**Site 1: run_single_prompt error path (image fallback), lines ~287-304**
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:318..343 ✓ (1ms)
+  ▶ edit src/main.rs (19 → 14 lines)
+                    if should_exit_error {
+                        format::maybe_ring_bell(prompt_start.elapsed());
+  -                     if print_mode {
+  -                         print!("{}", final_response.text);
+  -                     } else if json_output {
+  -                         println!(
+  -                             "{}",
+  -                             build_json_output(
+  -                                 &final_response,
+  -                                 &agent_config.model,
+  -                                 &session_total,
+  -                                 true,
+  -                                 &session_changes,
+  -                                 prompt_start.elapsed(),
+  -                                 count_assistant_turns(agent),
+  -                             )
+  -                         );
+  -                     } else {
+  -                         write_output_file(output_path, &final_response.text);
+  +                     emit_output(
+  ... (11 more lines)
+ ✓ (170ms)
+                    if should_exit_error {
+                        format::maybe_ring_bell(prompt_start.elapsed());
+  -                     if print_mode {
+  -                         print!("{}", final_response.text);
+  -                     } else if json_output {
+  -                         println!(
+  -                             "{}",
+  -                             build_json_output(
+  ... (13 more lines)
+  2 tools completed in 7.0s (2 ✓)
+
+The original had a closing } for the else branch that I need to also remove. Let me check the context:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:335..350 ✓ (1ms)
+
+There's a stray } on line 338 from the old `else` block. Let me fix that:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (4 → 3 lines)
+                            count_assistant_turns(agent),
+                        );
+  -                     }
+                        std::process::exit(1);
+ ✓ (1m 5s)
+                            count_assistant_turns(agent),
+                        );
+  -                     }
+                        std::process::exit(1);
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

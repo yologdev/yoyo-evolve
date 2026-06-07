@@ -1,0 +1,185 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the repository and what changes are pending.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/main.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/main.rs | wc -l ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/main.rs ✓ (5ms)
+  4 tools completed in 12.9s (4 ✓)
+
+Let me see the full diff without truncation:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --no-color src/main.rs … ✓ (5ms)
+
+The tool is truncating the diff. Let me read the actual file to see the changes:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --no-color src/main.rs … ✓ (5ms)
+
+The diff tool itself is truncating. Let me read the modified file directly and compare:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git stash show -p 2>/dev/null ||… ✓ (8ms)
+
+The output keeps getting truncated by the tool. Let me read the actual modified file sections:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:163..223 ✓ (2ms)
+  ▶ read src/main.rs:320..370 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+I see - the change extracts duplicated output logic into an emit_output function but only applied it in one of the two places. Let me see the second call site:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:365..395 ✓ (1ms)
+
+Now let me see if there's a third instance (the success path):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:395..425 ✓ (1ms)
+
+Good. Now I understand the full picture. The change extracted the duplicated output pattern into `emit_output`, applied it to one call site (the image path error exit at line 326), but left two more identical patterns un-refactored (lines 365-384 and lines 400-417). The evaluator's complaint is that the changes were never committed.
+
+Let me also apply the refactoring to the remaining two call sites for consistency, then verify and commit.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (23 → 17 lines)
+            if should_exit_error {
+                format::maybe_ring_bell(prompt_start.elapsed());
+  -             if print_mode {
+  -                 print!("{}", final_response.text);
+  -             } else if json_output {
+  -                 println!(
+  -                     "{}",
+  -                     build_json_output(
+  -                         &final_response,
+  -                         &agent_config.model,
+  -                         &session_total,
+  -                         true,
+  -                         &session_changes,
+  -                         prompt_start.elapsed(),
+  -                         count_assistant_turns(agent),
+  -                     )
+  -                 );
+  -             } else {
+  -                 write_output_file(output_path, &final_response.text);
+  -             }
+  ... (15 more lines)
+ ✓ (1m 4s)
+            if should_exit_error {
+                format::maybe_ring_bell(prompt_start.elapsed());
+  -             if print_mode {
+  -                 print!("{}", final_response.text);
+  -             } else if json_output {
+  -                 println!(
+  -                     "{}",
+  -                     build_json_output(
+  ... (13 more lines)
+
+Now replace the success path output (the final one after watch):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:390..415 ✓ (1ms)
+  ▶ edit src/main.rs (20 → 14 lines)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     if print_mode {
+  -         print!("{}", response.text);
+  -     } else if json_output {
+  -         println!(
+  -             "{}",
+  -             build_json_output(
+  -                 &response,
+  -                 &agent_config.model,
+  -                 &session_total,
+  -                 false,
+  -                 &session_changes,
+  -                 prompt_start.elapsed(),
+  -                 count_assistant_turns(agent),
+  -             )
+  -         );
+  -     } else {
+  -         write_output_file(output_path, &response.text);
+  -     }
+  +     emit_output(
+  ... (12 more lines)
+ ✓ (1m 6s)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     if print_mode {
+  -         print!("{}", response.text);
+  -     } else if json_output {
+  -         println!(
+  -             "{}",
+  -             build_json_output(
+  -                 &response,
+  ... (13 more lines)
+  2 tools completed in 1m 12s (2 ✓)
+
+Now let me also check the piped mode function for the same pattern:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "print_mode\|write_outpu… ✓ (4ms)
+
+Let me check the piped mode function:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:500..540 ✓ (1ms)
+
+There's another instance in run_piped_mode. Let me refactor that too:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (20 → 14 lines)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     if print_mode {
+  -         print!("{}", response.text);
+  -     } else if json_output {
+  -         println!(
+  -             "{}",
+  -             build_json_output(
+  -                 &response,
+  -                 &agent_config.model,
+  -                 &session_total,
+  -                 should_exit_error,
+  -                 &session_changes,
+  -                 prompt_start.elapsed(),
+  -                 count_assistant_turns(agent),
+  -             )
+  -         );
+  -     } else {
+  -         write_output_file(output_path, &response.text);
+  -     }
+  +     emit_output(
+  ... (12 more lines)
+ ✓ (1m 4s)
+        format::maybe_ring_bell(prompt_start.elapsed());
+  -     if print_mode {
+  -         print!("{}", response.text);
+  -     } else if json_output {
+  -         println!(
+  -             "{}",
+  -             build_json_output(
+  -                 &response,
+  ... (13 more lines)
+
+Now let me also check the main function for similar patterns:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:720..760 ✓ (1ms)
+
+That's the top-level calls, no duplicate there. Now verify the build passes:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (147ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (32.7s)
+  3 tools completed in 58.2s (3 ✓)
+
+All checks pass. Now let me commit the changes:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (9 lines) ✓ (12ms)
+  2 tools completed in 7.0s (2 ✓)
+
+The fix is complete. Here's what was done:
+
+1. **The evaluator's issue**: The previous attempt extracted an emit_output helper function and applied it to one of four duplicate call sites, but never committed the changes.
+
+2. What I fixed:
+   • Applied the emit_output refactoring to all remaining duplicate sites (3 more: the text-only error path in run_single_prompt, the success path in run_single_prompt, and the output path in run_piped_mode)
+   • Ran cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test — all pass (88 tests, 0 failures)
+   • Committed the changes with a descriptive commit message
+
+The refactoring eliminates 4 copies of the same print_mode / json_output / write_output_file branching pattern, consolidating them into a single `emit_output()` function.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

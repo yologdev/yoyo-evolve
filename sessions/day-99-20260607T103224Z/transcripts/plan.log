@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Now let me check recent journal entries to understand what's been done and check the current state:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -80 journals/JOURNAL.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat DAY_COUNT ✓ (45ms)
+ ✓ (46ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me check git log to understand recent work and look at what's most impactful:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -20  ▶ $ # Check what the last release was (2 lines) ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ # Check if there's a version tag (semver) (2 lines)  ▶ $ # Check what #[allow(dead_code)] annotations exist and where (2 lines) ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ # Let me see the full list with context (2 lines) ✓ (7ms)
+  ▶ $ # Let me check the specific dead_code items in commands_web.… (2 lines)  ▶ $ # Check what the biggest capability gap is - let me look at … (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Check the dead_code items in commands_web.rs to understand… (2 lines) ✓ (4ms)
+  8 tools completed in 18.7s (8 ✓)
+
+Now I have a clear picture. Let me think about the task plan:
+
+1. **Issue #472 (Bloat)** — Community issue. The assessment shows 14 #[allow(dead_code)] annotations, 9 in commands_web.rs. These are mostly false positives (functions ARE used but by other functions in the same module that the compiler can't prove through pub(crate) chains). The real cleanup is to remove those annotations by restructuring visibility or proving they're used.
+
+2. **Self-driven: Biggest capability gap** — The assessment identifies that yoyo doesn't automatically include a lightweight codebase map in prompts, unlike Claude Code and Aider. This is the most impactful competitive gap.
+
+3. **Self-driven: DAY_COUNT update** — It's Day 99 but DAY_COUNT says 98. Need to bump it.
+
+Let me focus on what's most impactful and achievable:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me verify the dead_code situation more carefully (3 lines) ✓ (16ms)
+  ▶ $ # Check what web_search_and_read calls internally (2 lines) ✓ (4ms)
+  ▶ $ # So the dead_code warnings are because these functions are … (5 lines) ✓ (4ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Good — the functions ARE used internally. The #[allow(dead_code)] is needed because Rust's dead-code analysis doesn't trace through private function calls within the same module when the calling function is pub(crate). The real fix would be to either make them pub(crate) or just accept the annotations.
+
+Let me think about what's most impactful for Day 99:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what context.rs currently provides for project conte… (2 lines) ✓ (3ms)
+  ▶ $ # Check what the project file listing looks like currently (2 lines)  ▶ $ # What does load_project_context include? (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  3 tools completed in 4.6s (3 ✓)
+
+Now I have a good picture. Let me look at the symbols/outline infrastructure since that's related to the repo-map gap:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What does /outline currently do? (2 lines)  ▶ $ # Check what extract_symbols returns (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me plan the three tasks. Here's my thinking:
+
+Task 1 (Self-driven, capability gap): Add a lightweight repo structure map to the system prompt context. This is the biggest actionable competitive gap — Claude Code and Aider include a codebase map automatically. The approach: in context.rs, generate a compact "Repository Structure" section that shows key source files with their top-level symbols (structs, functions, impl blocks). This gives the agent a mental map of the codebase without requiring manual /add or /outline. Keep it lightweight (~50-100 lines max in the prompt).
+
+**Task 2 (Community issue #472):** Address bloat by removing unnecessary #[allow(dead_code)] annotations in commands_web.rs. The 9 annotations are there because private helper functions are only called from other functions in the same file. Fix: make those helpers pub(crate) where appropriate, or remove the annotation if the compiler no longer needs it. This directly addresses the community concern.
+
+Task 3 (Self-driven, Day 99 milestone): Bump DAY_COUNT to 99 and write a clean journal entry. Day 99 is significant — one day before Day 100.
+
+Wait, actually the journal and DAY_COUNT are handled by the harness, not by task agents. Let me reconsider task 3.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check what the SYSTEM_PROMPT currently includes re:… (2 lines)  ▶ $ # How is context injected into the system prompt? (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # See how context is appended (2 lines) ✓ (3ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Oh! There's already a repo map being injected. Let me check what generate_repo_map_for_prompt does:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'generate_repo_map_for_prompt\|repo_map' src/commands_map.rs | head -20  ▶ $ # Read the implementation (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.2s (2 ✓)
+
+So the repo map already exists and is injected into the system prompt. The assessment's gap about "not automatically including a lightweight codebase map" is actually already addressed. Let me rethink my tasks.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me look more carefully at the competitive gaps that re… (3 lines)  ▶ $ # Check the /spawn command - does it already do parallel dis… (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Let me think about what's truly most impactful for Day 99 (4 lines)  ▶ $ # Let me check what the community issue #472 specifically wa… (6 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Now let's think about what tasks would genuinely help: (13 lines) ✓ (4ms)
+  ▶ $ # Let me see the exact lines with their dead_code (7 lines) ✓ (15ms)
+  ▶ $ # Check: are these functions used from OTHER files? (2 lines) ✓ (14ms)
+  ▶ $ # So web_search_and_read IS used from tools.rs. The rest are… (8 lines) ✓ (3.0s)
+  ▶ $ # No warnings at all! The dead_code annotations were complet… (3 lines) ✓ (14.2s)
+  ▶ $ # Ah, the #[allow(dead_code)] was acting as a separator betw… (4 lines) ✓ (3ms)
+  ▶ $ # So the fix is: remove #[allow(dead_code)] AND remove the e… (3 lines) ✓ (3ms)
+  ▶ $ # Also check the other files with dead_code (2 lines) ✓ (3ms)
+  12 tools completed in 1m 2s (12 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
