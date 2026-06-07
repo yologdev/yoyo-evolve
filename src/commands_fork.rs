@@ -71,12 +71,6 @@ fn with_branch_store<R>(f: impl FnOnce(&BranchStore) -> R) -> R {
 /// Subcommands for `/fork <Tab>` completion.
 pub const FORK_SUBCOMMANDS: &[&str] = &["switch", "list", "delete", "rename"];
 
-/// Return the name of the current conversation branch, if any.
-#[allow(dead_code)]
-pub fn current_branch_name() -> Option<String> {
-    with_branch_store(|store| store.current.clone())
-}
-
 /// Generate a UTC HH:MM:SS timestamp.
 fn utc_timestamp() -> String {
     use std::time::SystemTime;

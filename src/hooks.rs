@@ -34,7 +34,7 @@ impl PostHookResult {
     }
 
     /// Convenience: wrap output with feedback.
-    #[allow(dead_code)] // Public API for hook implementors; used in tests
+    #[allow(dead_code)] // used in tests
     pub fn with_feedback(output: &str, feedback: String) -> Self {
         Self {
             output: output.to_string(),
