@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /effort command. Let me start by understanding the existing code patterns.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  8 tools completed in 26.8s (8 ✓)
+
+Let me understand the existing patterns:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_think_show|set_thinking|thinking_level' in src/commands_config.rs ✓ (2ms)
+  ▶ search 'fn handle_think|think' in src/commands_config.rs ✓ (2ms)
+  ▶ search 'handle_think' in src (*.rs) ✓ (7ms)
+  ▶ search 'think"' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:464..524 ✓ (1ms)
+  5 tools completed in 15.2s (5 ✓)
+
+Now let me look at how max_auto_continues is managed:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'max_auto_continues|set_max_auto_continues|get_max_auto_conti…' in src (*.rs) ✓ (8ms)
+  ▶ search 'auto_continue|max_continues' in src (*.rs) ✓ (8ms)
+  ▶ search 'auto.continue' in src (*.rs) ✓ (9ms)
+  3 tools completed in 9.8s (3 ✓)
+
+Now let me understand the approach. The max_auto_continues is config-based (read from file config each turn). I need a way to override it at runtime. Let me check how the repl reads config:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:735..765 ✓ (1ms)
+  ▶ read src/repl.rs:1050..1080 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me understand the thinking level types:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search 'ThinkingLevel' in src (*.rs) ✓ (10ms)
+
+Now let me understand the rebuild_preserving_messages pattern and the `AgentConfig`:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:390..440 ✓ (1ms)
+
+Now let me check the CommandRoute enum and how it's used in dispatch:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'enum CommandRoute"' in src/dispatch.rs ✓ (3ms)
+  ▶ search 'CommandRoute"' in src/dispatch.rs ✓ (2ms)
+  ▶ search 'enum CommandRoute' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:30..110 ✓ (1ms)
+  ▶ read src/dispatch.rs:109..139 ✓ (1ms)
+  ▶ read src/dispatch.rs:138..238 ✓ (1ms)
+  ▶ read src/dispatch.rs:237..277 ✓ (1ms)
+  7 tools completed in 26.6s (7 ✓)
+
+Now let me see what KNOWN_COMMANDS looks like:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search 'KNOWN_COMMANDS"' in src/commands.rs ✓ (2ms)
+  ▶ search 'pub const KNOWN_COMMANDS"' in src/commands.rs ✓ (2ms)
+  ▶ search 'KNOWN_COMMANDS"' in src/commands.rs ✓ (2ms)
+  ▶ search 'KNOWN_COMMANDS' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:52..132 ✓ (1ms)
+  ▶ read src/commands.rs:131..151 ✓ (1ms)
+  6 tools completed in 20.7s (6 ✓)
+
+Now let me look at command_arg_hint and command_arg_completions:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn command_arg_hint' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:213..293 ✓ (1ms)
+  ▶ read src/commands.rs:292..332 ✓ (1ms)
+  3 tools completed in 8.4s (3 ✓)
+
+Now I need to understand how max_auto_continues can be set at runtime. Currently it's read from file config. I need to add a runtime override mechanism. Let me check if there's already a pattern for runtime overrides:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1057..1097 ✓ (1ms)
+
+Good. Now I have a clear picture. I need to:
+
+1. Add an effort-level override for max_auto_continues — a static global that get_max_auto_continues checks
+2. Implement `handle_effort in commands_config.rs`
+3. Add routing in dispatch.rs
+4. Add to KNOWN_COMMANDS, completions, hints in commands.rs
+5. Add help text in `help_data.rs`
+
+Let me check how the dispatch uses `DispatchContext`:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:270..300 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

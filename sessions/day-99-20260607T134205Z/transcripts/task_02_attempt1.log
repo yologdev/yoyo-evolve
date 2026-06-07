@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task — removing false #[allow(dead_code)] annotations and truly dead functions. Let me start by examining the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[allow(dead_code)\]' …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'current_branch_name' sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'last_session_exists' sr… ✓ (3ms)
+ ✓ (6ms)
+ ✓ (3ms)
+  3 tools completed in 1.7s (3 ✓)
+
+Let me look at the context around each annotation in commands_web.rs and the dead functions:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for line in 520 529 548 579 603 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,85p' src/commands_for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '388,402p' src/commands_s… ✓ (3ms)
+ ✓ (4ms)
+ ✓ (16ms)
+  3 tools completed in 1.5s (3 ✓)
+
+Good. Let me verify these functions are truly dead (or truly used):
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'current_branch_name' s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'last_session_exists' s… ✓ (7ms)
+ ✓ (7ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Both truly dead — not referenced anywhere else. Now let me also check the test for last_session_exists:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1415,1425p' src/commands… ✓ (3ms)
+
+The test for last_session_exists needs to go too since we're removing the function. Now let me make all the changes:
+
+**Part A: Remove 9 #[allow(dead_code)] annotations from commands_web.rs**
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// A single web search result.
+  - #[allow(dead_code)]
+    pub(crate) struct WebSearchResult {
+ ✓ (1m 4s)
+    /// A single web search result.
+  - #[allow(dead_code)]
+    pub(crate) struct WebSearchResult {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  - #[allow(dead_code)]
+    fn url_encode(s: &str) -> String {
+ ✓ (1m 6s)
+    /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  - #[allow(dead_code)]
+    fn url_encode(s: &str) -> String {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Decode a percent-encoded string (e.g. from a URL query parameter).
+  - #[allow(dead_code)]
+    fn url_decode(s: &str) -> String {
+ ✓ (1m 6s)
+    /// Decode a percent-encoded string (e.g. from a URL query parameter).
+  - #[allow(dead_code)]
+    fn url_decode(s: &str) -> String {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
+  - #[allow(dead_code)]
+    pub(crate) fn extract_ddg_url(href: &str) -> String {
+ ✓ (1m 3s)
+    /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
+  - #[allow(dead_code)]
+    pub(crate) fn extract_ddg_url(href: &str) -> String {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// `extract_attr(tag, "href")` returns the value inside the quotes.
+  - #[allow(dead_code)]
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+ ✓ (1m 5s)
+    /// `extract_attr(tag, "href")` returns the value inside the quotes.
+  - #[allow(dead_code)]
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Returns the inner text with HTML tags stripped.
+  - #[allow(dead_code)]
+    fn extract_inner_text(html: &str) -> String {
+ ✓ (1m 3s)
+    /// Returns the inner text with HTML tags stripped.
+  - #[allow(dead_code)]
+    fn extract_inner_text(html: &str) -> String {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// ```
+  - #[allow(dead_code)]
+    pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+ ✓ (1m 4s)
+    /// ```
+  - #[allow(dead_code)]
+    pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Format search results as a clean numbered text block.
+  - #[allow(dead_code)]
+    pub(crate) fn format_search_results(results: &[WebSearchResult]) -> String {
+ ✓ (1m 6s)
+    /// Format search results as a clean numbered text block.
+  - #[allow(dead_code)]
+    pub(crate) fn format_search_results(results: &[WebSearchResult]) -> String {
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Returns a human-/agent-readable string on both success and failure.
+  - #[allow(dead_code)]
+    pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
+ ✓ (1m 4s)
+    /// Returns a human-/agent-readable string on both success and failure.
+  - #[allow(dead_code)]
+    pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
+  9 tools completed in 10m 17s (9 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
