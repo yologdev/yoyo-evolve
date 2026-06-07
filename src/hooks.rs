@@ -34,7 +34,6 @@ impl PostHookResult {
     }
 
     /// Convenience: wrap output with feedback.
-    #[allow(dead_code)] // used in tests
     pub fn with_feedback(output: &str, feedback: String) -> Self {
         Self {
             output: output.to_string(),
@@ -328,15 +327,14 @@ impl Hook for ShellHook {
         // Post-hooks pass through original output; stderr becomes feedback
         match self.run_command(&env_vars) {
             Ok((_, stderr)) => {
-                let feedback = if stderr.trim().is_empty() {
-                    None
+                if stderr.trim().is_empty() {
+                    Ok(PostHookResult::passthrough(output))
                 } else {
-                    Some(stderr.trim().to_string())
-                };
-                Ok(PostHookResult {
-                    output: output.to_string(),
-                    feedback,
-                })
+                    Ok(PostHookResult::with_feedback(
+                        output,
+                        stderr.trim().to_string(),
+                    ))
+                }
             }
             // On failure, still pass through output with no feedback
             Err(_) => Ok(PostHookResult::passthrough(output)),

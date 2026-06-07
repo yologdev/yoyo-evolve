@@ -119,6 +119,7 @@ pub(crate) enum CommandRoute {
     Side,
     Quick,
     Tips,
+    Effort,
     /// Input starts with `/` but doesn't match any known command.
     UnknownSlash,
     /// Input is not a slash command at all.
@@ -260,6 +261,7 @@ fn route_command_prefix(input: &str) -> CommandRoute {
             "extended" => CommandRoute::Extended,
             "side" => CommandRoute::Side,
             "quick" => CommandRoute::Quick,
+            "effort" => CommandRoute::Effort,
             _ => CommandRoute::UnknownSlash,
         }
     } else {
@@ -854,6 +856,10 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         }
         CommandRoute::Teach => {
             commands::handle_teach(ctx.input);
+            CommandResult::Continue
+        }
+        CommandRoute::Effort => {
+            crate::commands_config::handle_effort(ctx.input);
             CommandResult::Continue
         }
         CommandRoute::Read => {
@@ -1731,5 +1737,13 @@ mod tests {
                 "Exact match failed for: {input:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_route_effort() {
+        assert_eq!(route_command("/effort"), CommandRoute::Effort);
+        assert_eq!(route_command("/effort low"), CommandRoute::Effort);
+        assert_eq!(route_command("/effort high"), CommandRoute::Effort);
+        assert_eq!(route_command("/effort medium"), CommandRoute::Effort);
     }
 }

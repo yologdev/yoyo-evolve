@@ -924,6 +924,46 @@ pub fn handle_teach(input: &str) {
     }
 }
 
+// ── Effort level command ──
+
+/// Handle the `/effort` REPL command.
+pub fn handle_effort(input: &str) {
+    use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+
+    let arg = input.strip_prefix("/effort").unwrap_or("").trim();
+    if arg.is_empty() {
+        let level = effort_level();
+        let icon = match level {
+            EffortLevel::Low => "⚡",
+            EffortLevel::Medium => "⚖️",
+            EffortLevel::High => "🔬",
+        };
+        println!("{BOLD}  {icon} Effort level: {}{RESET}\n", level.label());
+        return;
+    }
+    match arg {
+        "low" | "lo" | "l" => {
+            set_effort_level(EffortLevel::Low);
+            println!("{GREEN}  ⚡ Effort: low{RESET} — concise answers, skip deep analysis\n");
+        }
+        "medium" | "med" | "m" | "default" => {
+            set_effort_level(EffortLevel::Medium);
+            println!("{GREEN}  ⚖️  Effort: medium{RESET} — balanced (default)\n");
+        }
+        "high" | "hi" | "h" => {
+            set_effort_level(EffortLevel::High);
+            println!("{GREEN}  🔬 Effort: high{RESET} — thorough analysis, explore alternatives\n");
+        }
+        _ => {
+            println!("{DIM}  usage: /effort [low|medium|high]");
+            println!("  Set how much work yoyo puts into each response.");
+            println!("    low    — concise, skip deep analysis");
+            println!("    medium — balanced (default)");
+            println!("    high   — thorough, explore alternatives{RESET}\n");
+        }
+    }
+}
+
 /// Build the `/mcp help` text. Extracted as a pure function so tests can
 /// assert on its contents (e.g. to guard against the stale "coming soon"
 /// string returning, or server-filesystem sneaking back in as the primary

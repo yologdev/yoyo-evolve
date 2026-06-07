@@ -29,6 +29,61 @@ pub fn effective_context_tokens() -> u64 {
     EFFECTIVE_CONTEXT_TOKENS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+// ── Effort level ──
+
+/// Graduated effort presets controlling response depth and thoroughness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffortLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl EffortLevel {
+    /// Human-readable label for display.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    /// System prompt hint appended when this effort level is active.
+    /// Returns empty string for medium (default behavior, no extra hint).
+    #[allow(dead_code)] // Used by prompt integration (follow-up task)
+    pub fn system_hint(&self) -> &'static str {
+        match self {
+            Self::Low => "Be concise. Give short, direct answers. Skip lengthy analysis.",
+            Self::Medium => "",
+            Self::High => "Be thorough. Analyze carefully. Consider alternatives. Explain your reasoning in detail.",
+        }
+    }
+}
+
+/// Global effort level — defaults to Medium.
+/// Stored as AtomicU8: 0=Low, 1=Medium, 2=High.
+static EFFORT_LEVEL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
+/// Set the current effort level.
+pub fn set_effort_level(level: EffortLevel) {
+    let val = match level {
+        EffortLevel::Low => 0,
+        EffortLevel::Medium => 1,
+        EffortLevel::High => 2,
+    };
+    EFFORT_LEVEL.store(val, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Get the current effort level.
+pub fn effort_level() -> EffortLevel {
+    match EFFORT_LEVEL.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => EffortLevel::Low,
+        2 => EffortLevel::High,
+        _ => EffortLevel::Medium,
+    }
+}
+
 /// Global flag: auto-approve file edits but still confirm shell commands.
 /// Set once during CLI startup via `enable_auto_edit()`.
 static AUTO_EDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -199,5 +254,40 @@ mod tests {
         // Reset for other tests (AtomicBool allows this, unlike OnceLock).
         AUTO_EDIT.store(false, std::sync::atomic::Ordering::Relaxed);
         assert!(!is_auto_edit());
+    }
+
+    #[test]
+    fn test_effort_level_label() {
+        assert_eq!(EffortLevel::Low.label(), "low");
+        assert_eq!(EffortLevel::Medium.label(), "medium");
+        assert_eq!(EffortLevel::High.label(), "high");
+    }
+
+    #[test]
+    fn test_effort_level_system_hint() {
+        // Low and High have non-empty hints; Medium is empty (default behavior)
+        assert!(!EffortLevel::Low.system_hint().is_empty());
+        assert!(EffortLevel::Medium.system_hint().is_empty());
+        assert!(!EffortLevel::High.system_hint().is_empty());
+        assert!(EffortLevel::Low.system_hint().contains("concise"));
+        assert!(EffortLevel::High.system_hint().contains("thorough"));
+    }
+
+    #[test]
+    fn test_effort_level_roundtrip() {
+        // Save original to restore (tests run concurrently)
+        let original = effort_level();
+
+        set_effort_level(EffortLevel::Low);
+        assert_eq!(effort_level(), EffortLevel::Low);
+
+        set_effort_level(EffortLevel::High);
+        assert_eq!(effort_level(), EffortLevel::High);
+
+        set_effort_level(EffortLevel::Medium);
+        assert_eq!(effort_level(), EffortLevel::Medium);
+
+        // Restore
+        set_effort_level(original);
     }
 }
