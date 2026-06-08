@@ -1,0 +1,93 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make. Let me assess the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat memory/learnings.jsonl | tai… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 ✓ (4ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Let me look at what areas could benefit most from improvement. Let me check for common patterns that could be impactful - specifically focusing on robustness and user experience.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "unwrap()" src/ | grep … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.unwrap()" src/prompt… ✓ (4ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Those are all in tests. Let me look at the main code paths for issues.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.unwrap()" src/repl.r… ✓ (4ms)
+
+All tests. Let me focus on finding something more impactful. Let me look at what area could give the most user-facing benefit.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 11s)
+
+Excellent analysis. The looks_incomplete issue is important, but let me check if stop_reason handling already exists — because max_tokens cutoff detection is often a separate mechanism. Let me look at how auto-continue actually works:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_incomplete\|auto.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '940,1000p' src/repl.rs ✓ (4ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now let me look at the looks_incomplete function itself:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1087,1250p' src/repl.rs ✓ (5ms)
+
+Now let me check how the outcome text is collected - specifically whether we have access to stop reason:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stop_reason\|StopReason… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '63,90p' src/prompt.rs ✓ (3ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me look at how stop reason is handled in the event loop:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '500,540p' src/prompt.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StopReason" src/prompt.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "StopReason" src/ | hea… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "enum StopReason" ~/.ca… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A10 "enum StopReason" ~/.c… ✓ (3ms)
+  5 tools completed in 19.8s (5 ✓)
+
+`StopReason::Length` is what we need — it means the model hit the max output tokens limit. Now let me understand the full flow: when the agent finishes, does the stop_reason propagate to the caller?
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '500,560p' src/prompt.rs ✓ (3ms)
+
+I see the stop reason is checked only for Error. It doesn't propagate Length to PromptOutcome. This is the gap — we know when the model was cut off (stop_reason == Length) but we don't pass that info to the auto-continue logic in `repl.rs`.
+
+Let me also think about what's most impactful. The `looks_incomplete` issue is real but it's about heuristics. Let me look at another angle — perhaps there's something more clearly broken or a concrete user-facing improvement. Let me check what issues have been filed:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "was_truncated\|was_cut_… ✓ (3ms)
+
+OK, so there's no tracking of whether the model was cut off due to output token limit. This is a significant gap. The PromptOutcome struct needs a was_cut_off field, and looks_incomplete should use it. But actually, the real question is: does the agent loop in yoagent handle `StopReason::Length` automatically by continuing? Let me check:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Length\|max_output\|stop_reason" ~/.cargo/registry/src/index.crates.io-… ✓ (4ms)
+  ▶ $ find ~/.cargo/registry/src/ -name "*.rs" -path "*yoagent-0.8*" | xargs grep -l "… ✓ (56ms)
+  ▶ $ grep -n "Length\|stop_reason" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b… ✓ (5ms)
+  ▶ $ sed -n '360,380p' ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent… ✓ (3ms)
+  4 tools completed in 13.9s (4 ✓)
+
+So yoagent only handles Error/Aborted stop reasons specially — `StopReason::Length and StopReason::Stop` both just fall through to the normal end of the loop. This means when the model hits output limit (Length), it just stops, and yoyo's looks_incomplete heuristic has to detect it textually.
+
+This is a great improvement to make: **add was_cut_off to PromptOutcome and use it in the auto-continue logic**. When stop_reason is Length, the response was definitely cut off — no heuristic needed.
+
+Let me now design and implement this. Let me look more at the flow:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,420p' src/prompt.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '420,500p' src/prompt.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '508,560p' src/prompt.rs ✓ (4ms)
+  3 tools completed in 9.7s (3 ✓)
+
+Now I need to see where the final PromptOutcome is built from the event handler state:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptOutcome {" src/pr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '875,900p' src/prompt.rs ✓ (3ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now let me see where collected_text and the event state comes from:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '760,890p' src/prompt.rs ✓ (5ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
