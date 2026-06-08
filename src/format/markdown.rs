@@ -145,8 +145,9 @@ impl MarkdownRenderer {
 
         // Process all complete lines (those ending with \n)
         while let Some(newline_pos) = self.line_buffer.find('\n') {
-            let line = self.line_buffer[..newline_pos].to_string();
-            self.line_buffer = self.line_buffer[newline_pos + 1..].to_string();
+            let line: String = self.line_buffer.drain(..newline_pos).collect();
+            // Drain the '\n' itself
+            self.line_buffer.drain(..1);
 
             if self.block_prefix_rendered {
                 // The prefix (bullet, quote marker, etc.) was already rendered.

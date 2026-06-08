@@ -1008,28 +1008,32 @@ fn detect_src_prefix(path: &str) -> &str {
 /// Results are deduplicated, sorted, and filtered to only files that
 /// exist on disk.
 pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
-    use regex::Regex;
     use std::collections::BTreeSet;
     use std::path::Path;
+    use std::sync::LazyLock;
 
-    // Lazy-build patterns.  We accept some overlap — the BTreeSet
-    // deduplicates anyway.
-    let patterns: &[Regex] = &[
-        // Rust: `--> src/foo.rs:42:10`
-        Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
-        // Python: `File "src/foo.py", line 42`
-        Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
-        // TS paren style: `src/foo.ts(42,10)`
-        Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
-        // Generic `path/file.ext:LINE` — must contain a `/` or `.\` to
-        // avoid matching random words like `error:1`.
-        Regex::new(r"([\w._\-\\]*[/\\][\w./_\-\\]+\.\w+):\d+").unwrap(),
-        // Go-style `./foo.go:42`
-        Regex::new(r"(\./[\w./_\-\\]+\.\w+):\d+").unwrap(),
-    ];
+    use regex::Regex;
+
+    // Compile patterns once — this function is called on every watch
+    // iteration, so avoiding repeated Regex::new() matters.
+    static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+        vec![
+            // Rust: `--> src/foo.rs:42:10`
+            Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
+            // Python: `File "src/foo.py", line 42`
+            Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
+            // TS paren style: `src/foo.ts(42,10)`
+            Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
+            // Generic `path/file.ext:LINE` — must contain a `/` or `.\` to
+            // avoid matching random words like `error:1`.
+            Regex::new(r"([\w._\-\\]*[/\\][\w./_\-\\]+\.\w+):\d+").unwrap(),
+            // Go-style `./foo.go:42`
+            Regex::new(r"(\./[\w./_\-\\]+\.\w+):\d+").unwrap(),
+        ]
+    });
 
     let mut seen = BTreeSet::new();
-    for pat in patterns {
+    for pat in PATTERNS.iter() {
         for cap in pat.captures_iter(output) {
             if let Some(m) = cap.get(1) {
                 let p = m.as_str().to_string();
@@ -1049,19 +1053,23 @@ pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
 /// matching independently of on-disk state.
 #[cfg(test)]
 fn extract_file_path_candidates(output: &str) -> Vec<String> {
-    use regex::Regex;
     use std::collections::BTreeSet;
+    use std::sync::LazyLock;
 
-    let patterns: &[Regex] = &[
-        Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
-        Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
-        Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
-        Regex::new(r"([\w._\-\\]*[/\\][\w./_\-\\]+\.\w+):\d+").unwrap(),
-        Regex::new(r"(\./[\w./_\-\\]+\.\w+):\d+").unwrap(),
-    ];
+    use regex::Regex;
+
+    static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+        vec![
+            Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
+            Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
+            Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
+            Regex::new(r"([\w._\-\\]*[/\\][\w./_\-\\]+\.\w+):\d+").unwrap(),
+            Regex::new(r"(\./[\w./_\-\\]+\.\w+):\d+").unwrap(),
+        ]
+    });
 
     let mut seen = BTreeSet::new();
-    for pat in patterns {
+    for pat in PATTERNS.iter() {
         for cap in pat.captures_iter(output) {
             if let Some(m) = cap.get(1) {
                 seen.insert(m.as_str().to_string());

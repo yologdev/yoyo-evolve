@@ -370,7 +370,7 @@ impl ThinkBlockFilter {
                 // Look for </think>
                 if let Some(end_pos) = self.buffer.find("</think>") {
                     // Skip everything up to and including </think>
-                    self.buffer = self.buffer[end_pos + 8..].to_string();
+                    drop(self.buffer.drain(..end_pos + 8));
                     self.in_block = false;
                 } else if self.buffer.ends_with('<')
                     || self.buffer.ends_with("</")
@@ -392,7 +392,7 @@ impl ThinkBlockFilter {
                 if let Some(start_pos) = self.buffer.find("<think>") {
                     // Emit everything before <think>
                     result.push_str(&self.buffer[..start_pos]);
-                    self.buffer = self.buffer[start_pos + 7..].to_string();
+                    drop(self.buffer.drain(..start_pos + 7));
                     self.in_block = true;
                 } else if self.buffer.ends_with('<')
                     || self.buffer.ends_with("<t")
@@ -404,7 +404,7 @@ impl ThinkBlockFilter {
                     // Might be a partial <think> — emit everything before the '<'
                     if let Some(lt_pos) = self.buffer.rfind('<') {
                         result.push_str(&self.buffer[..lt_pos]);
-                        self.buffer = self.buffer[lt_pos..].to_string();
+                        drop(self.buffer.drain(..lt_pos));
                     }
                     break;
                 } else {

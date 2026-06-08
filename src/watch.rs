@@ -490,8 +490,8 @@ pub fn parse_typescript_errors(output: &str) -> Vec<CompilerError> {
         }
 
         // Pattern 3: jest/vitest failure line — `FAIL src/file.test.ts`
-        if trimmed.starts_with("FAIL ") {
-            let file = trimmed.strip_prefix("FAIL ").unwrap().trim();
+        if let Some(file) = trimmed.strip_prefix("FAIL ") {
+            let file = file.trim();
             if !file.is_empty() {
                 errors.push(CompilerError {
                     code: None,
