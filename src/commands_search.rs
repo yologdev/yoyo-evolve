@@ -1331,28 +1331,95 @@ fn highlight_grep_match(text: &str, pattern: &str, case_sensitive: bool) -> Stri
         return text.to_string();
     }
 
-    let mut result = String::new();
-    let (search_text, search_pattern) = if case_sensitive {
-        (text.to_string(), pattern.to_string())
-    } else {
-        (text.to_lowercase(), pattern.to_lowercase())
-    };
-
-    let mut last_end = 0;
-    let mut start = 0;
-    while let Some(pos) = search_text[start..].find(&search_pattern) {
-        let abs_pos = start + pos;
-        // Append text before match
-        result.push_str(&text[last_end..abs_pos]);
-        // Append highlighted match (use original case from text)
-        result.push_str(&format!(
-            "{BOLD_YELLOW}{}{RESET}",
-            &text[abs_pos..abs_pos + pattern.len()]
-        ));
-        last_end = abs_pos + pattern.len();
-        start = last_end;
+    if case_sensitive {
+        // Case-sensitive: byte positions are identical between search and original,
+        // so direct slicing is safe.
+        let mut result = String::new();
+        let mut last_end = 0;
+        let mut start = 0;
+        while let Some(pos) = text[start..].find(pattern) {
+            let abs_pos = start + pos;
+            result.push_str(&text[last_end..abs_pos]);
+            result.push_str(&format!(
+                "{BOLD_YELLOW}{}{RESET}",
+                &text[abs_pos..abs_pos + pattern.len()]
+            ));
+            last_end = abs_pos + pattern.len();
+            start = last_end;
+        }
+        result.push_str(&text[last_end..]);
+        return result;
     }
-    result.push_str(&text[last_end..]);
+
+    // Case-insensitive: to_lowercase() can change byte lengths for certain
+    // Unicode characters (e.g. İ → i̇ gains a byte, ẞ → ß loses a byte).
+    // Using byte positions from the lowercased string to slice the original
+    // would panic. Instead, work at the char level with a mapping back to
+    // original byte offsets.
+    let lower_pattern: Vec<char> = pattern.to_lowercase().chars().collect();
+    let pat_len = lower_pattern.len();
+    if pat_len == 0 {
+        return text.to_string();
+    }
+
+    // Collect (byte_offset, lowercased_chars) for each original character.
+    // A single original char can produce multiple lowercase chars (e.g. İ → ['i', '\u{307}']).
+    struct CharMapping {
+        orig_byte_start: usize,
+        orig_byte_end: usize,
+        lower_chars: Vec<char>,
+    }
+
+    let mappings: Vec<CharMapping> = text
+        .char_indices()
+        .map(|(byte_idx, ch)| {
+            let lower: Vec<char> = ch.to_lowercase().collect();
+            CharMapping {
+                orig_byte_start: byte_idx,
+                orig_byte_end: byte_idx + ch.len_utf8(),
+                lower_chars: lower,
+            }
+        })
+        .collect();
+
+    // Flatten the lowercased chars, keeping track of which mapping index they came from.
+    let mut lower_flat: Vec<(usize, char)> = Vec::new(); // (mapping_index, char)
+    for (map_idx, m) in mappings.iter().enumerate() {
+        for &lc in &m.lower_chars {
+            lower_flat.push((map_idx, lc));
+        }
+    }
+
+    let mut result = String::new();
+    let mut last_end_byte = 0; // byte position in original text up to which we've consumed
+    let mut i = 0;
+
+    while i + pat_len <= lower_flat.len() {
+        let matched = lower_flat[i..i + pat_len]
+            .iter()
+            .zip(lower_pattern.iter())
+            .all(|(&(_, lc), &pc)| lc == pc);
+
+        if matched {
+            let match_start_map = lower_flat[i].0;
+            let match_end_map = lower_flat[i + pat_len - 1].0;
+
+            let match_start_byte = mappings[match_start_map].orig_byte_start;
+            let match_end_byte = mappings[match_end_map].orig_byte_end;
+
+            result.push_str(&text[last_end_byte..match_start_byte]);
+            result.push_str(&format!(
+                "{BOLD_YELLOW}{}{RESET}",
+                &text[match_start_byte..match_end_byte]
+            ));
+            last_end_byte = match_end_byte;
+            // Advance past the match in the flat array
+            i += pat_len;
+        } else {
+            i += 1;
+        }
+    }
+    result.push_str(&text[last_end_byte..]);
 
     result
 }
@@ -2846,5 +2913,89 @@ src/b.rs:20:match two";
         assert_eq!(matches[1].line, 20);
         assert_eq!(matches[2].name, "gamma");
         assert_eq!(matches[2].line, 30);
+    }
+
+    // --- highlight_grep_match tests ---
+
+    #[test]
+    fn highlight_grep_match_empty_pattern() {
+        assert_eq!(
+            highlight_grep_match("hello world", "", false),
+            "hello world"
+        );
+        assert_eq!(highlight_grep_match("hello world", "", true), "hello world");
+    }
+
+    #[test]
+    fn highlight_grep_match_case_sensitive_basic() {
+        let result = highlight_grep_match("hello world", "world", true);
+        // Should contain the pattern with ANSI highlight
+        assert!(result.contains("world"));
+        assert!(result.contains("hello "));
+    }
+
+    #[test]
+    fn highlight_grep_match_case_insensitive_basic() {
+        let result = highlight_grep_match("Hello World", "world", false);
+        // Should highlight "World" from original text (preserving case)
+        assert!(result.contains("World"));
+        assert!(result.contains("Hello "));
+    }
+
+    #[test]
+    fn highlight_grep_match_no_match() {
+        let result = highlight_grep_match("hello world", "xyz", false);
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn highlight_grep_match_multiple_matches() {
+        let result = highlight_grep_match("foo bar foo", "foo", true);
+        // Both "foo" occurrences should be highlighted
+        // Count RESET occurrences as proxy for highlight count
+        let reset_count = result.matches("\x1b[0m").count();
+        assert_eq!(reset_count, 2, "should highlight both matches");
+    }
+
+    #[test]
+    fn highlight_grep_match_unicode_before_match_case_insensitive() {
+        // Turkish İ (U+0130) lowercases to "i\u{307}" (2 chars, 3 bytes)
+        // while uppercase is 2 bytes — so byte lengths differ after to_lowercase
+        // This must NOT panic.
+        let text = "İ hello";
+        let result = highlight_grep_match(text, "hello", false);
+        assert!(result.contains("hello"));
+        assert!(result.contains("İ"));
+    }
+
+    #[test]
+    fn highlight_grep_match_unicode_eszett_case_insensitive() {
+        // German ẞ (U+1E9E, capital sharp s) lowercases to ß (U+00DF)
+        // Byte lengths differ. Must not panic.
+        let text = "ẞtraße hello";
+        let result = highlight_grep_match(text, "hello", false);
+        assert!(result.contains("hello"));
+    }
+
+    #[test]
+    fn highlight_grep_match_multibyte_pattern() {
+        // Pattern itself contains multibyte chars
+        let text = "the café is nice";
+        let result = highlight_grep_match(text, "café", false);
+        assert!(result.contains("café"));
+    }
+
+    #[test]
+    fn highlight_grep_match_case_insensitive_mixed_case_pattern() {
+        let result = highlight_grep_match("Hello World", "HELLO", false);
+        // Should find and highlight "Hello" from the original text
+        assert!(result.contains("Hello"));
+    }
+
+    #[test]
+    fn highlight_grep_match_adjacent_matches() {
+        let result = highlight_grep_match("aaa", "a", true);
+        let reset_count = result.matches("\x1b[0m").count();
+        assert_eq!(reset_count, 3, "should highlight each 'a'");
     }
 }
