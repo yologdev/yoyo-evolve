@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate this task quickly. The task asked to "read your own source code, identify the most impactful improvement, implement it, and commit." Let me check the diff.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+ ✓ (15ms)
+  2 tools completed in 1.9s (2 ✓)
+
+The diff shows changes to src/commands_search.rs that are uncommitted. Let me look at what was changed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_search.rs ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_search.rs … ✓ (6ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Let me see the full diff without truncation:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --no-color src/commands… ✓ (8ms)
+
+The diff is being abbreviated. Let me read the actual file sections:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --no-color -U5 src/comm… ✓ (6ms)
+
+The diff is being collapsed by git's `diff.collapseRenames` or similar. Let me try a different approach:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && GIT_DIFF_OPTS="" git -c diff.ren… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --raw src/commands_sear… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && diff <(git show HEAD:src/command… ✓ (9ms)
+  3 tools completed in 9.7s (3 ✓)
+
+Something is collapsing the output. Let me just read the relevant file sections directly:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1329..1429  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_search.rs ✓ (2ms)
+ ✓ (2ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me see the new tests that were added:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:2915.. ✓ (1ms)
+
+Now let me see the original version of the function that was replaced:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/commands_searc… ✓ (4ms)
+
+Now I can see the issue clearly. The old code used byte positions from `text.to_lowercase() to slice the original text` — this is a classic Unicode safety bug. If to_lowercase() changes byte lengths (e.g., Turkish İ → i̇), the byte offsets would be wrong, causing either incorrect highlighting or a panic.
+
+The new code:
+1. Case-sensitive path: Direct byte slicing is safe (no case transformation)
+2. Case-insensitive path: Builds a char-level mapping between original and lowercased text, then matches at the char level and maps back to original byte offsets
+
+This is exactly the kind of safety issue documented in the CLAUDE.md safety rules: "Never use byte indexing on strings."
+
+Let me run the tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test highlight_grep_match …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (261ms)
+ ✓ (20.0s)
+  2 tools completed in 21.9s (2 ✓)
+
+All 10 new tests pass and the full test suite (88 tests) passes. Let me also verify clippy:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.9s)
+
+Let me also verify that the old code would actually panic on the Turkish İ test case to confirm this was a real bug:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (18ms)
+
+Confirmed: the old code had a real Unicode safety bug — `İ is 2 bytes but İ.to_lowercase() is 3 bytes (i` + combining dot above), so byte positions from the lowercased string would be off by 1+ when used to slice the original string, causing either incorrect highlighting or a panic at a char boundary.
+
+Now let me write the verdict:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (32.0s)
+
+**Verdict: PASS**
+
+The implementation fixes a genuine Unicode safety bug in highlight_grep_match — the old code used byte positions from `to_lowercase()` to slice the original string, which would panic or produce wrong results when lowercasing changes byte lengths (e.g., Turkish İ → i̇ gains a byte). The new implementation correctly handles this with char-level mapping. 10 comprehensive tests were added, including specific Unicode edge cases. All tests and clippy pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

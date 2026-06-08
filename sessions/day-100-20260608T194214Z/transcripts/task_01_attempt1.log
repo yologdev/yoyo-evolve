@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make. Let me assess the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (21.5s)
+ ✓ (41.1s)
+  4 tools completed in 46.4s (4 ✓)
+
+Good, clean baseline. Now let me look for impactful improvements. Let me examine areas where there might be bugs, performance issues, or missing safety.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (4m 52s)
+
+Excellent find. Let me also look for other similar issues to get a complete picture before deciding:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'highlight_grep_match' s… ✓ (3ms)
+  ▶ read src/commands_search.rs:1329..1389 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+This is a real, panicking bug. The core issue: when case-insensitive, to_lowercase() can change byte lengths, so positions found in search_text are invalid for slicing text. This is exactly the kind of byte-indexing safety issue mentioned in CLAUDE.md's safety rules.
+
+Let me also check for other similar patterns across the codebase:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'to_lowercase().*find\|f… ✓ (3ms)
+
+Now let me also check for any existing tests of this function:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'highlight_grep_match' s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'highlight_grep' src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/com… ✓ (3ms)
+  ▶ read src/commands_search.rs:1432..1582 ✓ (1ms)
+  4 tools completed in 10.5s (4 ✓)
+
+No existing tests for highlight_grep_match. Now let me also check for similar bugs elsewhere - there are two different highlight functions:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn highlight_match' src… ✓ (3ms)
+  ▶ read src/commands_search.rs:230..280 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Interesting — highlight_match (for file paths) already does the correct char-level mapping with `lower_to_orig. But highlight_grep_match` (for grep results, the more frequently used one) has the bug. This is a clear, impactful fix.
+
+Let me now implement the fix. First, I'll write the test:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 4.6s (5 ✓)
+
+Let me find the right place to add tests in the existing test module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1580..1640 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^}' src/commands_search… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me find the end of the test module to insert tests there:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:2835..2855 ✓ (1ms)
+
+Now let me check what constants are used for highlighting in this function:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'BOLD_YELLOW\|RESET' src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'BOLD_YELLOW' src/comman… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'BOLD_YELLOW' src/format… ✓ (3ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Good. Now let me write the tests first, then the fix. The tests should demonstrate the bug:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (4 → 85 lines)
+            assert_eq!(matches[2].name, "gamma");
+            assert_eq!(matches[2].line, 30);
+  +     }
+  + 
+  +     // --- highlight_grep_match tests ---
+  + 
+  +     #[test]
+  +     fn highlight_grep_match_empty_pattern() {
+  +         assert_eq!(highlight_grep_match("hello world", "", false), "hello world");
+  +         assert_eq!(highlight_grep_match("hello world", "", true), "hello world");
+  +     }
+  + 
+  +     #[test]
+  +     fn highlight_grep_match_case_sensitive_basic() {
+  +         let result = highlight_grep_match("hello world", "world", true);
+  +         // Should contain the pattern with ANSI highlight
+  +         assert!(result.contains("world"));
+  +         assert!(result.contains("hello "));
+  +     }
+  + 
+  ... (65 more lines)
+ ✓ (59.3s)
+            assert_eq!(matches[2].name, "gamma");
+            assert_eq!(matches[2].line, 30);
+  +     }
+  + 
+  +     // --- highlight_grep_match tests ---
+  + 
+  +     #[test]
+  +     fn highlight_grep_match_empty_pattern() {
+  ... (13 more lines)
+
+Let me run the tests specifically to see what happens:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test highlight_grep_match … ✓ (127ms)
+
+The tests confirm the bug - panics and wrong results on Unicode input. Now let me fix the function:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me implement the fix. The approach: for case-insensitive matching, work at the character level using the same pattern as highlight_match (which already handles this correctly):
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (30 → 97 lines)
+    fn highlight_grep_match(text: &str, pattern: &str, case_sensitive: bool) -> String {
+        if pattern.is_empty() {
+  +         return text.to_string();
+  +     }
+  + 
+  +     if case_sensitive {
+  +         // Case-sensitive: byte positions are identical between search and original,
+  +         // so direct slicing is safe.
+  +         let mut result = String::new();
+  +         let mut last_end = 0;
+  +         let mut start = 0;
+  +         while let Some(pos) = text[start..].find(pattern) {
+  +             let abs_pos = start + pos;
+  +             result.push_str(&text[last_end..abs_pos]);
+  +             result.push_str(&format!(
+  +                 "{BOLD_YELLOW}{}{RESET}",
+  +                 &text[abs_pos..abs_pos + pattern.len()]
+  +             ));
+  +             last_end = abs_pos + pattern.len();
+  +             start = last_end;
+  ... (96 more lines)
+ ✓ (1m 2s)
+    fn highlight_grep_match(text: &str, pattern: &str, case_sensitive: bool) -> String {
+        if pattern.is_empty() {
+  +         return text.to_string();
+  +     }
+  + 
+  +     if case_sensitive {
+  +         // Case-sensitive: byte positions are identical between search and original,
+  +         // so direct slicing is safe.
+  ... (13 more lines)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test highlight_grep_match … ✓ (16.0s)
+  5 tools completed in 1m 42s (5 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
