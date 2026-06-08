@@ -1,0 +1,192 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement, then implement it.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 9.3s (4 ✓)
+
+Let me scan the codebase for areas that could benefit from improvement - focusing on error handling, performance, and code quality issues.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (3m 28s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3m 32s (2 ✓)
+
+Good analysis. The most impactful improvement is converting the regex recompilation in extract_file_paths_from_output to static LazyLock — this function is called in the hot watch loop and recompiles 5 regexes every invocation. Let me also look at the markdown renderer and ThinkBlockFilter for the string slicing issues, plus clean up the starts_with + strip_prefix().unwrap() pattern into idiomatic if let Some(...).
+
+Let me read the specific code sections:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'extract_file_paths_from_output' in src/commands_file.rs ✓ (3ms)
+  ▶ read src/commands_file.rs:1010..1090 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me check the watch.rs patterns with starts_with + strip_prefix().unwrap():
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'strip_prefix.*unwrap' in src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs:488..500 ✓ (1ms)
+  ▶ read src/watch.rs:575..587 ✓ (1ms)
+  3 tools completed in 6.4s (3 ✓)
+
+Now let me check commands_web.rs:269:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:265..275 ✓ (0ms)
+
+Now let me check the ThinkBlockFilter string slicing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'self\.buffer.*to_string' in src/format/tools.rs ✓ (3ms)
+  ▶ read src/format/tools.rs:355..415 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me check the markdown renderer:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/markdown.rs:140..170 ✓ (1ms)
+
+Good. Now I have a clear picture. Let me implement the improvements. The most impactful change is:
+
+1. Static regex compilation in `extract_file_paths_from_output` — called every watch iteration, recompiles 5 regexes each time
+2. **Eliminate redundant string allocations** in ThinkBlockFilter::filter() using String::drain() — this is on the streaming hot path
+3. Eliminate redundant string allocations in MarkdownRenderer::render_delta_buffered() — also on the streaming hot path
+4. **Idiomatic if let Some** replacing starts_with + strip_prefix().unwrap() in watch.rs and commands_web.rs
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me start with the most impactful: static regex compilation in commands_file.rs.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:1..16 ✓ (1ms)
+  ▶ edit src/commands_file.rs (36 → 40 lines)
+    pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+  -     use regex::Regex;
+        use std::collections::BTreeSet;
+        use std::path::Path;
+  +     use std::sync::LazyLock;
+    
+  -     // Lazy-build patterns.  We accept some overlap — the BTreeSet
+  -     // deduplicates anyway.
+  -     let patterns: &[Regex] = &[
+  -         // Rust: `--> src/foo.rs:42:10`
+  -         Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
+  -         // Python: `File "src/foo.py", line 42`
+  -         Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
+  -         // TS paren style: `src/foo.ts(42,10)`
+  -         Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
+  -         // Generic `path/file.ext:LINE` — must contain a `/` or `.\` to
+  -         // avoid matching random words like `error:1`.
+  -         Regex::new(r"([\w._\-\\]*[/\\][\w./_\-\\]+\.\w+):\d+").unwrap(),
+  -         // Go-style `./foo.go:42`
+  -         Regex::new(r"(\./[\w./_\-\\]+\.\w+):\d+").unwrap(),
+  ... (27 more lines)
+ ✓ (1m 2s)
+    pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+  -     use regex::Regex;
+        use std::collections::BTreeSet;
+        use std::path::Path;
+  +     use std::sync::LazyLock;
+    
+  -     // Lazy-build patterns.  We accept some overlap — the BTreeSet
+  -     // deduplicates anyway.
+  ... (13 more lines)
+  2 tools completed in 1m 19s (2 ✓)
+
+Now fix the test-only version to also use static patterns (keeping them consistent):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (24 → 28 lines)
+    #[cfg(test)]
+    fn extract_file_path_candidates(output: &str) -> Vec<String> {
+  -     use regex::Regex;
+        use std::collections::BTreeSet;
+  +     use std::sync::LazyLock;
+    
+  -     let patterns: &[Regex] = &[
+  -         Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
+  -         Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
+  -         Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
+  -         Regex::new(r"([\w._\-\\]*[/\\][\w./_\-\\]+\.\w+):\d+").unwrap(),
+  -         Regex::new(r"(\./[\w./_\-\\]+\.\w+):\d+").unwrap(),
+  -     ];
+  +     use regex::Regex;
+  + 
+  +     static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+  +         vec![
+  +             Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
+  +             Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
+  +             Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
+  ... (11 more lines)
+ ✓ (1m 2s)
+    #[cfg(test)]
+    fn extract_file_path_candidates(output: &str) -> Vec<String> {
+  -     use regex::Regex;
+        use std::collections::BTreeSet;
+  +     use std::sync::LazyLock;
+    
+  -     let patterns: &[Regex] = &[
+  -         Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
+  ... (13 more lines)
+
+Now fix the ThinkBlockFilter to use drain() instead of creating new strings:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/tools.rs (52 → 52 lines)
+                    // Look for </think>
+                    if let Some(end_pos) = self.buffer.find("</think>") {
+                        // Skip everything up to and including </think>
+  -                     self.buffer = self.buffer[end_pos + 8..].to_string();
+  +                     drop(self.buffer.drain(..end_pos + 8));
+                        self.in_block = false;
+                    } else if self.buffer.ends_with('<')
+                        || self.buffer.ends_with("</")
+  ···
+                    if let Some(start_pos) = self.buffer.find("<think>") {
+                        // Emit everything before <think>
+                        result.push_str(&self.buffer[..start_pos]);
+  -                     self.buffer = self.buffer[start_pos + 7..].to_string();
+  +                     drop(self.buffer.drain(..start_pos + 7));
+                        self.in_block = true;
+                    } else if self.buffer.ends_with('<')
+                        || self.buffer.ends_with("<t")
+  ···
+                        // Might be a partial <think> — emit everything before the '<'
+                        if let Some(lt_pos) = self.buffer.rfind('<') {
+  ... (6 more lines)
+ ✓ (1m 2s)
+                    // Look for </think>
+                    if let Some(end_pos) = self.buffer.find("</think>") {
+                        // Skip everything up to and including </think>
+  -                     self.buffer = self.buffer[end_pos + 8..].to_string();
+  +                     drop(self.buffer.drain(..end_pos + 8));
+                        self.in_block = false;
+                    } else if self.buffer.ends_with('<')
+                        || self.buffer.ends_with("</")
+  ... (13 more lines)
+
+Now fix the markdown renderer to use drain() instead of creating new strings:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/markdown.rs (4 → 5 lines)
+            // Process all complete lines (those ending with \n)
+            while let Some(newline_pos) = self.line_buffer.find('\n') {
+  -             let line = self.line_buffer[..newline_pos].to_string();
+  -             self.line_buffer = self.line_buffer[newline_pos + 1..].to_string();
+  +             let line: String = self.line_buffer.drain(..newline_pos).collect();
+  +             // Drain the '\n' itself
+  +             self.line_buffer.drain(..1);
+ ✓ (1m 1s)
+            // Process all complete lines (those ending with \n)
+            while let Some(newline_pos) = self.line_buffer.find('\n') {
+  -             let line = self.line_buffer[..newline_pos].to_string();
+  -             self.line_buffer = self.line_buffer[newline_pos + 1..].to_string();
+  +             let line: String = self.line_buffer.drain(..newline_pos).collect();
+  +             // Drain the '\n' itself
+  +             self.line_buffer.drain(..1);
+
+Now fix the starts_with + `strip_prefix().unwrap()` patterns in watch.rs:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (3 → 3 lines)
+            // Pattern 3: jest/vitest failure line — `FAIL src/file.test.ts`
+  -         if trimmed.starts_with("FAIL ") {
+  -             let file = trimmed.strip_prefix("FAIL ").unwrap().trim();
+  +         if let Some(file) = trimmed.strip_prefix("FAIL ") {
+  +             let file = file.trim();
