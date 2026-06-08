@@ -60,8 +60,11 @@ pub fn compress_tool_output(output: &str) -> String {
 
 /// Remove ANSI escape sequences from a string.
 ///
-/// Matches `ESC [ <params> <final byte>` where params are digits/semicolons
-/// and final byte is an ASCII letter.
+/// Handles the full set of terminal escape sequences:
+/// 1. **CSI** (Control Sequence Introducer): `ESC [` params letter — colors, cursor movement
+/// 2. **OSC** (Operating System Command): `ESC ]` ... ST — hyperlinks, window titles
+///    (modern `rustc` emits OSC 8 hyperlinks in error output)
+/// 3. **Two-character sequences**: `ESC` + single letter (e.g., `ESC M`, `ESC D`)
 ///
 /// Uses char-based iteration to correctly handle multi-byte UTF-8 content.
 /// ANSI escape sequences are purely ASCII, so we can safely detect them
@@ -72,25 +75,66 @@ fn strip_ansi_codes(s: &str) -> String {
 
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            // Check for CSI sequence: ESC [
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                              // Skip parameter bytes (digits, semicolons)
-                while let Some(&p) = chars.peek() {
-                    if p.is_ascii_digit() || p == ';' {
-                        chars.next();
-                    } else {
-                        break;
+            match chars.peek() {
+                // CSI sequence: ESC [ <params> <final byte>
+                Some(&'[') => {
+                    chars.next(); // consume '['
+                                  // Skip parameter bytes: digits, semicolons, and private markers
+                    while let Some(&p) = chars.peek() {
+                        if p.is_ascii_digit()
+                            || p == ';'
+                            || p == '?'
+                            || p == '>'
+                            || p == '<'
+                            || p == '='
+                            || p == '!'
+                        {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    // Skip intermediate bytes (space 0x20 through / 0x2F)
+                    while let Some(&p) = chars.peek() {
+                        if (' '..='/').contains(&p) {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    // Skip final byte (@ 0x40 through ~ 0x7E)
+                    if let Some(&f) = chars.peek() {
+                        if ('@'..='~').contains(&f) {
+                            chars.next();
+                        }
                     }
                 }
-                // Skip final byte (ASCII letter)
-                if let Some(&f) = chars.peek() {
-                    if f.is_ascii_alphabetic() {
-                        chars.next();
+                // OSC sequence: ESC ] ... ST (terminated by BEL \x07 or ESC \)
+                Some(&']') => {
+                    chars.next(); // consume ']'
+                                  // Consume until String Terminator (ST = ESC \) or BEL (\x07)
+                    loop {
+                        match chars.next() {
+                            None => break,
+                            Some('\x07') => break, // BEL terminates OSC
+                            Some('\x1b') => {
+                                // Check for ESC \ (ST)
+                                if chars.peek() == Some(&'\\') {
+                                    chars.next(); // consume '\'
+                                }
+                                break;
+                            }
+                            Some(_) => {} // skip OSC content
+                        }
                     }
                 }
+                // Two-character escape: ESC + single ASCII letter (@ through ~)
+                Some(&ch) if ('@'..='~').contains(&ch) => {
+                    chars.next(); // consume the letter
+                }
+                // Unknown/malformed: just skip the ESC character
+                _ => {}
             }
-            // Non-CSI escape sequences: just skip the ESC
         } else {
             result.push(c);
         }
@@ -2276,6 +2320,54 @@ mod tests {
         let input = "\x1b[32m日本語\x1b[0m";
         let result = strip_ansi_codes(input);
         assert_eq!(result, "日本語");
+    }
+
+    #[test]
+    fn test_strip_ansi_osc_with_bel() {
+        // OSC sequence terminated by BEL (\x07): set window title
+        let input = "\x1b]0;My Title\x07some text";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "some text");
+    }
+
+    #[test]
+    fn test_strip_ansi_osc_with_st() {
+        // OSC sequence terminated by ST (ESC \): set window title
+        let input = "\x1b]2;Window Title\x1b\\visible";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "visible");
+    }
+
+    #[test]
+    fn test_strip_ansi_osc_hyperlink() {
+        // OSC 8 hyperlink: ESC ]8;;url BEL text ESC ]8;; BEL
+        let input = "\x1b]8;;https://example.com\x07click here\x1b]8;;\x07";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "click here");
+    }
+
+    #[test]
+    fn test_strip_ansi_two_char_escape() {
+        // Two-character escapes: ESC M (reverse index), ESC D (index)
+        let input = "before\x1bMmiddle\x1bDafter";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "beforemiddleafter");
+    }
+
+    #[test]
+    fn test_strip_ansi_mixed_csi_osc_two_char() {
+        // Mix of CSI, OSC, and two-character escapes in one string
+        let input = "\x1b[1mbold\x1b[0m \x1b]0;title\x07 \x1bMtext";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "bold  text");
+    }
+
+    #[test]
+    fn test_strip_ansi_lone_esc() {
+        // Lone ESC at end of string (no following character)
+        let input = "text\x1b";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "text");
     }
 
     // --- Tests for compiler-output-aware truncation ---
