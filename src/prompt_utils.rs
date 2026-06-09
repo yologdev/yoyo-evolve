@@ -284,12 +284,10 @@ fn extract_topic_phrase(text: &str) -> String {
         return first_line.to_string();
     }
     // Find a safe char boundary and then a word boundary
-    let mut end = max_len;
-    while end > 0 && !first_line.is_char_boundary(end) {
-        end -= 1;
-    }
+    let truncated = safe_truncate(first_line, max_len);
+    let mut end = truncated.len();
     // Try to break at the last space before the limit
-    if let Some(space_pos) = first_line[..end].rfind(' ') {
+    if let Some(space_pos) = truncated.rfind(' ') {
         if space_pos > 10 {
             end = space_pos;
         }

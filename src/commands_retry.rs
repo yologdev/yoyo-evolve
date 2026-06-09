@@ -238,12 +238,7 @@ fn format_file_list(snapshot: &[FileChange]) -> String {
     if joined.len() <= 60 {
         joined
     } else {
-        // Find a safe char boundary for truncation
-        let mut b = 57;
-        while b > 0 && !joined.is_char_boundary(b) {
-            b -= 1;
-        }
-        format!("{}…", &joined[..b])
+        safe_truncate_with_suffix(&joined, 57, "…")
     }
 }
 

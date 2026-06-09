@@ -267,11 +267,9 @@ fn handle_compact_preview(agent: &Agent) {
                     let topic = if text.len() <= 50 {
                         text.to_string()
                     } else {
-                        let mut end = 50;
-                        while end > 0 && !text.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        if let Some(sp) = text[..end].rfind(' ') {
+                        let truncated = safe_truncate(text, 50);
+                        let mut end = truncated.len();
+                        if let Some(sp) = truncated.rfind(' ') {
                             if sp > 10 {
                                 end = sp;
                             }
