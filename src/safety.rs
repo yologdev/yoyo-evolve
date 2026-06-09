@@ -14,6 +14,7 @@
 //! - Fork bombs (`:(){ :|:& };:`)
 //! - Destructive xargs (`find | xargs rm -rf`)
 //! - Moving files to system paths (`mv ... /etc/`)
+//! - Copying files to system paths (`cp ... /etc/`, `cp ... /usr/bin/`)
 //! - Firewall flushing (`iptables -F`, `ufw disable`)
 //! - History destruction (`history -c`, `history -w /dev/null`)
 //! - Bare file truncation via `>` redirection
@@ -86,6 +87,11 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
 
     // 13. Moving files to system paths
     if let Some(reason) = check_mv_system_paths(cmd) {
+        return Some(reason);
+    }
+
+    // 13b. Copying files to system paths
+    if let Some(reason) = check_cp_system_paths(cmd) {
         return Some(reason);
     }
 
@@ -622,6 +628,43 @@ fn check_mv_system_paths(cmd: &str) -> Option<String> {
                 if after_mv.contains(target) {
                     return Some(format!(
                         "Moving file to system path: 'mv' targeting '{target}' can break the system"
+                    ));
+                }
+            }
+        }
+        search_from = abs_pos + 3;
+    }
+    None
+}
+
+/// Check for copying files to system paths.
+/// Similar to `check_mv_system_paths` but for `cp`, which can overwrite
+/// critical system files (e.g., `cp malicious.sh /etc/cron.d/backdoor`).
+fn check_cp_system_paths(cmd: &str) -> Option<String> {
+    let mut search_from = 0;
+    while let Some(pos) = cmd[search_from..].find("cp ") {
+        let abs_pos = search_from + pos;
+        if is_at_word_boundary(cmd, abs_pos) {
+            let after_cp = &cmd[abs_pos + 3..];
+
+            let system_targets = [
+                "/etc/",
+                "/usr/",
+                "/bin/",
+                "/sbin/",
+                "/lib/",
+                "/boot/",
+                "/etc/passwd",
+                "/etc/shadow",
+                "/etc/sudoers",
+                "/etc/hosts",
+                "/etc/cron",
+            ];
+
+            for target in &system_targets {
+                if after_cp.contains(target) {
+                    return Some(format!(
+                        "Copying file to system path: 'cp' targeting '{target}' can overwrite critical system files"
                     ));
                 }
             }
@@ -1624,5 +1667,25 @@ mod tests {
         // With both -r and -f
         assert!(analyze_bash_command("rm -rf .").is_some());
         assert!(analyze_bash_command("rm -r .").is_some());
+    }
+
+    #[test]
+    fn test_analyze_cp_system_paths() {
+        // Copying to system directories should be flagged
+        assert!(analyze_bash_command("cp malicious.sh /etc/cron.d/backdoor").is_some());
+        assert!(analyze_bash_command("cp payload /usr/bin/ls").is_some());
+        assert!(analyze_bash_command("cp bad /etc/passwd").is_some());
+        assert!(analyze_bash_command("cp rootkit.so /lib/security/pam.so").is_some());
+        assert!(analyze_bash_command("cp kernel /boot/vmlinuz").is_some());
+        assert!(analyze_bash_command("cp trojan /sbin/init").is_some());
+        assert!(analyze_bash_command("cp evil /etc/shadow").is_some());
+        assert!(analyze_bash_command("cp script /etc/cron.daily/job").is_some());
+        // With flags
+        assert!(analyze_bash_command("cp -r backdoor /etc/").is_some());
+        assert!(analyze_bash_command("sudo cp payload /usr/bin/").is_some());
+        // Safe: cp within project directories
+        assert!(analyze_bash_command("cp file1.txt file2.txt").is_none());
+        assert!(analyze_bash_command("cp src/old.rs src/new.rs").is_none());
+        assert!(analyze_bash_command("cp -r src/ backup/").is_none());
     }
 }
