@@ -1,0 +1,136 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current safe_truncate and safe_truncate_with_suffix functions, then find the exact inline patterns to replace in the three target files.
+  ▶ search 'fn safe_truncate' (*.rs)  ▶ search 'is_char_boundary' in src/commands_retry.rs  ▶ search 'is_char_boundary' in src/commands_session.rs  ▶ search 'is_char_boundary' in src/prompt_utils.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+ ✓ (22ms)
+  4 tools completed in 2.4s (4 ✓)
+
+Good. Let me read the safe_truncate functions and the three inline sites:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:220..255  ▶ read src/commands_retry.rs:235..255  ▶ read src/commands_session.rs:260..285  ▶ read src/prompt_utils.rs:280..305 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+ ✓ (3ms)
+  4 tools completed in 1.9s (4 ✓)
+
+Now I have a clear picture. Let me make the three replacements:
+
+**1. src/commands_retry.rs** — straightforward safe_truncate_with_suffix replacement.
+
+**2. `src/commands_session.rs** — uses safe_truncate then rfind(' ')` on the result, then formats with the truncated slice.
+
+3. `src/prompt_utils.rs` — same pattern as #2.
+
+Let me first check how crate::format is already used in these files:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::format' in src/commands_retry.rs  ▶ search 'use crate::format' in src/commands_session.rs  ▶ search 'use crate::format' in src/prompt_utils.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  3 tools completed in 2.2s (3 ✓)
+
+All three already have use crate::format::*;, so safe_truncate and safe_truncate_with_suffix are already in scope. No need for fully qualified paths.
+
+Now let me make the edits:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (6 → 1 lines)
+  -         // Find a safe char boundary for truncation
+  -         let mut b = 57;
+  -         while b > 0 && !joined.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &joined[..b])
+  +         safe_truncate_with_suffix(&joined, 57, "…")
+  ▶ edit src/commands_session.rs (10 → 8 lines)
+  -                         let mut end = 50;
+  -                         while end > 0 && !text.is_char_boundary(end) {
+  -                             end -= 1;
+  -                         }
+  -                         if let Some(sp) = text[..end].rfind(' ') {
+  +                         let truncated = safe_truncate(text, 50);
+  +                         let mut end = truncated.len();
+  +                         if let Some(sp) = truncated.rfind(' ') {
+                                if sp > 10 {
+                                    end = sp;
+                                }
+  ▶ edit src/prompt_utils.rs (12 → 10 lines)
+        // Find a safe char boundary and then a word boundary
+  -     let mut end = max_len;
+  -     while end > 0 && !first_line.is_char_boundary(end) {
+  -         end -= 1;
+  -     }
+  +     let truncated = safe_truncate(first_line, max_len);
+  +     let mut end = truncated.len();
+        // Try to break at the last space before the limit
+  -     if let Some(space_pos) = first_line[..end].rfind(' ') {
+  +     if let Some(space_pos) = truncated.rfind(' ') {
+            if space_pos > 10 {
+                end = space_pos;
+            }
+ ✓ (1m 4s)
+  -         // Find a safe char boundary for truncation
+  -         let mut b = 57;
+  -         while b > 0 && !joined.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &joined[..b])
+  +         safe_truncate_with_suffix(&joined, 57, "…")
+ ✓ (1m 49s)
+  -                         let mut end = 50;
+  -                         while end > 0 && !text.is_char_boundary(end) {
+  -                             end -= 1;
+  -                         }
+  -                         if let Some(sp) = text[..end].rfind(' ') {
+  +                         let truncated = safe_truncate(text, 50);
+  +                         let mut end = truncated.len();
+  +                         if let Some(sp) = truncated.rfind(' ') {
+  ... (3 more lines)
+ ✓ (2m 35s)
+        // Find a safe char boundary and then a word boundary
+  -     let mut end = max_len;
+  -     while end > 0 && !first_line.is_char_boundary(end) {
+  -         end -= 1;
+  -     }
+  +     let truncated = safe_truncate(first_line, max_len);
+  +     let mut end = truncated.len();
+        // Try to break at the last space before the limit
+  ... (5 more lines)
+  3 tools completed in 2m 38s (3 ✓)
+
+Now let me run the full check suite:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (32.5s)
+  2 tools completed in 52.8s (2 ✓)
+
+All 88 tests pass, clippy clean, fmt clean. Let me verify the `is_char_boundary` count dropped in these files:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'is_char_boundary' src/… ✓ (3ms)
+
+Zero remaining is_char_boundary calls in all three target files. Let me also verify the overall count:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'is_char_boundary' src/… ✓ (6ms)
+
+The remaining sites are: format/mod.rs (the canonical implementation), `format/output.rs, repl.rs, commands_move.rs, commands_rename.rs, commands_skill.rs, and tool_wrappers.rs` (test assertion) — as noted in the task, these are for future sessions or have different patterns.
+
+Let me quickly verify the edits look correct by spot-checking:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:237..245  ▶ read src/commands_session.rs:267..279  ▶ read src/prompt_utils.rs:284..296 ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+  3 tools completed in 1.9s (3 ✓)
+
+All three replacements look clean and preserve identical behavior. The key correctness insight: safe_truncate returns &s[..b] where `b is a valid char boundary, so truncated.len()` gives back the same byte offset that end had before, and &text[..end] / &first_line[..end] is still safe because end is either truncated.len() (a char boundary) or a space position within the truncated slice (also a char boundary).
+
+Now let me commit:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (10 lines) ✓ (15ms)
+
+Clean. Three files, 16 lines out, 7 lines in — net reduction of 9 lines of duplicated logic. Each inline is_char_boundary loop replaced with the canonical safe_truncate / safe_truncate_with_suffix from crate::format, preserving identical truncation behavior. All 88 tests pass, clippy clean.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

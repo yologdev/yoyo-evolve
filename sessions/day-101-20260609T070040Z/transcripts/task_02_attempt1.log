@@ -1,0 +1,223 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current safe_truncate and safe_truncate_with_suffix functions, then find and replace the inline char-boundary loops in the 3 target files.
+  ▶ search 'fn safe_truncate' in src/format/mod.rs  ▶ search 'is_char_boundary' in src/commands_git.rs  ▶ search 'is_char_boundary' in src/commands_revisit.rs  ▶ search 'is_char_boundary' in src/tool_wrappers.rs ✓ (5ms)
+ ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 2.3s (4 ✓)
+
+Good — found all 5 inline sites plus the test assertion (which is different). Let me read each site in context.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:226..256  ▶ read src/commands_git.rs:518..538  ▶ read src/commands_git.rs:1270..1290  ▶ read src/commands_revisit.rs:322..352  ▶ read src/tool_wrappers.rs:600..620 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (3ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  5 tools completed in 2.0s (5 ✓)
+
+Now I have full context for all 5 sites. Let me also check the imports in each file to see what's already imported from `crate::format`.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::format' in src/commands_git.rs  ▶ search 'use crate::format' in src/commands_revisit.rs  ▶ search 'use crate::format' in src/tool_wrappers.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  3 tools completed in 2.3s (3 ✓)
+
+All three files already use use crate::format::*;, so safe_truncate and safe_truncate_with_suffix are already in scope. Now let me make the edits.
+
+### 1. src/commands_git.rs — first site (handle_diff_explain)
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (9 → 6 lines)
+        // Truncate if too large
+        if diff_text.len() > DIFF_EXPLAIN_MAX_BYTES {
+  -         let mut b = DIFF_EXPLAIN_MAX_BYTES;
+  -         while b > 0 && !diff_text.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         diff_text.truncate(b);
+  +         let safe_len = safe_truncate(&diff_text, DIFF_EXPLAIN_MAX_BYTES).len();
+  +         diff_text.truncate(safe_len);
+            diff_text.push_str("\n\n... (diff truncated for context limit)");
+        }
+ ✓ (1m 6s)
+        // Truncate if too large
+        if diff_text.len() > DIFF_EXPLAIN_MAX_BYTES {
+  -         let mut b = DIFF_EXPLAIN_MAX_BYTES;
+  -         while b > 0 && !diff_text.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         diff_text.truncate(b);
+  +         let safe_len = safe_truncate(&diff_text, DIFF_EXPLAIN_MAX_BYTES).len();
+  ... (3 more lines)
+
+### 2. src/commands_git.rs — second site (build_commit_ai_prompt)
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (13 → 10 lines)
+        let truncated = if diff.len() > COMMIT_AI_MAX_BYTES {
+  -         let mut b = COMMIT_AI_MAX_BYTES;
+  -         while b > 0 && !diff.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  +         let t = safe_truncate(diff, COMMIT_AI_MAX_BYTES);
+            format!(
+                "{}\n\n... (diff truncated, {} total bytes)",
+  -             &diff[..b],
+  +             t,
+                diff.len()
+            )
+        } else {
+ ✓ (1m 6s)
+        let truncated = if diff.len() > COMMIT_AI_MAX_BYTES {
+  -         let mut b = COMMIT_AI_MAX_BYTES;
+  -         while b > 0 && !diff.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  +         let t = safe_truncate(diff, COMMIT_AI_MAX_BYTES);
+            format!(
+                "{}\n\n... (diff truncated, {} total bytes)",
+  ... (5 more lines)
+
+### 3. src/commands_revisit.rs — body preview
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_revisit.rs (10 → 2 lines)
+        // Body preview (first 300 chars)
+  -     let body_preview = if body.len() > 300 {
+  -         let mut b = 300;
+  -         while b > 0 && !body.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &body[..b])
+  -     } else {
+  -         body.to_string()
+  -     };
+  +     let body_preview = safe_truncate_with_suffix(&body, 300, "…");
+ ✓ (15.5s)
+        // Body preview (first 300 chars)
+  -     let body_preview = if body.len() > 300 {
+  -         let mut b = 300;
+  -         while b > 0 && !body.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &body[..b])
+  -     } else {
+  ... (3 more lines)
+
+Quick clippy fix — body is already a String, so no need for `&`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_revisit.rs:320..330 ✓ (1ms)
+
+Let me check what type body is:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'body' in src/commands_revisit.rs ✓ (3ms)
+
+Line 292: let body = item["body"].as_str().unwrap_or("(no description)"); — so body is &str. Clippy is saying &body on a `&str is a double-reference. I should just pass body` directly:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_revisit.rs (1 → 1 lines)
+  -     let body_preview = safe_truncate_with_suffix(&body, 300, "…");
+  +     let body_preview = safe_truncate_with_suffix(body, 300, "…");
+ ✓ (1m 8s)
+  -     let body_preview = safe_truncate_with_suffix(&body, 300, "…");
+  +     let body_preview = safe_truncate_with_suffix(body, 300, "…");
+
+### 4. src/commands_revisit.rs — last_comment preview
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_revisit.rs:330..345 ✓ (0ms)
+
+Let me check what type last_comment is:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'last_comment' in src/commands_revisit.rs ✓ (2ms)
+  ▶ read src/commands_revisit.rs:304..314 ✓ (0ms)
+  2 tools completed in 5.8s (2 ✓)
+
+last_comment is also &str. Good, no & needed:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_revisit.rs (10 → 2 lines)
+        // Last comment as close-reason hint
+  -     let comment_preview = if last_comment.len() > 200 {
+  -         let mut b = 200;
+  -         while b > 0 && !last_comment.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &last_comment[..b])
+  -     } else {
+  -         last_comment.to_string()
+  -     };
+  +     let comment_preview = safe_truncate_with_suffix(last_comment, 200, "…");
+ ✓ (1m 4s)
+        // Last comment as close-reason hint
+  -     let comment_preview = if last_comment.len() > 200 {
+  -         let mut b = 200;
+  -         while b > 0 && !last_comment.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         format!("{}…", &last_comment[..b])
+  -     } else {
+  ... (3 more lines)
+
+### 5. src/tool_wrappers.rs — AutoCheckTool
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tool_wrappers.rs:598..618 ✓ (1ms)
+
+Here output is a String. Let me check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'let output =' in src/tool_wrappers.rs ✓ (2ms)
+  ▶ search 'output' in src/tool_wrappers.rs (src/tool_wrappers.rs) ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Line 597: let (passed, output) = crate::watch::run_watch_command(check_cmd); — output is a String. The `else branch uses output by move. I need to use safe_truncate` on a &str reference, then decide ownership:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (14 → 9 lines)
+            // Append check failure output to the tool result
+            let truncated_output = if output.len() > AUTO_CHECK_MAX_CHARS {
+  -             // Find safe char boundary for truncation
+  -             let mut b = AUTO_CHECK_MAX_CHARS;
+  -             while b > 0 && !output.is_char_boundary(b) {
+  -                 b -= 1;
+  -             }
+  +             let t = safe_truncate(&output, AUTO_CHECK_MAX_CHARS);
+                format!(
+  -                 "{}...\n[auto-check output truncated at {AUTO_CHECK_MAX_CHARS} chars]",
+  -                 &output[..b]
+  +                 "{t}...\n[auto-check output truncated at {AUTO_CHECK_MAX_CHARS} chars]",
+                )
+            } else {
+                output
+ ✓ (1m 4s)
+            // Append check failure output to the tool result
+            let truncated_output = if output.len() > AUTO_CHECK_MAX_CHARS {
+  -             // Find safe char boundary for truncation
+  -             let mut b = AUTO_CHECK_MAX_CHARS;
+  -             while b > 0 && !output.is_char_boundary(b) {
+  -                 b -= 1;
+  -             }
+  +             let t = safe_truncate(&output, AUTO_CHECK_MAX_CHARS);
+  ... (7 more lines)
+
+Now let me run the full check suite:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (51.1s)
+  2 tools completed in 1m 13s (2 ✓)
+
+All 3787 tests pass, 0 failures. Now let me verify the grep check — no is_char_boundary should remain in the modified files (except tests):
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_char_boundary' in src/commands_git.rs  ▶ search 'is_char_boundary' in src/commands_revisit.rs  ▶ search 'is_char_boundary' in src/tool_wrappers.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  3 tools completed in 2.0s (3 ✓)
+
+The only remaining is_char_boundary in tool_wrappers.rs is in a test assertion (line 1896), which is correct — it's testing that output is valid UTF-8, not doing inline truncation. All 5 inline loops have been replaced.
+
+Now let me commit:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (19ms)
+
+Clean. All 5 inline char-boundary truncation loops replaced with the existing safe_truncate / safe_truncate_with_suffix helpers. Tests pass, clippy is clean, zero is_char_boundary remains in production code across the 3 target files.
+
+The lesson from Day 66 holds: the smaller the duplicated unit, the longer it survives. These 4-line loops looked like idiomatic usage — but they were really a design choice hiding in plain sight.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
