@@ -520,11 +520,8 @@ fn gather_diff_text(opts: &DiffOptions) -> Option<String> {
 
     // Truncate if too large
     if diff_text.len() > DIFF_EXPLAIN_MAX_BYTES {
-        let mut b = DIFF_EXPLAIN_MAX_BYTES;
-        while b > 0 && !diff_text.is_char_boundary(b) {
-            b -= 1;
-        }
-        diff_text.truncate(b);
+        let safe_len = safe_truncate(&diff_text, DIFF_EXPLAIN_MAX_BYTES).len();
+        diff_text.truncate(safe_len);
         diff_text.push_str("\n\n... (diff truncated for context limit)");
     }
 
@@ -1273,15 +1270,8 @@ const COMMIT_AI_MAX_BYTES: usize = 30_000;
 /// This is a pure function — easy to test without an actual agent.
 pub(crate) fn build_commit_ai_prompt(diff: &str) -> String {
     let truncated = if diff.len() > COMMIT_AI_MAX_BYTES {
-        let mut b = COMMIT_AI_MAX_BYTES;
-        while b > 0 && !diff.is_char_boundary(b) {
-            b -= 1;
-        }
-        format!(
-            "{}\n\n... (diff truncated, {} total bytes)",
-            &diff[..b],
-            diff.len()
-        )
+        let t = safe_truncate(diff, COMMIT_AI_MAX_BYTES);
+        format!("{}\n\n... (diff truncated, {} total bytes)", t, diff.len())
     } else {
         diff.to_string()
     };

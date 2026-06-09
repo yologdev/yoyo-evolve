@@ -602,15 +602,8 @@ impl AgentTool for AutoCheckTool {
 
         // Append check failure output to the tool result
         let truncated_output = if output.len() > AUTO_CHECK_MAX_CHARS {
-            // Find safe char boundary for truncation
-            let mut b = AUTO_CHECK_MAX_CHARS;
-            while b > 0 && !output.is_char_boundary(b) {
-                b -= 1;
-            }
-            format!(
-                "{}...\n[auto-check output truncated at {AUTO_CHECK_MAX_CHARS} chars]",
-                &output[..b]
-            )
+            let t = safe_truncate(&output, AUTO_CHECK_MAX_CHARS);
+            format!("{t}...\n[auto-check output truncated at {AUTO_CHECK_MAX_CHARS} chars]",)
         } else {
             output
         };

@@ -49,9 +49,8 @@ impl EffortLevel {
         }
     }
 
-    /// System prompt hint appended when this effort level is active.
+    /// System prompt hint prepended to user messages when this effort level is active.
     /// Returns empty string for medium (default behavior, no extra hint).
-    #[allow(dead_code)] // Used by prompt integration (follow-up task)
     pub fn system_hint(&self) -> &'static str {
         match self {
             Self::Low => "Be concise. Give short, direct answers. Skip lengthy analysis.",

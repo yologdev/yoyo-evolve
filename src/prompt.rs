@@ -12,6 +12,20 @@ use yoagent::*;
 use crate::prompt_budget::{audit_log_tool_call, session_budget_exhausted};
 use crate::session::{ChangeKind, SessionChanges};
 
+/// Prepend the effort-level hint to user input when the effort level is not Medium.
+///
+/// Medium (default) returns an empty hint, so the input passes through unchanged.
+/// Low and High prepend a bracketed instruction that guides the agent's response style.
+/// This is applied per-turn so `/effort` changes take effect immediately.
+pub(crate) fn apply_effort_hint(input: &str) -> String {
+    let hint = crate::cli_config::effort_level().system_hint();
+    if hint.is_empty() {
+        input.to_string()
+    } else {
+        format!("[Effort: {}]\n\n{}", hint, input)
+    }
+}
+
 /// Accumulate usage from `delta` into `total`.
 ///
 /// Replaces the recurring 4-line pattern:
@@ -740,6 +754,9 @@ pub async fn run_prompt_with_changes(
     // Proactive compact: if context is already near the limit, compact before attempting
     crate::commands_session::proactive_compact_if_needed(agent);
 
+    // Apply effort-level hint (no-op for Medium/default)
+    let effective_input = apply_effort_hint(input);
+
     let prompt_start = Instant::now();
     let mut total_usage = Usage::default();
     let mut collected_text = String::new();
@@ -776,7 +793,7 @@ pub async fn run_prompt_with_changes(
             }
         }
 
-        match run_prompt_once(agent, input, changes, model).await {
+        match run_prompt_once(agent, &effective_input, changes, model).await {
             PromptResult::Done {
                 collected_text: text,
                 usage,
@@ -1008,6 +1025,20 @@ pub async fn run_prompt_with_content_and_changes(
     // Proactive compact: if context is already near the limit, compact before attempting
     crate::commands_session::proactive_compact_if_needed(agent);
 
+    // Apply effort-level hint as a leading text block (no-op for Medium/default)
+    let effective_blocks = {
+        let hint = crate::cli_config::effort_level().system_hint();
+        if hint.is_empty() {
+            content_blocks
+        } else {
+            let mut blocks = vec![Content::Text {
+                text: format!("[Effort: {}]", hint),
+            }];
+            blocks.extend(content_blocks);
+            blocks
+        }
+    };
+
     let prompt_start = Instant::now();
     let mut total_usage = Usage::default();
     let mut collected_text = String::new();
@@ -1015,7 +1046,7 @@ pub async fn run_prompt_with_content_and_changes(
     let mut last_tool_name: Option<String> = None;
     let mut api_error: Option<String> = None;
     let user_msg = AgentMessage::Llm(Message::User {
-        content: content_blocks,
+        content: effective_blocks,
         timestamp: now_ms(),
     });
 
@@ -2221,5 +2252,39 @@ mod tests {
         };
         assert!(outcome.text.contains('🐙'));
         assert!(outcome.text.contains("日本語"));
+    }
+
+    #[test]
+    fn test_apply_effort_hint_low_prepends() {
+        use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+        let original = effort_level();
+        set_effort_level(EffortLevel::Low);
+        let result = apply_effort_hint("Hello agent");
+        set_effort_level(original);
+        assert!(result.starts_with("[Effort: "));
+        assert!(result.contains("concise"));
+        assert!(result.ends_with("Hello agent"));
+    }
+
+    #[test]
+    fn test_apply_effort_hint_medium_noop() {
+        use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+        let original = effort_level();
+        set_effort_level(EffortLevel::Medium);
+        let result = apply_effort_hint("Hello agent");
+        set_effort_level(original);
+        assert_eq!(result, "Hello agent");
+    }
+
+    #[test]
+    fn test_apply_effort_hint_high_prepends() {
+        use crate::cli_config::{effort_level, set_effort_level, EffortLevel};
+        let original = effort_level();
+        set_effort_level(EffortLevel::High);
+        let result = apply_effort_hint("Hello agent");
+        set_effort_level(original);
+        assert!(result.starts_with("[Effort: "));
+        assert!(result.contains("thorough"));
+        assert!(result.ends_with("Hello agent"));
     }
 }

@@ -323,30 +323,14 @@ fn format_issue_check(json_str: &str) -> Result<String, String> {
     }
 
     // Body preview (first 300 chars)
-    let body_preview = if body.len() > 300 {
-        let mut b = 300;
-        while b > 0 && !body.is_char_boundary(b) {
-            b -= 1;
-        }
-        format!("{}…", &body[..b])
-    } else {
-        body.to_string()
-    };
+    let body_preview = safe_truncate_with_suffix(body, 300, "…");
     out.push_str(&format!("\n  {DIM}Description:{RESET}\n"));
     for line in body_preview.lines() {
         out.push_str(&format!("    {line}\n"));
     }
 
     // Last comment as close-reason hint
-    let comment_preview = if last_comment.len() > 200 {
-        let mut b = 200;
-        while b > 0 && !last_comment.is_char_boundary(b) {
-            b -= 1;
-        }
-        format!("{}…", &last_comment[..b])
-    } else {
-        last_comment.to_string()
-    };
+    let comment_preview = safe_truncate_with_suffix(last_comment, 200, "…");
     out.push_str(&format!(
         "\n  {DIM}Last comment (close reason hint):{RESET}\n"
     ));
