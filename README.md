@@ -476,10 +476,6 @@ If you use yoyo-evolve in a research paper, please cite our work as follows:
 
 <a href="https://github.com/zhenfund" title="@zhenfund — $1,000"><img src="https://github.com/zhenfund.png?size=160" width="80" height="80" alt="@zhenfund" /></a>
 
-**🚀 Patron Sponsors ($50+):**
-
-<a href="https://github.com/kojiyang" title="@kojiyang — $200"><img src="https://github.com/kojiyang.png?size=128" width="64" height="64" alt="@kojiyang" /></a>
-
 <!-- SPONSORS_END -->
 
 ## License
