@@ -1,0 +1,170 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll read the source code, identify a high-impact improvement, implement it, and verify everything passes.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.0s (4 ✓)
+
+Let me look at the source code to find impactful improvements. I'll focus on areas with known pain points.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (3m 29s)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 3m 36s (2 ✓)
+
+Good analysis. Let me verify these findings and look at the actual code before implementing fixes.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ search '\[\.\.(\d+|[a-z_]+)\]|\[(\d+|[a-z_]+)\.\.\]' in src (*.rs) ✓ (6ms)
+  ▶ search '\[\.\.(\d+)\]' in src (*.rs) ✓ (6ms)
+  ▶ search '\&\w+\[' in src (*.rs) ✓ (5ms)
+  ▶ search '\[\.\.7\]' in src (*.rs) ✓ (5ms)
+  ▶ read src/format/output.rs:255..280 ✓ (1ms)
+  ▶ search 'format_date' in src (*.rs) ✓ (8ms)
+  ▶ read src/commands_revisit.rs:164..179 ✓ (1ms)
+  8 tools completed in 24.2s (8 ✓)
+
+Now let me look at the git.rs byte slicing:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'line\[\.\.2\]|line\[3\.\.\]' in src (*.rs) ✓ (4ms)
+  ▶ search '\[\.\.2\]|\[3\.\.\]' in src (*.rs) ✓ (5ms)
+  ▶ search 'parse_status_files' in src/git.rs (*.rs) ✓ (3ms)
+  ▶ read src/git.rs:349..379 ✓ (1ms)
+  4 tools completed in 13.9s (4 ✓)
+
+Now let me search for more byte-index slicing patterns across the codebase:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]' src/*.rs sr… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\[\.\..*\]' src/*.rs sr… ✓ (8ms)
+  2 tools completed in 4.6s (2 ✓)
+
+There are many byte-index operations. Let me focus on the most dangerous ones — those operating on external/untrusted data. Let me implement a comprehensive fix for all unsafe byte-index patterns on external data.
+
+Let me check the specific dangerous cases more carefully:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:260..280 ✓ (1ms)
+
+Now let me look at the broader landscape. Let me look at git.rs line 77:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:72..82 ✓ (1ms)
+
+The find('|') returns a char position that's also a byte position since | is ASCII. And the result is a position before the |, so trimmed[..pipe_pos] is safe. This one is actually safe.
+
+Let me focus on the highest-impact improvement. Looking at the analysis, the most impactful category is **hardening byte-index operations on external data**. Let me identify every instance and fix them systematically.
+
+Let me look at a broader set of issues - let me search for patterns that could be most impactful for users:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.unwrap()' src/*.rs s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.expect(' src/*.rs sr… ✓ (8ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Too many to fix all at once. Let me focus on the highest-impact improvement. Let me look at one specific area that has high user-facing impact: the compress_tool_output function in `format/output.rs`. This is called for every tool result and directly affects how useful the output is to the LLM agent.
+
+Let me look at what patterns are being compressed and whether there are missing compression patterns that waste context:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:1..101 ✓ (2ms)
+  ▶ read src/format/output.rs:100..300 ✓ (2ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Now I have a clear picture. Let me focus on the most impactful single improvement: **hardening all byte-index string operations on external data against multi-byte UTF-8 panics**. This addresses the exact issue that caused the production crash (#250) and protects multiple code paths.
+
+Let me identify all the locations that need fixing:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'is_char_boundary' src/f… ✓ (3ms)
+  ▶ read src/format/mod.rs:220..240 ✓ (1ms)
+  2 tools completed in 14.3s (2 ✓)
+
+Good, there's already a safe_truncate helper. Now let me plan all the fixes:
+
+1. **`src/commands_revisit.rs:169** — &iso[..10] → use is_char_boundary` guard
+2. **`src/format/output.rs:262-265** — &trimmed[7..], hash_part[..40], &hash_part[..7]` → use safe indexing
+3. **`src/git.rs:356-358** — line[..2], line[3..] → use get()` safe indexing
+4. `src/commands_session.rs:277` — `&text[..end]` → check for char boundary
+
+Let me look at commands_session.rs:277:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:270..285 ✓ (1ms)
+
+This one is actually safe because end comes from `safe_truncate which already ensures char boundary, and rfind(' ')` returns a char boundary for ASCII space. But it's still fragile — let me verify end is always from a boundary. Actually, truncated is from safe_truncate(text, 50) which is a &str slice of text, so `truncated.len() is relative to truncated, not text`. Wait — truncated is &text[..b] where b ≤ 50. So truncated.len() = b, and end starts as b, which is a char boundary in text. If rfind(' ') finds a space, sp is an offset within truncated, which is also a valid byte offset within text since truncated starts at the beginning of text. So `&text[..end]` is safe. Good.
+
+Let me look at the commands_skill.rs byte slicing:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:330..340 ✓ (1ms)
+
+Good — that one already uses is_char_boundary. Let me check commands_skill.rs:534 and 715:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:530..540 ✓ (1ms)
+
+This is safe — content[3..] is after `--- which is ASCII, and find("\n---")` returns a byte position from .find() which is always valid.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:710..720 ✓ (1ms)
+
+Safe — rfind('@') returns an ASCII position.
+
+Now let me focus on the actual fixes. Here are the three files that need hardening:
+
+1. `src/commands_revisit.rs` — format_date
+2. `src/format/output.rs` — git commit hash abbreviation  
+3. `src/git.rs` — `parse_status_files`
+
+Let me also search for other string index operations I might have missed:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'line\[' src/git.rs | he… ✓ (3ms)
+
+Line 236: find(':') returns ASCII position — safe.
+
+Now let me also look for the most impactful improvement holistically. Instead of just fixing a few byte-index patterns, let me think about what would benefit users the most.
+
+Let me look at the recently changed files and the memory/learnings for clues:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -10 memory/learnings.jsonl … ✓ (24ms)
+
+The learning "Fixing a class of bugs one instance at a time creates a false sense of completion each time" is highly relevant. Let me think about what class-level fix would be most impactful.
+
+Let me look at the tool_wrappers.rs `RecoveryHintTool` - this gives hints when tools fail. Let me also look at the truncate_tool_output function since it's critical path:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn truncate_tool_output… ✓ (3ms)
+  ▶ read src/format/output.rs:576..636 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+OK. Now I have a clear plan. The most impactful improvement is to **harden byte-index string operations on external data to prevent potential panics** — this is a class-level fix for the exact pattern that caused production crash #250. I'll fix it in all affected locations and add tests.
+
+Let me implement the fixes:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_revisit.rs:160..175 ✓ (0ms)
+  ▶ edit src/commands_revisit.rs (9 → 11 lines)
+    /// Format a date string for display (extract just the date part from ISO 8601).
+    fn format_date(iso: &str) -> &str {
+        // "2025-05-13T09:33:00Z" → "2025-05-13"
+  -     if iso.len() >= 10 {
+  +     // Use is_char_boundary to avoid panics if the input contains multi-byte UTF-8
+  +     // characters (e.g. from malformed API responses). See issue #250.
+  +     if iso.len() >= 10 && iso.is_char_boundary(10) {
+            &iso[..10]
+        } else {
+            iso
+ ✓ (1m 5s)
+    /// Format a date string for display (extract just the date part from ISO 8601).
+    fn format_date(iso: &str) -> &str {
+        // "2025-05-13T09:33:00Z" → "2025-05-13"
+  -     if iso.len() >= 10 {
+  +     // Use is_char_boundary to avoid panics if the input contains multi-byte UTF-8
+  +     // characters (e.g. from malformed API responses). See issue #250.
+  +     if iso.len() >= 10 && iso.is_char_boundary(10) {
+            &iso[..10]
+        } else {
+            iso
+  2 tools completed in 1m 12s (2 ✓)
+
+Now fix the git hash abbreviation in `format/output.rs`:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:259..274 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
