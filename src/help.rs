@@ -528,7 +528,7 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "    /loop <N|until-pass>   Repeat a prompt in a polling loop"
+        "    /loop <N|until-pass|until> Repeat a prompt in a polling loop"
     );
     let _ = writeln!(
         s,
@@ -786,7 +786,7 @@ pub fn help_text() -> String {
         "  /watch [cmd|all|lint]  Auto-run lint+test after agent edits (off/status to control)\n",
     );
     out.push_str(
-        "  /loop <N|until-pass>   Repeat a prompt in a polling loop (stop early on success)\n",
+        "  /loop <N|until-pass|until> Repeat a prompt in a polling loop (stop early on success)\n",
     );
     out.push_str(
         "  /ast <pattern>     Structural code search using ast-grep (--lang, --in flags)\n",

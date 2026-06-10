@@ -386,12 +386,6 @@ pub fn handle_compact(agent: &mut Agent, input: &str) {
 
 // ── auto-save ────────────────────────────────────────────────────────────
 
-/// Check whether a previous auto-saved session exists at `.yoyo/last-session.json`.
-#[allow(dead_code)]
-pub fn last_session_exists() -> bool {
-    std::path::Path::new(AUTO_SAVE_SESSION_PATH).exists()
-}
-
 /// Auto-save the current conversation to `.yoyo/last-session.json`.
 /// Creates the `.yoyo/` directory if it doesn't exist.
 /// Silently ignores errors (best-effort crash recovery).
@@ -1083,12 +1077,6 @@ mod tests {
             path == AUTO_SAVE_SESSION_PATH || path == DEFAULT_SESSION_PATH,
             "continue_session_path should return a valid session path, got: {path}"
         );
-    }
-
-    #[test]
-    fn test_last_session_exists_returns_bool() {
-        // Should not panic regardless of whether the file exists
-        let _exists = last_session_exists();
     }
 
     #[test]

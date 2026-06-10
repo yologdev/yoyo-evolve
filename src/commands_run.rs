@@ -203,12 +203,14 @@ pub enum LoopMode {
     Count(usize),
     /// Run until the last tool call succeeds (max 20 iterations).
     UntilPass,
+    /// Run until a bash command exits 0 (max 20 iterations).
+    UntilCmd(String),
 }
 
 const MAX_UNTIL_PASS: usize = 20;
 const MAX_LOOP_COUNT: usize = 100;
 
-/// Parse `/loop <N|until-pass> <prompt>`.
+/// Parse `/loop <N|until-pass|until <cmd> -- prompt> <prompt>`.
 ///
 /// Returns `None` if the input is malformed (missing args, zero count, etc.).
 /// Counts above [`MAX_LOOP_COUNT`] are clamped silently.
@@ -219,12 +221,17 @@ pub fn parse_loop_args(input: &str) -> Option<(LoopMode, String)> {
     }
 
     // Split into mode token and the remaining prompt.
-    let (mode_tok, prompt) = match rest.split_once(char::is_whitespace) {
+    let (mode_tok, after_mode) = match rest.split_once(char::is_whitespace) {
         Some((m, p)) => (m, p.trim()),
         None => return None, // e.g. "/loop 5" with no prompt
     };
 
-    if prompt.is_empty() {
+    // Handle "until" mode: /loop until <cmd> -- <prompt>
+    if mode_tok == "until" {
+        return parse_until_cmd(after_mode);
+    }
+
+    if after_mode.is_empty() {
         return None;
     }
 
@@ -239,7 +246,49 @@ pub fn parse_loop_args(input: &str) -> Option<(LoopMode, String)> {
         return None;
     };
 
-    Some((mode, prompt.to_string()))
+    Some((mode, after_mode.to_string()))
+}
+
+/// Parse the `<cmd> -- <prompt>` portion of `/loop until ...`.
+///
+/// Handles quoted commands (`"cmd arg"` or `'cmd arg'`) and unquoted commands.
+/// The `--` separator is required.
+fn parse_until_cmd(input: &str) -> Option<(LoopMode, String)> {
+    if input.is_empty() {
+        return None;
+    }
+
+    // Check for quoted command
+    let first = input.as_bytes()[0];
+    if first == b'"' || first == b'\'' {
+        let quote = first as char;
+        // Find the closing quote
+        let after_open = &input[1..];
+        let close_pos = after_open.find(quote)?;
+        let cmd = &after_open[..close_pos];
+        if cmd.is_empty() {
+            return None;
+        }
+        // After the closing quote, expect whitespace then "--" then prompt
+        let remainder = after_open[close_pos + 1..].trim_start();
+        let prompt = remainder.strip_prefix("--")?.trim();
+        if prompt.is_empty() {
+            return None;
+        }
+        return Some((LoopMode::UntilCmd(cmd.to_string()), prompt.to_string()));
+    }
+
+    // Unquoted command: everything before " -- " is the command
+    let sep_pos = input.find(" -- ")?;
+    let cmd = input[..sep_pos].trim();
+    if cmd.is_empty() {
+        return None;
+    }
+    let prompt = input[sep_pos + 4..].trim();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some((LoopMode::UntilCmd(cmd.to_string()), prompt.to_string()))
 }
 
 /// Run a prompt in a polling loop.
@@ -254,9 +303,10 @@ pub async fn handle_loop(
         Some(v) => v,
         None => {
             println!(
-                "{DIM}Usage: /loop <N|until-pass> <prompt>\n\
+                "{DIM}Usage: /loop <N|until-pass|until <cmd> -- prompt> <prompt>\n\
                  \n  /loop 5 run the tests and fix any failures\
-                 \n  /loop until-pass run cargo test{RESET}"
+                 \n  /loop until-pass run cargo test\
+                 \n  /loop until \"cargo test\" -- fix any failing tests{RESET}"
             );
             return;
         }
@@ -265,7 +315,19 @@ pub async fn handle_loop(
     let max_iters = match &mode {
         LoopMode::Count(n) => *n,
         LoopMode::UntilPass => MAX_UNTIL_PASS,
+        LoopMode::UntilCmd(_) => MAX_UNTIL_PASS,
     };
+
+    // For UntilCmd mode, check if the condition already passes before looping.
+    if let LoopMode::UntilCmd(ref cmd) = mode {
+        let pre_check = run_shell_command(cmd);
+        if pre_check.success {
+            println!(
+                "{GREEN}{BOLD}✓ Condition already met — \"{cmd}\" exits 0. Nothing to do.{RESET}"
+            );
+            return;
+        }
+    }
 
     for i in 1..=max_iters {
         // Print iteration header.
@@ -273,6 +335,11 @@ pub async fn handle_loop(
             LoopMode::Count(n) => format!("--- loop iteration {i}/{n} ---"),
             LoopMode::UntilPass => {
                 format!("--- loop iteration {i} (until-pass, max {MAX_UNTIL_PASS}) ---")
+            }
+            LoopMode::UntilCmd(cmd) => {
+                format!(
+                    "--- loop iteration {i} (until \"{cmd}\" succeeds, max {MAX_UNTIL_PASS}) ---"
+                )
             }
         };
         println!("\n{BOLD}{CYAN}{label}{RESET}\n");
@@ -291,6 +358,22 @@ pub async fn handle_loop(
             return;
         }
 
+        // For until-cmd mode: run the condition command and stop if it passes.
+        if let LoopMode::UntilCmd(ref cmd) = mode {
+            println!("{DIM}  Running condition: {cmd}{RESET}");
+            let check = run_shell_command(cmd);
+            if check.success {
+                println!(
+                    "\n{GREEN}{BOLD}✓ Loop complete — \"{cmd}\" succeeded on iteration {i}.{RESET}"
+                );
+                return;
+            }
+            println!(
+                "{DIM}  Condition not yet met (exit {}).{RESET}",
+                check.exit_code
+            );
+        }
+
         // Don't sleep after the last iteration.
         if i < max_iters {
             // Brief pause so the user can Ctrl+C between iterations.
@@ -306,6 +389,11 @@ pub async fn handle_loop(
         LoopMode::UntilPass => {
             println!(
                 "\n{YELLOW}Loop exhausted {MAX_UNTIL_PASS} iterations without a passing tool call.{RESET}"
+            );
+        }
+        LoopMode::UntilCmd(cmd) => {
+            println!(
+                "\n{YELLOW}Loop exhausted {MAX_UNTIL_PASS} iterations — \"{cmd}\" never succeeded.{RESET}"
             );
         }
     }
@@ -512,6 +600,86 @@ mod tests {
             Some((
                 LoopMode::Count(3),
                 "check if the server is responding".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_double_quoted() {
+        let result = parse_loop_args("/loop until \"cargo test\" -- fix it");
+        assert_eq!(
+            result,
+            Some((
+                LoopMode::UntilCmd("cargo test".to_string()),
+                "fix it".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_single_quoted() {
+        let result = parse_loop_args("/loop until 'echo ok' -- do stuff");
+        assert_eq!(
+            result,
+            Some((
+                LoopMode::UntilCmd("echo ok".to_string()),
+                "do stuff".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_unquoted() {
+        let result = parse_loop_args("/loop until cargo test -- fix it");
+        assert_eq!(
+            result,
+            Some((
+                LoopMode::UntilCmd("cargo test".to_string()),
+                "fix it".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_missing_separator() {
+        // No "--" separator → None
+        assert_eq!(parse_loop_args("/loop until cargo test"), None);
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_empty_cmd() {
+        // "until --" with no command
+        assert_eq!(parse_loop_args("/loop until -- no cmd"), None);
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_empty_prompt() {
+        // Has command but empty prompt after "--"
+        assert_eq!(parse_loop_args("/loop until cargo test -- "), None);
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_complex_command() {
+        let result = parse_loop_args(
+            "/loop until \"curl -s localhost:8080/health | grep ok\" -- fix server",
+        );
+        assert_eq!(
+            result,
+            Some((
+                LoopMode::UntilCmd("curl -s localhost:8080/health | grep ok".to_string()),
+                "fix server".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_loop_until_cmd_file_test() {
+        let result = parse_loop_args("/loop until test -f output.json -- generate the output file");
+        assert_eq!(
+            result,
+            Some((
+                LoopMode::UntilCmd("test -f output.json".to_string()),
+                "generate the output file".to_string()
             ))
         );
     }
