@@ -7,7 +7,7 @@
 //! - Collapsing repetitive line sequences
 //! - Truncating to head/tail with a clear omission marker
 
-use super::{format_duration, pluralize, DIM, GREEN, RED, RESET};
+use super::{format_duration, pluralize, safe_byte_index, DIM, GREEN, RED, RESET};
 
 /// Default character threshold for tool output truncation.
 /// Outputs longer than this get the head/tail treatment.
@@ -319,12 +319,7 @@ fn line_category(line: &str) -> &str {
 
     // Include leading whitespace length + first word
     let prefix_len = (line.len() - trimmed.len()) + first_word_end;
-    let mut end = prefix_len.min(CATEGORY_PREFIX_MAX).min(line.len());
-
-    // Ensure we don't slice inside a multi-byte UTF-8 character
-    while end > 0 && !line.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = safe_byte_index(line, prefix_len.min(CATEGORY_PREFIX_MAX).min(line.len()));
 
     &line[..end]
 }
