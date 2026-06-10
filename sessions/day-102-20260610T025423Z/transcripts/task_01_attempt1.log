@@ -1,0 +1,209 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /loop until <cmd> -- <prompt> condition-based loop mode. Let me start by understanding the current code.
+  ▶ read src/commands_run.rs ✓ (3ms)
+
+Let me see the full LoopMode, parse_loop_args, and handle_loop functions:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:130..330 ✓ (1ms)
+
+Now let me check the help_data.rs for the loop entry:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'loop' in src/help_data.rs ✓ (2ms)
+  ▶ search 'loop' in src/help.rs ✓ (2ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I have a clear picture of the codebase. Let me implement this step by step.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 17.4s (6 ✓)
+
+Let me start with the tests and enum changes. First, add the `UntilCmd` variant:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_run.rs (8 → 10 lines)
+        Count(usize),
+        /// Run until the last tool call succeeds (max 20 iterations).
+        UntilPass,
+  +     /// Run until a bash command exits 0 (max 20 iterations).
+  +     UntilCmd(String),
+    }
+ ✓ (7.0s)
+        Count(usize),
+        /// Run until the last tool call succeeds (max 20 iterations).
+        UntilPass,
+  +     /// Run until a bash command exits 0 (max 20 iterations).
+  +     UntilCmd(String),
+    }
+  2 tools completed in 14.8s (2 ✓)
+
+Good, expected errors — I need to update the rest of the code. Let me do all the changes now.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now update parse_loop_args to handle the until syntax:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (33 → 80 lines)
+  - /// Parse `/loop <N|until-pass> <prompt>`.
+  + /// Parse `/loop <N|until-pass|until <cmd> -- prompt> <prompt>`.
+    ///
+    /// Returns `None` if the input is malformed (missing args, zero count, etc.).
+    /// Counts above [`MAX_LOOP_COUNT`] are clamped silently.
+  ···
+        }
+    
+        // Split into mode token and the remaining prompt.
+  -     let (mode_tok, prompt) = match rest.split_once(char::is_whitespace) {
+  +     let (mode_tok, after_mode) = match rest.split_once(char::is_whitespace) {
+            Some((m, p)) => (m, p.trim()),
+            None => return None, // e.g. "/loop 5" with no prompt
+        };
+    
+  -     if prompt.is_empty() {
+  +     // Handle "until" mode: /loop until <cmd> -- <prompt>
+  +     if mode_tok == "until" {
+  +         return parse_until_cmd(after_mode);
+  +     }
+  ... (54 more lines)
+ ✓ (7.1s)
+  - /// Parse `/loop <N|until-pass> <prompt>`.
+  + /// Parse `/loop <N|until-pass|until <cmd> -- prompt> <prompt>`.
+    ///
+    /// Returns `None` if the input is malformed (missing args, zero count, etc.).
+    /// Counts above [`MAX_LOOP_COUNT`] are clamped silently.
+  ···
+        }
+    
+  ... (13 more lines)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 16.2s (3 ✓)
+
+Now update handle_loop to support the UntilCmd mode:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:295..370 ✓ (1ms)
+  ▶ edit src/commands_run.rs (67 → 103 lines)
+            Some(v) => v,
+            None => {
+                println!(
+  -                 "{DIM}Usage: /loop <N|until-pass> <prompt>\n\
+  +                 "{DIM}Usage: /loop <N|until-pass|until <cmd> -- prompt> <prompt>\n\
+                     \n  /loop 5 run the tests and fix any failures\
+  -                  \n  /loop until-pass run cargo test{RESET}"
+  +                  \n  /loop until-pass run cargo test\
+  +                  \n  /loop until \"cargo test\" -- fix any failing tests{RESET}"
+                );
+                return;
+            }
+  ···
+        let max_iters = match &mode {
+            LoopMode::Count(n) => *n,
+            LoopMode::UntilPass => MAX_UNTIL_PASS,
+  +         LoopMode::UntilCmd(_) => MAX_UNTIL_PASS,
+        };
+  + 
+  +     // For UntilCmd mode, check if the condition already passes before looping.
+  ... (56 more lines)
+ ✓ (50.2s)
+            Some(v) => v,
+            None => {
+                println!(
+  -                 "{DIM}Usage: /loop <N|until-pass> <prompt>\n\
+  +                 "{DIM}Usage: /loop <N|until-pass|until <cmd> -- prompt> <prompt>\n\
+                     \n  /loop 5 run the tests and fix any failures\
+  -                  \n  /loop until-pass run cargo test{RESET}"
+  +                  \n  /loop until-pass run cargo test\
+  ... (13 more lines)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 1m 18s (4 ✓)
+
+Now add tests for the new until mode:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:540..590 ✓ (1ms)
+  ▶ read src/commands_run.rs:589..604 ✓ (0ms)
+  ▶ edit src/commands_run.rs (12 → 91 lines)
+                Some((
+                    LoopMode::Count(3),
+                    "check if the server is responding".to_string()
+  +             ))
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_loop_until_cmd_double_quoted() {
+  +         let result = parse_loop_args("/loop until \"cargo test\" -- fix it");
+  +         assert_eq!(
+  +             result,
+  +             Some((
+  +                 LoopMode::UntilCmd("cargo test".to_string()),
+  +                 "fix it".to_string()
+  +             ))
+  +         );
+  +     }
+  + 
+  +     #[test]
+  ... (65 more lines)
+ ✓ (50.7s)
+                Some((
+                    LoopMode::Count(3),
+                    "check if the server is responding".to_string()
+  +             ))
+  +         );
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 1m 14s (5 ✓)
+
+Now update help_data.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:833..853 ✓ (1ms)
+  ▶ edit src/help_data.rs (14 → 20 lines)
+            "loop" => Some(
+  -             "/loop <N|until-pass> <prompt> — Repeat a prompt in a polling loop\n\n\
+  +             "/loop <N|until-pass|until <cmd> --> <prompt> — Repeat a prompt in a polling loop\n\n\
+                 Usage:\n\
+  -              \x20 /loop <N> <prompt>          Run the prompt exactly N times (1-100)\n\
+  -              \x20 /loop until-pass <prompt>   Run until the last tool call succeeds (max 20)\n\n\
+  +              \x20 /loop <N> <prompt>                Run the prompt exactly N times (1-100)\n\
+  +              \x20 /loop until-pass <prompt>         Run until the last tool call succeeds (max 20)\n\
+  +              \x20 /loop until <cmd> -- <prompt>     Run until a bash command succeeds (max 20)\n\n\
+                 Each iteration runs the prompt through the normal agent path with auto-retry.\n\
+                 A 1-second pause between iterations gives you time to Ctrl+C.\n\n\
+                 In until-pass mode, the loop stops as soon as the last tool call exits\n\
+                 without error (e.g. a bash command that returns exit code 0).\n\n\
+  +              In until mode, the condition command is run after each agent iteration.\n\
+  +              If it exits 0, the loop stops. The condition is also checked before the first\n\
+  +              iteration — if it already passes, the loop returns immediately.\n\n\
+                 Examples:\n\
+                 \x20 /loop 5 run the tests and fix any failures\n\
+                 \x20 /loop until-pass run cargo test\n\
+  +              \x20 /loop until \"cargo test\" -- fix any failing tests\n\
+  ... (3 more lines)
+ ✓ (50.3s)
+            "loop" => Some(
+  -             "/loop <N|until-pass> <prompt> — Repeat a prompt in a polling loop\n\n\
+  +             "/loop <N|until-pass|until <cmd> --> <prompt> — Repeat a prompt in a polling loop\n\n\
+                 Usage:\n\
+  -              \x20 /loop <N> <prompt>          Run the prompt exactly N times (1-100)\n\
+  -              \x20 /loop until-pass <prompt>   Run until the last tool call succeeds (max 20)\n\n\
+  +              \x20 /loop <N> <prompt>                Run the prompt exactly N times (1-100)\n\
+  +              \x20 /loop until-pass <prompt>         Run until the last tool call succeeds (max 20)\n\
+  ... (13 more lines)
+  2 tools completed in 59.5s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

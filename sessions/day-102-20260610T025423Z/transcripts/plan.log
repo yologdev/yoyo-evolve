@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (45ms)
+ ✓ (49ms)
+  ▶ $ git tag --sort=-creatordate | head -5  ▶ $ git log v0.11.0..HEAD --oneline 2>/dev/null | wc -l ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ git tag --sort=-creatordate | grep '^v' | head -5 ✓ (3ms)
+  ▶ $ git tag --sort=-creatordate | head -20 ✓ (3ms)
+  ▶ $ # Check CHANGELOG for recent release info (2 lines) ✓ (2ms)
+  9 tools completed in 21.1s (9 ✓)
+
+Now let me think about what to build. The assessment is clear:
+
+1. **No CI failures** — all green
+2. No community issues — backlog is empty
+3. Biggest capability gap: Goal-driven autonomous execution (/loop or /until)
+4. Dead code: last_session_exists()
+5. Consolidation plateau — last ~5 sessions have been cleanup, no new features
+
+The assessment identifies the **biggest buildable gap** as goal-driven autonomous execution. Let me look at what infrastructure already exists to build on.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check existing goal infrastructure (2 lines)  ▶ $ # Check what /goal currently does (2 lines)  ▶ $ # Check existing watch mode loop structure for reference (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check how /goal check works - this is the closest to what … (2 lines)  ▶ $ # Check dispatch for how commands route to prompts (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Check CommandResult variants (2 lines) ✓ (2ms)
+  ▶ $ # Check how the REPL loop handles SendToAgent (2 lines)  ▶ $ # Check what run_prompt_auto_retry signature looks like (2 lines) ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ # How the REPL handles SendToAgent (2 lines) ✓ (3ms)
+  9 tools completed in 15.5s (9 ✓)
+
+Now I have a good picture. Let me think about the task plan:
+
+**Task 1: Build `/loop` command — goal-driven autonomous execution (Phase 1: command skeleton + condition checking)**
+
+This is the biggest competitive gap. The /loop command would run agent turns until a condition is met. Phase 1 builds the skeleton: parsing, condition types (bash command exit code, file exists, string match), and the loop runner that integrates with the existing prompt infrastructure.
+
+**Task 2: Wire /loop into REPL dispatch and add safety limits**
+
+Phase 2 connects /loop to the REPL, adds iteration caps, timeout, Ctrl+C handling, and user confirmation before starting.
+
+Task 3: Remove `last_session_exists()` dead code
+
+Quick cleanup — the assessment found dead code with #[allow(dead_code)]. Either wire it up or remove it.
+
+Let me size this properly. The /loop feature is significant — let me scope it tightly.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check existing command modules for a pattern of how new co… (2 lines)  ▶ $ # Check how dispatch routes commands (2 lines)  ▶ $ # Check KNOWN_COMMANDS for completions (2 lines) ✓ (2ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # See the KNOWN_COMMANDS list (2 lines) ✓ (3ms)
+  4 tools completed in 4.4s (4 ✓)
+
+Interesting — /loop is already in KNOWN_COMMANDS! Let me check if there's already a partial implementation.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "loop\|Loop" src/dispatch.rs | grep -i loop | head -20  ▶ $ grep -rn "/loop\|handle_loop\|commands_loop\|CommandRoute::Loop" src/ | head -20 ✓ (4ms)
+ ✓ (6ms)
+  2 tools completed in 2.0s (2 ✓)
+
+There's already a /loop command! Let me see what it does currently.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat src/commands_run.rs ✓ (35ms)
+  ▶ $ # See the full handle_loop implementation (2 lines)  ▶ $ sed -n '199,380p' src/commands_run.rs ✓ (3ms)
+ ✓ (3ms)
+  3 tools completed in 5.4s (3 ✓)
+
+OK, so /loop already exists with Count(N) and UntilPass modes. The assessment said the biggest gap is "goal-driven autonomous execution" — but we already have the loop infrastructure. Let me re-evaluate what's actually missing vs competitors.
+
+The existing /loop is good but limited:
+1. It takes a count or until-pass — but no condition-based stopping (e.g., "until `cargo test` passes", "until file X exists")
+2. No **`/loop until <bash-condition> <prompt>`** mode — the most powerful variant
+3. The until-pass only checks the last tool call — it doesn't check an arbitrary condition
+
+Let me look at what would be most impactful to build.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the dead code issue (2 lines) ✓ (3ms)
+  ▶ $ # Check if it's used anywhere else (2 lines) ✓ (5ms)
+  ▶ $ # Look at the function (2 lines) ✓ (3ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now let me think about what's actually most impactful for Day 102. The assessment notes:
+
+1. No community issues to address
+2. /loop already exists (I didn't know this from the assessment alone!)
+3. The real gap vs competitors is condition-based looping — /loop until <condition> 
+4. Dead code cleanup is trivial
+
+Let me re-scope. The biggest value-add is enhancing /loop with a condition-based mode: /loop until <bash-cmd> <prompt>. This is what makes it truly goal-driven — the agent keeps working until an external condition is met.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what help says about /loop currently (2 lines) ✓ (2ms)
+  ▶ $ grep -A 15 'loop' src/help_data.rs | head -30 ✓ (3ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now I have a complete picture. Let me plan the three tasks:
+
+Task 1: Add `/loop until <cmd> <prompt>` — condition-based loop mode where the agent keeps iterating until a specified bash command succeeds. This is the key gap vs Claude Code's managed agents.
+
+Task 2: Remove last_session_exists() dead code and its test.
+
+Task 3: Let me think about another impactful self-driven improvement...
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about natural-language auto-review rules? Or session … (3 lines)  ▶ $ # Check if we suggest /load on startup when a session exists (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Good — session resume hint already exists. Let me think about what's truly impactful for Task 3.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's a way to make /loop even better — what ab… (4 lines)  ▶ $ # What about adding /loop status display - showing iteration… (4 lines) ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me think about a high-value third task. Looking at the assessment's capability gaps:
+
+• Natural-language auto-review rules — Cursor lets users write permission rules in English (we have file-pattern-based)
+• **Goal workflows** — Codex has structured goal-driven execution; our /goal is passive
+
+The `/loop until` enhancement is good for Task 1. For Task 3, let me think about what else moves the needle...
+
+The assessment says "Consolidation plateau — last ~5 sessions have been DRY cleanup, safety hardening, and perf tuning. No new user-facing features." Breaking through that plateau with a user-facing feature improvement would be valuable.
+
+Let me check what /goal could do to be more active — right now it just injects context. What if `/goal check` could return structured progress?
+
+Actually, a better idea: **make `/loop work with /goal** — /loop goal <prompt>` would run the prompt iteratively, checking /goal check each time, stopping when the goal is achieved. That directly closes the "goal workflows" gap.
+
+But that's complex. Let me keep it simpler and more impactful:
+
+Task 1: Add `/loop until <bash-cmd> -- <prompt>` condition mode  
+Task 2: Remove last_session_exists() dead code  
+Task 3: Add elapsed time + iteration summary to /loop output (UX polish for the loop feature)
+
+Actually, Task 3 is too small and not impactful enough. Let me think bigger.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the /run command - is there anything missing? (2 lines)  ▶ $ sed -n '100,190p' src/commands_run.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Let me think about what the most impactful third task could be. Looking at the competitive analysis again:
+
+The assessment says: "Goal-driven autonomous execution — a /loop or /until command that keeps running agent turns until a stated condition is met (tests pass, a file exists, etc.). This is the single most impactful feature competitors have that we could build with our existing infrastructure."
+
+So enhancing /loop is the right direction. But I should think of it in phases:
+
+**Task 1**: Add LoopMode::UntilCmd(String) — `/loop until "cargo test" <prompt>` that checks a bash condition after each iteration.
+
+**Task 2**: Remove dead code last_session_exists().
+
+Task 3: Add loop progress reporting — elapsed time per iteration, cumulative elapsed, and a summary at the end showing iterations completed vs max, total time, and whether the condition was met. This makes /loop feel professional and gives users confidence in what's happening during long autonomous runs.
+
+Actually, for Task 3, something more impactful: what if we add `/loop` with `/goal` integration — `/loop goal <prompt>` that checks if the current goal is achieved using an agent evaluation after each iteration? That would close the "goal workflows" gap directly.
+
+But that's complex (requires agent evaluation per iteration) and might be slow/expensive. Let me stay practical.
+
+Better Task 3 idea: **Add /loop Ctrl+C graceful interruption** — right now there's a 1-second sleep between iterations for Ctrl+C, but if the agent is mid-prompt there's no clean way to stop. Add a `tokio::select!` with a signal handler so the user can cleanly interrupt a running loop iteration.
+
+Actually, that's tricky to implement well in 20 minutes. Let me pick something achievable:
+
+Task 3: Enhance /loop with elapsed time tracking and a structured summary — show wall-clock time per iteration, cumulative progress bar, and a final summary. This makes autonomous loops feel production-grade.
+
+Let me write the plan.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (57 lines) ✓ (36.3s)
+  ▶ write session_plan/task_02.md (22 lines) ✓ (36.4s)
+  ▶ write session_plan/task_03.md (66 lines) ✓ (36.2s)
+  3 tools completed in 2m 16s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

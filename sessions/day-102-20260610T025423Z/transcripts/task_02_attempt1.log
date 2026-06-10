@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: remove the dead code last_session_exists() and its test from commands_session.rs.
+
+Let me start by finding the exact code to remove.
+  ▶ search 'last_session_exists' in src/commands_session.rs ✓ (2ms)
+  ▶ read src/commands_session.rs:385..400  ▶ read src/commands_session.rs:1085..1100 ✓ (1ms)
+ ✓ (1ms)
+  3 tools completed in 5.8s (3 ✓)
+
+Good. Let me also verify there are no other callers anywhere in the project:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'last_session_exists' ✗ (5.6s)
+    │ Search error: grep: ./target/debug/deps/yoyo-824291b963c6c10a: binary file matches
+  ▶ search 'last_session_exists' (*.rs) ✓ (17ms)
+  2 tools completed in 10.7s (1 ✓, 1 ✗)
+
+Confirmed — only in commands_session.rs, no callers. Now let me remove both the function and its test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_session.rs (9 → 3 lines)
+  - 
+    
+  - /// Check whether a previous auto-saved session exists at `.yoyo/last-session.json`.
+  - #[allow(dead_code)]
+  - pub fn last_session_exists() -> bool {
+  -     std::path::Path::new(AUTO_SAVE_SESSION_PATH).exists()
+  - }
+    
+    /// Auto-save
+  ▶ edit src/commands_session.rs (8 → 2 lines)
+  -     #[test]
+  -     fn test_last_session_exists_returns_bool() {
+  -         // Should not panic regardless of whether the file exists
+  -         let _exists = last_session_exists();
+  -     }
+  - 
+        #[test]
+        fn test_auto_save_creates_directory_and_file() {
+ ✓ (51.0s)
+  - 
+    
+  - /// Check whether a previous auto-saved session exists at `.yoyo/last-session.json`.
+  - #[allow(dead_code)]
+  - pub fn last_session_exists() -> bool {
+  -     std::path::Path::new(AUTO_SAVE_SESSION_PATH).exists()
+  - }
+    
+    /// Auto-save
+ ✓ (1m 27s)
+  -     #[test]
+  -     fn test_last_session_exists_returns_bool() {
+  -         // Should not panic regardless of whether the file exists
+  -         let _exists = last_session_exists();
+  -     }
+  - 
+        #[test]
+        fn test_auto_save_creates_directory_and_file() {
+  2 tools completed in 1m 30s (2 ✓)
+
+Now let me verify the edits look right:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'last_session_exists' in src/commands_session.rs ✓ (2ms)
+
+Hmm, there's still a match. Let me check what's at line 391:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:385..400 ✓ (0ms)
+
+The first edit didn't take. There might be a blank line 387 that's causing whitespace mismatch. Let me look more carefully:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:383..398 ✓ (1ms)
+
+I see line 387 is missing from the display — it might be a blank line. Let me use bash to see the exact content:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '385,398p' src/commands_session.rs | cat -A ✓ (4ms)
+
+There's a section divider comment line 387 with emoji characters. Let me see it properly:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '387p' src/commands_session.rs ✓ (2ms)
+  ▶ $ sed -n '387p' src/commands_session.rs | xxd | head -5 ✓ (27ms)
+  2 tools completed in 4.2s (2 ✓)
+
+That's a section divider comment with box-drawing characters. My first edit didn't match because the actual text between the `}` and the function has this divider line. Let me do the removal more carefully:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '386,395p' src/commands_session.rs ✓ (2ms)
+  ▶ $ # Remove lines 388-393 (the doc comment, allow annotation, f… (3 lines) ✓ (3ms)
+  ▶ edit src/commands_session.rs (7 → 1 lines)
+  - /// Check whether a previous auto-saved session exists at `.yoyo/last-session.json`.
+  - #[allow(dead_code)]
+  - pub fn last_session_exists() -> bool {
+  -     std::path::Path::new(AUTO_SAVE_SESSION_PATH).exists()
+  - }
+  - 
+    /// Auto-save
+ ✓ (49.7s)
+  - /// Check whether a previous auto-saved session exists at `.yoyo/last-session.json`.
+  - #[allow(dead_code)]
+  - pub fn last_session_exists() -> bool {
+  -     std::path::Path::new(AUTO_SAVE_SESSION_PATH).exists()
+  - }
+  - 
+    /// Auto-save
+  3 tools completed in 1m 1s (3 ✓)
+
+Now verify it's gone:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'last_session_exists' in src/commands_session.rs ✓ (2ms)
+
+Both the function and the test are removed. Let me verify the surrounding code looks clean:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '385,395p' src/commands_session.rs ✓ (2ms)
+
+Wait, there's still that section divider line (387). Let me check:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '386,388p' src/commands_session.rs | cat -A ✓ (3ms)
+
+That section divider is fine — it was there before. The code looks clean. Now let me run the full check suite:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -20 ✓ (11.9s)
+  ▶ $ cargo build 2>&1 | tail -5 ✓ (119ms)
+  ▶ $ cargo test 2>&1 | tail -20 ✓ (25.0s)
+  3 tools completed in 45.1s (3 ✓)
+
+All 88 tests pass, clippy is clean, build succeeds. Let me commit:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 102 (01:59): Remove dead code last_session_exis… ✓ (14ms)
+
+Done. Clean removal of dead code:
+
+• Removed last_session_exists() function and its #[allow(dead_code)] annotation from `commands_session.rs`
+• Removed the corresponding test `test_last_session_exists_returns_bool`
+• Verified no other callers existed anywhere in the codebase
+• All checks pass: cargo fmt, cargo clippy, cargo build, cargo test (88 tests, 0 failures)
+
+The session resume functionality lives in banner.rs via session_resume_hint() and session_resume_hint_at(), which do the same path check plus age formatting — the removed function was genuinely redundant.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

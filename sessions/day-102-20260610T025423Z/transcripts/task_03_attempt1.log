@@ -1,0 +1,225 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current src/commands_run.rs to understand the existing code structure.
+  ▶ read src/commands_run.rs ✓ (4ms)
+
+Now let me read the middle section with handle_loop:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:200..470 ✓ (2ms)
+
+Now let me check the format_duration helper in `format/mod.rs`:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn format_duration' (*.rs) ✓ (18ms)
+  ▶ read src/format/cost.rs:228..253 ✓ (0ms)
+  2 tools completed in 9.6s (2 ✓)
+
+Good. Now let me check what's re-exported from format/mod.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'format_duration' in src/format/mod.rs ✓ (2ms)
+  ▶ search 'pub use' in src/format/mod.rs ✓ (2ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Good — format_duration is re-exported via pub use cost::*. And crate::format::* is already imported in commands_run.rs. Now I have a clear picture. Let me implement this step by step.
+
+First, I'll write the format_loop_summary helper function and its tests, then add the timing logic to `handle_loop`.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:99..109 ✓ (0ms)
+
+Now let me implement the changes. I'll add the format_loop_summary function and update `handle_loop` with timing:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (3 → 4 lines)
+    use std::sync::Mutex;
+  + use std::time::{Duration, Instant};
+    use yoagent::agent::Agent;
+    use yoagent::*;
+ ✓ (11.2s)
+    use std::sync::Mutex;
+  + use std::time::{Duration, Instant};
+    use yoagent::agent::Agent;
+    use yoagent::*;
+
+That's expected — they'll be used once I update handle_loop. Let me now add the format_loop_summary function just before the `#[cfg(test)]` block:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (1 → 27 lines)
+  + /// Format a structured loop summary for display.
+  + ///
+  + /// `iterations` — number completed, `max` — maximum allowed,
+  + /// `elapsed` — total wall-clock time, `success` — whether the goal was met,
+  + /// `mode_label` — human-readable result description.
+  + pub fn format_loop_summary(
+  +     iterations: usize,
+  +     max: usize,
+  +     elapsed: Duration,
+  +     success: bool,
+  +     mode_label: &str,
+  + ) -> String {
+  +     let time_str = format_duration(elapsed);
+  +     let (icon, color) = if success {
+  +         ("✓", GREEN)
+  +     } else {
+  +         ("✗", RED)
+  +     };
+  +     format!(
+  +         "── Loop Summary ──────────────────────\n\
+  ... (7 more lines)
+ ✓ (7.0s)
+  + /// Format a structured loop summary for display.
+  + ///
+  + /// `iterations` — number completed, `max` — maximum allowed,
+  + /// `elapsed` — total wall-clock time, `success` — whether the goal was met,
+  + /// `mode_label` — human-readable result description.
+  + pub fn format_loop_summary(
+  +     iterations: usize,
+  +     max: usize,
+  ... (13 more lines)
+
+I see — Color is a newtype, not a string. Let me check how it's used:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:178..208 ✓ (0ms)
+
+They're statics, not Copy/Clone. I need to use them via format reference (&GREEN). Actually, since they implement `Display`, I should just reference them in the format string directly. Let me fix the function to use the statics directly in the format string:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (20 → 24 lines)
+        mode_label: &str,
+    ) -> String {
+        let time_str = format_duration(elapsed);
+  -     let (icon, color) = if success {
+  -         ("✓", GREEN)
+  +     if success {
+  +         format!(
+  +             "── Loop Summary ──────────────────────\n\
+  +              Iterations: {iterations}/{max}\n\
+  +              Total time: {time_str}\n\
+  +              Result: {GREEN}✓ {mode_label}{RESET}"
+  +         )
+        } else {
+  -         ("✗", RED)
+  -     };
+  -     format!(
+  -         "── Loop Summary ──────────────────────\n\
+  -          Iterations: {iterations}/{max}\n\
+  -          Total time: {time_str}\n\
+  -          Result: {color}{icon} {mode_label}{RESET}"
+  ... (9 more lines)
+ ✓ (11.2s)
+        mode_label: &str,
+    ) -> String {
+        let time_str = format_duration(elapsed);
+  -     let (icon, color) = if success {
+  -         ("✓", GREEN)
+  +     if success {
+  +         format!(
+  +             "── Loop Summary ──────────────────────\n\
+  ... (13 more lines)
+
+Expected — Instant and the function aren't used yet. Let me now update handle_loop with the timing logic:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (48 → 80 lines)
+            LoopMode::Count(n) => *n,
+            LoopMode::UntilPass => MAX_UNTIL_PASS,
+        };
+  + 
+  +     let loop_start = Instant::now();
+    
+        for i in 1..=max_iters {
+            // Print iteration header.
+  ···
+            };
+            println!("\n{BOLD}{CYAN}{label}{RESET}\n");
+    
+  +         let iter_start = Instant::now();
+            let outcome =
+                run_prompt_auto_retry(agent, &prompt, session_total, &agent_config.model, changes)
+                    .await;
+  +         let iter_elapsed = iter_start.elapsed();
+  +         let total_elapsed = loop_start.elapsed();
+  + 
+  +         // Print per-iteration timing.
+  ... (52 more lines)
+ ✓ (50.6s)
+            LoopMode::Count(n) => *n,
+            LoopMode::UntilPass => MAX_UNTIL_PASS,
+        };
+  + 
+  +     let loop_start = Instant::now();
+    
+        for i in 1..=max_iters {
+            // Print iteration header.
+  ... (13 more lines)
+
+Now let me add the tests for format_loop_summary in the test module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:365..380 ✓ (1ms)
+  ▶ read src/commands_run.rs:572..582 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me add the `format_loop_summary` tests at the end of the test module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (12 → 63 lines)
+                    LoopMode::Count(3),
+                    "check if the server is responding".to_string()
+                ))
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn format_loop_summary_count_complete() {
+  +         let summary = format_loop_summary(
+  +             5,
+  +             5,
+  +             Duration::from_secs(252),
+  +             true,
+  +             "completed all iterations",
+  +         );
+  +         assert!(summary.contains("Iterations: 5/5"));
+  +         assert!(summary.contains("Total time: 4m 12s"));
+  +         assert!(summary.contains("completed all iterations"));
+  +         assert!(summary.contains("✓"));
+  +     }
+  ... (37 more lines)
+ ✓ (49.4s)
+                    LoopMode::Count(3),
+                    "check if the server is responding".to_string()
+                ))
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn format_loop_summary_count_complete() {
+  ... (13 more lines)
+
+Now let's run the full check:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (11.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (25.2s)
+  2 tools completed in 42.5s (2 ✓)
+
+All 3703 unit tests and 88 integration tests pass. Let me verify the final state of the file to make sure everything looks right:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:265..395 ✓ (1ms)
+
+Let me also check the test section:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_run.rs:570..650 ✓ (0ms)
+
+Everything looks clean. Let me also check that CLAUDE.md is still accurate — the commands_run.rs entry should mention the new function:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_run' in CLAUDE.md ✓ (2ms)
+  ▶ search 'commands_run\.rs' in CLAUDE.md ✓ (2ms)
+  ▶ search 'handle_loop' in CLAUDE.md ✓ (2ms)
+  ▶ search 'fn handle_loop' in CLAUDE.md ✓ (2ms)
+  ▶ search 'src/commands_run"' in CLAUDE.md ✓ (2ms)
+  ▶ search 'commands_run' in CLAUDE.md ✓ (2ms)
+  6 tools completed in 17.0s (6 ✓)
+
+Let me check where commands_run.rs is documented in CLAUDE.md:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ search 'RunResult"' in CLAUDE.md ✓ (2ms)
+  ▶ search 'RunResult' in CLAUDE.md ✓ (2ms)
+  2 tools completed in 3.2s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
