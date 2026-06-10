@@ -833,23 +833,17 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /security          Scan current project for known vulnerabilities",
         ),
         "loop" => Some(
-            "/loop <N|until-pass|until <cmd> --> <prompt> — Repeat a prompt in a polling loop\n\n\
+            "/loop <N|until-pass> <prompt> — Repeat a prompt in a polling loop\n\n\
              Usage:\n\
-             \x20 /loop <N> <prompt>                Run the prompt exactly N times (1-100)\n\
-             \x20 /loop until-pass <prompt>         Run until the last tool call succeeds (max 20)\n\
-             \x20 /loop until <cmd> -- <prompt>     Run until a bash command succeeds (max 20)\n\n\
+             \x20 /loop <N> <prompt>          Run the prompt exactly N times (1-100)\n\
+             \x20 /loop until-pass <prompt>   Run until the last tool call succeeds (max 20)\n\n\
              Each iteration runs the prompt through the normal agent path with auto-retry.\n\
              A 1-second pause between iterations gives you time to Ctrl+C.\n\n\
              In until-pass mode, the loop stops as soon as the last tool call exits\n\
              without error (e.g. a bash command that returns exit code 0).\n\n\
-             In until mode, the condition command is run after each agent iteration.\n\
-             If it exits 0, the loop stops. The condition is also checked before the first\n\
-             iteration — if it already passes, the loop returns immediately.\n\n\
              Examples:\n\
              \x20 /loop 5 run the tests and fix any failures\n\
              \x20 /loop until-pass run cargo test\n\
-             \x20 /loop until \"cargo test\" -- fix any failing tests\n\
-             \x20 /loop until test -f output.json -- generate the output file\n\
              \x20 /loop 3 check if the server is responding",
         ),
         "spawn" => Some(
