@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task step by step. Let me start by understanding the current code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'safe_truncate' src/form…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'while.*is_char_boundary… ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Good. Let me read the relevant sections of each file.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '220,260p' src/format/mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1088,1108p' src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '325,342p' src/commands_s… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  3 tools completed in 1.6s (3 ✓)
+
+Now let me check the existing test section and imports.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '800,870p' src/format/mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/repl.rs | grep -n '…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_skill.rs |… ✓ (5ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  3 tools completed in 1.4s (3 ✓)
+
+Good. Both repl.rs and commands_skill.rs already import crate::format::*, so safe_byte_index and safe_truncate_with_suffix will be available automatically. Now let me implement.
+
+### Step 1: Add `safe_byte_index` function and tests to `src/format/mod.rs`
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (3 → 15 lines)
+  + /// Find the nearest valid UTF-8 char boundary at or before `target`.
+  + /// Returns 0 if no boundary exists before `target`.
+  + /// Use this when you need a safe byte offset for slicing (not truncation).
+  + pub fn safe_byte_index(s: &str, target: usize) -> usize {
+  +     let target = target.min(s.len());
+  +     let mut b = target;
+  +     while b > 0 && !s.is_char_boundary(b) {
+  +         b -= 1;
+  +     }
+  +     b
+  + }
+  + 
+    /// Truncate a string at a safe UTF-8 char boundary, never exceeding `max_bytes`.
+    /// Returns a `&str` slice. Avoids panics from slicing mid-character.
+    pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+ ✓ (14.9s)
+  + /// Find the nearest valid UTF-8 char boundary at or before `target`.
+  + /// Returns 0 if no boundary exists before `target`.
+  + /// Use this when you need a safe byte offset for slicing (not truncation).
+  + pub fn safe_byte_index(s: &str, target: usize) -> usize {
+  +     let target = target.min(s.len());
+  +     let mut b = target;
+  +     while b > 0 && !s.is_char_boundary(b) {
+  +         b -= 1;
+  ... (7 more lines)
+
+Expected — I need to use it. Let me add the tests first, then replace the call sites.
+
+### Step 2: Add tests for `safe_byte_index`
+
+Let me find the end of the safe_truncate tests to add right after:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'test_safe_truncate_exac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '870,882p' src/format/mod… ✓ (3ms)
+  ▶ edit src/format/mod.rs (2 → 37 lines)
+  +     #[test]
+  +     fn test_safe_byte_index_empty_string() {
+  +         assert_eq!(safe_byte_index("", 0), 0);
+  +         assert_eq!(safe_byte_index("", 5), 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_safe_byte_index_ascii_within_bounds() {
+  +         assert_eq!(safe_byte_index("hello world", 5), 5);
+  +         assert_eq!(safe_byte_index("hello world", 0), 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_safe_byte_index_multibyte_rounds_down() {
+  +         // ✓ is 3 bytes (E2 9C 93). "hello ✓ world" byte layout:
+  +         //   h(0) e(1) l(2) l(3) o(4) ' '(5) ✓(6,7,8) ' '(9) w(10)...
+  +         let s = "hello ✓ world";
+  +         // Target 7 lands inside ✓ → rounds down to 6
+  +         assert_eq!(safe_byte_index(s, 7), 6);
+  +         // Target 8 also inside ✓ → rounds down to 6
+  ... (17 more lines)
+ ✓ (14.9s)
+  +     #[test]
+  +     fn test_safe_byte_index_empty_string() {
+  +         assert_eq!(safe_byte_index("", 0), 0);
+  +         assert_eq!(safe_byte_index("", 5), 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_safe_byte_index_ascii_within_bounds() {
+  ... (13 more lines)
+  3 tools completed in 27.2s (3 ✓)
+
+Still expected — tests use it but the main code doesn't yet. Let me now replace both call sites.
+
+### Step 3: Replace the loop in `src/repl.rs`
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (8 → 1 lines)
+  -     let tail_start = {
+  -         let target = text.len().saturating_sub(300);
+  -         let mut b = target;
+  -         while b > 0 && !text.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         b
+  -     };
+  +     let tail_start = safe_byte_index(text, text.len().saturating_sub(300));
+ ✓ (1m 4s)
+  -     let tail_start = {
+  -         let target = text.len().saturating_sub(300);
+  -         let mut b = target;
+  -         while b > 0 && !text.is_char_boundary(b) {
+  -             b -= 1;
+  -         }
+  -         b
+  -     };
+  +     let tail_start = safe_byte_index(text, text.len().saturating_sub(300));
+
+### Step 4: Replace the loop in `src/commands_skill.rs`
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (9 → 5 lines)
+            let name_display = if r.full_name.len() > 40 {
+  -             let mut b = 37;
+  -             while b > 0 && !r.full_name.is_char_boundary(b) {
+  -                 b -= 1;
+  -             }
+  -             format!("{}...", &r.full_name[..b])
+  +             safe_truncate_with_suffix(&r.full_name, 37, "...")
+            } else {
+                r.full_name.clone()
+            };
+ ✓ (1m 5s)
+            let name_display = if r.full_name.len() > 40 {
+  -             let mut b = 37;
+  -             while b > 0 && !r.full_name.is_char_boundary(b) {
+  -                 b -= 1;
+  -             }
+  -             format!("{}...", &r.full_name[..b])
+  +             safe_truncate_with_suffix(&r.full_name, 37, "...")
+            } else {
+                r.full_name.clone()
+            };
+
+### Step 5: Run all checks
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (32.4s)
+  2 tools completed in 52.3s (2 ✓)
+
+All 3795 tests pass. Let me verify the inline loops are gone from those two files:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'while.*!.*is_char_bound… ✓ (3ms)
+
+No matches — both inline char-boundary loops are gone. Now commit:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (18ms)
+
+Done. Here's what I did:
+
+1. Added `safe_byte_index` to src/format/mod.rs — a public helper that finds the nearest valid UTF-8 char boundary at or before a target byte offset. Unlike safe_truncate (which returns a truncated &str), this returns a raw usize for use as a slice start/end index.
+
+2. Added 4 tests for the new helper: empty string, ASCII within bounds, multi-byte rounding down, and target beyond string length.
+
+3. Replaced the inline loop in `src/repl.rs` (line ~1094) — the 8-line block computing tail_start for the looks_incomplete heuristic is now a single safe_byte_index call.
+
+4. **Replaced the inline loop in src/commands_skill.rs** (line ~330) — the 9-line truncate-with-ellipsis block is now a single `safe_truncate_with_suffix` call.
+
+All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, cargo test (3795 tests, 0 failures).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

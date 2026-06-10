@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ search 'while.*!.*is_char_boundary' in src/  ▶ search 'fn safe_byte_index' in src/format ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Good. I can see safe_byte_index exists in format/mod.rs, and the target inline loop is at src/format/output.rs:325. Let me look at the specific code:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:310..340  ▶ read src/format/mod.rs:225..240 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Now let me check how imports work in output.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:1..11 ✓ (1ms)
+
+It uses super:: for imports from format/mod.rs. Now I'll make the surgical edit:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (1 → 1 lines)
+  - use super::{format_duration, pluralize, DIM, GREEN, RED, RESET};
+  + use super::{format_duration, pluralize, safe_byte_index, DIM, GREEN, RED, RESET};
+ ✓ (15.2s)
+  - use super::{format_duration, pluralize, DIM, GREEN, RED, RESET};
+  + use super::{format_duration, pluralize, safe_byte_index, DIM, GREEN, RED, RESET};
+
+Expected — I need to also replace the inline loop. Let me do that now:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (8 → 3 lines)
+  -     let mut end = prefix_len.min(CATEGORY_PREFIX_MAX).min(line.len());
+  - 
+  -     // Ensure we don't slice inside a multi-byte UTF-8 character
+  -     while end > 0 && !line.is_char_boundary(end) {
+  -         end -= 1;
+  -     }
+  +     let end = safe_byte_index(line, prefix_len.min(CATEGORY_PREFIX_MAX).min(line.len()));
+    
+        &line[..end]
+ ✓ (1m 5s)
+  -     let mut end = prefix_len.min(CATEGORY_PREFIX_MAX).min(line.len());
+  - 
+  -     // Ensure we don't slice inside a multi-byte UTF-8 character
+  -     while end > 0 && !line.is_char_boundary(end) {
+  -         end -= 1;
+  -     }
+  +     let end = safe_byte_index(line, prefix_len.min(CATEGORY_PREFIX_MAX).min(line.len()));
+    
+        &line[..end]
+
+Now run the full verification:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (33.0s)
+  2 tools completed in 53.2s (2 ✓)
+
+All 3795 tests pass. Now verify no inline char-boundary loops remain in output.rs (and check the whole codebase):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'while.*!.*is_char_boundary' src/📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (47ms)
+
+The output.rs line is gone. The remaining instances are:
+• format/mod.rs:230 and 243 — these are inside safe_byte_index and safe_truncate themselves (the canonical helpers)
+• commands_rename.rs:163 — this is a *forward* boundary scan (start < text.len(), incrementing), which is a different pattern from the backward scan that safe_byte_index handles
+
+That's correct — the task was to eliminate the last inline char-boundary loop that duplicates safe_byte_index, and it's done. Let me commit:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (15ms)
+
+Clean. The line_category() function in `format/output.rs now uses safe_byte_index(line, ...) instead of the inline while end > 0 && !line.is_char_boundary(end) { end -= 1; }` loop. Two lines added (import + call), seven lines removed (mutable binding + comment + loop + decrement + closing brace + blank line + extra line). All checks pass — build, test, clippy, fmt. The DRY pass for char-boundary loops is complete.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
