@@ -1091,14 +1091,7 @@ pub(crate) fn looks_incomplete(text: &str) -> bool {
     }
 
     // Check the tail of the response (last ~300 chars) for continuation signals.
-    let tail_start = {
-        let target = text.len().saturating_sub(300);
-        let mut b = target;
-        while b > 0 && !text.is_char_boundary(b) {
-            b -= 1;
-        }
-        b
-    };
+    let tail_start = safe_byte_index(text, text.len().saturating_sub(300));
     let tail = &text[tail_start..];
     let tail_lower = tail.to_lowercase();
 

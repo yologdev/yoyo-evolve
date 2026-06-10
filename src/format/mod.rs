@@ -221,6 +221,18 @@ pub use markdown::*;
 pub use output::*;
 pub use tools::*;
 
+/// Find the nearest valid UTF-8 char boundary at or before `target`.
+/// Returns 0 if no boundary exists before `target`.
+/// Use this when you need a safe byte offset for slicing (not truncation).
+pub fn safe_byte_index(s: &str, target: usize) -> usize {
+    let target = target.min(s.len());
+    let mut b = target;
+    while b > 0 && !s.is_char_boundary(b) {
+        b -= 1;
+    }
+    b
+}
+
 /// Truncate a string at a safe UTF-8 char boundary, never exceeding `max_bytes`.
 /// Returns a `&str` slice. Avoids panics from slicing mid-character.
 pub fn safe_truncate(s: &str, max_bytes: usize) -> &str {
@@ -856,6 +868,41 @@ mod tests {
         assert_eq!(safe_truncate(s, 4), "ab");
         // Truncating at 2 should give "ab"
         assert_eq!(safe_truncate(s, 2), "ab");
+    }
+
+    #[test]
+    fn test_safe_byte_index_empty_string() {
+        assert_eq!(safe_byte_index("", 0), 0);
+        assert_eq!(safe_byte_index("", 5), 0);
+    }
+
+    #[test]
+    fn test_safe_byte_index_ascii_within_bounds() {
+        assert_eq!(safe_byte_index("hello world", 5), 5);
+        assert_eq!(safe_byte_index("hello world", 0), 0);
+    }
+
+    #[test]
+    fn test_safe_byte_index_multibyte_rounds_down() {
+        // ✓ is 3 bytes (E2 9C 93). "hello ✓ world" byte layout:
+        //   h(0) e(1) l(2) l(3) o(4) ' '(5) ✓(6,7,8) ' '(9) w(10)...
+        let s = "hello ✓ world";
+        // Target 7 lands inside ✓ → rounds down to 6
+        assert_eq!(safe_byte_index(s, 7), 6);
+        // Target 8 also inside ✓ → rounds down to 6
+        assert_eq!(safe_byte_index(s, 8), 6);
+        // Target 6 is start of ✓ → valid boundary
+        assert_eq!(safe_byte_index(s, 6), 6);
+        // Target 9 is after ✓ → valid boundary
+        assert_eq!(safe_byte_index(s, 9), 9);
+    }
+
+    #[test]
+    fn test_safe_byte_index_beyond_length() {
+        let s = "hello";
+        assert_eq!(safe_byte_index(s, 100), 5); // clamped to len
+        let s2 = "日本"; // 6 bytes
+        assert_eq!(safe_byte_index(s2, 999), 6);
     }
 
     #[test]

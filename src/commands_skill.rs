@@ -328,11 +328,7 @@ fn handle_skill_search(query: Option<&str>) {
 
     for r in &results {
         let name_display = if r.full_name.len() > 40 {
-            let mut b = 37;
-            while b > 0 && !r.full_name.is_char_boundary(b) {
-                b -= 1;
-            }
-            format!("{}...", &r.full_name[..b])
+            safe_truncate_with_suffix(&r.full_name, 37, "...")
         } else {
             r.full_name.clone()
         };
