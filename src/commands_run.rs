@@ -8,6 +8,7 @@ use crate::session::SessionChanges;
 use crate::sync_util::lock_or_recover;
 
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use yoagent::agent::Agent;
 use yoagent::*;
 
@@ -267,6 +268,8 @@ pub async fn handle_loop(
         LoopMode::UntilPass => MAX_UNTIL_PASS,
     };
 
+    let loop_start = Instant::now();
+
     for i in 1..=max_iters {
         // Print iteration header.
         let label = match &mode {
@@ -277,9 +280,19 @@ pub async fn handle_loop(
         };
         println!("\n{BOLD}{CYAN}{label}{RESET}\n");
 
+        let iter_start = Instant::now();
         let outcome =
             run_prompt_auto_retry(agent, &prompt, session_total, &agent_config.model, changes)
                 .await;
+        let iter_elapsed = iter_start.elapsed();
+        let total_elapsed = loop_start.elapsed();
+
+        // Print per-iteration timing.
+        println!(
+            "{DIM}⏱ Iteration {i} completed in {} (total: {}){RESET}",
+            format_duration(iter_elapsed),
+            format_duration(total_elapsed),
+        );
 
         auto_compact_if_needed(agent);
 
@@ -288,6 +301,14 @@ pub async fn handle_loop(
             println!(
                 "\n{GREEN}{BOLD}✓ Loop complete — last tool call succeeded on iteration {i}.{RESET}"
             );
+            let summary = format_loop_summary(
+                i,
+                max_iters,
+                loop_start.elapsed(),
+                true,
+                &format!("condition met on iteration {i}"),
+            );
+            println!("\n{summary}");
             return;
         }
 
@@ -301,13 +322,55 @@ pub async fn handle_loop(
     // Finished all iterations.
     match &mode {
         LoopMode::Count(n) => {
-            println!("\n{DIM}Loop complete — {n} iterations finished.{RESET}");
+            let summary = format_loop_summary(
+                *n,
+                *n,
+                loop_start.elapsed(),
+                true,
+                "completed all iterations",
+            );
+            println!("\n{summary}");
         }
         LoopMode::UntilPass => {
-            println!(
-                "\n{YELLOW}Loop exhausted {MAX_UNTIL_PASS} iterations without a passing tool call.{RESET}"
+            let summary = format_loop_summary(
+                MAX_UNTIL_PASS,
+                MAX_UNTIL_PASS,
+                loop_start.elapsed(),
+                false,
+                &format!("condition not met after {MAX_UNTIL_PASS} iterations"),
             );
+            println!("\n{summary}");
         }
+    }
+}
+
+/// Format a structured loop summary for display.
+///
+/// `iterations` — number completed, `max` — maximum allowed,
+/// `elapsed` — total wall-clock time, `success` — whether the goal was met,
+/// `mode_label` — human-readable result description.
+pub fn format_loop_summary(
+    iterations: usize,
+    max: usize,
+    elapsed: Duration,
+    success: bool,
+    mode_label: &str,
+) -> String {
+    let time_str = format_duration(elapsed);
+    if success {
+        format!(
+            "── Loop Summary ──────────────────────\n\
+             Iterations: {iterations}/{max}\n\
+             Total time: {time_str}\n\
+             Result: {GREEN}✓ {mode_label}{RESET}"
+        )
+    } else {
+        format!(
+            "── Loop Summary ──────────────────────\n\
+             Iterations: {iterations}/{max}\n\
+             Total time: {time_str}\n\
+             Result: {RED}✗ {mode_label}{RESET}"
+        )
     }
 }
 
@@ -514,5 +577,56 @@ mod tests {
                 "check if the server is responding".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn format_loop_summary_count_complete() {
+        let summary = format_loop_summary(
+            5,
+            5,
+            Duration::from_secs(252),
+            true,
+            "completed all iterations",
+        );
+        assert!(summary.contains("Iterations: 5/5"));
+        assert!(summary.contains("Total time: 4m 12s"));
+        assert!(summary.contains("completed all iterations"));
+        assert!(summary.contains("✓"));
+    }
+
+    #[test]
+    fn format_loop_summary_until_pass_success() {
+        let summary = format_loop_summary(
+            3,
+            20,
+            Duration::from_secs(154),
+            true,
+            "condition met on iteration 3",
+        );
+        assert!(summary.contains("Iterations: 3/20"));
+        assert!(summary.contains("Total time: 2m 34s"));
+        assert!(summary.contains("condition met on iteration 3"));
+        assert!(summary.contains("✓"));
+    }
+
+    #[test]
+    fn format_loop_summary_until_pass_exhausted() {
+        let summary = format_loop_summary(
+            20,
+            20,
+            Duration::from_secs(903),
+            false,
+            "condition not met after 20 iterations",
+        );
+        assert!(summary.contains("Iterations: 20/20"));
+        assert!(summary.contains("Total time: 15m 3s"));
+        assert!(summary.contains("condition not met after 20 iterations"));
+        assert!(summary.contains("✗"));
+    }
+
+    #[test]
+    fn format_loop_summary_has_header() {
+        let summary = format_loop_summary(1, 1, Duration::from_secs(5), true, "done");
+        assert!(summary.contains("── Loop Summary ──"));
     }
 }
