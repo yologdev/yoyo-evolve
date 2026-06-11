@@ -348,7 +348,146 @@ fn content_block_tokens(content: &[Content]) -> usize {
         .sum()
 }
 
-pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
+/// Per-turn token breakdown for `/tokens detail`.
+///
+/// Iterates through messages, estimates tokens per message, assigns turn numbers
+/// (user message starts a new turn), sorts by token count descending, and
+/// returns a formatted string showing the top 10 context consumers.
+pub fn format_per_turn_breakdown(messages: &[AgentMessage]) -> String {
+    struct TurnEntry {
+        turn: usize,
+        role: &'static str,
+        tokens: usize,
+        preview: String,
+    }
+
+    let mut entries: Vec<TurnEntry> = Vec::new();
+    let mut turn_num: usize = 0;
+
+    for msg in messages {
+        let llm = match msg.as_llm() {
+            Some(m) => m,
+            None => continue,
+        };
+
+        match llm {
+            Message::User { content, .. } => {
+                turn_num += 1;
+                let tokens = content_block_tokens(content);
+                let preview = message_preview(content, "user");
+                entries.push(TurnEntry {
+                    turn: turn_num,
+                    role: "user",
+                    tokens,
+                    preview,
+                });
+            }
+            Message::Assistant { content, .. } => {
+                let tokens = content_block_tokens(content);
+                let preview = message_preview(content, "assistant");
+                entries.push(TurnEntry {
+                    turn: turn_num.max(1),
+                    role: "assistant",
+                    tokens,
+                    preview,
+                });
+            }
+            Message::ToolResult {
+                tool_name, content, ..
+            } => {
+                let tokens = content_block_tokens(content) + estimate_tokens(tool_name) + 8;
+                let preview = format!("{}: {}", tool_name, first_text_content(content));
+                entries.push(TurnEntry {
+                    turn: turn_num.max(1),
+                    role: "tool_result",
+                    tokens,
+                    preview,
+                });
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    // Sort by tokens descending
+    entries.sort_by_key(|e| std::cmp::Reverse(e.tokens));
+
+    // Take top 10
+    let top = &entries[..entries.len().min(10)];
+
+    let mut out = format!("{DIM}  Top context consumers:");
+    for entry in top {
+        let preview_truncated = safe_truncate(&entry.preview, 40);
+        let suffix = if preview_truncated.len() < entry.preview.len() {
+            "…"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "\n    #{:<3} {:<13} {:>6} tokens  {}{}",
+            entry.turn,
+            entry.role,
+            format_token_count(entry.tokens as u64),
+            preview_truncated,
+            suffix,
+        ));
+    }
+
+    if entries.len() > 10 {
+        out.push_str(&format!(
+            "\n    {DIM}… and {} more messages{RESET}",
+            entries.len() - 10
+        ));
+    }
+    out.push_str(&format!("{RESET}"));
+    out
+}
+
+/// Extract the first text content from a content block list.
+fn first_text_content(content: &[Content]) -> String {
+    for c in content {
+        if let Content::Text { text } = c {
+            let line = text.lines().next().unwrap_or("").trim();
+            if !line.is_empty() {
+                return line.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+/// Build a short preview string for a message.
+fn message_preview(content: &[Content], _role: &str) -> String {
+    for c in content {
+        match c {
+            Content::Text { text } => {
+                let line = text.lines().next().unwrap_or("").trim();
+                if !line.is_empty() {
+                    return line.to_string();
+                }
+            }
+            Content::ToolCall { name, .. } => {
+                return format!("[tool: {name}]");
+            }
+            Content::Thinking { .. } => {
+                return "[thinking]".to_string();
+            }
+            Content::Image { .. } => {
+                return "[image]".to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str, input: &str) {
+    let show_detail = input
+        .strip_prefix("/tokens")
+        .unwrap_or("")
+        .trim()
+        .eq_ignore_ascii_case("detail");
     let max_context = crate::cli::effective_context_tokens();
     let messages = agent.messages().to_vec();
     let context_used = total_tokens(&messages) as u64;
@@ -380,6 +519,15 @@ pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
     if !tool_summary.is_empty() {
         println!();
         println!("{}", format_tool_call_summary(&tool_summary));
+    }
+
+    // Per-turn breakdown (only with /tokens detail)
+    if show_detail && !messages.is_empty() {
+        let detail = format_per_turn_breakdown(&messages);
+        if !detail.is_empty() {
+            println!();
+            println!("{detail}");
+        }
     }
 
     if session_total.input > context_used + 1000 {
@@ -1451,7 +1599,7 @@ mod tests {
         };
 
         // Should not panic with zero usage and empty conversation
-        handle_tokens(&agent, &usage, "test-model");
+        handle_tokens(&agent, &usage, "test-model", "/tokens");
     }
 
     #[test]
@@ -1471,7 +1619,7 @@ mod tests {
         };
 
         // Should not panic with very large values
-        handle_tokens(&agent, &usage, "test-model");
+        handle_tokens(&agent, &usage, "test-model", "/tokens");
     }
 
     #[test]
@@ -2692,6 +2840,162 @@ More text.
             2,
             10_000,
             200_000,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // format_per_turn_breakdown tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: create a User AgentMessage with given text content.
+    fn make_user_msg(text: &str) -> AgentMessage {
+        AgentMessage::Llm(Message::User {
+            content: vec![Content::Text {
+                text: text.to_string(),
+            }],
+            timestamp: 0,
+        })
+    }
+
+    /// Helper: create an Assistant AgentMessage with given text content.
+    fn make_assistant_msg(text: &str) -> AgentMessage {
+        AgentMessage::Llm(Message::Assistant {
+            content: vec![Content::Text {
+                text: text.to_string(),
+            }],
+            stop_reason: StopReason::Stop,
+            model: "test".to_string(),
+            provider: "test".to_string(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        })
+    }
+
+    /// Helper: create a ToolResult AgentMessage with given tool name and text content.
+    fn make_tool_result_msg(tool_name: &str, text: &str) -> AgentMessage {
+        AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            tool_name: tool_name.to_string(),
+            content: vec![Content::Text {
+                text: text.to_string(),
+            }],
+            is_error: false,
+            timestamp: 0,
+        })
+    }
+
+    #[test]
+    fn test_per_turn_breakdown_empty_messages() {
+        let result = format_per_turn_breakdown(&[]);
+        assert!(
+            result.is_empty(),
+            "empty messages should produce empty output"
+        );
+    }
+
+    #[test]
+    fn test_per_turn_breakdown_turn_numbering_and_roles() {
+        // Turn 1: user + assistant; Turn 2: user + tool_result
+        let messages = vec![
+            make_user_msg("Hello world"),
+            make_assistant_msg("Hi there"),
+            make_user_msg("Do something"),
+            make_tool_result_msg("bash", "ok done"),
+        ];
+        let result = format_per_turn_breakdown(&messages);
+
+        // Should contain turn numbers 1 and 2
+        assert!(result.contains("#1"), "should show turn #1");
+        assert!(result.contains("#2"), "should show turn #2");
+
+        // Should contain all three roles
+        assert!(result.contains("user"), "should show user role");
+        assert!(result.contains("assistant"), "should show assistant role");
+        assert!(
+            result.contains("tool_result"),
+            "should show tool_result role"
+        );
+    }
+
+    #[test]
+    fn test_per_turn_breakdown_sorted_descending() {
+        // Create messages with known relative sizes: a short user message and
+        // a much longer assistant message. The longer one should appear first.
+        let short_text = "hi";
+        let long_text = "a]".repeat(2000); // ~4000 chars → many tokens
+
+        let messages = vec![make_user_msg(short_text), make_assistant_msg(&long_text)];
+        let result = format_per_turn_breakdown(&messages);
+        let lines: Vec<&str> = result.lines().collect();
+
+        // First data line (after header) should be the larger entry (assistant)
+        // and second data line should be the smaller entry (user).
+        let first_data = lines.iter().find(|l| l.contains("tokens")).unwrap();
+        let second_data = lines
+            .iter()
+            .filter(|l| l.contains("tokens"))
+            .nth(1)
+            .unwrap();
+
+        assert!(
+            first_data.contains("assistant"),
+            "largest entry (assistant) should appear first, got: {}",
+            first_data
+        );
+        assert!(
+            second_data.contains("user"),
+            "smaller entry (user) should appear second, got: {}",
+            second_data
+        );
+    }
+
+    #[test]
+    fn test_per_turn_breakdown_preview_truncated_safely() {
+        // Use a string with multi-byte characters that would break at 40 bytes
+        // if not using safe_truncate. Each '✓' is 3 bytes → 14 chars = 42 bytes.
+        let multibyte_text = "✓".repeat(14);
+        assert!(
+            multibyte_text.len() > 40,
+            "test setup: string should exceed 40 bytes"
+        );
+
+        let messages = vec![make_user_msg(&multibyte_text)];
+        let result = format_per_turn_breakdown(&messages);
+
+        // Should not panic (safe_truncate handles char boundaries) and should
+        // contain the truncation indicator '…'
+        assert!(
+            result.contains('…'),
+            "long preview should be truncated with ellipsis"
+        );
+        // Verify no partial UTF-8 sequences leaked (result is valid UTF-8 if
+        // we got here — Rust strings enforce this, but let's be explicit)
+        assert!(
+            std::str::from_utf8(result.as_bytes()).is_ok(),
+            "output must be valid UTF-8"
+        );
+    }
+
+    #[test]
+    fn test_per_turn_breakdown_top_10_limit() {
+        // Create 15 messages (each a separate user turn) — only top 10 should show
+        let messages: Vec<AgentMessage> = (0..15)
+            .map(|i| make_user_msg(&format!("Message number {i} with some padding text")))
+            .collect();
+        let result = format_per_turn_breakdown(&messages);
+
+        // Count lines that contain "tokens" (these are the data rows)
+        let data_lines = result.lines().filter(|l| l.contains("tokens")).count();
+        assert_eq!(
+            data_lines, 10,
+            "should show exactly 10 entries, got {data_lines}"
+        );
+
+        // Should also mention the remaining 5
+        assert!(
+            result.contains("5 more"),
+            "should mention '5 more' remaining entries"
         );
     }
 }

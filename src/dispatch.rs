@@ -135,7 +135,7 @@ pub(crate) fn route_command(input: &str) -> CommandRoute {
         "/quit" | "/exit" => CommandRoute::Quit,
         "/version" => CommandRoute::Version,
         "/status" => CommandRoute::Status,
-        "/tokens" => CommandRoute::Tokens,
+        "/tokens" | "/tokens detail" => CommandRoute::Tokens,
         "/cost" => CommandRoute::Cost,
         "/profile" => CommandRoute::Profile,
         "/clear" => CommandRoute::Clear,
@@ -345,7 +345,12 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             CommandResult::Continue
         }
         CommandRoute::Tokens => {
-            commands::handle_tokens(ctx.agent, ctx.session_total, &ctx.agent_config.model);
+            commands::handle_tokens(
+                ctx.agent,
+                ctx.session_total,
+                &ctx.agent_config.model,
+                ctx.input,
+            );
             CommandResult::Continue
         }
         CommandRoute::Cost => {

@@ -639,14 +639,14 @@ pub(crate) fn with_auto_check(tool: Box<dyn AgentTool>) -> Box<dyn AgentTool> {
 // RecoveryHintTool — appends recovery hints to tool error messages
 // ---------------------------------------------------------------------------
 
-/// Tracks consecutive failures per tool name so recovery hints can escalate.
-///
-/// Shared across all tools in a session — when tool A fails 3 times,
-/// the hint it gets is more aggressive than on its first failure.
-/// When a tool succeeds, its counter resets.
+/// Tracks consecutive failures per (tool_name, target_file) pair so recovery
+/// hints can escalate per-file. When the same tool fails on the same file
+/// repeatedly, the `RecoveryHintTool` wrapper uses the failure count to select
+/// increasingly aggressive recovery suggestions and prepends a file-specific
+/// hint. When a tool succeeds on a target, only that (tool, target) pair resets.
 #[derive(Clone, Default)]
 pub(crate) struct ToolFailureTracker {
-    counts: Arc<Mutex<HashMap<String, u32>>>,
+    counts: Arc<Mutex<HashMap<(String, String), u32>>>,
 }
 
 impl ToolFailureTracker {
@@ -654,25 +654,61 @@ impl ToolFailureTracker {
         Self::default()
     }
 
-    /// Increment the failure count for a tool and return the new count.
-    fn record_failure(&self, tool_name: &str) -> u32 {
+    /// Increment the failure count for a (tool, target) pair and return the new count.
+    fn record_failure(&self, tool_name: &str, target: &str) -> u32 {
         let mut map = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        let count = map.entry(tool_name.to_string()).or_insert(0);
+        let key = (tool_name.to_string(), target.to_string());
+        let count = map.entry(key).or_insert(0);
         *count += 1;
         *count
     }
 
-    /// Reset the failure count for a tool (called on success).
-    fn record_success(&self, tool_name: &str) {
+    /// Reset the failure count for a (tool, target) pair (called on success).
+    fn record_success(&self, tool_name: &str, target: &str) {
         let mut map = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        map.remove(tool_name);
+        map.remove(&(tool_name.to_string(), target.to_string()));
     }
 
-    /// Get the current failure count for a tool (for testing).
+    /// Get the current failure count for a (tool, target) pair (for testing).
     #[cfg(test)]
-    fn get(&self, tool_name: &str) -> u32 {
+    fn get(&self, tool_name: &str, target: &str) -> u32 {
         let map = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        map.get(tool_name).copied().unwrap_or(0)
+        map.get(&(tool_name.to_string(), target.to_string()))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+/// Extract the target identifier from tool input parameters.
+/// For file-oriented tools, this extracts the file path.
+/// For bash, it extracts the command (truncated to 60 chars).
+/// For unknown tools, returns `"_"` as a global fallback.
+fn extract_target(tool_name: &str, input: &serde_json::Value) -> String {
+    match tool_name {
+        "edit_file" | "read_file" | "write_file" | "list_files" => input
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("_")
+            .to_string(),
+        "bash" => {
+            let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("_");
+            if cmd.len() <= 60 {
+                cmd.to_string()
+            } else {
+                // Safe truncation at char boundary
+                let mut b = 60;
+                while b > 0 && !cmd.is_char_boundary(b) {
+                    b -= 1;
+                }
+                cmd[..b].to_string()
+            }
+        }
+        "search" | "rename_symbol" => input
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("_")
+            .to_string(),
+        _ => "_".to_string(),
     }
 }
 
@@ -710,22 +746,32 @@ impl AgentTool for RecoveryHintTool {
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
         let tool_name = self.inner.name().to_string();
+        let target = extract_target(&tool_name, &params);
         match self.inner.execute(params, ctx).await {
             Ok(result) => {
-                self.tracker.record_success(&tool_name);
+                self.tracker.record_success(&tool_name, &target);
                 Ok(result)
             }
             Err(yoagent::types::ToolError::Failed(msg)) => {
-                let attempt = self.tracker.record_failure(&tool_name);
+                let attempt = self.tracker.record_failure(&tool_name, &target);
                 let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
+                // Prepend a file-specific hint when the same target fails 2+ times
+                let file_prefix = if attempt >= 2 && target != "_" {
+                    format!(
+                        "You've failed to {verb} '{target}' {attempt} times. ",
+                        verb = tool_name.replace('_', " "),
+                    )
+                } else {
+                    String::new()
+                };
                 Err(yoagent::types::ToolError::Failed(format!(
-                    "{msg}\n\n💡 Recovery hint: {hint}"
+                    "{msg}\n\n💡 Recovery hint: {file_prefix}{hint}"
                 )))
             }
             Err(other) => {
                 // Non-Failed errors (NotFound, InvalidArgs, Cancelled) pass through
                 // but still count as failures for escalation purposes
-                self.tracker.record_failure(&tool_name);
+                self.tracker.record_failure(&tool_name, &target);
                 Err(other)
             }
         }
@@ -1508,9 +1554,9 @@ mod tests {
         let tracker = ToolFailureTracker::new();
 
         // Manually seed a failure count
-        assert_eq!(tracker.record_failure("bash"), 1);
-        assert_eq!(tracker.record_failure("bash"), 2);
-        assert_eq!(tracker.get("bash"), 2);
+        assert_eq!(tracker.record_failure("bash", "_"), 1);
+        assert_eq!(tracker.record_failure("bash", "_"), 2);
+        assert_eq!(tracker.get("bash", "_"), 2);
 
         // Wrap a succeeding tool
         let tool = with_recovery_hints(
@@ -1527,7 +1573,7 @@ mod tests {
         assert!(result.is_ok(), "Should succeed");
 
         // Counter should be reset after success
-        assert_eq!(tracker.get("bash"), 0);
+        assert_eq!(tracker.get("bash", "_"), 0);
     }
 
     #[tokio::test]
@@ -1630,7 +1676,7 @@ mod tests {
             .execute(serde_json::json!({}), test_tool_context())
             .await;
 
-        assert_eq!(tracker.get("bash"), 2, "bash should have 2 failures");
+        assert_eq!(tracker.get("bash", "_"), 2, "bash should have 2 failures");
 
         // Fail edit_file once
         let edit_tool = with_recovery_hints(
@@ -1645,11 +1691,15 @@ mod tests {
             .await;
 
         assert_eq!(
-            tracker.get("edit_file"),
+            tracker.get("edit_file", "_"),
             1,
             "edit_file should have 1 failure"
         );
-        assert_eq!(tracker.get("bash"), 2, "bash should still have 2 failures");
+        assert_eq!(
+            tracker.get("bash", "_"),
+            2,
+            "bash should still have 2 failures"
+        );
 
         // Succeed on bash — resets only bash
         let bash_ok = with_recovery_hints(
@@ -1663,9 +1713,13 @@ mod tests {
             .execute(serde_json::json!({}), test_tool_context())
             .await;
 
-        assert_eq!(tracker.get("bash"), 0, "bash should be reset after success");
         assert_eq!(
-            tracker.get("edit_file"),
+            tracker.get("bash", "_"),
+            0,
+            "bash should be reset after success"
+        );
+        assert_eq!(
+            tracker.get("edit_file", "_"),
             1,
             "edit_file should be unaffected"
         );
@@ -1676,46 +1730,46 @@ mod tests {
     #[test]
     fn test_tracker_new_is_empty() {
         let tracker = ToolFailureTracker::new();
-        assert_eq!(tracker.get("bash"), 0);
-        assert_eq!(tracker.get("edit_file"), 0);
-        assert_eq!(tracker.get("nonexistent"), 0);
+        assert_eq!(tracker.get("bash", "_"), 0);
+        assert_eq!(tracker.get("edit_file", "_"), 0);
+        assert_eq!(tracker.get("nonexistent", "_"), 0);
     }
 
     #[test]
     fn test_tracker_record_failure_increments() {
         let tracker = ToolFailureTracker::new();
-        assert_eq!(tracker.record_failure("bash"), 1);
-        assert_eq!(tracker.record_failure("bash"), 2);
-        assert_eq!(tracker.record_failure("bash"), 3);
-        assert_eq!(tracker.get("bash"), 3);
+        assert_eq!(tracker.record_failure("bash", "_"), 1);
+        assert_eq!(tracker.record_failure("bash", "_"), 2);
+        assert_eq!(tracker.record_failure("bash", "_"), 3);
+        assert_eq!(tracker.get("bash", "_"), 3);
     }
 
     #[test]
     fn test_tracker_record_success_resets() {
         let tracker = ToolFailureTracker::new();
-        tracker.record_failure("bash");
-        tracker.record_failure("bash");
-        tracker.record_failure("bash");
-        assert_eq!(tracker.get("bash"), 3);
+        tracker.record_failure("bash", "_");
+        tracker.record_failure("bash", "_");
+        tracker.record_failure("bash", "_");
+        assert_eq!(tracker.get("bash", "_"), 3);
 
-        tracker.record_success("bash");
-        assert_eq!(tracker.get("bash"), 0);
+        tracker.record_success("bash", "_");
+        assert_eq!(tracker.get("bash", "_"), 0);
     }
 
     #[test]
     fn test_tracker_independent_tools() {
         let tracker = ToolFailureTracker::new();
-        tracker.record_failure("bash");
-        tracker.record_failure("bash");
-        tracker.record_failure("edit_file");
+        tracker.record_failure("bash", "_");
+        tracker.record_failure("bash", "_");
+        tracker.record_failure("edit_file", "_");
 
-        assert_eq!(tracker.get("bash"), 2);
-        assert_eq!(tracker.get("edit_file"), 1);
+        assert_eq!(tracker.get("bash", "_"), 2);
+        assert_eq!(tracker.get("edit_file", "_"), 1);
 
         // Resetting one doesn't affect the other
-        tracker.record_success("bash");
-        assert_eq!(tracker.get("bash"), 0);
-        assert_eq!(tracker.get("edit_file"), 1);
+        tracker.record_success("bash", "_");
+        assert_eq!(tracker.get("bash", "_"), 0);
+        assert_eq!(tracker.get("edit_file", "_"), 1);
     }
 
     #[test]
@@ -1723,12 +1777,16 @@ mod tests {
         let tracker = ToolFailureTracker::new();
         let cloned = tracker.clone();
 
-        tracker.record_failure("bash");
-        assert_eq!(cloned.get("bash"), 1, "Clone should share the same state");
-
-        cloned.record_failure("bash");
+        tracker.record_failure("bash", "_");
         assert_eq!(
-            tracker.get("bash"),
+            cloned.get("bash", "_"),
+            1,
+            "Clone should share the same state"
+        );
+
+        cloned.record_failure("bash", "_");
+        assert_eq!(
+            tracker.get("bash", "_"),
             2,
             "Original should see clone's mutation"
         );
@@ -2133,7 +2191,7 @@ mod tests {
 
         // Counter should still increment even for NotFound errors
         assert_eq!(
-            tracker.get("test_tool"),
+            tracker.get("test_tool", "_"),
             1,
             "NotFound errors should still be tracked"
         );
@@ -2156,7 +2214,7 @@ mod tests {
                 .execute(serde_json::json!({}), test_tool_context())
                 .await;
         }
-        assert_eq!(tracker.get("bash"), 3);
+        assert_eq!(tracker.get("bash", "_"), 3);
 
         // Succeed once — should reset to 0
         let tool = with_recovery_hints(
@@ -2171,7 +2229,7 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert_eq!(
-            tracker.get("bash"),
+            tracker.get("bash", "_"),
             0,
             "Success should reset counter from any value"
         );
@@ -2254,8 +2312,8 @@ mod tests {
     fn test_tracker_record_success_on_nonexistent_tool_is_noop() {
         let tracker = ToolFailureTracker::new();
         // Recording success for a tool that was never recorded should not panic
-        tracker.record_success("never_used");
-        assert_eq!(tracker.get("never_used"), 0);
+        tracker.record_success("never_used", "_");
+        assert_eq!(tracker.get("never_used", "_"), 0);
     }
 
     #[test]
@@ -2272,12 +2330,12 @@ mod tests {
         ];
         for (i, name) in tool_names.iter().enumerate() {
             for _ in 0..=i {
-                tracker.record_failure(name);
+                tracker.record_failure(name, "_");
             }
         }
         for (i, name) in tool_names.iter().enumerate() {
             assert_eq!(
-                tracker.get(name),
+                tracker.get(name, "_"),
                 (i + 1) as u32,
                 "{name} should have {} failures",
                 i + 1
@@ -2294,19 +2352,222 @@ mod tests {
 
         let handle = std::thread::spawn(move || {
             for _ in 0..100 {
-                tracker_clone.record_failure("bash");
+                tracker_clone.record_failure("bash", "_");
             }
         });
 
         for _ in 0..100 {
-            tracker.record_failure("bash");
+            tracker.record_failure("bash", "_");
         }
 
         handle.join().unwrap();
         assert_eq!(
-            tracker.get("bash"),
+            tracker.get("bash", "_"),
             200,
             "Concurrent failures should all be recorded"
+        );
+    }
+
+    // =========================================================================
+    // File-aware tracker tests — per (tool, target) tracking
+    // =========================================================================
+
+    #[test]
+    fn test_tracker_per_file_independent() {
+        let tracker = ToolFailureTracker::new();
+        // Failing on file A doesn't affect file B's count
+        tracker.record_failure("edit_file", "src/main.rs");
+        tracker.record_failure("edit_file", "src/main.rs");
+        tracker.record_failure("edit_file", "src/lib.rs");
+
+        assert_eq!(tracker.get("edit_file", "src/main.rs"), 2);
+        assert_eq!(tracker.get("edit_file", "src/lib.rs"), 1);
+    }
+
+    #[test]
+    fn test_tracker_success_resets_only_target_file() {
+        let tracker = ToolFailureTracker::new();
+        tracker.record_failure("edit_file", "src/a.rs");
+        tracker.record_failure("edit_file", "src/a.rs");
+        tracker.record_failure("edit_file", "src/b.rs");
+
+        // Success on file A resets only file A
+        tracker.record_success("edit_file", "src/a.rs");
+        assert_eq!(tracker.get("edit_file", "src/a.rs"), 0);
+        assert_eq!(tracker.get("edit_file", "src/b.rs"), 1);
+    }
+
+    #[test]
+    fn test_extract_target_edit_file() {
+        let input =
+            serde_json::json!({"path": "src/main.rs", "old_text": "foo", "new_text": "bar"});
+        assert_eq!(extract_target("edit_file", &input), "src/main.rs");
+    }
+
+    #[test]
+    fn test_extract_target_read_file() {
+        let input = serde_json::json!({"path": "README.md"});
+        assert_eq!(extract_target("read_file", &input), "README.md");
+    }
+
+    #[test]
+    fn test_extract_target_write_file() {
+        let input = serde_json::json!({"path": "out.txt", "content": "hello"});
+        assert_eq!(extract_target("write_file", &input), "out.txt");
+    }
+
+    #[test]
+    fn test_extract_target_bash_short() {
+        let input = serde_json::json!({"command": "cargo test"});
+        assert_eq!(extract_target("bash", &input), "cargo test");
+    }
+
+    #[test]
+    fn test_extract_target_bash_truncates_long() {
+        let long_cmd = "a".repeat(100);
+        let input = serde_json::json!({"command": long_cmd});
+        let target = extract_target("bash", &input);
+        assert!(
+            target.len() <= 60,
+            "bash target should be truncated to <=60 chars"
+        );
+    }
+
+    #[test]
+    fn test_extract_target_unknown_tool() {
+        let input = serde_json::json!({"foo": "bar"});
+        assert_eq!(extract_target("some_custom_tool", &input), "_");
+    }
+
+    #[test]
+    fn test_extract_target_missing_path() {
+        let input = serde_json::json!({"content": "hello"});
+        assert_eq!(extract_target("edit_file", &input), "_");
+    }
+
+    #[tokio::test]
+    async fn test_recovery_hint_file_specific_prefix() {
+        // When the same file fails 2+ times, the hint should name the file
+        let tracker = ToolFailureTracker::new();
+
+        let tool = with_recovery_hints(
+            Box::new(ConfigurableMockTool {
+                tool_name: "edit_file",
+                fail_msg: Some("old_text not found".to_string()),
+            }),
+            &tracker,
+        );
+
+        // First failure — no file-specific prefix (params have path)
+        let err1 = tool
+            .execute(
+                serde_json::json!({"path": "src/main.rs"}),
+                test_tool_context(),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !err1.contains("You've failed to"),
+            "First failure should NOT have file-specific prefix: {err1}"
+        );
+
+        // Second failure on same file — should have file-specific prefix
+        let err2 = tool
+            .execute(
+                serde_json::json!({"path": "src/main.rs"}),
+                test_tool_context(),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err2.contains("You've failed to edit file 'src/main.rs' 2 times"),
+            "Second failure should have file-specific prefix: {err2}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recovery_hint_different_files_independent() {
+        // Failing on file A then file B should NOT trigger file-specific hint for B
+        let tracker = ToolFailureTracker::new();
+
+        let tool = with_recovery_hints(
+            Box::new(ConfigurableMockTool {
+                tool_name: "edit_file",
+                fail_msg: Some("mismatch".to_string()),
+            }),
+            &tracker,
+        );
+
+        // Fail on file A
+        let _ = tool
+            .execute(serde_json::json!({"path": "src/a.rs"}), test_tool_context())
+            .await;
+
+        // Fail on file B — first failure for B, should NOT have file-specific prefix
+        let err = tool
+            .execute(serde_json::json!({"path": "src/b.rs"}), test_tool_context())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !err.contains("You've failed to"),
+            "First failure on file B should not have file-specific prefix: {err}"
+        );
+        // But file A should still have count 1
+        assert_eq!(tracker.get("edit_file", "src/a.rs"), 1);
+        assert_eq!(tracker.get("edit_file", "src/b.rs"), 1);
+    }
+
+    #[tokio::test]
+    async fn test_recovery_hint_success_resets_only_target() {
+        let tracker = ToolFailureTracker::new();
+
+        // Fail on file A twice
+        let fail_tool = with_recovery_hints(
+            Box::new(ConfigurableMockTool {
+                tool_name: "read_file",
+                fail_msg: Some("not found".to_string()),
+            }),
+            &tracker,
+        );
+        let _ = fail_tool
+            .execute(serde_json::json!({"path": "src/a.rs"}), test_tool_context())
+            .await;
+        let _ = fail_tool
+            .execute(serde_json::json!({"path": "src/a.rs"}), test_tool_context())
+            .await;
+
+        // Fail on file B once
+        let _ = fail_tool
+            .execute(serde_json::json!({"path": "src/b.rs"}), test_tool_context())
+            .await;
+
+        assert_eq!(tracker.get("read_file", "src/a.rs"), 2);
+        assert_eq!(tracker.get("read_file", "src/b.rs"), 1);
+
+        // Success on file A — should reset only A
+        let ok_tool = with_recovery_hints(
+            Box::new(ConfigurableMockTool {
+                tool_name: "read_file",
+                fail_msg: None,
+            }),
+            &tracker,
+        );
+        let _ = ok_tool
+            .execute(serde_json::json!({"path": "src/a.rs"}), test_tool_context())
+            .await;
+
+        assert_eq!(
+            tracker.get("read_file", "src/a.rs"),
+            0,
+            "Success should reset file A"
+        );
+        assert_eq!(
+            tracker.get("read_file", "src/b.rs"),
+            1,
+            "File B should be unaffected by A's success"
         );
     }
 
