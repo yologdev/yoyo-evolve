@@ -1,0 +1,181 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 1.7s (2 ✓)
+
+No community issues. All 3 slots are self-driven. Let me check what's been done recently and what would be most impactful.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -100 journals/JOURNAL.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat CHANGELOG.md | head -80 ✓ (4ms)
+ ✓ (48ms)
+  ▶ $ git log --oneline -20  ▶ $ git tag --sort=-creatordate | head -5 ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ # Check what the last release was and how many sessions sinc… (6 lines)  ▶ $ # Check the dispatch.rs route_command to understand what the… (2 lines) ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ # Check what capabilities are most competitive-gap-closing (5 lines)  ▶ $ # Check what proactive context features exist (4 lines) ✓ (7ms)
+ ✓ (6ms)
+  ▶ $ # Check what conversation checkpointing looks like - this is… (5 lines)  ▶ $ # What about smarter context management - proactive compact … (5 lines) ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ # What does /checkpoint currently do? (5 lines)  ▶ $ # Find where handle_checkpoint is defined (4 lines) ✓ (6ms)
+ ✓ (12ms)
+  ▶ $ # Let me see what CheckpointStore does currently (2 lines) ✓ (4ms)
+  13 tools completed in 28.7s (13 ✓)
+
+Now let me think about what the highest-impact tasks would be. Looking at the assessment:
+
+1. **Biggest competitive gap**: Conversation checkpointing exists for files (/checkpoint) but NOT for conversation state. Claude Code has full conversation state checkpoints. The /mark//jump system uses bookmarks but they're just message index pointers. A true conversation checkpoint that captures and restores the full message state is the #1 unified gap.
+
+2. **Structural improvement**: dispatch.rs route_command is ~1,580 lines — a single match block. This is a maintenance hazard.
+
+3. Quality: The tool_wrappers.rs at 2,907 lines with 6 distinct wrapper types could benefit from splitting.
+
+But let me think about what's most impactful for a real developer. The assessment identifies:
+• Conversation checkpointing as a specific gap vs Claude Code
+• Proactive project understanding as a realistic next move
+• Quality-of-life polish for daily commands
+
+Let me check what conversation state save/restore currently looks like:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # What does /mark and /jump actually do? (5 lines)  ▶ $ # What does /stash do with conversation? (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # What does the /checkpoint save/restore look like for CONVE… (11 lines) ✓ (4ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Now I have a clear picture. Let me think about the three highest-impact tasks:
+
+**Task 1 (Capability gap - biggest competitive win): Unified conversation + file checkpointing**
+The current /checkpoint only saves file state. /mark//jump only saves message index. /stash saves full messages but clears the conversation. The gap vs Claude Code is a unified "save this exact state and roll back" experience. BUT this spans multiple files and is complex. Let me scope it down.
+
+Actually, the simplest high-impact version: extend /checkpoint save to also capture conversation state (message snapshot), and /checkpoint restore to optionally restore both files AND conversation. This keeps it to commands_fork.rs (where CheckpointStore lives) and maybe dispatch.rs for passing the agent.
+
+**Task 2 (Self-driven quality): Split `tool_wrappers.rs` into a submodule**
+At 2,907 lines with 6 distinct wrapper types, this is the largest non-command module. Splitting it improves maintainability. But the CLAUDE.md says split tasks should be one-module-at-a-time. Let me scope this to extracting the two most distinct components.
+
+Actually, let me reconsider. The assessment says "Proactive project understanding (auto-detect common patterns, suggest workflows)" is a realistic next move. And "Smarter context management" is important. Let me think about what a real developer would notice most.
+
+Real developer perspective: When you start yoyo in a new project, it should understand what kind of project it is and proactively suggest useful commands. The banner already shows "📁 Rust project (yoyo-evolve) on main" — but it doesn't suggest /watch if there's no watch command set, or /test if tests exist, or /lint if a linter is configured. This is a high-signal, low-complexity feature.
+
+Let me plan three tasks:
+
+1. Extend `/checkpoint` to include conversation state — the single biggest competitive gap that's addressable in one task. Scope: commands_fork.rs only (CheckpointStore already lives there, just add message serialization alongside file snapshots).
+
+2. **Proactive startup suggestions** — when starting in a project, detect what's available and show helpful hints. Scope: banner.rs (where startup display lives) + maybe commands_project.rs for detection helpers.
+
+3. **Context-aware `/compact improvements** — the assessment mentions smarter context management. Currently /compact` is a blunt instrument. Adding a /compact preview that shows what would be removed before doing it gives users confidence to compact more often.
+
+Wait, let me reconsider task 3. Let me look at what would make the biggest difference:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What does /compact currently support? (4 lines)  ▶ $ # What about the banner - what does it show currently? (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Check welcome text and what it shows (2 lines) ✓ (3ms)
+  ▶ $ # Let me look at what the startup banner shows (2 lines) ✓ (3ms)
+  4 tools completed in 7.9s (4 ✓)
+
+Now I have a solid picture. Let me plan three high-impact tasks:
+
+Task 1: Extend /checkpoint to save+restore conversation state (the #1 gap vs Claude Code in the "conversation checkpointing" category). This changes commands_fork.rs only — CheckpointStore gets an optional messages_json field.
+
+Task 2: Proactive startup suggestions in the banner — detect available workflows and show 1-2 actionable hints (e.g., "💡 /watch available — auto-detect found cargo clippy && cargo test"). This is the "proactive project understanding" realistic next move from the assessment. Touches banner.rs mainly.
+
+Task 3: /compact dry-run alias and improved preview — the `/compact preview` exists but let me check if there's something more impactful. Actually, let me think about what else a developer hitting the context limit needs...
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about /context? What does it show? (5 lines)  ▶ $ # Let me think about what else would be high-impact for real… (7 lines) ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ sed -n '802,850p' src/commands_git.rs ✓ (3ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Good. /undo already handles turn-level revert. Now let me think about what the third task should be. 
+
+The assessment highlights "Smarter context management" and "Quality-of-life polish for the commands users actually use daily." Let me think about what a real developer would value most:
+
+1. Conversation checkpointing (Task 1) ✅
+2. Proactive startup suggestions (Task 2) ✅
+3. What's the third? Options:
+   • `/context usage` — show which files/topics are eating the most context (similar to /tokens detail but more actionable)
+   • Improve /compact to auto-suggest when context is getting high
+   • Add a /plan command that the AI creates a step-by-step plan before executing
+   • Better error messages when tools fail — actionable next steps
+
+Actually, looking at the assessment's "Realistic next moves": "Proactive project understanding (auto-detect common patterns, suggest workflows)" — this is more than just startup hints. What if yoyo could detect common project patterns and inject relevant context? For example, detecting a monorepo structure, or detecting that a project uses a specific testing framework.
+
+But let me keep it scoped. For task 3, let me do something that addresses a real developer pain point:
+
+Task 3: /status enhancement — show a quick "session health" summary including context usage %, turns used, files changed, and time elapsed. This gives developers awareness of where they are in a session. Currently /status exists but let me check what it shows:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_status" src/commands_info.rs | head -5 (4 lines) ✓ (7ms)
+  ▶ $ sed -n '164,280p' src/commands_info.rs ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+`/status` is already quite rich. Let me think about what else would be a strong Task 3.
+
+Let me look at the competitive gaps more carefully. The assessment calls out:
+• **`/loop` scheduled tasks** — Claude Code has recurring autonomous coding operations
+• The existing /loop is just command repetition
+
+What about something more developer-facing? Let me think about what matters day-to-day:
+
+Auto-suggest commands after errors — When a tool fails or the AI gets stuck, proactively suggest relevant commands. This already partially exists via `RecoveryHintTool`, but what about at the REPL level? When the AI's response ends with a compile error, suggest `/watch or /fix`.
+
+Actually, looking at the assessment again: "contextual command hints after prompt turns" already exists in repl.rs. Let me check something different.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about /diff functions - does it work well? (19 lines) ✓ (4ms)
+  ▶ $ sed -n '609,660p' src/format/mod.rs ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+OK, so context warnings already exist. Let me think about a truly impactful Task 3.
+
+Looking at this from a real developer's perspective, the most impactful thing I haven't seen yet: **Smart file suggestions when adding context**. When a developer is working on a bug or feature, they often need to add relevant files to the conversation. /add exists but the developer has to know which files matter. What if there was a `/related <file>` command that finds related files?
+
+Wait — suggest_related_files already exists in `commands_file.rs`. Let me check:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn suggest_related_files" src/commands_file.rs (4 lines) ✓ (8ms)
+
+That exists. Let me think harder about Task 3. The assessment lists these as realistic next moves:
+• Smarter context management ✅ (partially done with /tokens detail)
+• Better error recovery intelligence ✅ (per-file tracking landed)
+• **Proactive project understanding** (auto-detect common patterns, suggest workflows)
+• Quality-of-life polish
+
+For Task 3, what about: Smart auto-continue improvement. Currently `looks_incomplete` uses a heuristic. But the assessment mentions "auto-continue for incomplete responses (looks_incomplete heuristic, up to 5 follow-ups per user turn)". Making this smarter would help real developers who often have long multi-step tasks.
+
+Actually, let me step back and pick something really impactful. What about improving the `/spawn` experience? Sub-agents are a key differentiator. Let me check:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Actually, let me focus on what will make the biggest compe… (13 lines) ✓ (4ms)
+  ▶ $ # How does effort affect the prompt? (2 lines) ✓ (4ms)
+  2 tools completed in 5.4s (2 ✓)
+
+OK, let me finalize my task selection. I want three tasks that are all impactful:
+
+**Task 1: Unified conversation + file checkpointing** — Extend /checkpoint to save conversation state alongside file state. This directly closes the #1 identified gap. Files: `commands_fork.rs (CheckpointStore), dispatch.rs` (pass agent to checkpoint handler).
+
+Task 2: Proactive startup suggestions — After the banner, show 1-2 contextual suggestions based on project detection (e.g., "💡 Try /watch — auto-detected `cargo clippy && cargo test`" or "💡 Session from 2h ago available — /load to resume"). Files: banner.rs.
+
+**Task 3: Auto-checkpoint before compaction** — When /compact runs, automatically save a checkpoint so the user can roll back if compaction removed important context. This is "smarter context management" that protects users from losing work. Files: commands_session.rs.
+
+Wait, task 3 touches the agent and checkpoint store which might complicate things. Let me reconsider.
+
+Actually, let me pick something cleaner for Task 3. The assessment mentions "1,424 non-test unwrap() calls" as a class-level concern. But that's too broad for one task. 
+
+What about: `/diff functions` improvements — the assessment mentions symbol-level diffs. Let me check what that does:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_diff_functions" src/commands_git.rs | hea… (3 lines) ✓ (8ms)
+
+Let me focus. Here's my final plan:
+
+Task 1 (Competitive gap): Extend /checkpoint to include conversation state — this is the single most impactful competitive gap that's closeable in one task.
+
+Task 2 (Proactive UX): Smart startup hints in the banner — detect available workflows and show actionable suggestions.
+
+Task 3 (Developer QoL): Add `/tokens breakdown` to show a visual stacked-bar breakdown of what's consuming context by category (system prompt, user messages, assistant text, tool calls, tool results) — building on the existing context_breakdown function in `commands_info.rs`. This makes the context pressure legible and actionable. The per-turn detail landed in the last session; now give users a quick visual summary too.
+
+Wait, let me check — does /tokens already show this?
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_tokens" src/commands_info.rs | head -5 (3 lines) ✓ (8ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
