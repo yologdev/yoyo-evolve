@@ -1,0 +1,302 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/tool_wrappers.rs | head … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolFailureTracker\|Rec… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '639,750p' src/tool_wrapp… ✓ (3ms)
+  3 tools completed in 10.1s (3 ✓)
+
+Now let me look at the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1464,1730p' src/tool_wra… ✓ (4ms)
+
+Now let me look at the rest of the tests and the prompt_retry.rs for tool_recovery_hint:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_recovery_hint" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,140p' src/prompt_ret… ✓ (3ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now I have a clear picture. Let me look at the test context helper:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_tool_context" src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1310p' src/tool_wra… ✓ (3ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now let me check where the tests end:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tool_wrappers.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2240,2260p' src/tool_wra… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2260,2350p' src/tool_wra… ✓ (3ms)
+  3 tools completed in 17.3s (3 ✓)
+
+Good. Now I have the full picture. Let me also see the ConfigurableMockTool to understand if I need to modify it to accept params:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2079,2260p' src/tool_wra… ✓ (4ms)
+
+Now I have a complete understanding of the current code. Let me implement the changes:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 22.5s (6 ✓)
+
+Now let me implement the changes. First, I'll modify ToolFailureTracker to use (String, String) as the key:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (35 → 75 lines)
+  - /// Tracks consecutive failures per tool name so recovery hints can escalate.
+  - /// When the same tool fails repeatedly, the `RecoveryHintTool` wrapper uses
+  - /// the failure count to select increasingly aggressive recovery suggestions.
+  - /// When a tool succeeds, its counter resets.
+  + /// Tracks consecutive failures per (tool_name, target_file) pair so recovery
+  + /// hints can escalate per-file. When the same tool fails on the same file
+  + /// repeatedly, the `RecoveryHintTool` wrapper uses the failure count to select
+  + /// increasingly aggressive recovery suggestions and prepends a file-specific
+  + /// hint. When a tool succeeds on a target, only that (tool, target) pair resets.
+    #[derive(Clone, Default)]
+    pub(crate) struct ToolFailureTracker {
+  -     counts: Arc<Mutex<HashMap<String, u32>>>,
+  +     counts: Arc<Mutex<HashMap<(String, String), u32>>>,
+    }
+    
+    impl ToolFailureTracker {
+  ···
+            Self::default()
+        }
+    
+  ... (69 more lines)
+ ✗ (4ms)
+    │ old_text not found in src/tool_wrappers.rs.
+  ▶ edit src/tool_wrappers.rs (36 → 75 lines)
+  - /// Tracks consecutive failures per tool name so recovery hints can escalate.
+  - ///
+  - /// Shared across all tools in a session — when tool A fails 3 times,
+  - /// the hint it gets is more aggressive than on its first failure.
+  - /// When a tool succeeds, its counter resets.
+  + /// Tracks consecutive failures per (tool_name, target_file) pair so recovery
+  + /// hints can escalate per-file. When the same tool fails on the same file
+  + /// repeatedly, the `RecoveryHintTool` wrapper uses the failure count to select
+  + /// increasingly aggressive recovery suggestions and prepends a file-specific
+  + /// hint. When a tool succeeds on a target, only that (tool, target) pair resets.
+    #[derive(Clone, Default)]
+    pub(crate) struct ToolFailureTracker {
+  -     counts: Arc<Mutex<HashMap<String, u32>>>,
+  +     counts: Arc<Mutex<HashMap<(String, String), u32>>>,
+    }
+    
+    impl ToolFailureTracker {
+  ···
+            Self::default()
+        }
+  ... (70 more lines)
+ ✓ (7.9s)
+  - /// Tracks consecutive failures per tool name so recovery hints can escalate.
+  - ///
+  - /// Shared across all tools in a session — when tool A fails 3 times,
+  - /// the hint it gets is more aggressive than on its first failure.
+  - /// When a tool succeeds, its counter resets.
+  + /// Tracks consecutive failures per (tool_name, target_file) pair so recovery
+  + /// hints can escalate per-file. When the same tool fails on the same file
+  + /// repeatedly, the `RecoveryHintTool` wrapper uses the failure count to select
+  ... (13 more lines)
+  2 tools completed in 26.6s (1 ✓, 1 ✗)
+
+Good, the tracker is updated. Now I need to update the `RecoveryHintTool::execute` method:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  3 tools completed in 5.4s (3 ✓)
+
+Now update RecoveryHintTool::execute to extract the target and pass it:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,780p' src/tool_wrapp… ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (27 → 37 lines)
+            ctx: yoagent::types::ToolContext,
+        ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+            let tool_name = self.inner.name().to_string();
+  +         let target = extract_target(&tool_name, &params);
+            match self.inner.execute(params, ctx).await {
+                Ok(result) => {
+  -                 self.tracker.record_success(&tool_name);
+  +                 self.tracker.record_success(&tool_name, &target);
+                    Ok(result)
+                }
+                Err(yoagent::types::ToolError::Failed(msg)) => {
+  -                 let attempt = self.tracker.record_failure(&tool_name);
+  +                 let attempt = self.tracker.record_failure(&tool_name, &target);
+                    let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
+  +                 // Prepend a file-specific hint when the same target fails 2+ times
+  +                 let file_prefix = if attempt >= 2 && target != "_" {
+  +                     format!(
+  +                         "You've failed to {verb} '{target}' {attempt} times. ",
+  +                         verb = tool_name.replace('_', " "),
+  +                     )
+  ... (16 more lines)
+ ✓ (7.4s)
+            ctx: yoagent::types::ToolContext,
+        ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+            let tool_name = self.inner.name().to_string();
+  +         let target = extract_target(&tool_name, &params);
+            match self.inner.execute(params, ctx).await {
+                Ok(result) => {
+  -                 self.tracker.record_success(&tool_name);
+  +                 self.tracker.record_success(&tool_name, &target);
+  ... (13 more lines)
+  2 tools completed in 23.7s (2 ✓)
+
+Good. Now I need to fix all the existing tests that call record_failure, record_success, and get with the old 1-arg signature. Let me find them all:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'tracker\.record_failure… ✓ (3ms)
+
+There are a lot of tests to update. Let me do this systematically — I'll update all the test code at once. Let me read the full test section:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1555,1580p' src/tool_wra… ✓ (3ms)
+
+The old tests used record_failure("bash") etc. — now they need record_failure("bash", "_"). The existing tests pass empty JSON {} as params, so extract_target will return "_" for them. That means the old behavior should still work if tests use "_" as the target. Let me update all tests in a batch. Let me first do the direct tracker unit tests (lines ~1725-1780):
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1720,1790p' src/tool_wra… ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this method takes 2 arguments but 1 argument was supplied[0m
+    [1m[94m--> [0msrc/tool_wrappers.rs:1560:28
+     [1m[94m|[0m
+[1m[94m1560[0m [1m[94m|[0m         assert_eq!(tracker.record_failure("bash"), 1);
+     [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^^^[0m[1m[94m--------[0m [1m[94margument #2 of type `&str` is missing[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: method defined here
+    [1m[94m--> [0msrc/tool_wrappers.rs:658:8
+     [1m[94m|[0m
+[1m[94m 658[0m [1m[94m|[0m     fn record_failure(&self, tool_name: &str, target: &str) -> u32 {
+     [1m[94m|[0m        [1m[92m^^^^^^^^^^^^^^[0m                         [1m[94m------------[0m
+[1m[96mhelp[0m: provide the argument
+     [1m[94m|[0m
+[1m[94m1560[0m [1m[94m| [0m        assert_eq!(tracker.record_failure("bash"[92m, /* &str */[0m), 1);
+     [1m[94m|[0m                                                 [92m++++++++++++[0m
+
+[1m[91merror[E0061][0m[1m: this method takes 2 arguments but 1 argument was supplied[0m
+    [1m[94m--> [0msrc/tool_wrappers.rs:1561:28
+     [1m[94m|[0m
+[1m[94m1561[0m [1m[94m|[0m         assert_eq!(tracker.record_failure("bash"), 2);
+     [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^^^[0m[1m[94m--------[0m [1m[94margument #2 of type `&str` is missing[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: method defined here
+    [1m[94m--> [0msrc/tool_wrappers.rs:658:8
+     [1m[94m|[0m
+[1m[94m 658[0m [1m[94m|[0m     fn record_failure(&self, tool_name: &str, target: &str) -> u32 {
+     [1m[94m|[0m        [1m[92m^^^^^^^^^^^^^^[0m                         [1m[94m------------[0m
+[1m[96mhelp[0m: provide the argument
+     [1m[94m|[0m
+[1m[94m1561[0m [1m[94m| [0m        assert_eq!(tracker.record_failure("bash"[92m, /* &str */[0m), 2);
+     [1m[94m|[0...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix all the test call sites that need the second target argument.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'tracker\.record_failure… ✓ (4ms)
+
+There are many call sites. Let me use sed to do bulk replacements — adding "_" as the second argument to all test calls:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1555,1580p' src/tool_wra… ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (4 → 4 lines)
+            // Manually seed a failure count
+  -         assert_eq!(tracker.record_failure("bash"), 1);
+  -         assert_eq!(tracker.record_failure("bash"), 2);
+  -         assert_eq!(tracker.get("bash"), 2);
+  +         assert_eq!(tracker.record_failure("bash", "_"), 1);
+  +         assert_eq!(tracker.record_failure("bash", "_"), 2);
+  +         assert_eq!(tracker.get("bash", "_"), 2);
+ ✓ (7.6s)
+            // Manually seed a failure count
+  -         assert_eq!(tracker.record_failure("bash"), 1);
+  -         assert_eq!(tracker.record_failure("bash"), 2);
+  -         assert_eq!(tracker.get("bash"), 2);
+  +         assert_eq!(tracker.record_failure("bash", "_"), 1);
+  +         assert_eq!(tracker.record_failure("bash", "_"), 2);
+  +         assert_eq!(tracker.get("bash", "_"), 2);
+  2 tools completed in 12.6s (2 ✓)
+
+Let me do all remaining fixes at once using sed:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (56 lines) ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (5.8s)
+  2 tools completed in 10.4s (2 ✓)
+
+Build passes. Now run clippy and tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (39.4s)
+  2 tools completed in 54.9s (2 ✓)
+
+All 88 tests pass, clippy clean. Now let me add the new tests for the file-aware behavior:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_tracker_thread_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2338,2370p' src/tool_wra… ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Good. Now let me insert the new tests right after the thread safety test:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (6 → 223 lines)
+  +     // =========================================================================
+  +     // File-aware tracker tests — per (tool, target) tracking
+  +     // =========================================================================
+  + 
+  +     #[test]
+  +     fn test_tracker_per_file_independent() {
+  +         let tracker = ToolFailureTracker::new();
+  +         // Failing on file A doesn't affect file B's count
+  +         tracker.record_failure("edit_file", "src/main.rs");
+  +         tracker.record_failure("edit_file", "src/main.rs");
+  +         tracker.record_failure("edit_file", "src/lib.rs");
+  + 
+  +         assert_eq!(tracker.get("edit_file", "src/main.rs"), 2);
+  +         assert_eq!(tracker.get("edit_file", "src/lib.rs"), 1);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_tracker_success_resets_only_target_file() {
+  +         let tracker = ToolFailureTracker::new();
+  +         tracker.record_failure("edit_file", "src/a.rs");
+  ... (200 more lines)
+ ✓ (51.4s)
+  +     // =========================================================================
+  +     // File-aware tracker tests — per (tool, target) tracking
+  +     // =========================================================================
+  + 
+  +     #[test]
+  +     fn test_tracker_per_file_independent() {
+  +         let tracker = ToolFailureTracker::new();
+  +         // Failing on file A doesn't affect file B's count
+  ... (13 more lines)
+
+Now let me run the tests to see if the new tests pass:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (15.4s)
+
+Hmm, only 88? Let me check if the new tests are being compiled:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_tracker_per_file… ✓ (138ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_extract_target 2… ✓ (108ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_recovery_hint_fi… ✓ (111ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_recovery_hint_di… ✓ (108ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_recovery_hint_su… ✓ (111ms)
+  5 tools completed in 19.9s (5 ✓)
+
+All new tests pass. The 88 count for the full test run is because it only counts certain test targets. Let me run the full suite with -- to verify nothing is broken:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'test … ✓ (15.8s)
+
+3719 unit tests + 88 integration tests, all pass. Now run clippy and fmt:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.3s)
+
+All checks pass. Now let me update the CLAUDE.md architecture section to mention the file-aware tracking:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ToolFailureTracker' CLA… ✓ (2ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

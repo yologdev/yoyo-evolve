@@ -1,0 +1,186 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 3.6s (2 ✓)
+
+No community issues. All 3 slots are self-driven. Let me think about what's highest impact based on the assessment.
+
+The assessment highlights several things:
+1. Last 5+ sessions have been consolidation (DRY, dead code, safety) — low-impact, conservative work
+2. The codebase is clean: 0 clippy warnings, 0 dead code, 3,795 tests passing
+3. Key capability gaps vs Claude Code: conversation checkpointing, goal-driven loops, image input
+4. Potential high-value: error recovery UX, session persistence, performance, test coverage gaps
+
+The trajectory observation is sharp: "perfect success rates might mean tasks are too conservative." Time to push capability forward.
+
+Let me check a few things to inform planning:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto_save\|on_crash\|session.*resume\|continue_session" src/commands_se…  ▶ $ grep -n "is_image_extension\|mime_type_for\|image" src/commands_file.rs | head -…  ▶ $ grep -rn "checkpoint\|snapshot\|rollback" src/ --include="*.rs" -l📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (4ms)
+ ✓ (4ms)
+ ✓ (43ms)
+  ▶ $ # Check how images from /add are passed to the model (2 lines)  ▶ $ # Check what content blocks the conversations module builds (2 lines)  ▶ $ # Check what yoagent supports for image content (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (48ms)
+  6 tools completed in 7.4s (6 ✓)
+
+Good — images are already being sent to the model via Content::Image. The assessment's note about "yoyo handles images in /add but doesn't send them to model" seems incorrect — it does send them. Let me check what's actually a meaningful capability gap.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the TurnHistory / undo mechanism — this is related t… (2 lines)  ▶ $ # Check stash subsystem (2 lines)  ▶ $ # Check RecoveryHintTool coverage — the assessment says this… (2 lines) ✓ (3ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check what tool_recovery_hint covers (2 lines)  ▶ $ grep -A 40 "pub fn tool_recovery_hint" src/prompt_retry.rs | head -50 ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ # Check what the startup performance looks like — how many L… (2 lines)  ▶ $ # How long does yoyo --version take (rough startup perf) (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  7 tools completed in 9.6s (7 ✓)
+
+Startup is 3ms — performance is fine. 117 LazyLock entries in symbols.rs is a lot but they're lazy so they only compile when used.
+
+Let me look at what would be highest-impact capability work. The assessment says "the last 5+ sessions have been consolidation — low-impact, conservative work." Time to build something meaningful.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the /fork command — assessment mentions conversation… (2 lines)  ▶ $ # What does /undo currently do? (2 lines)  ▶ $ # Check if there's a /checkpoint command (2 lines) ✓ (3ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # There's already a checkpoint system! Let me see what it do… (2 lines)  ▶ $ grep -n "CheckpointStore\|handle_checkpoint" src/commands.rs | head -20 ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ grep -rn "CheckpointStore\|handle_checkpoint\|checkpoint_subcommands" src/ --inc…  ▶ $ grep -rn "pub struct CheckpointStore\|pub fn handle_checkpoint" src/ --include="… ✓ (7ms)
+ ✓ (7ms)
+  7 tools completed in 7.7s (7 ✓)
+
+OK, so conversation checkpointing already exists. The assessment's gap analysis was slightly off. Let me think about what's truly the highest-impact work I can plan.
+
+Looking at the assessment more carefully:
+1. No bugs — codebase is clean
+2. **Consolidation streak** — need to break out with real capability work
+3. Error recovery UX — RecoveryHintTool exists but only covers 6 tools
+4. **`dispatch.rs` at 1,749 lines** — getting long but not urgent
+5. **413 eprintln! calls** — no structured logging
+
+The biggest competitive gap that's actually closeable (not architectural) is around making the tool smarter at self-recovery. But let me think bigger — what would make a real developer choose yoyo?
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /run and /loop do — these are interactive devel… (2 lines)  ▶ $ # Check if there's a way to auto-detect and show project com… (2 lines)  ▶ $ # What does /context show? (2 lines) ✓ (3ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Let me check what a real gap is — can yoyo do "git smart c… (3 lines)  ▶ $ # Check the dispatch routing size (2 lines) ✓ (2ms)
+ ✓ (3ms)
+  5 tools completed in 7.2s (5 ✓)
+
+Let me think about what's truly high-impact. The assessment nails it: "Last 5+ sessions have been consolidation work... The trajectory shows perfect success rates — which might mean tasks are too conservative."
+
+Here's what I want to do:
+
+**Task 1: Smart context pruning — show token cost of each /add'd file and let users drop specific items**
+
+This is a real UX gap. When users /add files, the context grows but they can't see what's eating tokens or selectively remove items. Claude Code shows context usage per item. This is a developer workflow improvement.
+
+**Task 2: `/diff --since` — show changes since a timestamp or number of turns ago**
+
+Real developers need to see "what changed in the last 3 turns" without scrolling. This is workflow friction that competing tools handle better.
+
+**Task 3: Smarter auto-compact — preserve recent tool outputs that the model might reference**
+
+The auto-compact system exists but it's a blunt instrument. When it fires, it can lose context the model was just working with. Making it smarter about what to preserve is a real capability improvement.
+
+Wait, let me check what already exists more carefully before planning:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check /tokens — does it already show per-item breakdown? (2 lines)  ▶ $ grep -A 30 "fn handle_tokens" src/commands_info.rs | head -40 ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ grep -A 30 "fn context_breakdown" src/commands_info.rs | head -40 ✓ (3ms)
+  ▶ $ # Does format_context_breakdown show user vs assistant vs to… (2 lines) ✓ (3ms)
+  ▶ $ grep -n "format_context_breakdown" src/commands_info.rs ✓ (137ms)
+  ▶ $ grep -n "fn format_context_breakdown" src/commands_info.rs ✓ (206ms)
+  ▶ $ grep -rn "fn format_context_breakdown" src/ --include="*.rs" ✓ (44ms)
+  ▶ $ sed -n '551,600p' src/format/cost.rs ✓ (3ms)
+  8 tools completed in 16.2s (8 ✓)
+
+OK. /tokens already shows a breakdown by category (system, user, assistant, tool calls, tool results, thinking). That's good but it's aggregate — not "which specific file is eating 10k tokens."
+
+Let me think about what would genuinely make yoyo more competitive for a real developer session:
+
+1. **Smart context: show which /add'd files are in context and their token cost** — when a user does `/add src/big_file.rs`, they should be able to see "that file is using 8k tokens" and remove it. This is the kind of UX that Claude Code does well.
+
+2. **/diff turn-based diffing** — "show me what files changed in the last N turns" is a frequent developer need during long sessions.
+
+3. **Startup auto-detect and suggest watch command** — yoyo has `auto_detect_watch_command` but does it proactively suggest it on startup?
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Does yoyo proactively suggest watch on startup? (2 lines)  ▶ $ grep -rn "hint_auto_watch" src/ --include="*.rs" | head -10 ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 1.5s (2 ✓)
+
+OK, watch auto-detect is already there. Let me focus on something genuinely new and useful.
+
+Let me think about what a real developer actually wants from a CLI coding agent that yoyo doesn't do well:
+
+**The biggest gap I see is: when tool calls fail repeatedly, the agent doesn't learn from the pattern within the session.** The RecoveryHintTool gives static hints, but it doesn't adapt. If edit_file fails 3 times on the same file, the hint should be more specific: "You've tried editing this file 3 times. Read the current contents first."
+
+But actually — let me look at what the ToolFailureTracker does:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 30 "struct ToolFailureTracker" src/tool_wrappers.rs | head -35 ✓ (3ms)
+
+OK, the tracker counts per-tool-name failures. But it resets on any success, so if edit_file succeeds on file A but fails on file B, the counter resets. It's not tracking which target is failing.
+
+Let me think about truly high-impact tasks for Day 103:
+
+**Task 1: Context-aware recovery hints — track which files/targets are failing, not just which tools**
+
+Right now ToolFailureTracker tracks edit_file failures globally. If the agent fails to edit src/main.rs 3 times, the hint should say "You've failed to edit src/main.rs 3 times — try reading the current contents with `read_file src/main.rs first, or use write_file` to replace the entire file." This is file-aware, not just tool-aware.
+
+**Task 2: /drop command — remove specific items from conversation context**
+
+When context is getting full, users need to selectively remove things they /add'd. Claude Code and Cursor both have this. /drop src/big_file.rs would remove the content from the next prompt turn.
+
+**Task 3: Proactive context pressure warning with specific recommendations**
+
+When context is >70% full, show a one-time warning: "Context is 72% full. Your largest items: tool results (45%), src/symbols.rs (12%). Consider `/compact` or start a new session." This is better than the current blunt "context is getting full" warning.
+
+Let me verify what exists around /drop:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "\"drop\"\|/drop\|handle_drop\|fn.*drop" src/dispatch.rs | head -10  ▶ $ # Check if there's a clear command for context (2 lines) ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.1s (2 ✓)
+
+No /drop command exists. This is a real gap. But implementing `/drop` requires manipulating the agent's message history, which is complex. Let me think about what's achievable in 20 minutes per task.
+
+Actually, let me reconsider. The assessment says the biggest closeable competitive gaps are:
+1. Better error recovery (tool failures) — already partially built
+2. Session management UX — checkpoints exist, stash exists
+3. Context management UX — /tokens shows breakdown, /compact works
+
+Let me look at something that would genuinely surprise and delight a developer:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What does the contextual_hint system do? (2 lines) ✓ (3ms)
+  ▶ $ grep -A 60 "fn contextual_hint" src/format/mod.rs | head -65 ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Good. Now let me think about what's actually impactful and achievable. Here are my three tasks:
+
+**Task 1 (Self-driven, capability gap): File-aware tool failure tracking**
+Make ToolFailureTracker track failures per (tool, target_file) pair instead of just per tool. When edit_file fails on the same file 2+ times, append a file-specific recovery hint like "You've failed to edit this file 2 times. Read the exact current contents first." This is a real competitive edge — smarter self-correction during tool use.
+
+**Task 2 (Self-driven, capability gap): `/tokens detail` — show per-message token breakdown**
+Extend /tokens to show which specific messages/turns are consuming the most context. When a user says /tokens detail, show the top 5 context-consuming messages with summaries. This helps users understand what's filling their context and make informed decisions about /compact.
+
+**Task 3 (Self-driven, UX): Smarter context pressure hints)**
+Enhance the `contextual_hint` for the "compact" case to include what's dominating context. Instead of just "💡 /compact to free context space", show "💡 Context 72% full (tool results: 45%). Try /compact to free space." This gives users actionable information without requiring them to run `/tokens`.
+
+Let me verify sizing — each task should touch ≤3 files:
+
+• Task 1: tool_wrappers.rs (ToolFailureTracker + RecoveryHintTool), prompt_retry.rs (tool_recovery_hint) → 2 files
+• Task 2: commands_info.rs (handle_tokens, new detail mode) → 1 file, maybe format/cost.rs for formatting → 2 files  
+• Task 3: format/mod.rs (contextual_hint, HintContext) → 1 file, `repl.rs` (passing breakdown data to HintContext) → 2 files
+
+All within the 3-file limit. Let me write the plan:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (43 lines) ✓ (37.6s)
+  ▶ write session_plan/task_02.md (55 lines) ✓ (37.2s)
+  ▶ $ # Verify how /tokens is dispatched (2 lines) ✓ (3ms)
+  3 tools completed in 1m 44s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

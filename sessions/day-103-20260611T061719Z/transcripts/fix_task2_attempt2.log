@@ -1,0 +1,322 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure for /tokens dispatch and implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tokens" src/dispatch.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_tokens" src/comm… ✓ (8ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '330,360p' src/dispatch.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,420p' src/commands_i… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 4.5s (4 ✓)
+
+Now let me understand the dispatch more - specifically how input is passed (or not) to the tokens command:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Tokens" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute" src/dispa… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '129,200p' src/dispatch.r… ✓ (3ms)
+  3 tools completed in 4.4s (3 ✓)
+
+I see - /tokens is matched as an exact string. So /tokens detail would fall through to the prefix matching. Let me check how that would work:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,300p' src/dispatch.r… ✓ (3ms)
+
+So `/tokens detail` would go to the prefix route and since "tokens" isn't in the prefix match list, it would route to UnknownSlash. I need to add tokens to the prefix router. Let me look at how other commands that accept subcommands work:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '345,350p' src/dispatch.r… ✓ (3ms)
+
+Now let me understand the existing helper functions I'll need:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "estimate_tokens\|estima… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_token_count\|… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn format_token_count\… ✓ (9ms)
+  3 tools completed in 14.9s (3 ✓)
+
+Now let me look at the AgentMessage structure:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub struct AgentMessag… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '125,200p' ~/.cargo/regis… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Message\|pub… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,125p' ~/.cargo/registr… ✓ (3ms)
+  5 tools completed in 14.1s (5 ✓)
+
+Now let me look at how content_block_tokens works (already used in the file) and the safe_truncate function:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '325,350p' src/commands_i… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn safe_truncate\b" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '238,255p' src/format/mod… ✓ (3ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Now let me look at the existing test section in commands_info.rs to understand the patterns:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1431,1520p' src/commands… ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I have a full understanding. Let me create a plan and implement:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  6 tools completed in 20.2s (6 ✓)
+
+Let me first look at more context around the dispatch to understand the pattern for passing input:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ctx.input" src/dispatch… ✓ (3ms)
+
+Good - ctx.input is available. Now let me implement:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+**Step 1: Add "tokens" to prefix route in dispatch.rs**
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (1 → 1 lines)
+  -         "/tokens" => CommandRoute::Tokens,
+  +         "/tokens" | "/tokens detail" => CommandRoute::Tokens,
+ ✓ (51.0s)
+  -         "/tokens" => CommandRoute::Tokens,
+  +         "/tokens" | "/tokens detail" => CommandRoute::Tokens,
+  ▶ todo ✓ (0ms)
+  2 tools completed in 55.8s (2 ✓)
+
+**Step 2: Pass input string to handle_tokens in dispatch.rs**
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/dispatch.rs (4 → 9 lines)
+            CommandRoute::Tokens => {
+  -             commands::handle_tokens(ctx.agent, ctx.session_total, &ctx.agent_config.model);
+  +             commands::handle_tokens(
+  +                 ctx.agent,
+  +                 ctx.session_total,
+  +                 &ctx.agent_config.model,
+  +                 ctx.input,
+  +             );
+                CommandResult::Continue
+            }
+ ✓ (7.2s)
+            CommandRoute::Tokens => {
+  -             commands::handle_tokens(ctx.agent, ctx.session_total, &ctx.agent_config.model);
+  +             commands::handle_tokens(
+  +                 ctx.agent,
+  +                 ctx.session_total,
+  +                 &ctx.agent_config.model,
+  +                 ctx.input,
+  +             );
+                CommandResult::Continue
+            }
+  2 tools completed in 13.1s (2 ✓)
+
+Expected — I need to update the function signature. Let me proceed:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+**Step 3 & 4: Implement format_per_turn_breakdown and modify handle_tokens**
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me first look at the full handle_tokens function and context around it:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '351,425p' src/commands_i… ✓ (3ms)
+
+Now look at how format_context_breakdown works to understand the formatting pattern:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_context_break… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn format_context_brea… ✓ (5ms)
+  2 tools completed in 3.9s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0061][0m[1m: this function takes 3 arguments but 4 arguments were supplied[0m
+   [1m[94m--> [0msrc/dispatch.rs:348:13
+    [1m[94m|[0m
+[1m[94m348[0m [1m[94m|[0m             commands::handle_tokens(
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m352[0m [1m[94m|[0m                 ctx.input,
+    [1m[94m|[0m                 [1m[94m---------[0m [1m[94munexpected argument #4 of type `&str`[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/commands_info.rs:351:8
+    [1m[94m|[0m
+[1m[94m351[0m [1m[94m|[0m pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
+    [1m[94m|[0m        [1m[92m^^^^^^^^^^^^^[0m
+[1m[96mhelp[0m: remove the extra argument
+    [1m[94m|[0m
+[1m[94m351[0m [91m- [0m                &ctx.agent_config.model[91m,[0m
+[1m[94m352[0m [91m-                 ctx.input[0m,
+[1m[94m351[0m [92m+ [0m                &ctx.agent_config.model,
+    [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0061`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+The issue is clear: dispatch.rs passes 4 arguments to handle_tokens but the function in commands_info.rs only takes 3. I need to add the input parameter to handle_tokens and implement the full /tokens detail feature.
+
+Let me first understand the current state of the code:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '345,360p' src/dispatch.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '351,425p' src/commands_i… ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me check the existing content_block_tokens function and existing imports:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,25p' src/commands_info… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '333,350p' src/commands_i… ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me check what's used from imports and check how `safe_truncate` is available:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "safe_truncate" src/command… ✓ (2ms)
+
+Good, safe_truncate is already imported via the use crate::format::*; import. Now let me check the existing tests that call handle_tokens:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_tokens" src/comm… ✓ (3ms)
+
+Now let me look at the test to understand the full context of what needs updating:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1431,1530p' src/commands… ✓ (3ms)
+
+Now let me see how Message is constructed in tests to understand if we can construct test messages:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Message::user\|Message:… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2345,2400p' src/commands… ✓ (3ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I have all the context I need. Let me implement the full solution:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (1 → 6 lines)
+  - pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
+  + pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str, input: &str) {
+  +     let show_detail = input
+  +         .strip_prefix("/tokens")
+  +         .unwrap_or("")
+  +         .trim()
+  +         .eq_ignore_ascii_case("detail");
+ ✓ (7.3s)
+  - pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str) {
+  + pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str, input: &str) {
+  +     let show_detail = input
+  +         .strip_prefix("/tokens")
+  +         .unwrap_or("")
+  +         .trim()
+  +         .eq_ignore_ascii_case("detail");
+
+Good, expected errors. Now let me add the detail output call and fix the test call sites. First, add the detail printing in handle_tokens:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '393,400p' src/commands_i… ✓ (3ms)
+
+I need to insert the per-turn breakdown after the tool summary and before the session totals section. Let me find the exact insertion point:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,400p' src/commands_i… ✓ (3ms)
+  ▶ edit src/commands_info.rs (6 → 15 lines)
+        if !tool_summary.is_empty() {
+            println!();
+            println!("{}", format_tool_call_summary(&tool_summary));
+  +     }
+  + 
+  +     // Per-turn breakdown (only with /tokens detail)
+  +     if show_detail && !messages.is_empty() {
+  +         let detail = format_per_turn_breakdown(&messages);
+  +         if !detail.is_empty() {
+  +             println!();
+  +             println!("{detail}");
+  +         }
+        }
+ ✓ (7.4s)
+        if !tool_summary.is_empty() {
+            println!();
+            println!("{}", format_tool_call_summary(&tool_summary));
+  +     }
+  + 
+  +     // Per-turn breakdown (only with /tokens detail)
+  +     if show_detail && !messages.is_empty() {
+  +         let detail = format_per_turn_breakdown(&messages);
+  ... (5 more lines)
+  2 tools completed in 14.0s (2 ✓)
+
+Expected — I need to create format_per_turn_breakdown and fix the test call sites. Let me now add the function. I'll place it right before handle_tokens:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '349,352p' src/commands_i… ✓ (3ms)
+  ▶ edit src/commands_info.rs (4 → 144 lines)
+  + }
+  + 
+  + /// Per-turn token breakdown for `/tokens detail`.
+  + ///
+  + /// Iterates through messages, estimates tokens per message, assigns turn numbers
+  + /// (user message starts a new turn), sorts by token count descending, and
+  + /// returns a formatted string showing the top 10 context consumers.
+  + pub fn format_per_turn_breakdown(messages: &[AgentMessage]) -> String {
+  +     struct TurnEntry {
+  +         turn: usize,
+  +         role: &'static str,
+  +         tokens: usize,
+  +         preview: String,
+  +     }
+  + 
+  +     let mut entries: Vec<TurnEntry> = Vec::new();
+  +     let mut turn_num: usize = 0;
+  + 
+  +     for msg in messages {
+  +         let llm = match msg.as_llm() {
+  ... (123 more lines)
+ ✓ (7.3s)
+  + }
+  + 
+  + /// Per-turn token breakdown for `/tokens detail`.
+  + ///
+  + /// Iterates through messages, estimates tokens per message, assigns turn numbers
+  + /// (user message starts a new turn), sorts by token count descending, and
+  + /// returns a formatted string showing the top 10 context consumers.
+  + pub fn format_per_turn_breakdown(messages: &[AgentMessage]) -> String {
+  ... (13 more lines)
+  2 tools completed in 27.1s (2 ✓)
+
+Two issues: RESET is a Color type not a &str, and test call sites need updating. Let me check how RESET is used elsewhere:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "push_str.*RESET\|format… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct Color" src/forma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl.*Display.*Color\|i… ✓ (3ms)
+  3 tools completed in 8.2s (3 ✓)
+
+So Color implements Display but isn't a &str. In format strings it works via {RESET} but not with push_str. Let me fix:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (1 → 1 lines)
+  -     out.push_str(RESET);
+  +     out.push_str(&format!("{RESET}"));
+ ✓ (7.6s)
+  -     out.push_str(RESET);
+  +     out.push_str(&format!("{RESET}"));
+
+Good, only the test call sites remain. Let me fix those:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'handle_tokens(&agent, &… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/handle_tokens(&agent, … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.0s)
+  3 tools completed in 14.1s (3 ✓)
+
+Build passes. Now let me run clippy:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.7s)
+  ▶ edit src/commands_info.rs (1 → 1 lines)
+  -     entries.sort_by(|a, b| b.tokens.cmp(&a.tokens));
+  +     entries.sort_by_key(|e| std::cmp::Reverse(e.tokens));
+ ✓ (52.8s)
+  -     entries.sort_by(|a, b| b.tokens.cmp(&a.tokens));
+  +     entries.sort_by_key(|e| std::cmp::Reverse(e.tokens));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.1s)
+  3 tools completed in 1m 27s (3 ✓)
+
+Clippy passes. Now let me run tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (25.8s)
+
+  ✓ Watch passed after fix (attempt 1)
+

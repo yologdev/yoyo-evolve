@@ -1,0 +1,116 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /tokens detail subcommand. Let me start by understanding the current code structure.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 48s)
+
+Excellent. Now let me look at the dispatch more closely and understand the current message structure to build the per-turn breakdown.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Tokens" s… ✓ (4ms)
+  ▶ read src/dispatch.rs:344..356 ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me check if there's any input/args being passed already for the /tokens route, and look at the dispatch context structure:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DispatchContext"… ✓ (3ms)
+  ▶ read src/dispatch.rs:289..319 ✓ (1ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Good — ctx.input is available. Now let me check how ctx.input is used in other routes for parsing subcommands:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ctx.input" src/dispatch… ✓ (3ms)
+
+Now let me read the full handle_tokens function and understand the token counting utilities:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:246..321 ✓ (1ms)
+  ▶ read src/commands_info.rs:320..400 ✓ (1ms)
+  ▶ read src/commands_info.rs:399..429 ✓ (1ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Now let me check imports and see what's used from yoagent:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..31 ✓ (0ms)
+
+Now let me check what `Message variants look like more closely and understand the estimate_tokens` import:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub fn estimate_tokens… ✓ (4ms)
+
+Good. Now I have a clear picture. Let me also check how the `safe_truncate_with_suffix` function works:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_truncate_with_suff… ✓ (3ms)
+  ▶ read src/format/mod.rs:251..269 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now I have everything I need. Let me plan and implement:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  5 tools completed in 12.1s (5 ✓)
+
+Let me start by writing the implementation. First, I'll add the format_per_turn_breakdown function and its tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+Let me check what's right after handle_tokens to find a good insertion point:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:414..424 ✓ (0ms)
+
+Now let me check the end of the file for existing test modules:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/com… ✓ (3ms)
+  ▶ read src/commands_info.rs:1431..1451 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_info.rs ✓ (2ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now let me look at how Message is constructed in tests to understand the API:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Message::User\|Message:… ✓ (3ms)
+  ▶ read src/commands_info.rs:2345..2395 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now I have a clear picture of how to construct test messages. Let me also check what `StopReason` variants are available:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub enum StopReason" ~/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '167,185p' ~/.cargo/regis… ✓ (3ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now I'm ready to implement. Let me write the format_per_turn_breakdown function and insert it after handle_tokens:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (5 → 160 lines)
+        println!("{RESET}");
+  + }
+  + 
+  + /// Per-turn token breakdown entry used by `/tokens detail`.
+  + struct TurnEntry {
+  +     /// 1-based turn index (a turn is a user message + the assistant/tool
+  +     /// messages that follow it).
+  +     turn: usize,
+  +     /// High-level label for the biggest contributor in this turn.
+  +     label: String,
+  +     /// Short preview of content (≤40 chars).
+  +     preview: String,
+  +     /// Estimated tokens consumed by the entire turn.
+  +     tokens: usize,
+  + }
+  + 
+  + /// Produce a per-turn token breakdown of the conversation.
+  + ///
+  + /// A "turn" is defined as a user message plus every subsequent
+  + /// assistant / tool-result message until the next user message.  This
+  ... (140 more lines)
+ ✗ (3ms)
+    │ old_text not found in src/commands_info.rs.
+
+Let me check the exact text around line 415-420:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:413..423 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

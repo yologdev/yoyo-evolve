@@ -1,0 +1,140 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current implementation of format_per_turn_breakdown and the existing code structure.
+  ▶ search 'format_per_turn_breakdown' ✗ (5.4s)
+    │ Search error: grep: ./target/debug/deps/yoyo-d9cfd18e2c26f891: binary file matches
+  ▶ search 'format_per_turn_breakdown' (*.rs) ✓ (17ms)
+  ▶ read src/commands_info.rs:350..470 ✓ (1ms)
+  ▶ read src/commands_info.rs:467..507 ✓ (1ms)
+  4 tools completed in 19.5s (3 ✓, 1 ✗)
+
+Now let me see the helper functions used and the imports at the top of the file:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..31 ✓ (1ms)
+
+Now let me look at the content_block_tokens function and other helpers:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn content_block_tokens' (*.rs) ✓ (18ms)
+  ▶ read src/commands_info.rs:334..354 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now let me check what safe_truncate is and how it's imported:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn safe_truncate\b' (*.rs) ✓ (19ms)
+  ▶ read src/format/mod.rs:238..253 ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me check what format_token_count is:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn format_token_count' (*.rs) ✓ (18ms)
+
+Good. Now let me check the existing test section in commands_info.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' (src/commands_info.rs) ✓ (12ms)
+
+No test module yet. Let me check the end of the file:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2835..2855 ✓ (1ms)
+  ▶ search '#\[cfg\(test\)\]|mod tests' (src/commands_info.rs) ✓ (12ms)
+  ▶ search 'mod .*test' (src/commands_info.rs) ✓ (13ms)
+  ▶ search '#\[test\]' (src/commands_info.rs) ✓ (12ms)
+  4 tools completed in 9.8s (4 ✓)
+
+Wait, the file ends with } on line 2851 but let me look at the broader context:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2822..2852 ✓ (0ms)
+  ▶ search '^fn .*test|^    fn .*test' (src/commands_info.rs) ✓ (12ms)
+  ▶ $ grep -n 'test\|#\[cfg' src/commands_info.rs | tail -20 ✓ (5ms)
+  ▶ $ grep -n 'cfg(test)' src/commands_info.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (137ms)
+  ▶ read src/commands_info.rs:1585..1590 ✓ (1ms)
+  5 tools completed in 15.5s (5 ✓)
+
+Now let me understand what I need to create. I need to check the AgentMessage type:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub enum AgentMessage' in ~/.cargo/registry (*.rs) ✗ (2ms)
+    │ Search error: grep: ~/.cargo/registry: No such file or directory
+  ▶ $ find ~/.cargo/registry/src -name "*.rs" -path "*/yoagent*" | head -20 ✓ (37ms)
+  ▶ $ grep -rn "pub enum AgentMessage" ~/.cargo/registry/src/index.crates.io-*/yoagent… ✓ (33ms)
+  ▶ $ grep -n "yoagent" Cargo.toml ✓ (124ms)
+  ▶ $ grep -A 20 "pub enum AgentMessage" ~/.cargo/registry/src/index.crates.io-*/yoage… ✓ (227ms)
+  ▶ $ grep -B5 -A 25 "pub enum Message" ~/.cargo/registry/src/index.crates.io-*/yoagen… ✓ (3ms)
+  ▶ $ grep -A 5 "pub enum Content" ~/.cargo/registry/src/index.crates.io-*/yoagent-0.8… ✓ (122ms)
+  7 tools completed in 24.7s (6 ✓, 1 ✗)
+
+Now I have a good understanding. I need to write tests for format_per_turn_breakdown. Let me look at how the existing tests create AgentMessage instances:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1585..1665 ✓ (1ms)
+
+Now let me understand how to create AgentMessage objects for tests:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 10 "impl AgentMessage" ~/.cargo/registry/src/index.crates.io-*/yoagent-0… ✓ (3ms)
+  ▶ $ grep -B2 -A 30 "impl Message" ~/.cargo/registry/src/index.crates.io-*/yoagent-0.… ✓ (3ms)
+  ▶ $ grep -A 10 "pub fn tool_result" ~/.cargo/registry/src/index.crates.io-*/yoagent-… ✓ (65ms)
+  ▶ $ grep -A 10 "fn assistant" ~/.cargo/registry/src/index.crates.io-*/yoagent-0.8.3/… ✓ (317ms)
+  4 tools completed in 12.1s (4 ✓)
+
+So only Message::user() is a convenience constructor. I'll need to construct Message::Assistant and Message::ToolResult variants directly. Let me check what StopReason looks like:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -B2 -A 10 "pub enum StopReason" ~/.cargo/registry/src/index.crates.io-*/yoa… ✓ (33ms)
+  ▶ $ grep "fn now_ms" ~/.cargo/registry/src/index.crates.io-*/yoagent-0.8.3/src/types… ✓ (11ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Good. Now I have all the info I need. Let me write the tests. The function format_per_turn_breakdown takes `&[AgentMessage] and returns a String. I need to construct test data using AgentMessage::Llm(Message::...)`.
+
+Let me find where to add the tests - right before the last } closing the test module, or in the existing test module:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2842..2852 ✓ (0ms)
+
+Now let me also verify ToolResult struct fields:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 15 "ToolResult {" ~/.cargo/registry/src/index.crates.io-*/yoagent-0.8.3/… ✓ (3ms)
+
+Good. Now let me write the tests:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (12 → 164 lines)
+                2,
+                10_000,
+                200_000,
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // format_per_turn_breakdown tests
+  +     // -----------------------------------------------------------------------
+  + 
+  +     /// Helper: create a User AgentMessage with given text content.
+  +     fn make_user_msg(text: &str) -> AgentMessage {
+  +         AgentMessage::Llm(Message::User {
+  +             content: vec![Content::Text {
+  +                 text: text.to_string(),
+  +             }],
+  +             timestamp: 0,
+  +         })
+  +     }
+  + 
+  ... (138 more lines)
+ ✓ (54.0s)
+                2,
+                10_000,
+                200_000,
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // format_per_turn_breakdown tests
+  ... (13 more lines)
+
+Now I need to check if the StopReason type is imported in the test module:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "use yoagent" src/commands_info.rs ✓ (23ms)
+
+The test module uses use super::* which brings in `use yoagent::*; from line 20. Let me check that StopReason, Content, Message`, etc. are accessible:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep "pub use" ~/.cargo/registry/src/index.crates.io-*/yoagent-0.8.3/src/lib.rs … ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
