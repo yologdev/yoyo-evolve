@@ -610,17 +610,24 @@ impl AgentTool for AutoCheckTool {
 
         let check_notice = format!("\n\n⚠ Auto-check failed ({check_cmd}):\n{truncated_output}");
 
-        // Append the check notice to each text content block
-        let new_content = result
-            .content
-            .into_iter()
-            .map(|c| match c {
-                yoagent::Content::Text { text } => yoagent::Content::Text {
+        // Append the check notice to the last text block only (not all blocks)
+        // to avoid duplicating the same error output across multiple content blocks,
+        // which wastes context window tokens and confuses the agent.
+        let mut content: Vec<yoagent::Content> = result.content;
+        let last_text_idx = content
+            .iter()
+            .rposition(|c| matches!(c, yoagent::Content::Text { .. }));
+        if let Some(idx) = last_text_idx {
+            if let yoagent::Content::Text { text } = &content[idx] {
+                content[idx] = yoagent::Content::Text {
                     text: format!("{text}{check_notice}"),
-                },
-                other => other,
-            })
-            .collect();
+                };
+            }
+        } else {
+            // No text blocks — add a new one with the check notice
+            content.push(yoagent::Content::Text { text: check_notice });
+        }
+        let new_content = content;
 
         Ok(yoagent::types::ToolResult {
             content: new_content,
@@ -769,10 +776,34 @@ impl AgentTool for RecoveryHintTool {
                 )))
             }
             Err(other) => {
-                // Non-Failed errors (NotFound, InvalidArgs, Cancelled) pass through
-                // but still count as failures for escalation purposes
-                self.tracker.record_failure(&tool_name, &target);
-                Err(other)
+                // Non-Failed errors (NotFound, InvalidArgs, Cancelled) also get
+                // recovery hints — the counter is already being incremented, so
+                // the agent should see the same escalating advice.
+                let attempt = self.tracker.record_failure(&tool_name, &target);
+                let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
+                let file_prefix = if attempt >= 2 && target != "_" {
+                    format!(
+                        "You've failed to {verb} '{target}' {attempt} times. ",
+                        verb = tool_name.replace('_', " "),
+                    )
+                } else {
+                    String::new()
+                };
+                let suffix = format!("\n\n💡 Recovery hint: {file_prefix}{hint}");
+                match other {
+                    yoagent::types::ToolError::NotFound(msg) => Err(
+                        yoagent::types::ToolError::NotFound(format!("{msg}{suffix}")),
+                    ),
+                    yoagent::types::ToolError::InvalidArgs(msg) => Err(
+                        yoagent::types::ToolError::InvalidArgs(format!("{msg}{suffix}")),
+                    ),
+                    // Cancelled carries no message — convert to Failed to attach the hint
+                    yoagent::types::ToolError::Cancelled => Err(yoagent::types::ToolError::Failed(
+                        format!("Tool call was cancelled.{suffix}"),
+                    )),
+                    // Exhaustive: ToolError::Failed is already handled above
+                    e => Err(e),
+                }
             }
         }
     }

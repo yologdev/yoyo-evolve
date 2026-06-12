@@ -126,6 +126,19 @@ pub fn tool_recovery_hint(tool_name: &str, attempt: u32) -> &'static str {
                  check if the binary exists with `which <cmd>`, or try an alternative \
                  tool (e.g., read_file instead of cat, search instead of grep)."
             }
+            "list_files" => {
+                "Try bash instead: use `ls -la <path>` for detailed listing, \
+                 `find . -name '<pattern>'` for name search, or `find . -type f -maxdepth 2` \
+                 for directory exploration."
+            }
+            "web_search" => {
+                "Try rephrasing the query with different keywords, or use bash with \
+                 `curl` to fetch a specific URL directly."
+            }
+            "sub_agent" => {
+                "The sub-agent failed. Try doing the task directly instead of delegating, \
+                 or break it into smaller, more focused sub-tasks."
+            }
             _ => "The tool call failed again. Try a completely different tool or approach.",
         }
     } else {
@@ -149,6 +162,18 @@ pub fn tool_recovery_hint(tool_name: &str, attempt: u32) -> &'static str {
             }
             "search" => "The search failed. Try a simpler pattern or check the path.",
             "rename_symbol" => "The rename failed. Verify the symbol exists with search first.",
+            "list_files" => {
+                "The file listing failed. Check that the directory path exists, or try \
+                 a parent directory."
+            }
+            "web_search" => {
+                "The web search failed. Try a shorter or simpler query with \
+                 different keywords."
+            }
+            "sub_agent" => {
+                "The sub-agent failed. Check the task description for clarity and \
+                 ensure the task is self-contained."
+            }
             _ => "The tool call failed. Try a different approach.",
         }
     }
