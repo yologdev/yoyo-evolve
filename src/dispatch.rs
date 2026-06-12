@@ -309,26 +309,18 @@ pub(crate) struct DispatchContext<'a> {
     pub openapi_count: u32,
 }
 
-/// Dispatch a slash command entered at the REPL prompt.
+/// Dispatch info/status commands to their handlers.
 ///
-/// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
-/// the main loop what to do next.  This was extracted from `run_repl` to keep
-/// the outer loop small and the command table easy to navigate.
-///
-/// Routing is delegated to the pure [`route_command`] function, keeping the
-/// dispatch logic testable without a live agent.
-pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandResult {
-    match route_command(ctx.input) {
-        CommandRoute::Quit => CommandResult::Quit,
-        CommandRoute::Help => {
-            if !commands::handle_help_command(ctx.input) {
-                commands::handle_help();
-            }
-            CommandResult::Continue
-        }
+/// Returns `Some(CommandResult)` if `route` is an info command (version, status,
+/// tokens, cost, profile, changelog, evolution, tips), `None` otherwise.
+async fn dispatch_info_command(
+    route: &CommandRoute,
+    ctx: &mut DispatchContext<'_>,
+) -> Option<CommandResult> {
+    match route {
         CommandRoute::Version => {
             commands::handle_version();
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Status => {
             let ctx_used = total_tokens(ctx.agent.messages()) as u64;
@@ -342,7 +334,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 ctx_used,
                 ctx_max,
             );
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Tokens => {
             commands::handle_tokens(
@@ -351,7 +343,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 &ctx.agent_config.model,
                 ctx.input,
             );
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Cost => {
             commands::handle_cost(
@@ -359,7 +351,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 &ctx.agent_config.model,
                 ctx.agent.messages(),
             );
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Profile => {
             commands::handle_profile(
@@ -369,18 +361,46 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 ctx.session_start,
                 ctx.session_total,
             );
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Changelog => {
             commands::handle_changelog(ctx.input);
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Evolution => {
             commands::handle_evolution(ctx.input);
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Tips => {
             commands::handle_tips();
+            Some(CommandResult::Continue)
+        }
+        _ => None,
+    }
+}
+
+/// Dispatch a slash command entered at the REPL prompt.
+///
+/// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
+/// the main loop what to do next.  This was extracted from `run_repl` to keep
+/// the outer loop small and the command table easy to navigate.
+///
+/// Routing is delegated to the pure [`route_command`] function, keeping the
+/// dispatch logic testable without a live agent.
+pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandResult {
+    let route = route_command(ctx.input);
+
+    // Delegate info/status commands to a focused helper.
+    if let Some(result) = dispatch_info_command(&route, ctx).await {
+        return result;
+    }
+
+    match route {
+        CommandRoute::Quit => CommandResult::Quit,
+        CommandRoute::Help => {
+            if !commands::handle_help_command(ctx.input) {
+                commands::handle_help();
+            }
             CommandResult::Continue
         }
         CommandRoute::Clear => {
@@ -1065,6 +1085,16 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 CommandResult::Continue
             }
         }
+        // Info commands are handled by dispatch_info_command above.
+        CommandRoute::Version
+        | CommandRoute::Status
+        | CommandRoute::Tokens
+        | CommandRoute::Cost
+        | CommandRoute::Profile
+        | CommandRoute::Changelog
+        | CommandRoute::Evolution
+        | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+
         CommandRoute::NotACommand => CommandResult::NotACommand,
     }
 }
