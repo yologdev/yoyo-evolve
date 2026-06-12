@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /commit --dry-run preview mode. Let me start by understanding the existing code structure.
+  ▶ search 'struct CommitArgs' in src/commands_git.rs  ▶ search 'fn parse_commit_args' in src/commands_git.rs  ▶ search 'fn handle_commit' in src/commands_git.rs  ▶ search 'fn wants_ai_commit' in src/commands_git.rs ✓ (5ms)
+ ✓ (4ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  ▶ read src/commands_git.rs:1011..1131 ✓ (2ms)
+  ▶ read src/commands_git.rs:1130..1230 ✓ (1ms)
+  6 tools completed in 9.1s (6 ✓)
+
+Now let me see the handle_commit_ai function and `wants_ai_commit`:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1320..1440 ✓ (2ms)
+
+Now let me look at the existing tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:3200..3350 ✓ (2ms)
+
+Now let me look at the help data:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'commit' in src/help_data.rs ✓ (3ms)
+  ▶ read src/help_data.rs:119..139 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I have a clear picture. Let me also check how handle_commit is dispatched to understand the flow for dry-run in the AI path:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'commit' in src/dispatch.rs ✓ (3ms)
+
+Good — so dispatch checks wants_ai_commit first, then either calls handle_commit_ai or handle_commit. The dry-run flag needs to work in both paths.
+
+Now let me also check the format_diff_stat helper since I might reuse it:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn format_diff_stat' in src/commands_git.rs ✓ (3ms)
+
+Now I have everything I need. Let me implement this step by step.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  7 tools completed in 18.0s (7 ✓)
+
+Let me start with the tests first (TDD), then the implementation.
+
+**Step 1: Add dry_run to CommitArgs and parse it**
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ edit src/commands_git.rs (10 → 12 lines)
+        pub ai: bool,
+        /// Amend the last commit instead of creating a new one (`--amend`).
+        pub amend: bool,
+  +     /// Preview what would be committed without actually committing (`--dry-run`).
+  +     pub dry_run: bool,
+        /// The remaining commit message (if any) after stripping flags.
+        pub message: String,
+    }
+ ✓ (8.8s)
+        pub ai: bool,
+        /// Amend the last commit instead of creating a new one (`--amend`).
+        pub amend: bool,
+  +     /// Preview what would be committed without actually committing (`--dry-run`).
+  +     pub dry_run: bool,
+        /// The remaining commit message (if any) after stripping flags.
+        pub message: String,
+    }
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 25.2s (4 ✓)
+
+Now update parse_commit_args to handle --dry-run:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (22 → 25 lines)
+        let mut auto_stage = false;
+        let mut ai = false;
+        let mut amend = false;
+  +     let mut dry_run = false;
+        let mut message_parts: Vec<&str> = Vec::new();
+    
+        for token in arg.split_whitespace() {
+  ···
+                "-a" | "--all" => auto_stage = true,
+                "--ai" | "--generate" => ai = true,
+                "--amend" => amend = true,
+  +             "--dry-run" => dry_run = true,
+                other => message_parts.push(other),
+            }
+        }
+  ···
+            auto_stage,
+            ai,
+            amend,
+  +         dry_run,
+  ... (3 more lines)
+ ✓ (1m 5s)
+        let mut auto_stage = false;
+        let mut ai = false;
+        let mut amend = false;
+  +     let mut dry_run = false;
+        let mut message_parts: Vec<&str> = Vec::new();
+    
+        for token in arg.split_whitespace() {
+  ···
+  ... (13 more lines)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 10s (2 ✓)
+
+Now let me add tests before implementing the dry-run behavior. Let me add tests at the end of the test module:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ read src/commands_git.rs:3328..3338 ✓ (1ms)
+  ▶ edit src/commands_git.rs (7 → 58 lines)
+        fn parse_commit_args_amend_message_first() {
+            let args = parse_commit_args("fix the bug --amend");
+            assert!(args.amend);
+  +         assert!(!args.auto_stage);
+  +         assert_eq!(args.message, "fix the bug");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_commit_args_dry_run() {
+  +         let args = parse_commit_args("--dry-run");
+  +         assert!(args.dry_run);
+  +         assert!(!args.auto_stage);
+  +         assert!(!args.ai);
+  +         assert!(!args.amend);
+  +         assert_eq!(args.message, "");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_commit_args_ai_dry_run() {
+  +         let args = parse_commit_args("--ai --dry-run");
+  ... (38 more lines)
+ ✓ (1m 4s)
+        fn parse_commit_args_amend_message_first() {
+            let args = parse_commit_args("fix the bug --amend");
+            assert!(args.amend);
+  +         assert!(!args.auto_stage);
+  +         assert_eq!(args.message, "fix the bug");
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+  3 tools completed in 1m 17s (3 ✓)
+
+Now let me also update the existing tests that check `dry_run` is false by default — the existing tests don't check it, but they should still pass. Let me verify the build compiles first:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib -- parse_commit… ✓ (104ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- parse_commit_args … ✓ (129ms)
+  2 tools completed in 3.2s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

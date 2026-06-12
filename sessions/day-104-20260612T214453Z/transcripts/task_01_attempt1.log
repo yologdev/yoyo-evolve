@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of dispatch.rs, focusing on the dispatch_command function and the info-related command arms.
+  ▶ $ wc -l src/dispatch.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "pub async fn dispatch_command\|async fn dispatch_command\|fn dispatch_c…  ▶ $ grep -n "CommandRoute::" src/dispatch.rs | head -60 ✓ (4ms)
+ ✓ (10ms)
+ ✓ (10ms)
+  3 tools completed in 1.4s (3 ✓)
+
+Now let me find the specific match arms I need to extract:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "CommandRoute::Version\|CommandRoute::Status\|CommandRoute::Tokens\|Comm… ✓ (4ms)
+  ▶ read src/dispatch.rs:320..400 ✓ (1ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Good, I can see the exact match arms. Now let me also check `handle_evolution and handle_changelog signatures to confirm they take input`:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn handle_evolution\|pub fn handle_changelog\|pub fn handle_version… ✓ (9ms)
+  ▶ $ grep -n "pub fn handle_evolution\|pub fn handle_changelog\|pub fn handle_version… ✓ (9ms)
+  ▶ $ grep -n "pub fn handle_" src/commands_info.rs ✓ (8ms)
+  ▶ $ grep -n "pub fn handle_" src/commands_info.rs | cat ✓ (3ms)
+  4 tools completed in 10.9s (4 ✓)
+
+Now let me check the DispatchContext struct and the imports at the top of dispatch.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1..61 ✓ (1ms)
+  ▶ read src/dispatch.rs:60..110 ✓ (1ms)
+  ▶ read src/dispatch.rs:109..139 ✓ (1ms)
+  3 tools completed in 8.4s (3 ✓)
+
+Now let me see the DispatchContext struct:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "struct DispatchContext" src/dispatch.rs ✓ (8ms)
+  ▶ read src/dispatch.rs:289..324 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Now I have a clear picture. Let me implement the extraction. The plan is:
+
+1. Create dispatch_info_command as an async helper right before dispatch_command
+2. Call it at the start of dispatch_command with early return
+3. Move the 8 info command match arms into the new function
+
+Let me first check if there are any existing tests related to these commands:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "route_command.*version\|route_command.*status\|route_command.*tokens\|r… ✓ (10ms)
+
+Good — the tests are all on route_command, which I'm not changing. Now let me implement the extraction:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:312..382 ✓ (1ms)
+
+Now I'll add the dispatch_info_command helper and modify dispatch_command to use it:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (74 → 94 lines)
+  - /// Dispatch a slash command entered at the REPL prompt.
+  - ///
+  - /// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
+  - /// the main loop what to do next.  This was extracted from `run_repl` to keep
+  - /// the outer loop small and the command table easy to navigate.
+  + /// Dispatch info/status commands to their handlers.
+    ///
+  - /// Routing is delegated to the pure [`route_command`] function, keeping the
+  - /// dispatch logic testable without a live agent.
+  - pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandResult {
+  -     match route_command(ctx.input) {
+  -         CommandRoute::Quit => CommandResult::Quit,
+  -         CommandRoute::Help => {
+  -             if !commands::handle_help_command(ctx.input) {
+  -                 commands::handle_help();
+  -             }
+  -             CommandResult::Continue
+  -         }
+  + /// Returns `Some(CommandResult)` if `route` is an info command (version, status,
+  + /// tokens, cost, profile, changelog, evolution, tips), `None` otherwise.
+  ... (88 more lines)
+ ✓ (8.8s)
+  - /// Dispatch a slash command entered at the REPL prompt.
+  - ///
+  - /// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
+  - /// the main loop what to do next.  This was extracted from `run_repl` to keep
+  - /// the outer loop small and the command table easy to navigate.
+  + /// Dispatch info/status commands to their handlers.
+    ///
+  - /// Routing is delegated to the pure [`route_command`] function, keeping the
+  ... (13 more lines)
+
+Right — the match is exhaustive and now the moved-out variants aren't covered. Since `dispatch_info_command` handles them before the match, I need to add unreachable arms for those variants in the main match:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1078..1093 ✓ (1ms)
+
+I need to add the info variants as unreachable since they're handled by the early return. Let me add them before the NotACommand arm:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (3 → 13 lines)
+  +         // Info commands are handled by dispatch_info_command above.
+  +         CommandRoute::Version
+  +         | CommandRoute::Status
+  +         | CommandRoute::Tokens
+  +         | CommandRoute::Cost
+  +         | CommandRoute::Profile
+  +         | CommandRoute::Changelog
+  +         | CommandRoute::Evolution
+  +         | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+  + 
+            CommandRoute::NotACommand => CommandResult::NotACommand,
+        }
+    }
+ ✓ (1m 6s)
+  +         // Info commands are handled by dispatch_info_command above.
+  +         CommandRoute::Version
+  +         | CommandRoute::Status
+  +         | CommandRoute::Tokens
+  +         | CommandRoute::Cost
+  +         | CommandRoute::Profile
+  +         | CommandRoute::Changelog
+  +         | CommandRoute::Evolution
+  ... (5 more lines)
+
+Now let's build and test:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.8s)
+
+Clean clippy. Now tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (33.0s)
+
+All 88 tests pass. Let me also do a full build to be sure:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (124ms)
+
+Everything passes. Let me verify the final shape of the change looks right:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/dispatch.rs ✓ (5ms)
+  2 tools completed in 3.9s (2 ✓)
+
+The diff looks exactly right. The 8 info command match arms are extracted into `dispatch_info_command, called at the top of dispatch_command` with early return, and unreachable arms in the main match ensure exhaustiveness.
+
+Let me verify the line count change in dispatch_command and confirm the new function is not pub:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "async fn dispatch_info_command" src/dispatch.rs ✓ (8ms)
+
+Good — it's async fn (not pub), exactly as specified. Now commit:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (9 lines) ✓ (13ms)
+
+Clean extraction. 8 info command arms moved out of dispatch_command into `dispatch_info_command`, called at the top with early return. All 88 tests pass, clippy clean, no behavior change. The main match stays exhaustive via unreachable arms for the delegated variants.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

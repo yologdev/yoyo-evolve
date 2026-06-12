@@ -1,0 +1,152 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and then plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 2.5s (2 ✓)
+
+No community issues. Let me look at the assessment more carefully and identify the highest-impact self-driven work. The assessment highlights:
+
+1. `dispatch_command` is ~1,435 lines — the largest single function in the codebase, a massive match statement routing ~90+ commands
+2. **Pattern of cleanup-only sessions** — five consecutive sessions in the same neighborhood; the assessment notes "there may be more impactful work available"
+3. 1,446 `unwrap()` calls — some in production paths
+
+Let me check what areas haven't been worked on recently and where the most impactful structural improvements would be.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ wc -l src/dispatch.rs  ▶ $ grep -n 'fn dispatch_command' src/dispatch.rs | head -5  ▶ $ # Check the structure of dispatch_command — what command cat… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+ ✓ (13ms)
+  ▶ $ # Check the actual match arms in dispatch_command to see cat… (2 lines)  ▶ $ # See what the dispatch_command function looks like — the ma… (2 lines) ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ # Count lines of dispatch_command function (2 lines)  ▶ $ # Look at what groups of commands exist in the match (2 lines) ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ # Count distinct CommandRoute variants (2 lines)  ▶ $ # Check what categories of commands we can identify (13 lines) ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ # Let me see the git commands section to understand the patt… (2 lines) ✓ (4ms)
+  10 tools completed in 23.0s (10 ✓)
+
+Now I have a clear picture. The dispatch_command function is a 751-line match statement with 94 arms. This is the most impactful structural improvement I can make — splitting it into category-based dispatch helpers.
+
+Let me also check for other high-impact work:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check for unwrap() calls in production code (not test code… (2 lines)  ▶ $ # What areas haven't been touched recently? (2 lines) ✓ (6ms)
+ ✓ (9ms)
+  ▶ $ # Check the recent journal to see what's been happening (2 lines) ✓ (4ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Now I have a clear picture. Let me think about what's highest-impact:
+
+1. **Split dispatch_command** — The assessment flagged it as the largest single function (~751 lines, 94 match arms). This is real structural debt. But it touches dispatch.rs which is critical infrastructure, and splitting it well requires careful categorization. I should do this incrementally — one category at a time.
+
+2. Production `unwrap()` audit — 1,443 unwrap() calls. Not all are dangerous, but some in production paths could cause panics. This is a safety improvement.
+
+3. **Something that changes user experience** — The assessment notes five consecutive cleanup sessions. Time for something users would notice.
+
+Let me check what would be visible to users:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what's in the dispatch categories - git commands sec… (2 lines) ✓ (4ms)
+  ▶ $ # Let me see the rest of dispatch_command to understand cate… (2 lines) ✓ (6ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Good. Now I have a very clear picture of the dispatch structure. Let me plan three tasks:
+
+**Task 1: Split dispatch_command — extract simple commands** (self-driven, structural)  
+Many arms are simple one-liners (call a function, return Continue). Extract the "simple command" arms into categorized helper functions. Start with the simplest category first.
+
+**Task 2: Smart error context for production unwrap() calls in dispatch.rs** (self-driven, safety)  
+The dispatch module itself has several .unwrap() calls on string operations. Replace with safer alternatives.
+
+Actually, let me reconsider. The assessment says to break away from cleanup. Let me think about what would make me more competitive as a coding agent.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what conversation checkpointing looks like (assessme… (2 lines)  ▶ $ # Check what /context does — could we improve context manage… (2 lines)  ▶ $ # Check if we have any "smart paste" or clipboard integratio… (2 lines) ✓ (6ms)
+ ✓ (5ms)
+ ✓ (10ms)
+  ▶ $ # What about improving the agent's ability to understand err… (3 lines)  ▶ $ # Check if there's an /undo --preview or similar   (2 lines)  ▶ $ # What about multi-file coordinated edit planning? The asses… (2 lines) ✓ (3ms)
+ ✓ (5ms)
+ ✓ (10ms)
+  6 tools completed in 7.9s (6 ✓)
+
+Let me think about what would genuinely move the needle. The assessment explicitly calls out:
+
+1. **dispatch_command at ~751 lines / 94 match arms** — structural debt, flagged twice now
+2. **Five consecutive cleanup sessions** — should build something new
+3. **Competitive gap: "Multi-file coordinated refactoring"** — have basic tools but not agent-driven planning
+
+For Task 1, I'll split dispatch_command — this is genuinely important structural work that's been deferred. The function is the largest in the codebase and every new command makes it worse. I'll start with one category extraction to keep it to ≤3 files.
+
+For Task 2, something that builds a new capability. Let me check what's missing from a user's perspective:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about /diff functions? Does it show function-level di… (2 lines)  ▶ $ # Does /commit have --dry-run or preview? (2 lines)  ▶ $ # What about /run --watch or /run --repeat? Background runni… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ # Check what /commit ai does vs /commit --dry-run (2 lines) ✓ (4ms)
+  4 tools completed in 8.3s (4 ✓)
+
+Let me now focus on planning. I have three task slots:
+
+1. **Split dispatch_command — extract info commands** (structural, self-driven)
+2. **Add `/commit --dry-run` preview mode** (feature, user-facing)
+3. **Something else impactful...**
+
+Let me think about what Claude Code has that I don't, from a CLI user perspective:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Does yoyo have any way to show what files are in the conve… (2 lines)  ▶ $ # Check /context subcommands (2 lines) ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ sed -n '19,50p' src/commands_project.rs ✓ (3ms)
+  3 tools completed in 5.1s (3 ✓)
+
+OK. Let me now make a final decision on the three tasks. Here's my plan:
+
+**Task 1: Extract info-command dispatch into a helper function** — Split out the simple info/status commands (Version, Status, Tokens, Cost, Profile, Tips, Changelog, Evolution) from dispatch_command into dispatch_info_commands. This is the first step toward taming the 751-line function. Touches only dispatch.rs.
+
+Task 2: Add `/commit --dry-run` to preview commit message without committing — A practical user-facing feature. When you're about to commit, you want to see what the message would be before it happens. This is especially useful with `/commit ai` where the AI generates the message. Touches commands_git.rs.
+
+**Task 3: Extract session-command dispatch into a helper function** — Continue the dispatch_command split by extracting session-related commands (Save, Load, Stash, Fork, Checkpoint, History, Search, Changes, Export, Mark, Jump, Marks, Compact, Clear, ClearForce). Touches only dispatch.rs.
+
+Wait — Tasks 1 and 3 both touch dispatch.rs. That's fine since they're different categories. But the implementation agents run separately, so they might conflict. Let me restructure:
+
+Task 1: Extract info commands from dispatch (dispatch.rs only)
+Task 2: /commit --dry-run (commands_git.rs only)  
+Task 3: Extract session commands from dispatch (dispatch.rs only — but this runs AFTER task 1, so it should see task 1's changes)
+
+Actually, the tasks are independent implementation agents — they might run in parallel or sequentially. If both touch dispatch.rs, the second one might conflict. Let me make Task 3 something different.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the /diff command? Does it support --… (2 lines)  ▶ $ sed -n '1,50p' src/commands_git.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.8s (2 ✓)
+
+OK, let me reconsider Task 3. The tasks run sequentially (task_01, task_02, task_03), so Task 3 can build on Task 1's changes to dispatch.rs. But to be safe and keep each task independent, let me pick something for Task 3 that doesn't overlap:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's any "smart retry" or "retry with differen… (3 lines)  ▶ $ # How about improving the safety module? Let me check what p… (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check dispatch.rs for unwrap() in the dispatch_command fun… (2 lines) ✓ (3ms)
+  3 tools completed in 4.2s (3 ✓)
+
+No unwraps in dispatch.rs — good. Let me think about what's actually high-value for Task 3:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about the proactive_compact feature? Is it actually h… (2 lines)  ▶ $ # Let me check if we have any way to show "what changed this… (2 lines) ✓ (7ms)
+ ✓ (16ms)
+  ▶ $ # Check the format_exit_summary function (2 lines)  ▶ $ sed -n '200,260p' src/commands_retry.rs ✓ (4ms)
+ ✓ (3ms)
+  4 tools completed in 4.7s (4 ✓)
+
+OK. I have clarity now. Here's my final plan:
+
+1. Task 1: Extract info-command dispatch — Pull Version, Status, Tokens, Cost, Profile, Tips, Changelog, Evolution out of dispatch_command into a dispatch_info helper. This is the first step to taming the 751-line monster. Touches only `dispatch.rs`.
+
+2. Task 2: Add `/commit --dry-run` preview — Let users preview what /commit ai would generate without actually committing. Practical, user-facing feature that reduces the "will this message be right?" anxiety. Touches commands_git.rs and help_data.rs.
+
+3. **Task 3: Extract session-command dispatch** — Continue splitting dispatch_command by pulling out Save, Load, Stash, Fork, Checkpoint, History, Marks, Search, Changes, Export, Mark, Jump, Compact, Clear, ClearForce into dispatch_session. This runs after Task 1, so it builds on that work. Touches only `dispatch.rs`.
+
+Now let me write the task files:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (70 lines) ✓ (47.3s)
+  ▶ write session_plan/task_02.md (68 lines) ✓ (47.1s)
+  2 tools completed in 1m 54s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
