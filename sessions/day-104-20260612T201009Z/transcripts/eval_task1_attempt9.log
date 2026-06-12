@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate the changes quickly and thoroughly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.5s)
+ ✓ (36.8s)
+  2 tools completed in 38.5s (2 ✓)
+
+Tests pass (88 passed), clippy is clean. Let me now review the changes for correctness:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat ✓ (5ms)
+
+Let me verify the three changes are sound:
+
+1. **prompt_retry.rs - new recovery hints for list_files, web_search, sub_agent**: These are straightforward additions to the match arms, providing actionable hints. The structure matches the existing pattern exactly.
+
+2. **`tool_wrappers.rs` - AutoCheckTool fix**: Changed from appending check notice to ALL text blocks to only the LAST text block. This is a genuine improvement — if a tool returns multiple text content blocks, the previous code would duplicate the error notice in each one, wasting context tokens. The new code uses rposition correctly and has a fallback for no text blocks.
+
+3. **tool_wrappers.rs - RecoveryHintTool for non-Failed errors**: Previously, NotFound, InvalidArgs, and Cancelled errors recorded failures but didn't attach recovery hints. Now they do. The implementation correctly handles each variant, converting Cancelled (which has no message) to Failed with the hint. The exhaustive match with a fallback e => Err(e) is safe.
+
+All three changes are self-contained improvements to error recovery, logically correct, and don't introduce regressions. No doc updates needed — these are internal behavior improvements, not user-facing feature changes.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (36.0s)
+
+**Verdict: PASS** — All three changes are correct, well-scoped improvements to tool error recovery. Tests pass, clippy is clean, and the changes follow existing code patterns faithfully.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

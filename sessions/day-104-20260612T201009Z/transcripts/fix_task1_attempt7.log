@@ -1,0 +1,216 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the codebase and identifying a high-impact improvement. Let me read the source code systematically.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 8.5s (4 ✓)
+
+Let me look at the recently changed files and areas with potential improvements:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -10 ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs | sort -rn | head… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.4s)
+  3 tools completed in 17.9s (3 ✓)
+
+Good, it's clean. Let me look at the tool_wrappers.rs since it's a key file in the hot path — every tool call goes through it:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 57s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 58s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (47.8s)
+  3 tools completed in 4m 55s (3 ✓)
+
+Let me look more carefully at specific areas:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_recovery_hint" src… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:95..165 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me look at RecoveryHintTool more closely to understand the flow:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:640..810 ✓ (1ms)
+
+Now let me look for the most impactful improvement. Let me check the `AutoCheckTool` more closely — the bug about appending check notices to ALL text blocks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:546..646 ✓ (1ms)
+
+Now let me look at the auto-retry and how recovery hints integrate with it:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_retry\|MAX_AUTO_RE… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:55..105 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me think about the most impactful improvement. Let me look at what the AutoCheckTool bug really is and also look at the looks_incomplete heuristic in the REPL:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_incomplete" src/r… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1087..1287 ✓ (1ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Let me now identify the most impactful improvement. Let me look at how `RecoveryHintTool interacts with the non-Failed` error types and what tools actually have recovery hints:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "list_files\|web_search\… ✓ (3ms)
+
+Now I have a clear picture. Let me identify the most impactful improvement:
+
+**The `AutoCheckTool` duplicates the check notice into EVERY text content block** (lines 614-623 in tool_wrappers.rs). When a tool result has multiple text blocks, the same error output gets appended to each one, wasting context tokens and confusing the agent. This is a real bug in the hot path.
+
+Additionally, tool_recovery_hint is missing coverage for list_files, `web_search, and sub_agent` — tools that agents use frequently. And the RecoveryHintTool doesn't add hints to non-Failed errors even though it increments the counter, creating an asymmetry.
+
+Let me implement these fixes:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.2s (2 ✓)
+
+The improvement plan:
+
+1. Fix AutoCheckTool: Append the check notice only to the LAST text block (not all blocks) — avoids wasting context tokens with duplicated error output.
+2. **Extend tool_recovery_hint**: Add specific hints for list_files, web_search, and sub_agent tools.
+3. Fix RecoveryHintTool non-Failed error handling: Add recovery hints to `NotFound, InvalidArgs, and Cancelled` errors too, since the counter is already being incremented.
+4. **Add tests for all changes.**
+
+Let me start:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:600..635 ✓ (0ms)
+
+### Fix 1: AutoCheckTool — append check notice only to the last text block
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (13 → 22 lines)
+            let check_notice = format!("\n\n⚠ Auto-check failed ({check_cmd}):\n{truncated_output}");
+    
+  -         // Append the check notice to each text content block
+  -         let new_content = result
+  -             .content
+  -             .into_iter()
+  -             .map(|c| match c {
+  -                 yoagent::Content::Text { text } => yoagent::Content::Text {
+  +         // Append the check notice to the last text block only (not all blocks)
+  +         // to avoid duplicating the same error output across multiple content blocks,
+  +         // which wastes context window tokens and confuses the agent.
+  +         let mut content: Vec<yoagent::Content> = result.content;
+  +         let last_text_idx = content
+  +             .iter()
+  +             .rposition(|c| matches!(c, yoagent::Content::Text { .. }));
+  +         if let Some(idx) = last_text_idx {
+  +             if let yoagent::Content::Text { text } = &content[idx] {
+  +                 content[idx] = yoagent::Content::Text {
+                        text: format!("{text}{check_notice}"),
+  -                 },
+  ... (12 more lines)
+ ✓ (51.5s)
+            let check_notice = format!("\n\n⚠ Auto-check failed ({check_cmd}):\n{truncated_output}");
+    
+  -         // Append the check notice to each text content block
+  -         let new_content = result
+  -             .content
+  -             .into_iter()
+  -             .map(|c| match c {
+  -                 yoagent::Content::Text { text } => yoagent::Content::Text {
+  ... (13 more lines)
+
+### Fix 2: Extend tool_recovery_hint with missing tool coverage
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (5 → 18 lines)
+                    "Try a simpler command: break the command into smaller steps, \
+                     check if the binary exists with `which <cmd>`, or try an alternative \
+                     tool (e.g., read_file instead of cat, search instead of grep)."
+  +             }
+  +             "list_files" => {
+  +                 "Try bash instead: use `ls -la <path>` for detailed listing, \
+  +                  `find . -name '<pattern>'` for name search, or `find . -type f -maxdepth 2` \
+  +                  for directory exploration."
+  +             }
+  +             "web_search" => {
+  +                 "Try rephrasing the query with different keywords, or use bash with \
+  +                  `curl` to fetch a specific URL directly."
+  +             }
+  +             "sub_agent" => {
+  +                 "The sub-agent failed. Try doing the task directly instead of delegating, \
+  +                  or break it into smaller, more focused sub-tasks."
+                }
+ ✓ (50.9s)
+                    "Try a simpler command: break the command into smaller steps, \
+                     check if the binary exists with `which <cmd>`, or try an alternative \
+                     tool (e.g., read_file instead of cat, search instead of grep)."
+  +             }
+  +             "list_files" => {
+  +                 "Try bash instead: use `ls -la <path>` for detailed listing, \
+  +                  `find . -name '<pattern>'` for name search, or `find . -type f -maxdepth 2` \
+  +                  for directory exploration."
+  ... (9 more lines)
+
+Now add attempt 1 (diagnostic) hints for the same tools:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:144..174 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (3 → 15 lines)
+                "search" => "The search failed. Try a simpler pattern or check the path.",
+                "rename_symbol" => "The rename failed. Verify the symbol exists with search first.",
+  +             "list_files" => {
+  +                 "The file listing failed. Check that the directory path exists, or try \
+  +                  a parent directory."
+  +             }
+  +             "web_search" => {
+  +                 "The web search failed. Try a shorter or simpler query with \
+  +                  different keywords."
+  +             }
+  +             "sub_agent" => {
+  +                 "The sub-agent failed. Check the task description for clarity and \
+  +                  ensure the task is self-contained."
+  +             }
+                _ => "The tool call failed. Try a different approach.",
+ ✓ (50.9s)
+                "search" => "The search failed. Try a simpler pattern or check the path.",
+                "rename_symbol" => "The rename failed. Verify the symbol exists with search first.",
+  +             "list_files" => {
+  +                 "The file listing failed. Check that the directory path exists, or try \
+  +                  a parent directory."
+  +             }
+  +             "web_search" => {
+  +                 "The web search failed. Try a shorter or simpler query with \
+  ... (7 more lines)
+  2 tools completed in 58.4s (2 ✓)
+
+### Fix 3: RecoveryHintTool — add hints to non-Failed errors
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs:760..795 ✓ (1ms)
+
+Now let me check what ToolError variants are available:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ToolError" ~/.cargo/re… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A 20 "pub enum ToolError" … ✓ (3ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Good. Now let me update the non-Failed error handling to also include hints. For NotFound and InvalidArgs which carry a String message, we can enrich them:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (5 → 33 lines)
+                Err(other) => {
+  -                 // Non-Failed errors (NotFound, InvalidArgs, Cancelled) pass through
+  -                 // but still count as failures for escalation purposes
+  -                 self.tracker.record_failure(&tool_name, &target);
+  -                 Err(other)
+  +                 // Non-Failed errors (NotFound, InvalidArgs, Cancelled) also get
+  +                 // recovery hints — the counter is already being incremented, so
+  +                 // the agent should see the same escalating advice.
+  +                 let attempt = self.tracker.record_failure(&tool_name, &target);
+  +                 let hint = crate::prompt_retry::tool_recovery_hint(&tool_name, attempt);
+  +                 let file_prefix = if attempt >= 2 && target != "_" {
+  +                     format!(
+  +                         "You've failed to {verb} '{target}' {attempt} times. ",
+  +                         verb = tool_name.replace('_', " "),
+  +                     )
+  +                 } else {
+  +                     String::new()
+  +                 };
+  +                 let suffix = format!("\n\n💡 Recovery hint: {file_prefix}{hint}");
+  +                 match other {
+  ... (17 more lines)
