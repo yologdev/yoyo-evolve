@@ -1,0 +1,181 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I need to read the source code, identify an impactful improvement, implement it, and ensure it passes all checks. Let me start by understanding the codebase and finding a meaningful improvement.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 10s)
+
+Good analysis. Let me look at the most impactful improvements and implement them. Let me start by examining the specific code areas.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 10.6s (4 ✓)
+
+Let me examine each area:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search '\"\" \| \"all\"' in src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs:1370..1470 ✓ (1ms)
+  2 tools completed in 5.7s (2 ✓)
+
+The "" and "all" arms are identical. Let me fix that:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (72 → 47 lines)
+  -         "" => {
+  +         "" | "all" => {
+                // Auto-detect lint+test as separate phases
+                match detect_watch_all_phases() {
+                    Some(phases) => {
+  ···
+                    println!("{DIM}  👀 Watch mode: OFF{RESET}\n");
+                }
+            },
+  -         "all" => {
+  -             // Auto-detect lint + test as separate phases
+  -             match detect_watch_all_phases() {
+  -                 Some(phases) => {
+  -                     let display = phases.join(" && ");
+  -                     let phase_refs: Vec<&str> = phases.iter().map(|s| s.as_str()).collect();
+  -                     set_watch_commands(&phase_refs);
+  -                     if phases.len() > 1 {
+  -                         println!(
+  -                             "{GREEN}  👀 Watch mode ON — {n} phases: `{display}`{RESET}\n",
+  -                             n = phases.len()
+  ... (14 more lines)
+ ✓ (1m 3s)
+  -         "" => {
+  +         "" | "all" => {
+                // Auto-detect lint+test as separate phases
+                match detect_watch_all_phases() {
+                    Some(phases) => {
+  ···
+                    println!("{DIM}  👀 Watch mode: OFF{RESET}\n");
+                }
+  ... (13 more lines)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 16s (2 ✓)
+
+Now let's fix the is_err()/unwrap() anti-pattern in commands_skill.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_err\(\).*unwrap\(\)' in src/commands_skill.rs ✓ (3ms)
+  ▶ read src/commands_skill.rs:278..288 ✓ (1ms)
+  ▶ read src/commands_skill.rs:1570..1580 ✓ (1ms)
+  ▶ edit src/commands_skill.rs (1 → 1 lines)
+  -     if gh_check.is_err() || !gh_check.unwrap().success() {
+  +     if !gh_check.is_ok_and(|s| s.success()) {
+ ✓ (1m 5s)
+  -     if gh_check.is_err() || !gh_check.unwrap().success() {
+  +     if !gh_check.is_ok_and(|s| s.success()) {
+  ▶ edit src/commands_skill.rs (1 → 1 lines)
+  -         if status.is_err() || !status.unwrap().success() {
+  +         if !status.is_ok_and(|s| s.success()) {
+ ✓ (1m 3s)
+  -         if status.is_err() || !status.unwrap().success() {
+  +         if !status.is_ok_and(|s| s.success()) {
+  5 tools completed in 2m 24s (5 ✓)
+
+Now let me search for the same anti-pattern across the entire codebase:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'is_err\(\).*unwrap\(\)' in src ✓ (9ms)
+
+Good, those were the only two. Let me also check for the reverse pattern:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search '\.is_ok\(\).*\.unwrap\(\)' in src ✓ (8ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let's fix the regex pattern duplication in commands_file.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'LazyLock.*Vec.*Regex"' in src/commands_file.rs ✓ (3ms)
+  ▶ search 'LazyLock"' in src/commands_file.rs ✓ (3ms)
+  ▶ search 'Regex"' in src/commands_file.rs ✓ (3ms)
+  ▶ search 'Regex' in src/commands_file.rs ✓ (3ms)
+  ▶ read src/commands_file.rs:1005..1105 ✓ (2ms)
+  5 tools completed in 12.2s (5 ✓)
+
+Now I'll deduplicate by extracting the shared pattern matching logic into a common function:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (83 → 67 lines)
+  - /// Extract file paths from compiler/linter output.
+  - ///
+  - /// Recognises several common formats:
+  - /// - Rust:         `--> src/foo.rs:42:10`
+  - /// - Python:       `File "src/foo.py", line 42`
+  - /// - TypeScript:   `src/foo.ts(42,10)`
+  - /// - Go:         `./foo.go:42:10`
+  - /// - Generic:    `path/file.ext:LINE`
+  + /// Compile patterns once — this function is called on every watch
+  + /// iteration, so avoiding repeated Regex::new() matters.
+    ///
+  - /// Results are deduplicated, sorted, and filtered to only files that
+  - /// exist on disk.
+  - pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+  + /// Shared by both `extract_file_paths_from_output` (production, filters
+  + /// to files that exist on disk) and `extract_file_path_candidates`
+  + /// (test-only, no filesystem filter).
+  + fn extract_file_path_candidates_from(output: &str) -> Vec<String> {
+        use std::collections::BTreeSet;
+  -     use std::path::Path;
+  ... (75 more lines)
+ ✗ (4ms)
+    │ old_text not found in src/commands_file.rs.
+  ▶ read src/commands_file.rs:1000..1080 ✓ (1ms)
+  ▶ read src/commands_file.rs:1079..1084 ✓ (1ms)
+  3 tools completed in 7.8s (2 ✓, 1 ✗)
+
+Now let me use the exact text:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (82 → 65 lines)
+    /// - Go:         `./foo.go:42:10`
+    /// - Generic:    `path/file.ext:LINE`
+    ///
+  - /// Results are deduplicated, sorted, and filtered to only files that
+  - /// exist on disk.
+  - pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+  + /// Results are deduplicated and sorted.  Shared by the public
+  + /// `extract_file_paths_from_output` (filters to existing files) and
+  + /// the test-only `extract_file_path_candidates` (no filesystem check).
+  + fn extract_file_path_candidates_from(output: &str) -> Vec<String> {
+        use std::collections::BTreeSet;
+  -     use std::path::Path;
+        use std::sync::LazyLock;
+    
+        use regex::Regex;
+  ···
+        for pat in PATTERNS.iter() {
+            for cap in pat.captures_iter(output) {
+                if let Some(m) = cap.get(1) {
+  -                 let p = m.as_str().to_string();
+  ... (52 more lines)
+ ✓ (1m 3s)
+    /// - Go:         `./foo.go:42:10`
+    /// - Generic:    `path/file.ext:LINE`
+    ///
+  - /// Results are deduplicated, sorted, and filtered to only files that
+  - /// exist on disk.
+  - pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+  + /// Results are deduplicated and sorted.  Shared by the public
+  + /// `extract_file_paths_from_output` (filters to existing files) and
+  ... (13 more lines)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 1m 15s (2 ✓)
+
+Now let me also search for additional `is_err()/unwrap()` patterns across the codebase that we might have missed, and other similar anti-patterns:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search 'if.*\.is_err\(\).*\|\|.*\.unwrap\(\)"' in src ✓ (32ms)
+
+The search was too broad. Let me do a more targeted search:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'is_err().*unwrap()' src/ 2>/dev/null; grep -rn '\.is_err()' src/ | gre… ✓ (16ms)
+
+Good, no more instances of the anti-pattern. Now let me run the full check:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (763ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (159ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1
