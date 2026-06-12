@@ -117,19 +117,29 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              files touched, and topics in the conversation — without changing anything.",
         ),
         "commit" => Some(
-            "/commit [message] — Commit staged changes\n\n\
+            "/commit [message] [--dry-run] — Commit staged changes\n\n\
              Usage:\n\
              \x20 /commit              Generate a heuristic commit message from the diff\n\
              \x20 /commit --ai         Use AI to generate a descriptive commit message\n\
-             \x20 /commit <message>    Commit with the given message\n\n\
+             \x20 /commit <message>    Commit with the given message\n\
+             \x20 /commit --dry-run    Preview what would be committed without committing\n\
+             \x20 /commit ai --dry-run Generate AI message and preview without committing\n\n\
              Without arguments, a heuristic message is generated from the diff.\n\
              With --ai (or --generate), a side agent analyzes the diff and writes\n\
              a conventional-commit-style message describing the actual changes.\n\
              Both modes show the suggestion and let you accept (y), reject (n),\n\
              or edit (e) before committing.\n\n\
+             Flags:\n\
+             \x20 --dry-run  Show what would be committed without actually committing\n\
+             \x20 --ai       Use AI to generate the commit message\n\
+             \x20 -a, --all  Auto-stage tracked modified files before committing\n\
+             \x20 --amend    Amend the last commit instead of creating a new one\n\n\
              Examples:\n\
              \x20 /commit\n\
              \x20 /commit --ai\n\
+             \x20 /commit --dry-run\n\
+             \x20 /commit ai --dry-run\n\
+             \x20 /commit --dry-run -m fix: resolve off-by-one\n\
              \x20 /commit fix: resolve off-by-one in parser",
         ),
         "cost" => Some(

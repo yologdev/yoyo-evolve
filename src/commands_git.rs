@@ -1015,6 +1015,8 @@ pub(crate) struct CommitArgs {
     pub ai: bool,
     /// Amend the last commit instead of creating a new one (`--amend`).
     pub amend: bool,
+    /// Preview what would be committed without actually committing (`--dry-run`).
+    pub dry_run: bool,
     /// The remaining commit message (if any) after stripping flags.
     pub message: String,
 }
@@ -1026,6 +1028,7 @@ pub(crate) fn parse_commit_args(arg: &str) -> CommitArgs {
     let mut auto_stage = false;
     let mut ai = false;
     let mut amend = false;
+    let mut dry_run = false;
     let mut message_parts: Vec<&str> = Vec::new();
 
     for token in arg.split_whitespace() {
@@ -1033,6 +1036,7 @@ pub(crate) fn parse_commit_args(arg: &str) -> CommitArgs {
             "-a" | "--all" => auto_stage = true,
             "--ai" | "--generate" => ai = true,
             "--amend" => amend = true,
+            "--dry-run" => dry_run = true,
             other => message_parts.push(other),
         }
     }
@@ -1041,6 +1045,7 @@ pub(crate) fn parse_commit_args(arg: &str) -> CommitArgs {
         auto_stage,
         ai,
         amend,
+        dry_run,
         message: message_parts.join(" "),
     }
 }
@@ -1105,12 +1110,73 @@ fn get_last_commit_message() -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// Display a dry-run preview of what would be committed.
+///
+/// Shows the diff stat (staged if available, otherwise unstaged + untracked)
+/// and an optional commit message. Returns without running `git commit`.
+fn print_dry_run_preview(message: Option<&str>) {
+    // Prefer staged diff stat; fall back to unstaged + untracked
+    let stat_output = run_git(&["diff", "--cached", "--stat"])
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+
+    let stat = if let Some(s) = stat_output {
+        s
+    } else {
+        let mut combined = String::new();
+        if let Ok(unstaged) = run_git(&["diff", "--stat"]) {
+            if !unstaged.trim().is_empty() {
+                combined.push_str(&unstaged);
+            }
+        }
+        if let Ok(untracked) = run_git(&["ls-files", "--others", "--exclude-standard"]) {
+            for f in untracked.lines() {
+                let f = f.trim();
+                if !f.is_empty() {
+                    combined.push_str(&format!("  {f} (new)\n"));
+                }
+            }
+        }
+        combined
+    };
+
+    println!("\n{BOLD}  Dry run — would commit:{RESET}");
+    if stat.trim().is_empty() {
+        println!("{DIM}  (no changes detected){RESET}");
+    } else {
+        for line in stat.lines() {
+            println!("  {DIM}{line}{RESET}");
+        }
+    }
+
+    if let Some(msg) = message {
+        if !msg.is_empty() {
+            println!("\n  {DIM}Message:{RESET} \"{BOLD}{msg}{RESET}\"");
+        }
+    }
+
+    println!("\n  {DIM}(use /commit without --dry-run to actually commit){RESET}\n");
+}
+
 pub fn handle_commit(input: &str) {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
     let parsed = parse_commit_args(arg);
 
     // Auto-stage tracked files when `-a`/`--all` is present
     if parsed.auto_stage && !auto_stage_tracked() {
+        return;
+    }
+
+    if parsed.dry_run {
+        let msg = if parsed.message.is_empty() {
+            // Generate a heuristic message from the staged diff for preview
+            get_staged_diff()
+                .filter(|d| !d.trim().is_empty())
+                .map(|d| generate_commit_message(&d))
+        } else {
+            Some(parsed.message.clone())
+        };
+        print_dry_run_preview(msg.as_deref());
         return;
     }
 
@@ -1327,6 +1393,10 @@ pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
     }
 
     if !parsed.message.is_empty() {
+        if parsed.dry_run {
+            print_dry_run_preview(Some(&parsed.message));
+            return;
+        }
         // User gave a message alongside --ai — just use it directly
         let (ok, output) = run_git_commit_with_trailer(&parsed.message);
         if ok {
@@ -1381,6 +1451,12 @@ pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
     } else {
         message
     };
+
+    if parsed.dry_run {
+        print_dry_run_preview(Some(&suggested));
+        println!("  {DIM}(dry run — use /commit ai to commit with this message){RESET}\n");
+        return;
+    }
 
     println!("{DIM}  Suggested commit message:{RESET}");
     println!("    {BOLD}{suggested}{RESET}");
@@ -3325,5 +3401,56 @@ mod tests {
         assert!(args.amend);
         assert!(!args.auto_stage);
         assert_eq!(args.message, "fix the bug");
+    }
+
+    #[test]
+    fn parse_commit_args_dry_run() {
+        let args = parse_commit_args("--dry-run");
+        assert!(args.dry_run);
+        assert!(!args.auto_stage);
+        assert!(!args.ai);
+        assert!(!args.amend);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_ai_dry_run() {
+        let args = parse_commit_args("--ai --dry-run");
+        assert!(args.dry_run);
+        assert!(args.ai);
+        assert!(!args.auto_stage);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_dry_run_with_message() {
+        let args = parse_commit_args("--dry-run fix the bug");
+        assert!(args.dry_run);
+        assert!(!args.ai);
+        assert_eq!(args.message, "fix the bug");
+    }
+
+    #[test]
+    fn parse_commit_args_dry_run_auto_stage() {
+        let args = parse_commit_args("-a --dry-run");
+        assert!(args.dry_run);
+        assert!(args.auto_stage);
+        assert_eq!(args.message, "");
+    }
+
+    #[test]
+    fn parse_commit_args_no_dry_run() {
+        let args = parse_commit_args("fix the bug");
+        assert!(!args.dry_run);
+        assert_eq!(args.message, "fix the bug");
+    }
+
+    #[test]
+    fn parse_commit_args_all_flags_with_dry_run() {
+        let args = parse_commit_args("--ai -a --dry-run fix it");
+        assert!(args.dry_run);
+        assert!(args.auto_stage);
+        assert!(args.ai);
+        assert_eq!(args.message, "fix it");
     }
 }
