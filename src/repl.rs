@@ -1129,8 +1129,25 @@ pub(crate) fn looks_incomplete(text: &str) -> bool {
     }
 
     // ── Pattern 3: response ends with "..." suggesting continuation ──
+    // Only trigger if the tail also contains signals of ongoing work.
+    // LLMs commonly end prose with "..." (e.g. "handles errors, logging, etc...")
+    // without intending to continue — that's a rhetorical trailing off, not a cutoff.
     if text.ends_with("...") || text.ends_with("…") {
-        return true;
+        let fence_count = text.matches("```").count();
+        let has_work_signal = tail_lower.contains("remaining")
+            || tail_lower.contains("need to")
+            || tail_lower.contains("i'll ")
+            || tail_lower.contains("i\u{2019}ll ") // smart apostrophe
+            || tail_lower.contains("let me ")
+            || tail_lower.contains("next")
+            || tail_lower.contains("more things")
+            || tail_lower.contains("more to")
+            || tail_lower.contains("moving on")
+            || tail_lower.contains("continue")
+            || fence_count % 2 == 1;
+        if has_work_signal {
+            return true;
+        }
     }
 
     // ── Pattern 4: numbered steps where later steps haven't been addressed ──
@@ -1195,19 +1212,30 @@ pub(crate) fn looks_incomplete(text: &str) -> bool {
     }
 
     // ── Pattern 7: ordinal progression without completion ──
-    // "first" or "second" in the tail without "finally" or "lastly" suggests more steps coming.
+    // "first" used as a step enumeration marker (not just a discourse marker)
+    // requires corroborating intent signals: "then", "next", "i'll", "need to", etc.
     if (tail_lower.contains("first,") || tail_lower.contains("first "))
         && !tail_lower.contains("finally")
         && !tail_lower.contains("lastly")
         && !tail_lower.contains("last,")
     {
-        // Only trigger if "second" is absent — if both "first" and "second" are present,
-        // check that "third" or "finally" is missing
-        if !tail_lower.contains("second") {
-            return true;
-        }
-        if !tail_lower.contains("third") && !tail_lower.contains("finally") {
-            return true;
+        // Require a forward-looking signal to distinguish "First, I'll fix X, then Y"
+        // from "First, here's what I changed" (discourse marker, no future intent).
+        let has_forward_intent = tail_lower.contains("then ")
+            || tail_lower.contains("next")
+            || tail_lower.contains("need to")
+            || tail_lower.contains("i'll ")
+            || tail_lower.contains("i\u{2019}ll ")
+            || tail_lower.contains("let me ")
+            || tail_lower.contains("second");
+
+        if has_forward_intent {
+            if !tail_lower.contains("second") {
+                return true;
+            }
+            if !tail_lower.contains("third") && !tail_lower.contains("finally") {
+                return true;
+            }
         }
     }
 
@@ -1782,8 +1810,30 @@ mod tests {
 
     #[test]
     fn test_looks_incomplete_trailing_ellipsis() {
+        // Ellipsis with corroborating continuation signals — should trigger
         assert!(looks_incomplete("I'll update these files next..."));
         assert!(looks_incomplete("There are a few more things to handle…"));
+        assert!(looks_incomplete("I need to fix the remaining modules..."));
+        assert!(looks_incomplete("Let me continue with the next file..."));
+    }
+
+    #[test]
+    fn test_looks_incomplete_trailing_ellipsis_prose_no_trigger() {
+        // Ellipsis at end of completed prose — should NOT trigger
+        assert!(!looks_incomplete(
+            "The function handles errors, logging, caching..."
+        ));
+        assert!(!looks_incomplete(
+            "It supports JSON, YAML, TOML, and other formats..."
+        ));
+        assert!(!looks_incomplete(
+            "There are several approaches to consider..."
+        ));
+        assert!(!looks_incomplete("Everything works now: auth, DB, API..."));
+        // Short trailing-off summary
+        assert!(!looks_incomplete(
+            "The changes cover validation, parsing, serialization..."
+        ));
     }
 
     #[test]
@@ -1917,6 +1967,21 @@ mod tests {
         ));
         assert!(!looks_incomplete(
             "First, I fixed the parser. Second, the tests. Finally, the documentation. All done!"
+        ));
+    }
+
+    #[test]
+    fn test_looks_incomplete_ordinal_completed_work() {
+        // "First" used as a discourse marker in completed explanations —
+        // should NOT trigger when work is clearly done
+        assert!(!looks_incomplete(
+            "First, here's what I changed: the parser now handles JSON correctly."
+        ));
+        assert!(!looks_incomplete(
+            "First off, the build passes. All tests are green."
+        ));
+        assert!(!looks_incomplete(
+            "The first thing to note is that this approach works well."
         ));
     }
 
