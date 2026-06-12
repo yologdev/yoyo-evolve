@@ -1005,11 +1005,11 @@ fn detect_src_prefix(path: &str) -> &str {
 /// - Go:         `./foo.go:42:10`
 /// - Generic:    `path/file.ext:LINE`
 ///
-/// Results are deduplicated, sorted, and filtered to only files that
-/// exist on disk.
-pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+/// Results are deduplicated and sorted.  Shared by the public
+/// `extract_file_paths_from_output` (filters to existing files) and
+/// the test-only `extract_file_path_candidates` (no filesystem check).
+fn extract_file_path_candidates_from(output: &str) -> Vec<String> {
     use std::collections::BTreeSet;
-    use std::path::Path;
     use std::sync::LazyLock;
 
     use regex::Regex;
@@ -1036,14 +1036,21 @@ pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
     for pat in PATTERNS.iter() {
         for cap in pat.captures_iter(output) {
             if let Some(m) = cap.get(1) {
-                let p = m.as_str().to_string();
-                seen.insert(p);
+                seen.insert(m.as_str().to_string());
             }
         }
     }
 
-    // Filter to files that actually exist.
-    seen.into_iter()
+    seen.into_iter().collect()
+}
+
+/// Extract file paths from compiler/linter output, filtered to only
+/// files that actually exist on disk.
+pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
+    use std::path::Path;
+
+    extract_file_path_candidates_from(output)
+        .into_iter()
         .filter(|p| Path::new(p).is_file())
         .collect()
 }
@@ -1053,31 +1060,7 @@ pub fn extract_file_paths_from_output(output: &str) -> Vec<String> {
 /// matching independently of on-disk state.
 #[cfg(test)]
 fn extract_file_path_candidates(output: &str) -> Vec<String> {
-    use std::collections::BTreeSet;
-    use std::sync::LazyLock;
-
-    use regex::Regex;
-
-    static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-        vec![
-            Regex::new(r"-->\s+([\w./_\-\\]+\.\w+):\d+").unwrap(),
-            Regex::new(r#"File\s+"([\w./_\-\\]+\.\w+)",\s+line\s+\d+"#).unwrap(),
-            Regex::new(r"([\w./_\-\\]+\.\w+)\(\d+[,)]").unwrap(),
-            Regex::new(r"([\w._\-\\]*[/\\][\w./_\-\\]+\.\w+):\d+").unwrap(),
-            Regex::new(r"(\./[\w./_\-\\]+\.\w+):\d+").unwrap(),
-        ]
-    });
-
-    let mut seen = BTreeSet::new();
-    for pat in PATTERNS.iter() {
-        for cap in pat.captures_iter(output) {
-            if let Some(m) = cap.get(1) {
-                seen.insert(m.as_str().to_string());
-            }
-        }
-    }
-
-    seen.into_iter().collect()
+    extract_file_path_candidates_from(output)
 }
 
 #[cfg(test)]

@@ -1371,7 +1371,7 @@ pub fn handle_watch(input: &str) {
     let arg = input.strip_prefix("/watch").unwrap_or("").trim();
 
     match arg {
-        "" => {
+        "" | "all" => {
             // Auto-detect lint+test as separate phases
             match detect_watch_all_phases() {
                 Some(phases) => {
@@ -1418,31 +1418,6 @@ pub fn handle_watch(input: &str) {
                 println!("{DIM}  👀 Watch mode: OFF{RESET}\n");
             }
         },
-        "all" => {
-            // Auto-detect lint + test as separate phases
-            match detect_watch_all_phases() {
-                Some(phases) => {
-                    let display = phases.join(" && ");
-                    let phase_refs: Vec<&str> = phases.iter().map(|s| s.as_str()).collect();
-                    set_watch_commands(&phase_refs);
-                    if phases.len() > 1 {
-                        println!(
-                            "{GREEN}  👀 Watch mode ON — {n} phases: `{display}`{RESET}\n",
-                            n = phases.len()
-                        );
-                    } else {
-                        println!(
-                            "{GREEN}  👀 Watch mode ON — will run `{display}` after agent edits{RESET}\n"
-                        );
-                    }
-                }
-                None => {
-                    println!("{DIM}  No lint or test command detected. Specify one:{RESET}");
-                    println!("{DIM}    /watch cargo clippy && cargo test{RESET}");
-                    println!("{DIM}    /watch npm run lint && npm test{RESET}\n");
-                }
-            }
-        }
         "lint" => {
             // Auto-detect lint-only command
             let dir = std::env::current_dir().unwrap_or_default();

@@ -279,7 +279,7 @@ fn handle_skill_search(query: Option<&str>) {
         .stderr(std::process::Stdio::null())
         .status();
 
-    if gh_check.is_err() || !gh_check.unwrap().success() {
+    if !gh_check.is_ok_and(|s| s.success()) {
         eprintln!("{RED}  gh CLI not found{RESET}");
         eprintln!(
             "{DIM}  install the GitHub CLI to search for skills: https://cli.github.com/{RESET}\n"
@@ -1571,7 +1571,7 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .status();
 
-        if status.is_err() || !status.unwrap().success() {
+        if !status.is_ok_and(|s| s.success()) {
             // git not available, skip test
             return;
         }
