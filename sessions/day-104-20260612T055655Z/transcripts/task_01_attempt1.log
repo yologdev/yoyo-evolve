@@ -1,0 +1,236 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.5s)
+  2 tools completed in 19.2s (2 ✓)
+
+Good, clean build. Let me look for patterns of inefficiency, duplication, or missing error handling in the most critical paths.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "unwrap()" src/ | grep … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.clone()" src/prompt.… ✓ (3ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Let me focus on high-impact areas. Let me look at the tool output handling — that's a critical path that affects every user interaction.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|HACK\|XXX… ✓ (8ms)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (1m 26s)
+  2 tools completed in 1m 39s (2 ✓)
+
+Excellent analysis. The looks_incomplete false positive on trailing ... is a clear high-impact fix — it wastes tokens, money, and confuses users. Let me implement this.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_incomplete" src/r… ✓ (4ms)
+  ▶ read src/repl.rs:1087..1247 ✓ (1ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me read the existing tests to understand what behavior needs to be preserved:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1745..1925 ✓ (2ms)
+
+Now I have a clear picture. Let me look at the two existing test cases for trailing ellipsis — both contain continuation signals ("I'll update" and "things to handle"):
+
+```
+"I'll update these files next..."  — has "i'll update" (action phrase)
+"There are a few more things to handle…"  — has "handle" which is borderline
+```
+
+Wait, these tests assert that ... *alone* triggers. But both also contain action phrases. Let me verify the order of pattern checks — Pattern 3 (ellipsis) fires before Pattern 6 (action phrases), so these tests currently pass because of the raw ellipsis check, not because of action phrases. This means my change needs to be careful.
+
+Let me examine the test cases more closely:
+
+• "I'll update these files next..." — contains "i'll update" (action phrase from pattern 6). With my change, this would still trigger because of the action signal.
+• "There are a few more things to handle…" — contains "handle" but NOT "let me handle" / "i'll handle". I need to make sure this still triggers. It has "more things to handle" which is clearly continuation intent.
+
+Let me design a robust fix. I'll make Pattern 3 require corroborating signals:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1780..1800 ✓ (1ms)
+
+Now let me write the tests first (as per the rules), then implement the fix:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1922..2007 ✓ (1ms)
+
+Good. Now I'll write tests first, then implement. Let me add the new tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (5 → 31 lines)
+        #[test]
+        fn test_looks_incomplete_trailing_ellipsis() {
+  +         // Ellipsis with corroborating continuation signals — should trigger
+            assert!(looks_incomplete("I'll update these files next..."));
+            assert!(looks_incomplete("There are a few more things to handle…"));
+  +         assert!(looks_incomplete(
+  +             "I need to fix the remaining modules..."
+  +         ));
+  +         assert!(looks_incomplete("Let me continue with the next file..."));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_looks_incomplete_trailing_ellipsis_prose_no_trigger() {
+  +         // Ellipsis at end of completed prose — should NOT trigger
+  +         assert!(!looks_incomplete(
+  +             "The function handles errors, logging, caching..."
+  +         ));
+  +         assert!(!looks_incomplete(
+  +             "It supports JSON, YAML, TOML, and other formats..."
+  +         ));
+  ... (11 more lines)
+ ✓ (1m 1s)
+        #[test]
+        fn test_looks_incomplete_trailing_ellipsis() {
+  +         // Ellipsis with corroborating continuation signals — should trigger
+            assert!(looks_incomplete("I'll update these files next..."));
+            assert!(looks_incomplete("There are a few more things to handle…"));
+  +         assert!(looks_incomplete(
+  +             "I need to fix the remaining modules..."
+  +         ));
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_looks_incomplete… ✓ (126ms)
+  2 tools completed in 1m 6s (2 ✓)
+
+The tests correctly fail because the current implementation triggers on any trailing .... Now let me implement the fix:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (4 → 21 lines)
+        // ── Pattern 3: response ends with "..." suggesting continuation ──
+  +     // Only trigger if the tail also contains signals of ongoing work.
+  +     // LLMs commonly end prose with "..." (e.g. "handles errors, logging, etc...")
+  +     // without intending to continue — that's a rhetorical trailing off, not a cutoff.
+        if text.ends_with("...") || text.ends_with("…") {
+  -         return true;
+  +         let fence_count = text.matches("```").count();
+  +         let has_work_signal = tail_lower.contains("remaining")
+  +             || tail_lower.contains("need to")
+  +             || tail_lower.contains("i'll ")
+  +             || tail_lower.contains("i\u{2019}ll ") // smart apostrophe
+  +             || tail_lower.contains("let me ")
+  +             || tail_lower.contains("next")
+  +             || tail_lower.contains("more things")
+  +             || tail_lower.contains("more to")
+  +             || tail_lower.contains("moving on")
+  +             || tail_lower.contains("continue")
+  +             || fence_count % 2 == 1;
+  +         if has_work_signal {
+  +             return true;
+  ... (2 more lines)
+ ✓ (1m 4s)
+        // ── Pattern 3: response ends with "..." suggesting continuation ──
+  +     // Only trigger if the tail also contains signals of ongoing work.
+  +     // LLMs commonly end prose with "..." (e.g. "handles errors, logging, etc...")
+  +     // without intending to continue — that's a rhetorical trailing off, not a cutoff.
+        if text.ends_with("...") || text.ends_with("…") {
+  -         return true;
+  +         let fence_count = text.matches("```").count();
+  +         let has_work_signal = tail_lower.contains("remaining")
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_looks_incomplete… ✓ (127ms)
+  2 tools completed in 1m 8s (2 ✓)
+
+Both test suites pass. Now let me also improve Pattern 7 (ordinal false positive on "first") — the sub-agent identified this as another source of false positives. Let me add a test first:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1910..1930 ✓ (1ms)
+  ▶ read src/repl.rs:1948..1978 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me add tests for the Pattern 7 false positives, and also add a test for the Pattern 5 improvement (code fence counting):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (13 → 28 lines)
+            ));
+            assert!(!looks_incomplete(
+                "First, I fixed the parser. Second, the tests. Finally, the documentation. All done!"
+  +         ));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_looks_incomplete_ordinal_completed_work() {
+  +         // "First" used as a discourse marker in completed explanations —
+  +         // should NOT trigger when work is clearly done
+  +         assert!(!looks_incomplete(
+  +             "First, here's what I changed: the parser now handles JSON correctly."
+  +         ));
+  +         assert!(!looks_incomplete(
+  +             "First off, the build passes. All tests are green."
+  +         ));
+  +         assert!(!looks_incomplete(
+  +             "The first thing to note is that this approach works well."
+            ));
+        }
+ ✓ (1m 2s)
+            ));
+            assert!(!looks_incomplete(
+                "First, I fixed the parser. Second, the tests. Finally, the documentation. All done!"
+  +         ));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_looks_incomplete_ordinal_completed_work() {
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_looks_incomplete… ✓ (126ms)
+  2 tools completed in 1m 7s (2 ✓)
+
+Good — the test correctly catches the false positive. Now let me fix Pattern 7. The problem: "First, here's what I changed:" triggers because "first" is present without "second" or "finally". The fix: require a stronger signal that the speaker is enumerating upcoming work items, not just using "first" as a discourse marker.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1238..1258 ✓ (0ms)
+
+Let me look at the Pattern 7 code again in context of the full function:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1213..1238 ✓ (1ms)
+
+The issue with Pattern 7: "first" is extremely common as a discourse marker ("First, here's what I changed"). The pattern triggers whenever "first" appears without "finally"/"second". The fix: require that "first" is used in a context that implies enumeration of upcoming work. The key signal is future intent: "first, I'll..." or "first, let me..." or an explicit ordering marker like "then".
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (16 → 27 lines)
+        // ── Pattern 7: ordinal progression without completion ──
+  -     // "first" or "second" in the tail without "finally" or "lastly" suggests more steps coming.
+  +     // "first" used as a step enumeration marker (not just a discourse marker)
+  +     // requires corroborating intent signals: "then", "next", "i'll", "need to", etc.
+        if (tail_lower.contains("first,") || tail_lower.contains("first "))
+            && !tail_lower.contains("finally")
+            && !tail_lower.contains("lastly")
+            && !tail_lower.contains("last,")
+        {
+  -         // Only trigger if "second" is absent — if both "first" and "second" are present,
+  -         // check that "third" or "finally" is missing
+  -         if !tail_lower.contains("second") {
+  -             return true;
+  -         }
+  -         if !tail_lower.contains("third") && !tail_lower.contains("finally") {
+  -             return true;
+  +         // Require a forward-looking signal to distinguish "First, I'll fix X, then Y"
+  +         // from "First, here's what I changed" (discourse marker, no future intent).
+  +         let has_forward_intent = tail_lower.contains("then ")
+  +             || tail_lower.contains("next")
+  ... (15 more lines)
+ ✓ (1m 4s)
+        // ── Pattern 7: ordinal progression without completion ──
+  -     // "first" or "second" in the tail without "finally" or "lastly" suggests more steps coming.
+  +     // "first" used as a step enumeration marker (not just a discourse marker)
+  +     // requires corroborating intent signals: "then", "next", "i'll", "need to", etc.
+        if (tail_lower.contains("first,") || tail_lower.contains("first "))
+            && !tail_lower.contains("finally")
+            && !tail_lower.contains("lastly")
+            && !tail_lower.contains("last,")
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_looks_incomplete… ✓ (128ms)
+  2 tools completed in 1m 11s (2 ✓)
+
+Both ordinal tests pass. Now let me also improve Pattern 5 (code fence counting) — let me scope it to only check the latter part of the text to avoid false positives from early code blocks:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1180..1195 ✓ (1ms)
+
+Pattern 5 already uses the full text which is actually correct — an odd fence count means an unclosed block. The sub-agent's concern was theoretical (quoted ` in prose). I'll leave this one alone since the fix would be complex and the false positive is rare.
+
+Now let me run the full test suite:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (6.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (48.0s)
+  3 tools completed in 1m 18s (3 ✓)
+
+All 3728 tests pass, clippy clean, formatted. Let me verify the diff looks right:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/repl.rs ✓ (5ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
