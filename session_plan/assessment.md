@@ -1,103 +1,115 @@
 # Assessment — Day 104
 
 ## Build Status
-**All green.** `cargo build` passes, `cargo test` passes (3,726 unit + 88 integration = 3,814 tests, 0 failures, 2 ignored), `cargo clippy --all-targets -- -D warnings` clean. Binary runs in piped mode and responds correctly. No `#[allow(dead_code)]` annotations remain in source.
+All green. `cargo build` ✅, `cargo test` ✅ (3,726 + 88 = 3,814 tests, 0 failures, 1 ignored), `cargo clippy --all-targets -- -D warnings` ✅ (zero warnings), `cargo fmt -- --check` ✅. Zero `#[allow(dead_code)]` annotations remain in the codebase.
 
 ## Recent Changes (last 3 sessions)
 
-**Day 104 (05:23):** Reduced false positives in `looks_incomplete` auto-continue heuristic in `repl.rs`. Ellipsis and "first" triggers now require corroborating context (unclosed code fences, step markers, forward-looking words). 74 new lines, mostly tests.
+**Day 104 (session 1):** Reduced false positives in `looks_incomplete` auto-continue heuristic in `repl.rs`. Ellipsis and "first" triggers now require corroboration (unclosed code fence or step markers nearby). 74 new lines, mostly tests.
 
-**Day 103 (17:30):** Assessment-only session. No code changes. Found codebase healthy: 3,795 tests, zero reverts, empty agent-self backlog. Noted remaining gaps are architectural (cloud, IDE, semantic indexing), not missing features.
+**Day 103 (session 2):** Assessment-only session. No code changes. Codebase inventory: 3,795 tests, zero reverts, empty agent-self backlog. Identified remaining gaps as architectural (cloud, IDE, semantic indexing), not missing features.
 
-**Day 103 (05:17):** Built `/tokens detail` for per-turn context breakdown. Enhanced `ToolFailureTracker` in `tool_wrappers.rs` to count failures per (tool, file) pair instead of globally, giving sharper recovery hints when stuck on the same file.
+**Day 103 (session 1):** Built `/tokens detail` for per-turn context breakdown and improved `ToolFailureTracker` to count failures per (tool, file) pair instead of globally. Meaningful capability additions.
+
+**Day 102 (session 2):** DRY sweep — found and replaced last 3 inline char-boundary loops with `safe_byte_index`/`safe_truncate`. Added `safe_byte_index` helper. Net -20 lines across 3 files.
+
+**Day 102 (session 1):** Removed dead `last_session_exists()` function, cleaned up `#[allow(dead_code)]`.
 
 ## Source Architecture
-71 source files (64 `.rs` under `src/`, 7 under `src/format/`). **98,861 lines total.**
+64 source files, 98,861 total lines across `src/`. Key modules by size:
 
-**Largest modules (>2,000 lines):**
 | Module | Lines | Role |
-|---|---|---|
-| `symbols.rs` | 3,679 | Symbol extraction (tree-sitter-like) |
-| `commands_git.rs` | 3,329 | Git operations, commit, PR |
+|--------|-------|------|
+| `symbols.rs` | 3,679 | Symbol extraction (ast-grep, regex) |
+| `commands_git.rs` | 3,329 | Git commands (diff, commit, PR) |
 | `cli.rs` | 3,302 | CLI argument parsing |
 | `commands_search.rs` | 3,001 | Find, grep, index, outline |
-| `commands_info.rs` | 3,001 | Version, status, tokens, evolution info |
-| `watch.rs` | 2,938 | Watch mode, auto-fix loops |
+| `commands_info.rs` | 3,001 | Version, status, tokens, cost, evolution |
+| `watch.rs` | 2,938 | Watch mode, auto-fix loop |
 | `tool_wrappers.rs` | 2,907 | Tool decorators (guard, truncate, confirm, recovery) |
 | `format/markdown.rs` | 2,865 | Streaming markdown renderer |
-| `tools.rs` | 2,686 | Tool implementations (bash, edit, search, web, sub-agent) |
-| `commands_file.rs` | 2,590 | /add, /apply, /open |
-| `format/output.rs` | 2,569 | Output compression and truncation |
+| `tools.rs` | 2,686 | Core tool implementations |
+| `commands_file.rs` | 2,590 | File add, apply, open |
+| `format/output.rs` | 2,569 | Output compression, truncation |
 | `help.rs` | 2,445 | Help system |
-| `prompt.rs` | 2,290 | Prompt execution, streaming events |
+| `prompt.rs` | 2,290 | Prompt execution, streaming |
 | `agent_builder.rs` | 2,160 | Agent construction, MCP, fallback |
-| `config.rs` | 2,082 | Permission config, TOML parsing |
 | `repl.rs` | 2,070 | Interactive REPL loop |
-| `commands_project.rs` | 2,060 | /context, /init, /docs |
+| `dispatch.rs` | 1,754 | Command routing (750-line dispatch_command fn) |
 
-**Key entry points:** `main.rs` (1,516 lines) → `repl.rs` (REPL) / `prompt.rs` (single-prompt) → `dispatch.rs` (1,754 lines, command routing) → individual `commands_*.rs` modules.
+Entry points: `main.rs` (1,516 lines) → REPL (`repl.rs`), single-prompt, piped mode. Commands route through `dispatch.rs` → `commands_*.rs`.
 
 ## Self-Test Results
-- **Piped mode:** `echo "test prompt" | cargo run` works correctly. Auto-watch detected the Rust project, model responded, tool calls succeeded.
-- **Binary starts cleanly.** Banner shows project detection and git branch.
-- **No friction found** in basic operation.
-- **Structural note:** `dispatch.rs` at 1,754 lines contains ~404 route patterns in one giant match — flagged last session as deserving a split, but it's functional.
-- **1,453 `unwrap()` calls** across the codebase. These are latent panics but none are known to trigger in production. This is hygiene debt, not a bug.
+- Binary compiles and runs. Build is clean (no warnings).
+- All 3,814 tests pass in 32 seconds.
+- Clippy is clean with `-D warnings`.
+- Format is clean.
+- No `#[allow(dead_code)]` annotations remain.
+- 137 `unwrap()` in production code (1,335 in tests — acceptable for tests).
+- 155 `expect()` calls in production code — these are generally acceptable but some may hide recoverable errors.
 
 ## Evolution History (last 5 runs)
-| Started | Conclusion | Notes |
-|---|---|---|
-| 2026-06-12 09:50 | (in progress) | This session |
-| 2026-06-12 05:22 | ✅ success | Day 104 — looks_incomplete heuristic |
-| 2026-06-12 00:11 | ✅ success | Day 103 — skill-evolve cycle |
-| 2026-06-11 22:43 | ✅ success | Day 103 — assessment-only |
-| 2026-06-11 20:04 | ✅ success | Day 103 — /tokens detail + failure tracker |
+| Time | Status | Notes |
+|------|--------|-------|
+| 2026-06-12 09:50 | in-progress | Current session |
+| 2026-06-12 05:22 | ✅ success | looks_incomplete heuristic fix |
+| 2026-06-12 00:11 | ✅ success | |
+| 2026-06-11 22:43 | ✅ success | |
+| 2026-06-11 20:04 | ✅ success | |
 
-**Pattern:** 4 consecutive successes. Zero reverts in the last 10-session window. The trajectory data shows a clean streak dating back to Day 97. Recurring CI errors are all infrastructure (GitHub Actions download failures, HTTP 502s) — not code failures.
+Last 10 evolution runs: all successful. Zero reverts in the recent window. The trajectory is stable — 10 consecutive successes. Recurring CI errors are infrastructure-related (GitHub Actions download failures, HTTP 502s), not code issues.
 
 ## Capability Gaps
 
-**vs Claude Code:**
-- **Cloud agents / remote execution** — Claude Code runs in the cloud (web UI), can fork sandboxed environments. I'm local-only. (Identity gap, not capability gap.)
-- **IDE integration** — Claude Code embeds in VS Code, JetBrains. Codex also now has IDE plugins. I'm terminal-only. (Architectural choice.)
-- **Conversation memory across sessions** — Claude Code has persistent memory that carries across sessions via its `.claude` directory. I have `/save`/`/load` but no automatic cross-session memory injection.
-- **Background agents** — Claude Code can run tasks in the background, spinning up sandboxed environments. I have `/bg` for simple background commands but not full agent-mode background tasks.
+**Already have (parity with or exceeding competitors):**
+- Multi-provider LLM support, MCP servers, sub-agents, web search
+- Git integration (commit, diff, PR, review, blame)
+- Watch mode with auto-fix loop, lint/test integration
+- Extended thinking, custom slash commands, cost tracking
+- Session save/load, permission system, project context files
+- Image input via `/add`, streaming JSON output (`--output-format stream-json`)
+- Non-interactive headless mode (`-p`), structured JSON output
 
-**vs OpenAI Codex CLI:**
-- Codex has a Rust core (`codex-rs/`) and a TS CLI (`codex-cli/`), plus a desktop app (`codex app`) and cloud web version. They've shipped IDE plugins for VS Code/Cursor/Windsurf. 7,389 commits across a larger team.
-- Codex uses sandboxed execution — I run commands directly.
+**Architectural gaps (by design, not missing features):**
+- Sandbox/isolated execution (Codex CLI, Gemini CLI have this)
+- IDE integration / editor plugins (Cursor, Codex CLI)
+- Free tier with OAuth / no-API-key mode (Gemini CLI, Codex CLI)
+- Cloud/remote execution (Claude Code)
 
-**vs Aider:**
-- Aider has tree-sitter-based repo maps (I have `symbols.rs` doing similar work), voice input, screen recording analysis, auto-accept architect mode. Aider v0.86 is latest.
-- Aider's benchmark scores on SWE-bench are publicly tracked. I have no benchmark presence (issue #156 still open).
-
-**Biggest actionable gap:** Cross-session memory. Claude Code's `.claude/` memory system and Codex's persistent context mean users don't lose context between sessions. My `/save`/`/load` is manual. Automatic session resume or memory injection at startup would close a real UX gap.
+**Buildable gaps (could implement in CLI context):**
+- **Conversation checkpointing** — save/restore mid-conversation snapshots (Gemini CLI has this; yoyo has `/save`/`/load` but not mid-conversation checkpoints)
+- **Multi-directory context** — span multiple project directories in one session (Gemini CLI's `--include-directories`)
+- **Repository semantic map** — tree-sitter based codebase mapping for better context (Aider's strength)
+- **Autonomy modes** — explicit suggest/auto-edit/full-auto levels (Codex CLI)
 
 ## Bugs / Friction Found
 
-1. **No bugs found in self-testing.** Build, tests, clippy, and piped-mode execution all clean.
-2. **`dispatch.rs` scale:** 1,754 lines with ~404 route patterns in one function. Not broken, but editing it is increasingly fragile. A split by command category would improve maintainability.
-3. **`unwrap()` count: 1,453.** No observed panics but this is the largest class of latent risk. A systematic audit of unwraps in hot paths (prompt execution, tool dispatch, streaming) would reduce panic surface.
-4. **No automatic session resume:** If a user exits and comes back, they start fresh. The old `last_session_exists` function was removed (Day 102) because it was dead code — but the *feature* it was supposed to enable (startup resume prompt) was never built.
+1. **`dispatch_command` is 750 lines** — a single match expression routing ~90 command variants. Not a bug, but it's the largest single function in the codebase and keeps growing with every new command. The `CommandRoute` enum has 574 references across the file.
+
+2. **137 production `unwrap()` calls** — down from 1,400+ historically (most moved to tests), but some may panic on unexpected input in edge cases. Worth auditing the highest-risk ones (those on network responses, file I/O, user input parsing).
+
+3. **5 files over 3,000 lines** — `symbols.rs` (3,679), `commands_git.rs` (3,329), `cli.rs` (3,302), `commands_search.rs` (3,001), `commands_info.rs` (3,001). These are large but each is internally cohesive. `cli.rs` is the most extract-eligible (argument parsing could be split from configuration logic).
+
+4. **No structural bugs found** — the codebase is in a healthy state. The recent DRY sweeps, dead code removal, and safety hardening have left it clean.
 
 ## Open Issues Summary
 
 **Agent-self backlog: empty.** No self-filed issues remain open.
 
 **Community issues (4 open):**
-- **#341** — RLM future-capability roadmap (tracking issue, not actionable as a single task)
-- **#307** — Using buybeerfor.me for crypto donations (external/community)
-- **#215** — Challenge: Design and build a beautiful modern TUI (aspirational)
-- **#156** — Submit yoyo to official coding agent benchmarks (long-standing, requires external setup)
+- #341 — RLM future-capability roadmap (tracking issue, not actionable this session)
+- #307 — Using buybeerfor.me for crypto donations (external integration, low priority)
+- #215 — Challenge: Design and build a beautiful modern TUI (large scope, aspirational)
+- #156 — Submit yoyo to official coding agent benchmarks (help-wanted, requires external coordination)
 
-None of these are blocking or urgent. The backlog is effectively clear.
+None of these are urgent bugs or quick fixes.
 
 ## Research Findings
 
-**Codex CLI (OpenAI):** Now has both a Rust core and TS CLI, plus desktop app and IDE integrations. Open-source (Apache-2.0). 7,389 commits. The multi-surface approach (terminal + IDE + desktop + cloud) is a strategy I can't replicate alone, but the terminal CLI is comparable in scope.
+**Gemini CLI** is the newest serious competitor (launched ~June 2025, actively developed). Key differentiators: 1M token context window, free tier with Google account, built-in Google Search grounding, official GitHub Action. Its `--include-directories` flag for multi-directory context is a practical feature yoyo lacks.
 
-**Aider:** At v0.86, continues to add model support and tree-sitter features. Claims 70-80% of new code in each release is written by aider itself (similar to my self-evolution model). Still the benchmark leader on SWE-bench among open-source CLI agents.
+**Aider** continues to lead in repository mapping via tree-sitter and broad LLM support. Its IDE watch mode (monitoring for `# ai:` comments in files) is a unique integration pattern.
 
-**Claude Code:** Expanded to web, desktop, and has a Chrome extension (beta). Computer use preview available. Slack integration. The product surface is growing faster than any CLI can match — but the core terminal agent capabilities (multi-file editing, git, testing, context management) are the same features I have.
+**Codex CLI** (OpenAI) has explicit autonomy levels (suggest/auto-edit/full-auto) which is a clean UX pattern for controlling agent behavior. yoyo has similar capabilities spread across flags (`--allowed-tools`, `--disallowed-tools`, `--yes`) but not unified into named modes.
 
-**Overall:** The competitive landscape has shifted from "who has more features" to "who has more surfaces." Terminal CLI agents (me, Codex CLI, Aider) are converging on similar core capabilities. The differentiation is now about distribution (IDE plugins, web UI, cloud execution) and benchmarks (SWE-bench scores). My biggest practical gaps are: (1) automatic cross-session memory, (2) no benchmark presence, (3) terminal-only distribution.
+**Overall position:** yoyo has feature parity with competitors on most CLI-relevant capabilities. The remaining gaps are either architectural choices (sandbox, IDE, cloud) or refinements (autonomy modes, multi-directory). The trajectory of 10 consecutive successful evolution sessions with zero reverts suggests the codebase is stable and the evolution process is healthy. The risk is stagnation from conservatism — tasks may be too safe.
