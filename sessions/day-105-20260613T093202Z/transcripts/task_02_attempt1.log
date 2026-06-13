@@ -1,0 +1,228 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of dispatch.rs, particularly the dispatch_command function and any existing extraction patterns (like dispatch_info_command or dispatch_git_command).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_info_command\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::" src/dis… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '316,480p' src/dispatch.r… ✓ (5ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Now let me see the specific match arms I need to extract:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '480,1130p' src/dispatch.… ✓ (11ms)
+
+Now let me find the specific match arms for the commands I need to extract:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Save\|Com… ✓ (5ms)
+
+Let me see the exact match arms I need to extract:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '607,770p' src/dispatch.r… ✓ (5ms)
+
+Now let me see the Compact arm and the unreachable arm for reference:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1095,1130p' src/dispatch… ✓ (3ms)
+
+Now I have a clear picture. Let me also check what functions/types are used in the extracted arms so I know the imports are fine:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_save\|handle_loa… ✓ (5ms)
+
+Good. Now I have everything I need. Let me implement the extraction:
+
+1. Create the dispatch_session_command function
+2. Replace the match arms in dispatch_command with the delegation call
+3. Add the unreachable arm
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '460,478p' src/dispatch.r… ✓ (3ms)
+
+Now let me create the new function and make the changes. I'll insert the dispatch_session_command function right before dispatch_command:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:456..466 ✓ (1ms)
+  ▶ edit src/dispatch.rs (18 → 97 lines)
+  + /// Dispatch session/conversation management slash commands.
+  + async fn dispatch_session_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  +         CommandRoute::Save => {
+  +             commands::handle_save(ctx.agent, ctx.input);
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Load => {
+  +             commands::handle_load(ctx.agent, ctx.input);
+  +             reset_compact_thrash();
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Stash => {
+  +             let result = commands::handle_stash(ctx.agent, ctx.input);
+  +             print!("{result}");
+  +             Some(CommandResult::Continue)
+  +         }
+  ... (68 more lines)
+ ✓ (1m 4s)
+  + /// Dispatch session/conversation management slash commands.
+  + async fn dispatch_session_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  +         CommandRoute::Save => {
+  +             commands::handle_save(ctx.agent, ctx.input);
+  ... (13 more lines)
+  2 tools completed in 1m 20s (2 ✓)
+
+Now remove the old match arms from dispatch_command. Let me find their exact positions in the updated file:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Save\|Com… ✓ (5ms)
+
+I see the new function has the arms at lines 463-527, and the old ones remain at lines 686-836. Let me see the old arms to remove:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '686,842p' src/dispatch.r… ✓ (5ms)
+
+Now I need to remove the old session command arms (Save, Load, Stash, Fork, Checkpoint, History, Search, Marks, Changes, Export, Mark, Jump, Compact) from the `dispatch_command` match block, keeping the non-session arms (Health, Doctor, Test, Security, LintFix, Lint, Fix, Config, ConfigShow, ConfigEdit, ConfigSet, ConfigGet, Hooks, Permissions, Context).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (24 → 1 lines)
+  -         CommandRoute::Save => {
+  -             commands::handle_save(ctx.agent, ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Load => {
+  -             commands::handle_load(ctx.agent, ctx.input);
+  -             reset_compact_thrash();
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Stash => {
+  -             let result = commands::handle_stash(ctx.agent, ctx.input);
+  -             print!("{result}");
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Fork => {
+  -             let result = commands::handle_fork(ctx.agent, ctx.input);
+  -             print!("{result}");
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Checkpoint => {
+  ... (4 more lines)
+ ✓ (9.4s)
+  -         CommandRoute::Save => {
+  -             commands::handle_save(ctx.agent, ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Load => {
+  -             commands::handle_load(ctx.agent, ctx.input);
+  -             reset_compact_thrash();
+  -             CommandResult::Continue
+  ... (13 more lines)
+
+Good — I need to remove the remaining session arms and add them to the unreachable block. Let me remove the other session arms that are still in dispatch_command:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::History\|… ✓ (5ms)
+
+Lines 729-813 are the old ones still in dispatch_command. Let me see the exact content:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '725,820p' src/dispatch.r… ✓ (4ms)
+  ▶ edit src/dispatch.rs (38 → 1 lines)
+  -         CommandRoute::History => {
+  -             let sub = ctx.input.strip_prefix("/history").unwrap_or("").trim();
+  -             if sub == "detail" {
+  -                 commands::handle_history_detail(ctx.agent);
+  -             } else {
+  -                 commands::handle_history(ctx.agent);
+  -             }
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Search => {
+  -             commands::handle_search(ctx.agent, ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Marks => {
+  -             commands::handle_marks(ctx.bookmarks);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Changes => {
+  -             if commands::wants_summary(ctx.input) {
+  -                 commands::handle_changes_summary(ctx.session_changes, ctx.agent_config).await;
+  ... (18 more lines)
+ ✓ (9.2s)
+  -         CommandRoute::History => {
+  -             let sub = ctx.input.strip_prefix("/history").unwrap_or("").trim();
+  -             if sub == "detail" {
+  -                 commands::handle_history_detail(ctx.agent);
+  -             } else {
+  -                 commands::handle_history(ctx.agent);
+  -             }
+  -             CommandResult::Continue
+  ... (13 more lines)
+  2 tools completed in 16.3s (2 ✓)
+
+Now remove the Compact arm that's still in `dispatch_command`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Compact" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '773,782p' src/dispatch.r… ✓ (3ms)
+  ▶ edit src/dispatch.rs (5 → 1 lines)
+  -         CommandRoute::Compact => {
+  -             commands::handle_compact(ctx.agent, ctx.input);
+  -             CommandResult::Continue
+  -         }
+            CommandRoute::Context => {
+ ✓ (9.0s)
+  -         CommandRoute::Compact => {
+  -             commands::handle_compact(ctx.agent, ctx.input);
+  -             CommandResult::Continue
+  -         }
+            CommandRoute::Context => {
+  3 tools completed in 18.0s (3 ✓)
+
+Now I need to add these variants to the unreachable! block. Let me find it:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unreachable" src/dispat… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1118,1140p' src/dispatch… ✓ (4ms)
+  ▶ edit src/dispatch.rs (10 → 25 lines)
+            | CommandRoute::Pr
+            | CommandRoute::Git
+            | CommandRoute::Review => unreachable!("handled by dispatch_git_command"),
+  + 
+  +         // Session/conversation commands are handled by dispatch_session_command above.
+  +         CommandRoute::Save
+  +         | CommandRoute::Load
+  +         | CommandRoute::Stash
+  +         | CommandRoute::Fork
+  +         | CommandRoute::Checkpoint
+  +         | CommandRoute::History
+  +         | CommandRoute::Search
+  +         | CommandRoute::Changes
+  +         | CommandRoute::Export
+  +         | CommandRoute::Mark
+  +         | CommandRoute::Jump
+  +         | CommandRoute::Marks
+  +         | CommandRoute::Compact => unreachable!("handled by dispatch_session_command"),
+    
+            CommandRoute::NotACommand => CommandResult::NotACommand,
+ ✓ (1m 5s)
+            | CommandRoute::Pr
+            | CommandRoute::Git
+            | CommandRoute::Review => unreachable!("handled by dispatch_git_command"),
+  + 
+  +         // Session/conversation commands are handled by dispatch_session_command above.
+  +         CommandRoute::Save
+  +         | CommandRoute::Load
+  +         | CommandRoute::Stash
+  ... (12 more lines)
+  3 tools completed in 1m 18s (3 ✓)
+
+Now let's build and check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (157ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (33.4s)
+  3 tools completed in 56.9s (3 ✓)
+
+All 3820+ tests pass, no failures. Let me verify the match block actually shrank by the expected amount:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch.rs ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

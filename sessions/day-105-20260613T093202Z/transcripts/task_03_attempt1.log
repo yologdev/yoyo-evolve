@@ -1,0 +1,210 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the current dispatch.rs to understand the structure and find the specific command routes I need to extract.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/dispatch.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,200p' src/dispatch.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'dispatch_info_command\|… ✓ (4ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Good. Let me now see the existing dispatch helper functions and the main dispatch_command to understand the pattern:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '316,560p' src/dispatch.r… ✓ (6ms)
+
+Now let me find the specific command routes I need to extract (Health, Doctor, Test, Security, LintFix, Lint, Fix):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'CommandRoute::Health\|C… ✓ (4ms)
+
+Now let me see the exact match arms for the commands I need to extract:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '683,730p' src/dispatch.r… ✓ (4ms)
+
+Now let me see the unreachable! section to understand how the other dispatch helpers are listed:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1115,1160p' src/dispatch… ✓ (4ms)
+
+Now I have a clear picture. Let me also check existing tests related to dev commands:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'dispatch_dev\|dev_comma… ✓ (3ms)
+
+Good, nothing exists yet. Now let me see the test at the bottom that tests this grouping pattern so I can add a test for the dev commands:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1620,1660p' src/dispatch… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1780,1838p' src/dispatch… ✓ (4ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now I have a complete picture. Let me implement the extraction:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '553,560p' src/dispatch.r… ✓ (3ms)
+
+Now I'll add the dispatch_dev_command function and the delegation call. First, the function, placed after `dispatch_session_command`:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '455,460p' src/dispatch.r… ✓ (3ms)
+
+Let me find the exact boundary where dispatch_session_command ends (before the doc comment for dispatch_command):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '530,560p' src/dispatch.r… ✓ (4ms)
+
+Let me find the exact end of dispatch_session_command:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '524,535p' src/dispatch.r… ✓ (3ms)
+
+Now I'll insert the new dispatch_dev_command function between dispatch_session_command and dispatch_command:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (1 → 54 lines)
+  + /// Dispatch dev/lint/test commands related to project health and code quality.
+  + async fn dispatch_dev_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  +         CommandRoute::Health => {
+  +             commands::handle_health();
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Doctor => {
+  +             commands::handle_doctor(&ctx.agent_config.provider, &ctx.agent_config.model);
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Test => {
+  +             commands::handle_test();
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Security => {
+  +             commands::handle_security();
+  ... (34 more lines)
+ ✓ (14.5s)
+  + /// Dispatch dev/lint/test commands related to project health and code quality.
+  + async fn dispatch_dev_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  +         CommandRoute::Health => {
+  +             commands::handle_health();
+  ... (13 more lines)
+
+Expected — I need to add the delegation call and remove the old match arms. Let me add the delegation call first:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (6 → 11 lines)
+        // Delegate session/conversation management commands to a focused helper.
+        if let Some(result) = dispatch_session_command(&route, ctx).await {
+  +         return result;
+  +     }
+  + 
+  +     // Delegate dev/lint/test commands to a focused helper.
+  +     if let Some(result) = dispatch_dev_command(&route, ctx).await {
+            return result;
+        }
+    
+ ✓ (1m 5s)
+        // Delegate session/conversation management commands to a focused helper.
+        if let Some(result) = dispatch_session_command(&route, ctx).await {
+  +         return result;
+  +     }
+  + 
+  +     // Delegate dev/lint/test commands to a focused helper.
+  +     if let Some(result) = dispatch_dev_command(&route, ctx).await {
+            return result;
+        }
+    
+
+Now remove the old match arms from the main dispatch_command match block. Let me find them precisely:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'CommandRoute::Health\|C… ✓ (4ms)
+
+Lines 744-789 are the duplicate arms in the main dispatch_command that I need to remove. Let me see them:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,795p' src/dispatch.r… ✓ (5ms)
+
+Now I'll remove the 7 match arms (Health through Fix):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (44 → 1 lines)
+  -         CommandRoute::Health => {
+  -             commands::handle_health();
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Doctor => {
+  -             commands::handle_doctor(&ctx.agent_config.provider, &ctx.agent_config.model);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Test => {
+  -             commands::handle_test();
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Security => {
+  -             commands::handle_security();
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::LintFix => {
+  -             if let Some(fix_prompt) =
+  -                 commands::handle_lint_fix(ctx.agent, ctx.session_total, &ctx.agent_config.model)
+  -                     .await
+  ... (24 more lines)
+ ✓ (9.0s)
+  -         CommandRoute::Health => {
+  -             commands::handle_health();
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Doctor => {
+  -             commands::handle_doctor(&ctx.agent_config.provider, &ctx.agent_config.model);
+  -             CommandResult::Continue
+  -         }
+  ... (13 more lines)
+
+I need to add the dev commands to the unreachable! section. Let me find it:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1120,1170p' src/dispatch… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1148,1166p' src/dispatch… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1155,1170p' src/dispatch… ✓ (3ms)
+  ▶ edit src/dispatch.rs (3 → 12 lines)
+            | CommandRoute::Compact => unreachable!("handled by dispatch_session_command"),
+  + 
+  +         // Dev/lint/test commands are handled by dispatch_dev_command above.
+  +         CommandRoute::Health
+  +         | CommandRoute::Doctor
+  +         | CommandRoute::Test
+  +         | CommandRoute::Security
+  +         | CommandRoute::LintFix
+  +         | CommandRoute::Lint
+  +         | CommandRoute::Fix => unreachable!("handled by dispatch_dev_command"),
+    
+            CommandRoute::NotACommand => CommandResult::NotACommand,
+ ✓ (1m 4s)
+            | CommandRoute::Compact => unreachable!("handled by dispatch_session_command"),
+  + 
+  +         // Dev/lint/test commands are handled by dispatch_dev_command above.
+  +         CommandRoute::Health
+  +         | CommandRoute::Doctor
+  +         | CommandRoute::Test
+  +         | CommandRoute::Security
+  +         | CommandRoute::LintFix
+  ... (4 more lines)
+  4 tools completed in 1m 18s (4 ✓)
+
+Now let's build and test:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (32.3s)
+  2 tools completed in 54.0s (2 ✓)
+
+All 3820 tests pass (3732 unit + 88 integration). Now let me check that the test coverage for dev commands route correctly exists:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'dispatch_dev_command\|t… ✓ (4ms)
+
+The routing tests (which verify that /health, `/doctor, /test, /fix, /lint fix, /lint, /security` all route to the correct CommandRoute) already exist — they test route_command which is unchanged. The dispatch helper itself follows the exact same pattern as the other three helpers, and since all the existing tests (including the exhaustive routing tests) pass, the refactoring is correct.
+
+Let me verify the line count reduction in the main match block:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Net change: +54 lines (the new function), -43 lines (removed arms), +9 lines (unreachable block) = net +20 lines. But the main `dispatch_command` match block shrank by 43 lines from removing the dev command arms. Let me verify the dispatch helpers are now 4:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'async fn dispatch_.*_co… ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

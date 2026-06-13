@@ -1,0 +1,314 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of dispatch.rs, specifically the dispatch_command function and the existing dispatch_info_command pattern.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_info_command\|… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '316,400p' src/dispatch.r… ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me find the git-related command routes in the main match block:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Diff\|Com… ✓ (4ms)
+
+Let me see each git command arm in the dispatch_command match block:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '550,600p' src/dispatch.r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,950p' src/dispatch.r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,1010p' src/dispatch.… ✓ (4ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Now let me see the unreachable arm at the bottom:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1080,1110p' src/dispatch… ✓ (3ms)
+
+Now I have a full picture. Let me also look at what's in the unreachable arm more precisely:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1088,1098p' src/dispatch… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1088,1097p' src/dispatch… ✓ (3ms)
+  ▶ read src/dispatch.rs:1088..1100 ✓ (1ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Good. Now let me look at the existing tests to make sure I understand what might be testing the dispatch:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_.*git\|fn test_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1183,1200p' src/dispatch… ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+The tests only test route_command, not dispatch_command itself (which requires a live agent), so the extraction is safe. Let me now implement the change.
+
+First, let me get the exact text of all the arms I need to extract. Let me read the complete sections carefully:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:552..582 ✓ (1ms)
+  ▶ read src/dispatch.rs:711..736 ✓ (1ms)
+  ▶ read src/dispatch.rs:928..948 ✓ (1ms)
+  ▶ read src/dispatch.rs:970..990 ✓ (0ms)
+  4 tools completed in 8.7s (4 ✓)
+
+Now I have all the pieces. Let me implement the extraction. I'll:
+
+1. Add the dispatch_git_command function right after dispatch_info_command
+2. Add the delegation call in dispatch_command
+3. Remove the arms from the main match
+4. Add the variants to the unreachable arm
+
+Let me start by inserting the new function after dispatch_info_command:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:380..390 ✓ (0ms)
+  ▶ edit src/dispatch.rs (17 → 95 lines)
+  + }
+  + 
+  + /// Dispatch git-related slash commands (diff, blame, undo, commit, pr, git, review).
+  + async fn dispatch_git_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  +         CommandRoute::Diff => {
+  +             let opts = commands::parse_diff_args(ctx.input);
+  +             if opts.explain {
+  +                 if let Some(prompt) = commands::handle_diff_explain(
+  +                     ctx.input,
+  +                     ctx.agent,
+  +                     ctx.session_total,
+  +                     &ctx.agent_config.model,
+  +                 )
+  +                 .await
+  +                 {
+  +                     *ctx.last_input = Some(prompt);
+  ... (67 more lines)
+ ✓ (1m 8s)
+  + }
+  + 
+  + /// Dispatch git-related slash commands (diff, blame, undo, commit, pr, git, review).
+  + async fn dispatch_git_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  ... (13 more lines)
+  2 tools completed in 1m 24s (2 ✓)
+
+Now remove the git command arms from the main match block. They'll be at shifted line numbers due to the insertion. Let me find them:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Diff\|Com… ✓ (4ms)
+
+Lines 630-656 and 789-796 and 1006-1019 and 1048-1060 are the ones in the main dispatch_command match block. Let me remove them one by one. Let me read the exact text:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:628..658 ✓ (1ms)
+  ▶ edit src/dispatch.rs (29 → 1 lines)
+  -         CommandRoute::Diff => {
+  -             let opts = commands::parse_diff_args(ctx.input);
+  -             if opts.explain {
+  -                 if let Some(prompt) = commands::handle_diff_explain(
+  -                     ctx.input,
+  -                     ctx.agent,
+  -                     ctx.session_total,
+  -                     &ctx.agent_config.model,
+  -                 )
+  -                 .await
+  -                 {
+  -                     *ctx.last_input = Some(prompt);
+  -                 }
+  -             } else {
+  -                 commands::handle_diff(ctx.input);
+  -             }
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Blame => {
+  -             commands::handle_blame(ctx.input);
+  ... (9 more lines)
+ ✓ (9.3s)
+  -         CommandRoute::Diff => {
+  -             let opts = commands::parse_diff_args(ctx.input);
+  -             if opts.explain {
+  -                 if let Some(prompt) = commands::handle_diff_explain(
+  -                     ctx.input,
+  -                     ctx.agent,
+  -                     ctx.session_total,
+  -                     &ctx.agent_config.model,
+  ... (13 more lines)
+  2 tools completed in 16.1s (2 ✓)
+
+Expected — I need to remove all git arms and add them to unreachable first. Let me continue removing the remaining git arms:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Commit\|C… ✓ (4ms)
+
+Now remove Commit from the main match (line 761):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:759..771 ✓ (0ms)
+  ▶ edit src/dispatch.rs (9 → 1 lines)
+  -         CommandRoute::Commit => {
+  -             if commands::wants_ai_commit(ctx.input) {
+  -                 commands::handle_commit_ai(ctx.input, ctx.agent_config).await;
+  -             } else {
+  -                 commands::handle_commit(ctx.input);
+  -             }
+  -             CommandResult::Continue
+  -         }
+            CommandRoute::Context => {
+ ✓ (9.4s)
+  -         CommandRoute::Commit => {
+  -             if commands::wants_ai_commit(ctx.input) {
+  -                 commands::handle_commit_ai(ctx.input, ctx.agent_config).await;
+  -             } else {
+  -                 commands::handle_commit(ctx.input);
+  -             }
+  -             CommandResult::Continue
+  -         }
+            CommandRoute::Context => {
+  2 tools completed in 14.8s (2 ✓)
+
+Good, continuing. Remove Pr and `Git`:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:968..984 ✓ (1ms)
+  ▶ read src/dispatch.rs:983..988 ✓ (1ms)
+  ▶ edit src/dispatch.rs (15 → 1 lines)
+  -         CommandRoute::Pr => {
+  -             commands::handle_pr(
+  -                 ctx.input,
+  -                 ctx.agent,
+  -                 ctx.session_total,
+  -                 &ctx.agent_config.model,
+  -             )
+  -             .await;
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Git => {
+  -             commands::handle_git(ctx.input);
+  -             CommandResult::Continue
+  -         }
+            CommandRoute::Goal => commands::handle_goal(ctx.input),
+ ✓ (9.1s)
+  -         CommandRoute::Pr => {
+  -             commands::handle_pr(
+  -                 ctx.input,
+  -                 ctx.agent,
+  -                 ctx.session_total,
+  -                 &ctx.agent_config.model,
+  -             )
+  -             .await;
+  ... (7 more lines)
+  3 tools completed in 27.8s (3 ✓)
+
+Now remove Review:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Review =>… ✓ (4ms)
+  ▶ read src/dispatch.rs:996..1012 ✓ (1ms)
+  2 tools completed in 2.4s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0004][0m[1m: non-exhaustive patterns: `dispatch::CommandRoute::Diff`, `dispatch::CommandRoute::Blame`, `dispatch::CommandRoute::Undo` and 3 more not covered[0m
+    [1m[94m--> [0msrc/dispatch.rs:476:11
+     [1m[94m|[0m
+[1m[94m 476[0m [1m[94m|[0m     match route {
+     [1m[94m|[0m           [1m[91m^^^^^[0m [1m[91mpatterns `dispatch::CommandRoute::Diff`, `dispatch::CommandRoute::Blame`, `dispatch::CommandRoute::Undo` and 3 more not covered[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: `dispatch::CommandRoute` defined here
+    [1m[94m--> [0msrc/dispatch.rs:30:17
+     [1m[94m|[0m
+[1m[94m  30[0m [1m[94m|[0m pub(crate) enum CommandRoute {
+     [1m[94m|[0m                 [1m[92m^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m  50[0m [1m[94m|[0m     Diff,
+     [1m[94m|[0m     [1m[94m----[0m [1m[94mnot covered[0m
+[1m[94m  51[0m [1m[94m|[0m     Blame,
+     [1m[94m|[0m     [1m[94m-----[0m [1m[94mnot covered[0m
+[1m[94m  52[0m [1m[94m|[0m     Undo,
+     [1m[94m|[0m     [1m[94m----[0m [1m[94mnot covered[0m
+[1m[94m...[0m
+[1m[94m  75[0m [1m[94m|[0m     Commit,
+     [1m[94m|[0m     [1m[94m------[0m [1m[94mnot covered[0m
+[1m[94m...[0m
+[1m[94m 108[0m [1m[94m|[0m     Pr,
+     [1m[94m|[0m     [1m[94m--[0m [1m[94mnot covered[0m
+     [1m[94m= [0m[1mnote[0m: the matched value is of type `dispatch::CommandRoute`
+[1m[96mhelp[0m: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern as shown, or multiple match arms
+     [1m[94m|[0m
+[1m[94m1126[0m [92m~ [0m        CommandRoute::NotACommand => CommandResult::NotACommand[92m,[0m
+[1m[94m1127[0m [92m~         _ => todo!()[0m,
+     [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0004`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+I need to add the extracted git command variants to the `unreachable!() arm and also remove the Review` arm from the main match. Let me check the current state:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Review =>… ✓ (3ms)
+
+Line 438 is in dispatch_git_command, line 998 is still in dispatch_command. Let me remove it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:996..1012 ✓ (1ms)
+  ▶ edit src/dispatch.rs (14 → 1 lines)
+  -         CommandRoute::Review => {
+  -             if let Some(review_prompt) = commands::handle_review(
+  -                 ctx.input,
+  -                 ctx.agent,
+  -                 ctx.session_total,
+  -                 &ctx.agent_config.model,
+  -             )
+  -             .await
+  -             {
+  -                 *ctx.last_input = Some(review_prompt);
+  -             }
+  -             CommandResult::Continue
+  -         }
+            CommandRoute::Revisit => {
+ ✓ (9.4s)
+  -         CommandRoute::Review => {
+  -             if let Some(review_prompt) = commands::handle_review(
+  -                 ctx.input,
+  -                 ctx.agent,
+  -                 ctx.session_total,
+  -                 &ctx.agent_config.model,
+  -             )
+  -             .await
+  ... (6 more lines)
+  2 tools completed in 17.7s (2 ✓)
+
+Good, all git arms are removed. Now I need to add them to the unreachable!() arm. Let me find it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1098..1110 ✓ (1ms)
+  ▶ read src/dispatch.rs:1109..1117 ✓ (1ms)
+  ▶ edit src/dispatch.rs (11 → 20 lines)
+            | CommandRoute::Changelog
+            | CommandRoute::Evolution
+            | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+  + 
+  +         // Git commands are handled by dispatch_git_command above.
+  +         CommandRoute::Diff
+  +         | CommandRoute::Blame
+  +         | CommandRoute::Undo
+  +         | CommandRoute::Commit
+  +         | CommandRoute::Pr
+  +         | CommandRoute::Git
+  +         | CommandRoute::Review => unreachable!("handled by dispatch_git_command"),
+    
+            CommandRoute::NotACommand => CommandResult::NotACommand,
+ ✓ (1m 5s)
+            | CommandRoute::Changelog
+            | CommandRoute::Evolution
+            | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+  + 
+  +         // Git commands are handled by dispatch_git_command above.
+  +         CommandRoute::Diff
+  +         | CommandRoute::Blame
+  +         | CommandRoute::Undo
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (33.2s)
+  5 tools completed in 2m 13s (5 ✓)
+
+All checks pass. Now let me commit:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Clean extraction. Seven git-related command routes (`Diff, Blame, Undo, Commit, Pr, Git, Review) moved from the main dispatch_command` match block into a new dispatch_git_command helper — same pattern as dispatch_info_command from Day 104. All 88 tests pass, clippy clean.
+
+  ✓ Watch passed after fix (attempt 1)
+
