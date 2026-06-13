@@ -12,6 +12,49 @@ const SMART_EDIT_MAX_FILE_SIZE: u64 = 100_000;
 /// Number of context lines to show around the nearest match.
 const SMART_EDIT_CONTEXT_LINES: usize = 5;
 
+/// Minimum per-line similarity (0.0–1.0) required for a fuzzy match to be
+/// reported. Below this threshold the match is considered noise.
+const FUZZY_MIN_SIMILARITY: f64 = 0.6;
+
+/// Edit distance between two strings (Levenshtein). Used for fuzzy matching
+/// when exact trimmed matches fail.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, val) in dp[0].iter_mut().enumerate() {
+        *val = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[a.len()][b.len()]
+}
+
+/// Compute similarity between two strings as a ratio in 0.0..=1.0.
+/// Returns 1.0 for identical strings, 0.0 for completely different ones.
+fn line_similarity(a: &str, b: &str) -> f64 {
+    let a_trimmed = a.trim();
+    let b_trimmed = b.trim();
+    if a_trimmed.is_empty() && b_trimmed.is_empty() {
+        return 1.0;
+    }
+    let max_len = a_trimmed.len().max(b_trimmed.len());
+    if max_len == 0 {
+        return 1.0;
+    }
+    let dist = edit_distance(a_trimmed, b_trimmed);
+    1.0 - (dist as f64 / max_len as f64)
+}
+
 /// A wrapper tool specifically for `edit_file` that intercepts "not found"
 /// failures and augments the error message with:
 /// - The line number of the nearest match (first-line matching with whitespace normalization)
@@ -21,26 +64,65 @@ pub(crate) struct SmartEditTool {
     inner: Box<dyn AgentTool>,
 }
 
-/// Search a file's content for the best match of `old_text`, returning
-/// `(line_number_1indexed, is_whitespace_only_diff, snippet)`.
-fn find_nearest_match(file_content: &str, old_text: &str) -> Option<(usize, bool, String)> {
-    let old_lines: Vec<&str> = old_text.lines().collect();
-    if old_lines.is_empty() {
-        return None;
-    }
+/// Result of a nearest-match search.
+struct NearestMatch {
+    /// 1-indexed line number in the file.
+    line_num: usize,
+    /// Whether the mismatch is whitespace-only (auto-fixable).
+    is_whitespace_only: bool,
+    /// Whether this was a fuzzy (non-exact) match.
+    is_fuzzy: bool,
+    /// Average similarity score (1.0 = exact match, 0.0 = completely different).
+    similarity: f64,
+    /// Snippet of the file content around the match.
+    snippet: String,
+}
 
-    // Find the first non-empty line in old_text to use as anchor
+/// Build a snippet of context lines starting at `match_line_idx` (0-indexed).
+fn build_snippet(file_lines: &[&str], match_line_idx: usize) -> String {
+    let snippet_start = match_line_idx;
+    let snippet_end = (match_line_idx + SMART_EDIT_CONTEXT_LINES).min(file_lines.len());
+    file_lines[snippet_start..snippet_end]
+        .iter()
+        .enumerate()
+        .map(|(j, line)| format!("{:>4} │ {}", snippet_start + j + 1, line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Check if the match at `match_line_idx` (0-indexed) is a whitespace-only diff.
+fn check_whitespace_only(file_lines: &[&str], old_lines: &[&str], match_line_idx: usize) -> bool {
+    let mut all_match_trimmed = true;
+    let mut any_exact_mismatch = false;
+    for (j, old_line) in old_lines.iter().enumerate() {
+        let file_idx = match_line_idx + j;
+        if file_idx < file_lines.len() {
+            if file_lines[file_idx].trim() == old_line.trim() {
+                if file_lines[file_idx] != *old_line {
+                    any_exact_mismatch = true;
+                }
+            } else {
+                all_match_trimmed = false;
+                break;
+            }
+        } else {
+            all_match_trimmed = false;
+            break;
+        }
+    }
+    all_match_trimmed && any_exact_mismatch
+}
+
+/// Try to find an exact trimmed-line match for `old_text` in `file_lines`.
+/// Returns `(start_line_0indexed, match_count)` for the best match.
+fn find_exact_trimmed_match(file_lines: &[&str], old_lines: &[&str]) -> Option<(usize, usize)> {
     let anchor = old_lines.iter().find(|l| !l.trim().is_empty())?;
     let anchor_trimmed = anchor.trim();
 
-    let file_lines: Vec<&str> = file_content.lines().collect();
-
-    // Search for lines whose trimmed content matches the anchor's trimmed content
-    let mut best_match: Option<(usize, usize)> = None; // (line_idx, matching_lines_count)
+    let mut best_match: Option<(usize, usize)> = None;
 
     for (i, line) in file_lines.iter().enumerate() {
         if line.trim() == anchor_trimmed {
-            // Count how many subsequent lines also match (trimmed)
             let mut match_count = 1;
             let anchor_offset = old_lines
                 .iter()
@@ -61,7 +143,6 @@ fn find_nearest_match(file_content: &str, old_text: &str) -> Option<(usize, bool
             }
 
             if best_match.is_none_or(|(_, prev_count)| match_count > prev_count) {
-                // Adjust line number to account for leading empty lines in old_text
                 let start_line = if anchor_offset > 0 && i >= anchor_offset {
                     i - anchor_offset
                 } else {
@@ -72,42 +153,116 @@ fn find_nearest_match(file_content: &str, old_text: &str) -> Option<(usize, bool
         }
     }
 
-    let (match_line_idx, _match_count) = best_match?;
+    best_match
+}
 
-    // Check if the entire old_text matches but only differs in whitespace
-    let is_ws_only = {
-        let mut all_match_trimmed = true;
-        let mut any_exact_mismatch = false;
-        for (j, old_line) in old_lines.iter().enumerate() {
-            let file_idx = match_line_idx + j;
-            if file_idx < file_lines.len() {
-                if file_lines[file_idx].trim() == old_line.trim() {
-                    if file_lines[file_idx] != *old_line {
-                        any_exact_mismatch = true;
-                    }
-                } else {
-                    all_match_trimmed = false;
-                    break;
-                }
-            } else {
-                all_match_trimmed = false;
-                break;
-            }
+/// Compute the average similarity of `old_lines` against `file_lines` starting
+/// at position `start` (0-indexed). Only considers non-empty old lines.
+fn block_similarity(file_lines: &[&str], old_lines: &[&str], start: usize) -> f64 {
+    let mut total_sim = 0.0;
+    let mut count = 0;
+    for (j, old_line) in old_lines.iter().enumerate() {
+        // Skip empty lines — they don't carry signal for matching
+        if old_line.trim().is_empty() {
+            continue;
         }
-        all_match_trimmed && any_exact_mismatch
-    };
+        let file_idx = start + j;
+        if file_idx < file_lines.len() {
+            total_sim += line_similarity(old_line, file_lines[file_idx]);
+            count += 1;
+        } else {
+            // File ran out of lines — penalize
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return 0.0;
+    }
+    total_sim / count as f64
+}
 
-    // Build snippet: up to SMART_EDIT_CONTEXT_LINES lines starting at the match
-    let snippet_start = match_line_idx;
-    let snippet_end = (match_line_idx + SMART_EDIT_CONTEXT_LINES).min(file_lines.len());
-    let snippet: String = file_lines[snippet_start..snippet_end]
+/// Try to find a fuzzy match for `old_text` in `file_lines` when exact
+/// trimmed matching found nothing. Scores every candidate position by
+/// average per-line similarity and returns the best one above the threshold.
+fn find_fuzzy_match(file_lines: &[&str], old_lines: &[&str]) -> Option<(usize, f64)> {
+    let non_empty_old: Vec<&str> = old_lines
         .iter()
-        .enumerate()
-        .map(|(j, line)| format!("{:>4} │ {}", snippet_start + j + 1, line))
-        .collect::<Vec<_>>()
-        .join("\n");
+        .filter(|l| !l.trim().is_empty())
+        .copied()
+        .collect();
+    if non_empty_old.is_empty() {
+        return None;
+    }
 
-    Some((match_line_idx + 1, is_ws_only, snippet)) // 1-indexed line number
+    // Use the first non-empty old line as a pre-filter: only consider positions
+    // where the anchor has at least moderate similarity to avoid O(n*m) distance
+    // computation on every file line.
+    let anchor = non_empty_old[0];
+
+    let mut best: Option<(usize, f64)> = None;
+
+    for i in 0..file_lines.len() {
+        // Quick pre-filter: anchor similarity must pass threshold
+        let anchor_sim = line_similarity(anchor, file_lines[i]);
+        if anchor_sim < FUZZY_MIN_SIMILARITY {
+            continue;
+        }
+
+        // Compute block-level similarity at this position
+        let sim = block_similarity(file_lines, old_lines, i);
+        if sim < FUZZY_MIN_SIMILARITY {
+            continue;
+        }
+
+        if best.is_none_or(|(_, prev_sim)| sim > prev_sim) {
+            best = Some((i, sim));
+        }
+    }
+
+    best
+}
+
+/// Search a file's content for the best match of `old_text`, returning
+/// match details including location, similarity, and a context snippet.
+///
+/// Strategy:
+/// 1. Try exact trimmed-line matching (fast, handles whitespace-only diffs)
+/// 2. Fall back to fuzzy matching with edit-distance similarity scoring
+fn find_nearest_match(file_content: &str, old_text: &str) -> Option<NearestMatch> {
+    let old_lines: Vec<&str> = old_text.lines().collect();
+    if old_lines.is_empty() {
+        return None;
+    }
+
+    let file_lines: Vec<&str> = file_content.lines().collect();
+
+    // Phase 1: exact trimmed match
+    if let Some((match_line_idx, _match_count)) = find_exact_trimmed_match(&file_lines, &old_lines)
+    {
+        let is_ws_only = check_whitespace_only(&file_lines, &old_lines, match_line_idx);
+        let snippet = build_snippet(&file_lines, match_line_idx);
+        return Some(NearestMatch {
+            line_num: match_line_idx + 1,
+            is_whitespace_only: is_ws_only,
+            is_fuzzy: false,
+            similarity: 1.0,
+            snippet,
+        });
+    }
+
+    // Phase 2: fuzzy match
+    if let Some((match_line_idx, similarity)) = find_fuzzy_match(&file_lines, &old_lines) {
+        let snippet = build_snippet(&file_lines, match_line_idx);
+        return Some(NearestMatch {
+            line_num: match_line_idx + 1,
+            is_whitespace_only: false,
+            is_fuzzy: true,
+            similarity,
+            snippet,
+        });
+    }
+
+    None
 }
 
 /// Extract exact text from file content starting at `match_line_0indexed` for `line_count` lines.
@@ -194,16 +349,16 @@ impl SmartEditTool {
 
         let content = std::fs::read_to_string(path).ok()?;
 
-        // find_nearest_match returns 1-indexed line number
-        let (line_num_1indexed, is_ws_only, _snippet) = find_nearest_match(&content, old_text)?;
+        // find_nearest_match returns structured match info
+        let m = find_nearest_match(&content, old_text)?;
 
-        if !is_ws_only {
+        if !m.is_whitespace_only {
             return None; // Not a whitespace-only diff — let caller handle it
         }
 
         // Extract the actual text from the file at the match position
         let old_line_count = old_text.lines().count().max(1);
-        let match_line_0indexed = line_num_1indexed - 1;
+        let match_line_0indexed = m.line_num - 1;
         let actual_text = extract_matched_text(&content, match_line_0indexed, old_line_count);
 
         // Build corrected params with the file's actual whitespace
@@ -214,10 +369,7 @@ impl SmartEditTool {
         match self.inner.execute(corrected_params, ctx.clone()).await {
             Ok(mut result) => {
                 // Append auto-fix note to the result
-                let note = format!(
-                    "\n⚡ Auto-fixed whitespace mismatch at line {}",
-                    line_num_1indexed
-                );
+                let note = format!("\n⚡ Auto-fixed whitespace mismatch at line {}", m.line_num);
                 result.content.push(yoagent::Content::Text { text: note });
                 Some(Ok(result))
             }
@@ -256,17 +408,29 @@ impl SmartEditTool {
 
         // Search for nearest match
         match find_nearest_match(&content, old_text) {
-            Some((line_num, is_ws_only, snippet)) => {
+            Some(m) => {
                 let mut augmented = original_msg.to_string();
-                augmented.push_str(&format!(
-                    "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
-                    line_num, snippet
-                ));
-                if is_ws_only {
+                if m.is_fuzzy {
+                    let pct = (m.similarity * 100.0) as u32;
+                    augmented.push_str(&format!(
+                        "\n\n📍 Nearest fuzzy match at line {} ({pct}% similar):\n```\n{}\n```",
+                        m.line_num, m.snippet
+                    ));
                     augmented.push_str(
-                        "\n\n⚠️ Hint: the text exists but indentation/whitespace differs. \
-                         Use read_file to see the exact whitespace.",
+                        "\n\n⚠ The content differs (not just whitespace). \
+                         Read the file at that line to see the actual text.",
                     );
+                } else {
+                    augmented.push_str(&format!(
+                        "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
+                        m.line_num, m.snippet
+                    ));
+                    if m.is_whitespace_only {
+                        augmented.push_str(
+                            "\n\n⚠️ Hint: the text exists but indentation/whitespace differs. \
+                             Use read_file to see the exact whitespace.",
+                        );
+                    }
                 }
                 augmented
             }
@@ -295,7 +459,8 @@ mod tests {
         let old_text = "fn hello() {\n    world()\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some(), "Should find a match");
-        let (line, is_ws, snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws, snippet) = (m.line_num, m.is_whitespace_only, m.snippet);
         assert_eq!(line, 3, "Match should be at line 3");
         assert!(!is_ws, "Should not be whitespace-only diff");
         assert!(
@@ -311,7 +476,8 @@ mod tests {
         let old_text = "fn main() {\n  let x = 1;\n  let y = 2;\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some(), "Should find a match");
-        let (line, is_ws, _snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         assert_eq!(line, 1, "Match should be at line 1");
         assert!(is_ws, "Should detect whitespace-only diff");
     }
@@ -350,7 +516,8 @@ mod tests {
         let old_text = "line 5";
         let result = find_nearest_match(&file_content, old_text);
         assert!(result.is_some());
-        let (line, _, snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, snippet) = (m.line_num, m.snippet);
         assert_eq!(line, 5);
         // Should show exactly 5 lines of context
         let snippet_lines: Vec<&str> = snippet.lines().collect();
@@ -769,7 +936,8 @@ mod tests {
             result.is_some(),
             "Should find a match despite extra blank line"
         );
-        let (line, _is_ws, _snippet) = result.unwrap();
+        let m = result.unwrap();
+        let line = m.line_num;
         assert_eq!(line, 1, "Match should be at line 1");
     }
 
@@ -783,7 +951,8 @@ mod tests {
             result.is_some(),
             "Should find a match despite fewer blank lines"
         );
-        let (line, _is_ws, _snippet) = result.unwrap();
+        let m = result.unwrap();
+        let line = m.line_num;
         assert_eq!(line, 1, "Match should be at line 1");
     }
 
@@ -794,7 +963,8 @@ mod tests {
         let old_text = "fn first() {\n    body();\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some(), "Should find match at start");
-        let (line, is_ws, _snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         assert_eq!(line, 1, "Match should be at line 1 (very start)");
         assert!(!is_ws, "Should be an exact match, not whitespace-only");
     }
@@ -806,7 +976,8 @@ mod tests {
         let old_text = "fn last() {\n    done();\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some(), "Should find match at end of file");
-        let (line, is_ws, _snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         assert_eq!(line, 2, "Match should be at line 2");
         assert!(!is_ws, "Should be exact match");
     }
@@ -818,7 +989,8 @@ mod tests {
         let old_text = "last_line";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some());
-        let (line, _, snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, snippet) = (m.line_num, m.snippet);
         assert_eq!(line, 4, "Match at line 4 (last line)");
         // Snippet should only have 1 line since there's nothing after
         let snippet_lines: Vec<&str> = snippet.lines().collect();
@@ -833,7 +1005,8 @@ mod tests {
         let old_text = "b";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some(), "Single char should match a whole line");
-        let (line, is_ws, _) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         assert_eq!(line, 2);
         assert!(!is_ws);
     }
@@ -860,7 +1033,8 @@ mod tests {
             result.is_some(),
             "Should find match with tab/space mismatch"
         );
-        let (line, is_ws, _snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         assert_eq!(line, 1);
         assert!(is_ws, "Tab vs space difference should be whitespace-only");
     }
@@ -875,7 +1049,8 @@ mod tests {
             result.is_some(),
             "Should find match with space/tab mismatch"
         );
-        let (_, is_ws, _) = result.unwrap();
+        let m = result.unwrap();
+        let is_ws = m.is_whitespace_only;
         assert!(is_ws, "Space vs tab difference should be whitespace-only");
     }
 
@@ -887,7 +1062,8 @@ mod tests {
         let old_text = "fn do_thing() {\n    alpha();\n    beta();\n    gamma();\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some(), "Should find the best match");
-        let (line, is_ws, _) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         // The second fn do_thing() starts at line 5 and matches 5 lines
         assert_eq!(line, 5, "Should pick the better (longer) match at line 5");
         assert!(!is_ws);
@@ -901,7 +1077,8 @@ mod tests {
         let old_text = "let x = 1;\nlet y = 2;";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some());
-        let (line, _, _) = result.unwrap();
+        let m = result.unwrap();
+        let line = m.line_num;
         // Both matches have count=2, so the second one wins (> not >=)
         // Actually let's check: is_none_or with match_count > prev_count means
         // equal count does NOT replace, so first match wins
@@ -915,7 +1092,8 @@ mod tests {
         let old_text = "fn greet() {\n    println!(\"こんにちは\");\n    println!(\"世界\");\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some(), "Should match Unicode content");
-        let (line, is_ws, snippet) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws, snippet) = (m.line_num, m.is_whitespace_only, m.snippet);
         assert_eq!(line, 1);
         assert!(!is_ws);
         assert!(
@@ -931,7 +1109,8 @@ mod tests {
         let old_text = "fn emoji() {\n  let msg = \"🎉✓\";\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some());
-        let (_, is_ws, _) = result.unwrap();
+        let m = result.unwrap();
+        let is_ws = m.is_whitespace_only;
         assert!(
             is_ws,
             "Unicode content with only whitespace diff should be detected"
@@ -960,7 +1139,8 @@ mod tests {
             result.is_some(),
             "Should find match even with leading empty lines in old_text"
         );
-        let (line, _is_ws, _snippet) = result.unwrap();
+        let m = result.unwrap();
+        let line = m.line_num;
         // The anchor "fn beta() {" is at file line 3 (1-indexed),
         // and anchor_offset is 2 (two leading empty lines), so start_line adjusts back
         assert!(line <= 3, "Line should account for leading empty lines");
@@ -972,7 +1152,8 @@ mod tests {
         let old_text = "only_line";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some());
-        let (line, is_ws, _) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         assert_eq!(line, 1);
         assert!(!is_ws);
     }
@@ -984,7 +1165,8 @@ mod tests {
         let old_text = "fn main() {\n    let x = 1;\n}";
         let result = find_nearest_match(file_content, old_text);
         assert!(result.is_some());
-        let (line, is_ws, _) = result.unwrap();
+        let m = result.unwrap();
+        let (line, is_ws) = (m.line_num, m.is_whitespace_only);
         assert_eq!(line, 1);
         assert!(
             is_ws,
@@ -1134,5 +1316,196 @@ mod tests {
         let content = "a\nb\nc\nd\n";
         let result = extract_matched_text(content, 0, 4);
         assert_eq!(result, "a\nb\nc\nd");
+    }
+
+    // === line_similarity tests ===
+
+    #[test]
+    fn test_line_similarity_identical() {
+        assert!((line_similarity("fn hello()", "fn hello()") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_line_similarity_whitespace_only_diff() {
+        // Whitespace is trimmed, so these are identical
+        assert!((line_similarity("  fn hello()", "    fn hello()") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_line_similarity_empty_strings() {
+        assert!((line_similarity("", "") - 1.0).abs() < f64::EPSILON);
+        assert!((line_similarity("   ", "  ") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_line_similarity_small_typo() {
+        // "println" vs "prinltn" — 1 transposition in 7 chars = high similarity
+        let sim = line_similarity("println!(\"hello\")", "prinltn!(\"hello\")");
+        assert!(sim > 0.8, "Small typo should have high similarity: {sim}");
+    }
+
+    #[test]
+    fn test_line_similarity_completely_different() {
+        let sim = line_similarity("fn hello() {}", "use std::io;");
+        assert!(
+            sim < 0.5,
+            "Completely different should have low similarity: {sim}"
+        );
+    }
+
+    // === edit_distance tests ===
+
+    #[test]
+    fn test_edit_distance_identical() {
+        assert_eq!(edit_distance("hello", "hello"), 0);
+    }
+
+    #[test]
+    fn test_edit_distance_empty() {
+        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("abc", ""), 3);
+        assert_eq!(edit_distance("", ""), 0);
+    }
+
+    #[test]
+    fn test_edit_distance_single_change() {
+        assert_eq!(edit_distance("cat", "bat"), 1);
+        assert_eq!(edit_distance("cat", "cats"), 1);
+        assert_eq!(edit_distance("cat", "at"), 1);
+    }
+
+    // === fuzzy matching tests ===
+
+    #[test]
+    fn test_fuzzy_match_single_char_typo() {
+        let file_content = "fn main() {\n    println!(\"hello world\");\n}\n";
+        // Typo: "helo" instead of "hello"
+        let old_text = "    println!(\"helo world\");";
+        let result = find_nearest_match(file_content, old_text);
+        assert!(
+            result.is_some(),
+            "Should find fuzzy match for single-char typo"
+        );
+        let m = result.unwrap();
+        assert_eq!(m.line_num, 2);
+        assert!(m.is_fuzzy, "Should be marked as fuzzy");
+        assert!(
+            m.similarity > 0.8,
+            "Similarity should be high for single-char typo: {}",
+            m.similarity
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_match_minor_hallucination() {
+        let file_content =
+            "fn process_data(input: &str) -> Result<String, Error> {\n    let result = input.trim();\n    Ok(result.to_string())\n}\n";
+        // LLM hallucinated slightly different function signature
+        let old_text = "fn process_data(input: &str) -> Result<String, MyError> {";
+        let result = find_nearest_match(file_content, old_text);
+        assert!(
+            result.is_some(),
+            "Should find fuzzy match for minor hallucination"
+        );
+        let m = result.unwrap();
+        assert_eq!(m.line_num, 1);
+        assert!(m.is_fuzzy);
+    }
+
+    #[test]
+    fn test_fuzzy_match_multi_line_block() {
+        let file_content = "fn alpha() {}\nfn beta(x: i32) {\n    let y = x + 1;\n    println!(\"{}\", y);\n}\nfn gamma() {}\n";
+        // Typo in function name and argument
+        let old_text = "fn bata(x: i32) {\n    let y = x + 1;\n    println!(\"{}\", y);\n}";
+        let result = find_nearest_match(file_content, old_text);
+        assert!(
+            result.is_some(),
+            "Should find fuzzy match for multi-line block with typo"
+        );
+        let m = result.unwrap();
+        assert_eq!(m.line_num, 2, "Should match at line 2 (fn beta)");
+        assert!(m.is_fuzzy);
+    }
+
+    #[test]
+    fn test_fuzzy_match_not_triggered_for_exact() {
+        // When there's an exact trimmed match, fuzzy should NOT be used
+        let file_content = "fn hello() {\n    println!(\"hi\");\n}\n";
+        let old_text = "  fn hello() {"; // whitespace diff only
+        let result = find_nearest_match(file_content, old_text);
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert!(
+            !m.is_fuzzy,
+            "Exact trimmed match should not be marked fuzzy"
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_match_too_dissimilar() {
+        let file_content = "fn hello() {\n    println!(\"hi\");\n}\n";
+        let old_text = "struct CompletelyDifferent { field: u32 }";
+        let result = find_nearest_match(file_content, old_text);
+        // Should return None because nothing is similar enough
+        assert!(
+            result.is_none(),
+            "Completely different content should not match"
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_match_augmented_error_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("fuzzy.rs");
+        std::fs::write(&file_path, "fn process(x: i32) -> i32 {\n    x + 1\n}\n").unwrap();
+
+        let tool = SmartEditTool {
+            inner: Box::new(SmartEditMockTool {
+                fail_msg: None,
+                result_text: None,
+            }),
+        };
+        // Typo in function name
+        let params = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "old_text": "fn procss(x: i32) -> i32 {",
+            "new_text": "fn process(x: i64) -> i64 {"
+        });
+        let result = tool.augment_not_found_error("old_text not found", &params);
+        assert!(
+            result.contains("fuzzy match"),
+            "Should mention fuzzy match: {result}"
+        );
+        assert!(
+            result.contains("similar"),
+            "Should mention similarity: {result}"
+        );
+        assert!(
+            result.contains("line 1"),
+            "Should indicate line number: {result}"
+        );
+    }
+
+    #[test]
+    fn test_block_similarity_perfect() {
+        let file_lines = vec!["fn hello() {", "    println!(\"hi\");", "}"];
+        let old_lines = vec!["fn hello() {", "    println!(\"hi\");", "}"];
+        let sim = block_similarity(&file_lines, &old_lines, 0);
+        assert!(
+            (sim - 1.0).abs() < f64::EPSILON,
+            "Identical blocks should have similarity 1.0: {sim}"
+        );
+    }
+
+    #[test]
+    fn test_block_similarity_partial() {
+        let file_lines = vec!["fn hello() {", "    println!(\"hi\");", "}"];
+        let old_lines = vec!["fn helo() {", "    println!(\"hi\");", "}"];
+        let sim = block_similarity(&file_lines, &old_lines, 0);
+        assert!(
+            sim > 0.9,
+            "One-char typo in one of three lines should be high similarity: {sim}"
+        );
+        assert!(sim < 1.0, "Should not be perfect: {sim}");
     }
 }
