@@ -1,0 +1,384 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make. Let me assess the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (8ms)
+ ✓ (19.6s)
+  2 tools completed in 22.9s (2 ✓)
+
+Good, everything passes. Let me look at recently changed files and areas with potential for improvement.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (4ms)
+ ✓ (14.3s)
+  2 tools completed in 17.3s (2 ✓)
+
+The codebase is clean. I can see recent work has been extracting dispatch functions. Let me look at the dispatch.rs file to understand the pattern, and look for other high-impact improvements.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/dispatch.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn dispatch_command" sr… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '590,650p' src/dispatch.r… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 5.2s (4 ✓)
+
+Let me see what's still in the main dispatch_command match block — those are the commands that haven't been extracted yet.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '620,900p' src/dispatch.r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,1100p' src/dispatch.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1100,1300p' src/dispatch… ✓ (5ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Now let me look at a different angle — let me find areas where there might be actual user-impacting improvements rather than just architectural cleanup.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (2m 29s)
+
+Excellent analysis. The smart_edit fuzzy matching enhancement is a great choice — edit_file failures from small content mismatches are one of the most common agent failure modes. Let me study the current implementation in detail.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/smart_edit.rs ✓ (12ms)
+
+Now let me look at the existing edit_distance function and understand the full picture:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "edit_distance\|levensht…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn edit_distance\|fn fu… ✓ (10ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '365,400p' src/commands.r… ✓ (3ms)
+  3 tools completed in 4.8s (3 ✓)
+
+Good — there's an edit_distance function in commands.rs but it's private. Now let me understand the full flow of `SmartEditTool`:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,280p' src/smart_edit… ✓ (4ms)
+
+Now I have a clear picture. The current find_nearest_match only finds matches where lines have identical trimmed content. When the LLM hallucinates even a single character differently, no match is found and the error message gives zero location context. Let me implement fuzzy line matching.
+
+Here's my plan:
+1. Add a line-level similarity function to smart_edit.rs
+2. When exact trimmed matching fails in find_nearest_match, fall back to fuzzy matching using edit distance
+3. Report the similarity percentage in the augmented error message so the LLM gets actionable context
+4. Write tests first
+
+Let me start with the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    #\[test\]" src/sma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/smart_edit.rs ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Good. Now let me write the implementation and tests. First, let me understand exactly what I need:
+
+1. A `line_similarity(a, b) -> f64` function that returns 0.0..=1.0
+2. A find_nearest_fuzzy_match that finds the best fuzzy match when exact trimmed matching fails
+3. Integration into find_nearest_match as a fallback
+4. Updated augmented error messages showing similarity percentage
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,15p' src/smart_edit.rs ✓ (3ms)
+
+Now let me add the fuzzy matching. I'll add:
+1. line_similarity - computes similarity ratio between two strings
+2. Modify find_nearest_match to try fuzzy matching as a fallback
+3. Return the similarity score in the result tuple
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:1..16 ✓ (1ms)
+
+Now let me implement the changes. I'll add the line_similarity function, a minimum similarity threshold, and modify find_nearest_match to fall back to fuzzy matching:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (7 → 50 lines)
+    
+    /// Number of context lines to show around the nearest match.
+    const SMART_EDIT_CONTEXT_LINES: usize = 5;
+  + 
+  + /// Minimum per-line similarity (0.0–1.0) required for a fuzzy match to be
+  + /// reported. Below this threshold the match is considered noise.
+  + const FUZZY_MIN_SIMILARITY: f64 = 0.6;
+  + 
+  + /// Edit distance between two strings (Levenshtein). Used for fuzzy matching
+  + /// when exact trimmed matches fail.
+  + fn edit_distance(a: &str, b: &str) -> usize {
+  +     let a: Vec<char> = a.chars().collect();
+  +     let b: Vec<char> = b.chars().collect();
+  +     let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+  +     for (i, row) in dp.iter_mut().enumerate() {
+  +         row[0] = i;
+  +     }
+  +     for (j, val) in dp[0].iter_mut().enumerate() {
+  +         *val = j;
+  +     }
+  ... (26 more lines)
+ ✓ (14.2s)
+    
+    /// Number of context lines to show around the nearest match.
+    const SMART_EDIT_CONTEXT_LINES: usize = 5;
+  + 
+  + /// Minimum per-line similarity (0.0–1.0) required for a fuzzy match to be
+  + /// reported. Below this threshold the match is considered noise.
+  + const FUZZY_MIN_SIMILARITY: f64 = 0.6;
+  + 
+  ... (13 more lines)
+
+Expected — the new functions aren't used yet. Now I need to modify find_nearest_match to use them. Let me read the current function and update it:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:58..158 ✓ (1ms)
+
+Now I need to redesign find_nearest_match to include fuzzy matching as a fallback. The key insight: when the exact trimmed match fails, we should try fuzzy matching on the anchor line, then verify subsequent lines with a combined similarity score.
+
+I'll restructure the return type slightly to include a similarity score, and add the fuzzy fallback:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (88 → 201 lines)
+  - /// Search a file's content for the best match of `old_text`, returning
+  - /// `(line_number_1indexed, is_whitespace_only_diff, snippet)`.
+  - fn find_nearest_match(file_content: &str, old_text: &str) -> Option<(usize, bool, String)> {
+  -     let old_lines: Vec<&str> = old_text.lines().collect();
+  -     if old_lines.is_empty() {
+  -         return None;
+  + /// Result of a nearest-match search.
+  + struct NearestMatch {
+  +     /// 1-indexed line number in the file.
+  +     line_num: usize,
+  +     /// Whether the mismatch is whitespace-only (auto-fixable).
+  +     is_whitespace_only: bool,
+  +     /// Whether this was a fuzzy (non-exact) match.
+  +     is_fuzzy: bool,
+  +     /// Average similarity score (1.0 = exact match, 0.0 = completely different).
+  +     similarity: f64,
+  +     /// Snippet of the file content around the match.
+  +     snippet: String,
+  + }
+  + 
+  ... (209 more lines)
+ ✓ (8.5s)
+  - /// Search a file's content for the best match of `old_text`, returning
+  - /// `(line_number_1indexed, is_whitespace_only_diff, snippet)`.
+  - fn find_nearest_match(file_content: &str, old_text: &str) -> Option<(usize, bool, String)> {
+  -     let old_lines: Vec<&str> = old_text.lines().collect();
+  -     if old_lines.is_empty() {
+  -         return None;
+  + /// Result of a nearest-match search.
+  + struct NearestMatch {
+  ... (13 more lines)
+
+Good — I need to update all the call sites to use the new NearestMatch struct. Let me find and fix them:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "find_nearest_match" src… ✓ (3ms)
+
+There are many test call sites that use the old tuple return type. Let me update the two production call sites first, then fix the tests systematically.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '345,370p' src/smart_edit… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (11 → 11 lines)
+  -         // find_nearest_match returns 1-indexed line number
+  -         let (line_num_1indexed, is_ws_only, _snippet) = find_nearest_match(&content, old_text)?;
+  +         // find_nearest_match returns structured match info
+  +         let m = find_nearest_match(&content, old_text)?;
+    
+  -         if !is_ws_only {
+  +         if !m.is_whitespace_only {
+                return None; // Not a whitespace-only diff — let caller handle it
+            }
+    
+            // Extract the actual text from the file at the match position
+            let old_line_count = old_text.lines().count().max(1);
+  -         let match_line_0indexed = line_num_1indexed - 1;
+  +         let match_line_0indexed = m.line_num - 1;
+            let actual_text = extract_matched_text(&content, match_line_0indexed, old_line_count);
+ ✓ (8.5s)
+  -         // find_nearest_match returns 1-indexed line number
+  -         let (line_num_1indexed, is_ws_only, _snippet) = find_nearest_match(&content, old_text)?;
+  +         // find_nearest_match returns structured match info
+  +         let m = find_nearest_match(&content, old_text)?;
+    
+  -         if !is_ws_only {
+  +         if !m.is_whitespace_only {
+                return None; // Not a whitespace-only diff — let caller handle it
+  ... (7 more lines)
+  2 tools completed in 16.4s (2 ✓)
+
+Let me fix the remaining reference to line_num_1indexed:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,385p' src/smart_edit… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (2 → 2 lines)
+                        "\n⚡ Auto-fixed whitespace mismatch at line {}",
+  -                     line_num_1indexed
+  +                     m.line_num
+ ✓ (8.5s)
+                        "\n⚡ Auto-fixed whitespace mismatch at line {}",
+  -                     line_num_1indexed
+  +                     m.line_num
+  2 tools completed in 15.1s (2 ✓)
+
+Now let me fix the augment_not_found_error method:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '405,440p' src/smart_edit… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (17 → 28 lines)
+            // Search for nearest match
+            match find_nearest_match(&content, old_text) {
+  -             Some((line_num, is_ws_only, snippet)) => {
+  +             Some(m) => {
+                    let mut augmented = original_msg.to_string();
+  -                 augmented.push_str(&format!(
+  -                     "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
+  -                     line_num, snippet
+  -                 ));
+  -                 if is_ws_only {
+  +                 if m.is_fuzzy {
+  +                     let pct = (m.similarity * 100.0) as u32;
+  +                     augmented.push_str(&format!(
+  +                         "\n\n📍 Nearest fuzzy match at line {} ({pct}% similar):\n```\n{}\n```",
+  +                         m.line_num, m.snippet
+  +                     ));
+                        augmented.push_str(
+  - ... (2 more similar lines)
+  +                         "\n\n⚠ The content differs (not just whitespace). Read the file at that line to see the actual text.",
+                        );
+  ... (13 more lines)
+ ✗ (2ms)
+    │ old_text not found in /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs.
+  2 tools completed in 8.8s (1 ✓, 1 ✗)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/smart_edit.rs:415:18
+    [1m[94m|[0m
+[1m[94m414[0m [1m[94m|[0m         match find_nearest_match(&content, old_text) {
+    [1m[94m|[0m               [1m[94m--------------------------------------[0m [1m[94mthis expression has type `std::option::Option<smart_edit::NearestMatch>`[0m
+[1m[94m415[0m [1m[94m|[0m             Some((line_num, is_ws_only, snippet)) => {
+    [1m[94m|[0m                  [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mexpected `NearestMatch`, found `(_, _, _)`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: expected struct `[1m[35msmart_edit::NearestMatch[0m`
+                found tuple `[1m[35m(_, _, _)[0m`
+
+[1mFor more information about this error, try `rustc --explain E0308`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/smart_edit.rs:454:13
+    [1m[94m|[0m
+[1m[94m454[0m [1m[94m|[0m         let (line, is_ws, snippet) = result.unwrap();
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m   [1m[94m---------------[0m [1m[94mthis expression has type `smart_edit::NearestMatch`[0m
+    [1m[94m|[0m             [1m[91m|[0m
+    [1m[94m|[0m             [1m[91mexpected `NearestMatch`, found `(_, _, _)`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: expected struct `[1m[35msmart_edit::NearestMatch[0m`
+                found tuple `[1m[35m(_, _, _)[0m`
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/smart_edit.rs:470:13
+    [1m[94m|[0m
+[1m[94m470[0m [1m[94m|[0m         let (line, is_ws, _snippet) = result.unwrap();
+    [1m[94m|[0m             [1m[91m^^^^^^^^^^^^...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix all the remaining compilation errors. The issue is that tests and the augment_not_found_error method still use the old tuple destructuring pattern instead of the new NearestMatch struct.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "find_nearest_match\|let… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let (line\|Some((line" … ✓ (3ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Let me fix the augment_not_found_error method first (line 415), then fix all test destructuring patterns at once:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '413,432p' src/smart_edit… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (18 → 30 lines)
+            // Search for nearest match
+            match find_nearest_match(&content, old_text) {
+  -             Some((line_num, is_ws_only, snippet)) => {
+  +             Some(m) => {
+                    let mut augmented = original_msg.to_string();
+  -                 augmented.push_str(&format!(
+  -                     "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
+  -                     line_num, snippet
+  -                 ));
+  -                 if is_ws_only {
+  +                 if m.is_fuzzy {
+  +                     let pct = (m.similarity * 100.0) as u32;
+  +                     augmented.push_str(&format!(
+  +                         "\n\n📍 Nearest fuzzy match at line {} ({pct}% similar):\n```\n{}\n```",
+  +                         m.line_num, m.snippet
+  +                     ));
+                        augmented.push_str(
+  -                         "\n\n⚠️ Hint: the text exists but indentation/whitespace differs. \
+  -                          Use read_file to see the exact whitespace.",
+  +                         "\n\n⚠ The content differs (not just whitespace). \
+  ... (16 more lines)
+ ✓ (8.5s)
+            // Search for nearest match
+            match find_nearest_match(&content, old_text) {
+  -             Some((line_num, is_ws_only, snippet)) => {
+  +             Some(m) => {
+                    let mut augmented = original_msg.to_string();
+  -                 augmented.push_str(&format!(
+  -                     "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
+  -                     line_num, snippet
+  ... (13 more lines)
+  2 tools completed in 19.6s (2 ✓)
+
+Now I need to fix all the test destructuring. Let me use sed to do this efficiently:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i \ (8 lines) ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (6.6s)
+  2 tools completed in 10.9s (2 ✓)
+
+It builds. Let me run clippy and tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (8.5s)
+
+There are two more patterns I missed. Let me find them:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let (" src/smart_edit.r… ✓ (4ms)
+
+Lines 1046 and 1102 still have the old pattern let (_, is_ws, _) = result.unwrap();. Let me fix those:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1044,1048p' src/smart_ed… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1100,1104p' src/smart_ed… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i \ (3 lines) ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.3s)
+  4 tools completed in 23.3s (4 ✓)
+
+Clippy passes. Now tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (48.7s)
+
+All 88 tests pass. Now let me run cargo fmt and then add the new fuzzy matching tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (762ms)
+
+Now let me add tests for the new fuzzy matching functionality. Let me find the right place in the test section:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/smart_edit.rs ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (7 → 183 lines)
+            let content = "a\nb\nc\nd\n";
+            let result = extract_matched_text(content, 0, 4);
+            assert_eq!(result, "a\nb\nc\nd");
+  +     }
+  + 
+  +     // === line_similarity tests ===
+  + 
+  +     #[test]
+  +     fn test_line_similarity_identical() {
+  +         assert!((line_similarity("fn hello()", "fn hello()") - 1.0).abs() < f64::EPSILON);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_line_similarity_whitespace_only_diff() {
+  +         // Whitespace is trimmed, so these are identical
+  +         assert!((line_similarity("  fn hello()", "    fn hello()") - 1.0).abs() < f64::EPSILON);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_line_similarity_empty_strings() {
+  ... (161 more lines)
+ ✓ (1m 3s)
+            let content = "a\nb\nc\nd\n";
+            let result = extract_matched_text(content, 0, 4);
+            assert_eq!(result, "a\nb\nc\nd");
+  +     }
+  + 
+  +     // === line_similarity tests ===
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.1s)
+  3 tools completed in 1m 54s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
