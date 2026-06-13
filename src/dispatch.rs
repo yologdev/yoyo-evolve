@@ -379,6 +379,79 @@ async fn dispatch_info_command(
     }
 }
 
+/// Dispatch git-related slash commands (diff, blame, undo, commit, pr, git, review).
+async fn dispatch_git_command(
+    route: &CommandRoute,
+    ctx: &mut DispatchContext<'_>,
+) -> Option<CommandResult> {
+    match route {
+        CommandRoute::Diff => {
+            let opts = commands::parse_diff_args(ctx.input);
+            if opts.explain {
+                if let Some(prompt) = commands::handle_diff_explain(
+                    ctx.input,
+                    ctx.agent,
+                    ctx.session_total,
+                    &ctx.agent_config.model,
+                )
+                .await
+                {
+                    *ctx.last_input = Some(prompt);
+                }
+            } else {
+                commands::handle_diff(ctx.input);
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Blame => {
+            commands::handle_blame(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Undo => {
+            if let Some(undo_ctx) = commands::handle_undo(ctx.input, ctx.turn_history) {
+                *ctx.undo_context = Some(undo_ctx);
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Commit => {
+            if commands::wants_ai_commit(ctx.input) {
+                commands::handle_commit_ai(ctx.input, ctx.agent_config).await;
+            } else {
+                commands::handle_commit(ctx.input);
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Pr => {
+            commands::handle_pr(
+                ctx.input,
+                ctx.agent,
+                ctx.session_total,
+                &ctx.agent_config.model,
+            )
+            .await;
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Git => {
+            commands::handle_git(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Review => {
+            if let Some(review_prompt) = commands::handle_review(
+                ctx.input,
+                ctx.agent,
+                ctx.session_total,
+                &ctx.agent_config.model,
+            )
+            .await
+            {
+                *ctx.last_input = Some(review_prompt);
+            }
+            Some(CommandResult::Continue)
+        }
+        _ => None,
+    }
+}
+
 /// Dispatch a slash command entered at the REPL prompt.
 ///
 /// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
@@ -392,6 +465,11 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
 
     // Delegate info/status commands to a focused helper.
     if let Some(result) = dispatch_info_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate git-related commands to a focused helper.
+    if let Some(result) = dispatch_git_command(&route, ctx).await {
         return result;
     }
 
@@ -549,34 +627,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             commands::handle_checkpoint(ctx.input, ctx.checkpoint_store, ctx.session_changes);
             CommandResult::Continue
         }
-        CommandRoute::Diff => {
-            let opts = commands::parse_diff_args(ctx.input);
-            if opts.explain {
-                if let Some(prompt) = commands::handle_diff_explain(
-                    ctx.input,
-                    ctx.agent,
-                    ctx.session_total,
-                    &ctx.agent_config.model,
-                )
-                .await
-                {
-                    *ctx.last_input = Some(prompt);
-                }
-            } else {
-                commands::handle_diff(ctx.input);
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Blame => {
-            commands::handle_blame(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Undo => {
-            if let Some(undo_ctx) = commands::handle_undo(ctx.input, ctx.turn_history) {
-                *ctx.undo_context = Some(undo_ctx);
-            }
-            CommandResult::Continue
-        }
         CommandRoute::Health => {
             commands::handle_health();
             CommandResult::Continue
@@ -706,14 +756,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         }
         CommandRoute::Compact => {
             commands::handle_compact(ctx.agent, ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Commit => {
-            if commands::wants_ai_commit(ctx.input) {
-                commands::handle_commit_ai(ctx.input, ctx.agent_config).await;
-            } else {
-                commands::handle_commit(ctx.input);
-            }
             CommandResult::Continue
         }
         CommandRoute::Context => {
@@ -925,20 +967,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             }
             CommandResult::Continue
         }
-        CommandRoute::Pr => {
-            commands::handle_pr(
-                ctx.input,
-                ctx.agent,
-                ctx.session_total,
-                &ctx.agent_config.model,
-            )
-            .await;
-            CommandResult::Continue
-        }
-        CommandRoute::Git => {
-            commands::handle_git(ctx.input);
-            CommandResult::Continue
-        }
         CommandRoute::Goal => commands::handle_goal(ctx.input),
         CommandRoute::Spawn => {
             if let Some(context_msg) = commands::handle_spawn(
@@ -964,19 +992,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 crate::format::maybe_ring_bell(prompt_start.elapsed());
                 *ctx.last_error = outcome.last_tool_error;
                 auto_compact_if_needed(ctx.agent);
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Review => {
-            if let Some(review_prompt) = commands::handle_review(
-                ctx.input,
-                ctx.agent,
-                ctx.session_total,
-                &ctx.agent_config.model,
-            )
-            .await
-            {
-                *ctx.last_input = Some(review_prompt);
             }
             CommandResult::Continue
         }
@@ -1094,6 +1109,15 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::Changelog
         | CommandRoute::Evolution
         | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+
+        // Git commands are handled by dispatch_git_command above.
+        CommandRoute::Diff
+        | CommandRoute::Blame
+        | CommandRoute::Undo
+        | CommandRoute::Commit
+        | CommandRoute::Pr
+        | CommandRoute::Git
+        | CommandRoute::Review => unreachable!("handled by dispatch_git_command"),
 
         CommandRoute::NotACommand => CommandResult::NotACommand,
     }
