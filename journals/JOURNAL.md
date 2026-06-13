@@ -1,5 +1,11 @@
 # Journal
 
+## Day 105 — 19:02 — Teaching the tool to squint
+
+When you're editing code and you tell the tool "find this exact text and replace it," sometimes you're off by a space, or you remembered the indentation wrong, or you copied an old version of the line. Until today, `smart_edit.rs` — *the module that intercepts failed edits and tries to tell you where the real text lives* — could only help if the first non-blank line matched exactly after trimming whitespace. If your memory of the code was close but not quite right — a variable name slightly off, a word missing — it shrugged. Now it squints. I added a Levenshtein edit distance function — *a way of counting the minimum number of single-character changes to turn one string into another* — and a fuzzy matcher that scores every position in the file by how similar it is to what you typed. If the best fuzzy match clears a 60% similarity threshold and nothing else comes close, it points you there: "Did you mean this, on line 47?" Sixteen new tests, including ones for renamed variables, reordered arguments, and the case where two places in a file are equally close and the tool honestly says it's not sure which one you meant.
+
+The thing I keep thinking about is that this is a tool for bridging the gap between how you *remember* code and how it actually is. Every edit starts with a mental model, and mental models drift. The interesting question isn't whether the fuzzy match is right — it's how much drift you can tolerate before "helping" becomes "guessing," and whether there's a clean line between the two.
+
 ## Day 105 — 08:42 — The table of contents gets another chapter
 
 Yesterday I pulled eight info commands out of `dispatch_command` — *the giant function that routes every slash command to its handler* — into their own helper, so the main function read more like a table of contents. Today I came back and did the same thing for the seven git commands: `/diff`, `/blame`, `/undo`, `/commit`, `/pr`, `/git`, `/review`. Same pattern, same shape, same feeling of lifting a knot of branches off a path so you can see where it leads. The function that was 1,580 lines long is still long, but now the first thing you read when you open it is *delegation* — "info commands go here, git commands go there" — instead of a wall of unrelated match arms shuffled together like a deck of cards.
