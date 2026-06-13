@@ -454,6 +454,133 @@ async fn dispatch_git_command(
 
 /// Dispatch a slash command entered at the REPL prompt.
 ///
+/// Dispatch session/conversation management slash commands.
+async fn dispatch_session_command(
+    route: &CommandRoute,
+    ctx: &mut DispatchContext<'_>,
+) -> Option<CommandResult> {
+    match route {
+        CommandRoute::Save => {
+            commands::handle_save(ctx.agent, ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Load => {
+            commands::handle_load(ctx.agent, ctx.input);
+            reset_compact_thrash();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Stash => {
+            let result = commands::handle_stash(ctx.agent, ctx.input);
+            print!("{result}");
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Fork => {
+            let result = commands::handle_fork(ctx.agent, ctx.input);
+            print!("{result}");
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Checkpoint => {
+            commands::handle_checkpoint(ctx.input, ctx.checkpoint_store, ctx.session_changes);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::History => {
+            let sub = ctx.input.strip_prefix("/history").unwrap_or("").trim();
+            if sub == "detail" {
+                commands::handle_history_detail(ctx.agent);
+            } else {
+                commands::handle_history(ctx.agent);
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Search => {
+            commands::handle_search(ctx.agent, ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Changes => {
+            if commands::wants_summary(ctx.input) {
+                commands::handle_changes_summary(ctx.session_changes, ctx.agent_config).await;
+            } else {
+                commands::handle_changes(ctx.session_changes, ctx.input);
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Export => {
+            commands::handle_export(ctx.agent, ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Mark => {
+            commands::handle_mark(ctx.agent, ctx.input, ctx.bookmarks);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Jump => {
+            commands::handle_jump(ctx.agent, ctx.input, ctx.bookmarks);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Marks => {
+            commands::handle_marks(ctx.bookmarks);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Compact => {
+            commands::handle_compact(ctx.agent, ctx.input);
+            Some(CommandResult::Continue)
+        }
+        _ => None,
+    }
+}
+
+/// Dispatch dev/lint/test commands related to project health and code quality.
+async fn dispatch_dev_command(
+    route: &CommandRoute,
+    ctx: &mut DispatchContext<'_>,
+) -> Option<CommandResult> {
+    match route {
+        CommandRoute::Health => {
+            commands::handle_health();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Doctor => {
+            commands::handle_doctor(&ctx.agent_config.provider, &ctx.agent_config.model);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Test => {
+            commands::handle_test();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Security => {
+            commands::handle_security();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::LintFix => {
+            if let Some(fix_prompt) =
+                commands::handle_lint_fix(ctx.agent, ctx.session_total, &ctx.agent_config.model)
+                    .await
+            {
+                *ctx.last_input = Some(fix_prompt);
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Lint => {
+            if let Some(lint_result) = commands::handle_lint(ctx.input) {
+                if lint_result.starts_with("Lint FAILED")
+                    || lint_result.starts_with("Failed to run")
+                {
+                    *ctx.last_input = Some(lint_result);
+                }
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Fix => {
+            if let Some(fix_prompt) =
+                commands::handle_fix(ctx.agent, ctx.session_total, &ctx.agent_config.model).await
+            {
+                *ctx.last_input = Some(fix_prompt);
+            }
+            Some(CommandResult::Continue)
+        }
+        _ => None,
+    }
+}
+
 /// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
 /// the main loop what to do next.  This was extracted from `run_repl` to keep
 /// the outer loop small and the command table easy to navigate.
@@ -470,6 +597,16 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
 
     // Delegate git-related commands to a focused helper.
     if let Some(result) = dispatch_git_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate session/conversation management commands to a focused helper.
+    if let Some(result) = dispatch_session_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate dev/lint/test commands to a focused helper.
+    if let Some(result) = dispatch_dev_command(&route, ctx).await {
         return result;
     }
 
@@ -604,109 +741,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             }
             CommandResult::Continue
         }
-        CommandRoute::Save => {
-            commands::handle_save(ctx.agent, ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Load => {
-            commands::handle_load(ctx.agent, ctx.input);
-            reset_compact_thrash();
-            CommandResult::Continue
-        }
-        CommandRoute::Stash => {
-            let result = commands::handle_stash(ctx.agent, ctx.input);
-            print!("{result}");
-            CommandResult::Continue
-        }
-        CommandRoute::Fork => {
-            let result = commands::handle_fork(ctx.agent, ctx.input);
-            print!("{result}");
-            CommandResult::Continue
-        }
-        CommandRoute::Checkpoint => {
-            commands::handle_checkpoint(ctx.input, ctx.checkpoint_store, ctx.session_changes);
-            CommandResult::Continue
-        }
-        CommandRoute::Health => {
-            commands::handle_health();
-            CommandResult::Continue
-        }
-        CommandRoute::Doctor => {
-            commands::handle_doctor(&ctx.agent_config.provider, &ctx.agent_config.model);
-            CommandResult::Continue
-        }
-        CommandRoute::Test => {
-            commands::handle_test();
-            CommandResult::Continue
-        }
-        CommandRoute::Security => {
-            commands::handle_security();
-            CommandResult::Continue
-        }
-        CommandRoute::LintFix => {
-            if let Some(fix_prompt) =
-                commands::handle_lint_fix(ctx.agent, ctx.session_total, &ctx.agent_config.model)
-                    .await
-            {
-                *ctx.last_input = Some(fix_prompt);
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Lint => {
-            if let Some(lint_result) = commands::handle_lint(ctx.input) {
-                if lint_result.starts_with("Lint FAILED")
-                    || lint_result.starts_with("Failed to run")
-                {
-                    *ctx.last_input = Some(lint_result);
-                }
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Fix => {
-            if let Some(fix_prompt) =
-                commands::handle_fix(ctx.agent, ctx.session_total, &ctx.agent_config.model).await
-            {
-                *ctx.last_input = Some(fix_prompt);
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::History => {
-            let sub = ctx.input.strip_prefix("/history").unwrap_or("").trim();
-            if sub == "detail" {
-                commands::handle_history_detail(ctx.agent);
-            } else {
-                commands::handle_history(ctx.agent);
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Search => {
-            commands::handle_search(ctx.agent, ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Marks => {
-            commands::handle_marks(ctx.bookmarks);
-            CommandResult::Continue
-        }
-        CommandRoute::Changes => {
-            if commands::wants_summary(ctx.input) {
-                commands::handle_changes_summary(ctx.session_changes, ctx.agent_config).await;
-            } else {
-                commands::handle_changes(ctx.session_changes, ctx.input);
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Export => {
-            commands::handle_export(ctx.agent, ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Mark => {
-            commands::handle_mark(ctx.agent, ctx.input, ctx.bookmarks);
-            CommandResult::Continue
-        }
-        CommandRoute::Jump => {
-            commands::handle_jump(ctx.agent, ctx.input, ctx.bookmarks);
-            CommandResult::Continue
-        }
         CommandRoute::Config => {
             commands::handle_config(&ConfigDisplay {
                 provider: &ctx.agent_config.provider,
@@ -752,10 +786,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 &ctx.agent_config.permissions,
                 &ctx.agent_config.dir_restrictions,
             );
-            CommandResult::Continue
-        }
-        CommandRoute::Compact => {
-            commands::handle_compact(ctx.agent, ctx.input);
             CommandResult::Continue
         }
         CommandRoute::Context => {
@@ -1118,6 +1148,30 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::Pr
         | CommandRoute::Git
         | CommandRoute::Review => unreachable!("handled by dispatch_git_command"),
+
+        // Session/conversation commands are handled by dispatch_session_command above.
+        CommandRoute::Save
+        | CommandRoute::Load
+        | CommandRoute::Stash
+        | CommandRoute::Fork
+        | CommandRoute::Checkpoint
+        | CommandRoute::History
+        | CommandRoute::Search
+        | CommandRoute::Changes
+        | CommandRoute::Export
+        | CommandRoute::Mark
+        | CommandRoute::Jump
+        | CommandRoute::Marks
+        | CommandRoute::Compact => unreachable!("handled by dispatch_session_command"),
+
+        // Dev/lint/test commands are handled by dispatch_dev_command above.
+        CommandRoute::Health
+        | CommandRoute::Doctor
+        | CommandRoute::Test
+        | CommandRoute::Security
+        | CommandRoute::LintFix
+        | CommandRoute::Lint
+        | CommandRoute::Fix => unreachable!("handled by dispatch_dev_command"),
 
         CommandRoute::NotACommand => CommandResult::NotACommand,
     }
