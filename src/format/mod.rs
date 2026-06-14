@@ -2038,6 +2038,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_compact_on_high_usage() {
         reset_shown_hints();
         let ctx = HintContext {
@@ -2051,6 +2052,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_diff_when_files_modified() {
         reset_shown_hints();
         // watch hint fires first for files_modified + no watch, so set has_watch
@@ -2066,6 +2068,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_tips_after_no_slash_commands() {
         reset_shown_hints();
         let ctx = HintContext {
@@ -2079,6 +2082,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_no_repeat_same_category() {
         reset_shown_hints();
         let ctx = HintContext {
@@ -2100,6 +2104,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_none_when_no_conditions_match() {
         reset_shown_hints();
         let ctx = HintContext {
