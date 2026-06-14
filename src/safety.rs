@@ -197,6 +197,11 @@ fn is_whole_word(s: &str, pos: usize, pattern_len: usize) -> bool {
     is_at_word_boundary(s, pos) && is_at_word_boundary_end(s, pos + pattern_len)
 }
 
+/// Critical system directories that should never be recursively deleted.
+const CRITICAL_SYSTEM_DIRS: &[&str] = &[
+    "/etc", "/usr", "/var", "/boot", "/bin", "/sbin", "/lib", "/lib64", "/opt", "/srv",
+];
+
 /// Check for rm -rf with dangerous target paths.
 fn check_rm_destruction(cmd: &str) -> Option<String> {
     // Find all occurrences of "rm " in the command
@@ -217,6 +222,10 @@ fn check_rm_destruction(cmd: &str) -> Option<String> {
                 // Also check "." and ".." — recursive delete of cwd or parent is almost always destructive
                 let tokens: Vec<&str> = after_rm.split_whitespace().collect();
                 for token in &tokens {
+                    // Skip flags (e.g. -rf, --force)
+                    if token.starts_with('-') {
+                        continue;
+                    }
                     if *token == "/"
                         || *token == "/*"
                         || *token == "~"
@@ -235,6 +244,18 @@ fn check_rm_destruction(cmd: &str) -> Option<String> {
                         return Some(format!(
                             "Destructive command: {severity}recursive delete targeting '{token}'"
                         ));
+                    }
+                    // Also catch critical system directories like /etc, /usr, /var, /boot, etc.
+                    for dir in CRITICAL_SYSTEM_DIRS {
+                        if *token == *dir
+                            || *token == format!("{dir}/")
+                            || *token == format!("{dir}/*")
+                        {
+                            let severity = if has_f { "force-" } else { "" };
+                            return Some(format!(
+                                "Destructive command: {severity}recursive delete targeting system directory '{token}'"
+                            ));
+                        }
                     }
                 }
             }
@@ -1687,5 +1708,56 @@ mod tests {
         assert!(analyze_bash_command("cp file1.txt file2.txt").is_none());
         assert!(analyze_bash_command("cp src/old.rs src/new.rs").is_none());
         assert!(analyze_bash_command("cp -r src/ backup/").is_none());
+    }
+
+    #[test]
+    fn test_analyze_rm_critical_system_dirs() {
+        // rm -rf targeting critical system directories should be flagged
+        assert!(analyze_bash_command("rm -rf /etc").is_some());
+        assert!(analyze_bash_command("rm -rf /usr").is_some());
+        assert!(analyze_bash_command("rm -rf /var").is_some());
+        assert!(analyze_bash_command("rm -rf /boot").is_some());
+        assert!(analyze_bash_command("rm -rf /bin").is_some());
+        assert!(analyze_bash_command("rm -rf /sbin").is_some());
+        assert!(analyze_bash_command("rm -rf /lib").is_some());
+        assert!(analyze_bash_command("rm -rf /lib64").is_some());
+        assert!(analyze_bash_command("rm -rf /opt").is_some());
+        assert!(analyze_bash_command("rm -rf /srv").is_some());
+
+        // With trailing slash or wildcard
+        assert!(analyze_bash_command("rm -rf /etc/").is_some());
+        assert!(analyze_bash_command("rm -rf /usr/*").is_some());
+
+        // With sudo
+        assert!(analyze_bash_command("sudo rm -rf /etc").is_some());
+        assert!(analyze_bash_command("sudo rm -rf /var/").is_some());
+
+        // Without force flag (just -r) should still be caught
+        assert!(analyze_bash_command("rm -r /etc").is_some());
+        assert!(analyze_bash_command("rm -r /usr").is_some());
+
+        // The message should mention "system directory"
+        let msg = analyze_bash_command("rm -rf /etc").unwrap();
+        assert!(
+            msg.contains("system directory"),
+            "Expected 'system directory' in message: {msg}"
+        );
+
+        // Safe: rm of a specific file inside a system dir (not the dir itself)
+        // (check_rm_destruction only matches the dir itself, not sub-paths)
+        assert!(analyze_bash_command("rm /etc/myconfig.txt").is_none());
+    }
+
+    #[test]
+    fn test_rm_flag_skipping() {
+        // Flags like -rf should not be treated as path targets
+        // Before the fix, the flag-skipping logic was missing and flags could
+        // potentially interfere. This test ensures flags are properly skipped.
+        assert!(analyze_bash_command("rm -rf /tmp/safe_dir").is_none());
+        assert!(analyze_bash_command("rm -r -f /tmp/safe_dir").is_none());
+        assert!(analyze_bash_command("rm --recursive --force /tmp/safe_dir").is_none());
+        // But still catches dangerous paths alongside flags
+        assert!(analyze_bash_command("rm -rf /etc").is_some());
+        assert!(analyze_bash_command("rm --recursive --force /").is_some());
     }
 }
