@@ -754,6 +754,7 @@ pub fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_truncate_short_string() {
@@ -1836,6 +1837,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_first_turn() {
         reset_shown_hints();
         let ctx = HintContext {
@@ -1848,6 +1850,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_watch_when_files_modified_no_watch() {
         reset_shown_hints();
         let ctx = HintContext {
@@ -1862,6 +1865,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_no_watch_hint_when_watch_set() {
         reset_shown_hints();
         let ctx = HintContext {
@@ -1878,6 +1882,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_hint_retry_on_tool_error() {
         reset_shown_hints();
         let ctx = HintContext {
