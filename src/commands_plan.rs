@@ -36,21 +36,229 @@ pub fn is_plan_apply_active() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Last plan storage — holds the text of the most recently generated plan so
-// the user can review (/plan show) or execute (/plan apply) it later.
+// Structured plan types — a plan is parsed into numbered steps with tracking.
 // ---------------------------------------------------------------------------
 
-static LAST_PLAN: Mutex<Option<String>> = Mutex::new(None);
+/// A single step within a structured plan.
+#[derive(Debug, Clone)]
+pub struct PlanStep {
+    pub number: usize,
+    pub title: String,
+    pub description: String,
+    pub completed: bool,
+}
 
-/// Store the text of the last generated plan.
+/// A structured plan: the original raw text plus parsed steps with completion tracking.
+#[derive(Debug, Clone)]
+pub struct StructuredPlan {
+    pub raw_text: String,
+    pub steps: Vec<PlanStep>,
+}
+
+/// Parse plan text into structured steps.
+///
+/// Recognizes several common formats:
+/// - `1. **Title** — description` or `1. **Title**: description`
+/// - `1. Title`
+/// - `- [ ] Title` / `- [x] Title` (markdown checklist)
+/// - `Step 1: Title`
+pub fn parse_plan_steps(plan_text: &str) -> Vec<PlanStep> {
+    let mut steps: Vec<PlanStep> = Vec::new();
+    let mut current_desc_lines: Vec<String> = Vec::new();
+    let lines: Vec<&str> = plan_text.lines().collect();
+
+    for line in &lines {
+        let trimmed = line.trim();
+
+        // Try to match numbered list: `1. **Title** — desc` or `1. Title`
+        if let Some(step) = try_parse_numbered(trimmed) {
+            // Flush previous step's description
+            flush_description(&mut steps, &mut current_desc_lines);
+            steps.push(step);
+            continue;
+        }
+
+        // Try to match markdown checklist: `- [ ] Title` or `- [x] Title`
+        if let Some(step) = try_parse_checklist(trimmed, steps.len() + 1) {
+            flush_description(&mut steps, &mut current_desc_lines);
+            steps.push(step);
+            continue;
+        }
+
+        // Try to match `Step N: Title`
+        if let Some(step) = try_parse_step_prefix(trimmed) {
+            flush_description(&mut steps, &mut current_desc_lines);
+            steps.push(step);
+            continue;
+        }
+
+        // Otherwise it's a continuation/description line for the current step
+        if !steps.is_empty() && !trimmed.is_empty() {
+            // Only add indented or clearly subordinate lines as description
+            if line.starts_with("   ") || line.starts_with('\t') || trimmed.starts_with('-') {
+                current_desc_lines.push(trimmed.to_string());
+            }
+        }
+    }
+
+    // Flush final step's description
+    flush_description(&mut steps, &mut current_desc_lines);
+
+    steps
+}
+
+fn flush_description(steps: &mut [PlanStep], desc_lines: &mut Vec<String>) {
+    if !desc_lines.is_empty() {
+        if let Some(last) = steps.last_mut() {
+            if last.description.is_empty() {
+                last.description = desc_lines.join("\n");
+            } else {
+                last.description.push('\n');
+                last.description.push_str(&desc_lines.join("\n"));
+            }
+        }
+        desc_lines.clear();
+    }
+}
+
+/// Try parsing `1. **Title** — description` or `1. Title`
+fn try_parse_numbered(line: &str) -> Option<PlanStep> {
+    // Match: digits followed by `. ` or `) `
+    let (num_str, rest) = if let Some(pos) = line.find(". ") {
+        let num_part = &line[..pos];
+        if num_part.chars().all(|c| c.is_ascii_digit()) && !num_part.is_empty() {
+            (num_part, &line[pos + 2..])
+        } else {
+            return None;
+        }
+    } else if let Some(pos) = line.find(") ") {
+        let num_part = &line[..pos];
+        if num_part.chars().all(|c| c.is_ascii_digit()) && !num_part.is_empty() {
+            (num_part, &line[pos + 2..])
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    let number: usize = num_str.parse().ok()?;
+
+    // Extract title — strip bold markers
+    let rest = rest.trim();
+    let (title, description) = extract_title_and_desc(rest);
+
+    Some(PlanStep {
+        number,
+        title,
+        description,
+        completed: false,
+    })
+}
+
+/// Try parsing `- [ ] Title` or `- [x] Title`
+fn try_parse_checklist(line: &str, default_number: usize) -> Option<PlanStep> {
+    let rest = if let Some(r) = line.strip_prefix("- [ ] ") {
+        r
+    } else if let Some(r) = line.strip_prefix("- [x] ") {
+        return Some(PlanStep {
+            number: default_number,
+            title: r.trim().to_string(),
+            description: String::new(),
+            completed: true,
+        });
+    } else if let Some(r) = line.strip_prefix("- [X] ") {
+        return Some(PlanStep {
+            number: default_number,
+            title: r.trim().to_string(),
+            description: String::new(),
+            completed: true,
+        });
+    } else {
+        return None;
+    };
+
+    Some(PlanStep {
+        number: default_number,
+        title: rest.trim().to_string(),
+        description: String::new(),
+        completed: false,
+    })
+}
+
+/// Try parsing `Step N: Title`
+fn try_parse_step_prefix(line: &str) -> Option<PlanStep> {
+    let lower = line.to_lowercase();
+    let rest = lower.strip_prefix("step ")?;
+    // Find the number
+    let colon_pos = rest.find(':')?;
+    let num_str = rest[..colon_pos].trim();
+    let number: usize = num_str.parse().ok()?;
+
+    // Get title from the original line (preserving case)
+    let original_rest = &line["step ".len()..];
+    let original_colon_pos = original_rest.find(':')?;
+    let title = original_rest[original_colon_pos + 1..].trim().to_string();
+
+    Some(PlanStep {
+        number,
+        title,
+        description: String::new(),
+        completed: false,
+    })
+}
+
+/// Extract title and description from text that may have bold markers and separators.
+fn extract_title_and_desc(text: &str) -> (String, String) {
+    // Strip leading ** and find closing **
+    let text = text.trim();
+    if let Some(rest) = text.strip_prefix("**") {
+        if let Some(end_bold) = rest.find("**") {
+            let title = rest[..end_bold].to_string();
+            let after = rest[end_bold + 2..].trim();
+            // Strip leading separator (—, :, -, etc.)
+            let desc = after
+                .strip_prefix('—')
+                .or_else(|| after.strip_prefix(':'))
+                .or_else(|| after.strip_prefix('-'))
+                .unwrap_or(after)
+                .trim()
+                .to_string();
+            return (title, desc);
+        }
+    }
+
+    // No bold markers — just use the whole thing as title
+    // But split on — or : if present for description
+    if let Some(pos) = text.find(" — ") {
+        let title = text[..pos].trim().to_string();
+        let desc = text[pos + " — ".len()..].trim().to_string();
+        return (title, desc);
+    }
+
+    (text.to_string(), String::new())
+}
+
+// ---------------------------------------------------------------------------
+// Last plan storage — holds the structured plan so the user can review
+// (/plan show), track progress (/plan status), or execute (/plan apply) it.
+// ---------------------------------------------------------------------------
+
+static LAST_PLAN: Mutex<Option<StructuredPlan>> = Mutex::new(None);
+
+/// Store the text of the last generated plan (parses into structured steps).
 pub fn set_last_plan(plan: String) {
     if let Ok(mut guard) = LAST_PLAN.lock() {
-        *guard = Some(plan);
+        let steps = parse_plan_steps(&plan);
+        *guard = Some(StructuredPlan {
+            raw_text: plan,
+            steps,
+        });
     }
 }
 
 /// Retrieve the last stored plan, if any.
-pub fn get_last_plan() -> Option<String> {
+pub fn get_last_plan() -> Option<StructuredPlan> {
     LAST_PLAN.lock().ok().and_then(|g| g.clone())
 }
 
@@ -59,6 +267,75 @@ pub fn clear_last_plan() {
     if let Ok(mut guard) = LAST_PLAN.lock() {
         *guard = None;
     }
+}
+
+/// Mark a step as completed or not.
+pub fn mark_step(step_number: usize, completed: bool) -> Result<(), String> {
+    if let Ok(mut guard) = LAST_PLAN.lock() {
+        if let Some(plan) = guard.as_mut() {
+            if let Some(step) = plan.steps.iter_mut().find(|s| s.number == step_number) {
+                step.completed = completed;
+                Ok(())
+            } else {
+                Err(format!("No step {step_number} found in the current plan."))
+            }
+        } else {
+            Err("No plan stored. Use /plan <task> to create one first.".to_string())
+        }
+    } else {
+        Err("Failed to access plan state.".to_string())
+    }
+}
+
+/// Format the plan status display.
+pub fn format_plan_status(plan: &StructuredPlan) -> String {
+    if plan.steps.is_empty() {
+        return "  Plan has no parseable steps.\n\n  Raw plan text stored — use /plan show to view.".to_string();
+    }
+
+    let mut output = String::new();
+    let total = plan.steps.len();
+    let done = plan.steps.iter().filter(|s| s.completed).count();
+
+    output.push_str(&format!(
+        "  📋 Plan progress: {done}/{total} steps complete"
+    ));
+    if total > 0 {
+        let pct = (done * 100).checked_div(total).unwrap_or(0);
+        output.push_str(&format!(" ({pct}%)"));
+    }
+    output.push_str("\n\n");
+
+    let mut next_incomplete_shown = false;
+    for step in &plan.steps {
+        let check = if step.completed { "x" } else { " " };
+        let marker = if !step.completed && !next_incomplete_shown {
+            next_incomplete_shown = true;
+            "→"
+        } else {
+            " "
+        };
+        output.push_str(&format!(
+            "  {marker} [{check}] Step {}: {}",
+            step.number, step.title
+        ));
+        if !step.description.is_empty() {
+            // Show a truncated description on the same line
+            let short_desc = if step.description.len() > 60 {
+                let mut b = 60;
+                while b > 0 && !step.description.is_char_boundary(b) {
+                    b -= 1;
+                }
+                format!("{}…", &step.description[..b])
+            } else {
+                step.description.clone()
+            };
+            output.push_str(&format!("\n       {short_desc}"));
+        }
+        output.push('\n');
+    }
+
+    output
 }
 
 /// Enable or disable plan mode.
@@ -81,7 +358,9 @@ but you MUST NOT modify any files or run destructive commands. Specifically:
 Analyze the codebase, explain your plan, and describe what changes you WOULD make without making them.";
 
 /// Subcommand names for `/plan <Tab>` completion.
-pub const PLAN_SUBCOMMANDS: &[&str] = &["on", "off", "open", "close", "show", "apply", "clear"];
+pub const PLAN_SUBCOMMANDS: &[&str] = &[
+    "on", "off", "open", "close", "show", "apply", "clear", "status", "step",
+];
 
 /// Parse a `/plan` command and extract the task description.
 /// Returns None if no task was provided or if the input is a mode toggle keyword.
@@ -92,7 +371,9 @@ pub fn parse_plan_task(input: &str) -> Option<String> {
     } else {
         // Don't treat mode toggle keywords as plan tasks
         match task.as_str() {
-            "on" | "off" | "open" | "close" | "show" | "apply" | "clear" => None,
+            "on" | "off" | "open" | "close" | "show" | "apply" | "clear" | "status" | "step" => {
+                None
+            }
             _ => Some(task),
         }
     }
@@ -142,6 +423,53 @@ pub enum PlanResult {
     Apply(String),
 }
 
+/// Handle `/plan step N done` or `/plan step N undo`.
+fn handle_plan_step(step_arg: &str) -> PlanResult {
+    let parts: Vec<&str> = step_arg.split_whitespace().collect();
+    if parts.is_empty() {
+        println!("{DIM}  Usage: /plan step <N> done|undo{RESET}\n");
+        return PlanResult::Handled;
+    }
+
+    let number: usize = match parts[0].parse() {
+        Ok(n) => n,
+        Err(_) => {
+            println!("{RED}  Invalid step number: '{}'{RESET}\n", parts[0]);
+            return PlanResult::Handled;
+        }
+    };
+
+    let action = parts.get(1).copied().unwrap_or("done");
+    let completed = match action {
+        "done" | "complete" | "check" => true,
+        "undo" | "uncomplete" | "uncheck" => false,
+        other => {
+            println!("{RED}  Unknown step action: '{other}'. Use 'done' or 'undo'.{RESET}\n");
+            return PlanResult::Handled;
+        }
+    };
+
+    match mark_step(number, completed) {
+        Ok(()) => {
+            let verb = if completed {
+                "completed"
+            } else {
+                "uncompleted"
+            };
+            println!("{GREEN}  ✓ Step {number} marked as {verb}.{RESET}");
+            // Show updated status
+            if let Some(plan) = get_last_plan() {
+                println!("{}", format_plan_status(&plan));
+            }
+        }
+        Err(e) => {
+            println!("{RED}  {e}{RESET}\n");
+        }
+    }
+
+    PlanResult::Handled
+}
+
 /// Handle the `/plan` command: toggle plan mode, create a structured plan,
 /// or manage stored plans.
 ///
@@ -159,6 +487,11 @@ pub async fn handle_plan(
     model: &str,
 ) -> PlanResult {
     let arg = input.strip_prefix("/plan").unwrap_or("").trim();
+
+    // Handle `/plan step N done|undo` before the main match
+    if let Some(step_arg) = arg.strip_prefix("step ") {
+        return handle_plan_step(step_arg);
+    }
 
     // Handle mode toggle subcommands
     match arg {
@@ -179,7 +512,18 @@ pub async fn handle_plan(
             match get_last_plan() {
                 Some(plan) => {
                     println!("{BOLD}  📋 Last generated plan:{RESET}\n");
-                    println!("{plan}\n");
+                    println!("{}\n", plan.raw_text);
+                }
+                None => {
+                    println!("{DIM}  No plan stored. Use /plan <task> to create one.{RESET}\n");
+                }
+            }
+            return PlanResult::Handled;
+        }
+        "status" => {
+            match get_last_plan() {
+                Some(plan) => {
+                    println!("{}", format_plan_status(&plan));
                 }
                 None => {
                     println!("{DIM}  No plan stored. Use /plan <task> to create one.{RESET}\n");
@@ -189,7 +533,7 @@ pub async fn handle_plan(
         }
         "apply" => match get_last_plan() {
             Some(plan) => {
-                let prompt = build_apply_prompt(&plan);
+                let prompt = build_apply_prompt(&plan.raw_text);
                 println!("{GREEN}  🚀 Applying stored plan…{RESET}\n");
                 clear_last_plan();
                 return PlanResult::Apply(prompt);
@@ -404,6 +748,150 @@ mod tests {
         assert!(PLAN_SUBCOMMANDS.contains(&"show"));
         assert!(PLAN_SUBCOMMANDS.contains(&"apply"));
         assert!(PLAN_SUBCOMMANDS.contains(&"clear"));
+        assert!(PLAN_SUBCOMMANDS.contains(&"status"));
+        assert!(PLAN_SUBCOMMANDS.contains(&"step"));
+    }
+
+    #[test]
+    fn test_parse_plan_steps_numbered_list() {
+        let plan = "\
+1. **Set up the database** — configure connection pooling
+2. **Create migrations** — add users and posts tables
+3. **Implement models** — define structs for User and Post";
+        let steps = parse_plan_steps(plan);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].number, 1);
+        assert_eq!(steps[0].title, "Set up the database");
+        assert_eq!(steps[0].description, "configure connection pooling");
+        assert!(!steps[0].completed);
+        assert_eq!(steps[1].number, 2);
+        assert_eq!(steps[1].title, "Create migrations");
+        assert_eq!(steps[2].number, 3);
+        assert_eq!(steps[2].title, "Implement models");
+    }
+
+    #[test]
+    fn test_parse_plan_steps_markdown_checklist() {
+        let plan = "\
+- [ ] Add error handling
+- [x] Write unit tests
+- [ ] Update documentation";
+        let steps = parse_plan_steps(plan);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].number, 1);
+        assert_eq!(steps[0].title, "Add error handling");
+        assert!(!steps[0].completed);
+        assert_eq!(steps[1].number, 2);
+        assert_eq!(steps[1].title, "Write unit tests");
+        assert!(steps[1].completed);
+        assert_eq!(steps[2].number, 3);
+        assert_eq!(steps[2].title, "Update documentation");
+        assert!(!steps[2].completed);
+    }
+
+    #[test]
+    fn test_parse_plan_steps_mixed_formats() {
+        let plan = "\
+1. **First step** — do the first thing
+Step 2: Second step
+- [ ] Third step";
+        let steps = parse_plan_steps(plan);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].number, 1);
+        assert_eq!(steps[0].title, "First step");
+        assert_eq!(steps[1].number, 2);
+        assert_eq!(steps[1].title, "Second step");
+        assert_eq!(steps[2].number, 3);
+        assert_eq!(steps[2].title, "Third step");
+    }
+
+    #[test]
+    fn test_step_marking_done_and_undo() {
+        // Clear any previous plan state
+        clear_last_plan();
+        set_last_plan("1. Step one\n2. Step two\n3. Step three".to_string());
+
+        // Mark step 2 as done
+        assert!(mark_step(2, true).is_ok());
+        let plan = get_last_plan().unwrap();
+        assert!(!plan.steps[0].completed);
+        assert!(plan.steps[1].completed);
+        assert!(!plan.steps[2].completed);
+
+        // Undo step 2
+        assert!(mark_step(2, false).is_ok());
+        let plan = get_last_plan().unwrap();
+        assert!(!plan.steps[1].completed);
+
+        // Non-existent step
+        assert!(mark_step(99, true).is_err());
+
+        // Clean up
+        clear_last_plan();
+    }
+
+    #[test]
+    fn test_format_plan_status_display() {
+        let plan = StructuredPlan {
+            raw_text: String::new(),
+            steps: vec![
+                PlanStep {
+                    number: 1,
+                    title: "First".to_string(),
+                    description: String::new(),
+                    completed: true,
+                },
+                PlanStep {
+                    number: 2,
+                    title: "Second".to_string(),
+                    description: String::new(),
+                    completed: false,
+                },
+                PlanStep {
+                    number: 3,
+                    title: "Third".to_string(),
+                    description: String::new(),
+                    completed: false,
+                },
+            ],
+        };
+        let status = format_plan_status(&plan);
+        assert!(status.contains("1/3 steps complete"));
+        assert!(status.contains("33%"));
+        assert!(status.contains("[x] Step 1: First"));
+        assert!(status.contains("[ ] Step 2: Second"));
+        // The next incomplete step should have the → marker
+        assert!(status.contains("→"));
+    }
+
+    #[test]
+    fn test_parse_plan_steps_empty_plan() {
+        let steps = parse_plan_steps("");
+        assert!(steps.is_empty());
+
+        let steps = parse_plan_steps("   \n\n  \n");
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn test_parse_plan_steps_no_parseable_steps() {
+        let plan = "This is just a paragraph of text without any numbered steps\n\
+                     or checklists. It describes what to do but not in a structured way.";
+        let steps = parse_plan_steps(plan);
+        assert!(steps.is_empty());
+
+        // When stored as a StructuredPlan, raw_text is preserved
+        clear_last_plan();
+        set_last_plan(plan.to_string());
+        let stored = get_last_plan().unwrap();
+        assert!(stored.steps.is_empty());
+        assert_eq!(stored.raw_text, plan);
+
+        // Status display should handle empty steps gracefully
+        let status = format_plan_status(&stored);
+        assert!(status.contains("no parseable steps"));
+
+        clear_last_plan();
     }
 
     #[test]

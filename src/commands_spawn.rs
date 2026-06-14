@@ -9,7 +9,9 @@ use crate::prompt::run_prompt;
 use crate::prompt_utils::summarize_message;
 use crate::sync_util::lock_or_recover;
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use yoagent::types::{AgentMessage, Usage};
 
 // ── /spawn ────────────────────────────────────────────────────────────────
@@ -707,6 +709,185 @@ fn clone_agent_config(config: &crate::AgentConfig) -> crate::AgentConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Git worktree lifecycle — primitives for parallel sub-agent isolation
+// ---------------------------------------------------------------------------
+
+/// Information about a spawned git worktree.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct WorktreeInfo {
+    /// Absolute path to the worktree directory.
+    pub path: PathBuf,
+    /// The branch/ref name used (detached HEAD label).
+    pub branch: String,
+    /// When the worktree was created (for stale-cleanup).
+    pub created_at: Instant,
+}
+
+/// Run a git command in a specific directory.
+/// Returns stdout on success, stderr message on failure.
+#[allow(dead_code)]
+fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+    match std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        Err(e) => Err(format!("git not found: {e}")),
+    }
+}
+
+/// Resolve the root of the git repository that contains `start`.
+/// Falls back to `start` itself if rev-parse fails.
+#[allow(dead_code)]
+fn repo_root(start: &Path) -> PathBuf {
+    run_git_in(start, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| start.to_path_buf())
+}
+
+/// Create a worktree for a spawn task.
+///
+/// The worktree is placed under `<repo>/.yoyo/worktrees/spawn-{task_id}-{ts}/`
+/// and is detached at the current HEAD of `repo_dir`.
+///
+/// `repo_dir` must be inside an existing git repository.
+#[allow(dead_code)]
+pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<WorktreeInfo, String> {
+    let root = repo_root(repo_dir);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let dir_name = format!("spawn-{task_id}-{ts}");
+    let wt_path = root.join(".yoyo").join("worktrees").join(&dir_name);
+
+    // Make sure parent exists.
+    if let Err(e) = std::fs::create_dir_all(wt_path.parent().unwrap_or(&root)) {
+        return Err(format!("failed to create worktree parent dir: {e}"));
+    }
+
+    let wt_str = wt_path.to_string_lossy().to_string();
+    run_git_in(&root, &["worktree", "add", "--detach", &wt_str]).map_err(|e| {
+        // Clean up the (possibly partially-created) directory.
+        let _ = std::fs::remove_dir_all(&wt_path);
+        format!("git worktree add failed: {e}")
+    })?;
+
+    // Read the HEAD of the new worktree so we can record the branch/ref.
+    let head = run_git_in(&wt_path, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+
+    Ok(WorktreeInfo {
+        path: wt_path,
+        branch: head,
+        created_at: Instant::now(),
+    })
+}
+
+/// Remove a spawn worktree, cleaning up both the directory and the git metadata.
+///
+/// This is idempotent — calling it on an already-removed worktree is a no-op.
+#[allow(dead_code)]
+pub fn cleanup_spawn_worktree(repo_dir: &Path, info: &WorktreeInfo) -> Result<(), String> {
+    let root = repo_root(repo_dir);
+    let wt_str = info.path.to_string_lossy().to_string();
+
+    // If the worktree directory doesn't exist any more, just prune stale metadata.
+    if !info.path.exists() {
+        let _ = run_git_in(&root, &["worktree", "prune"]);
+        return Ok(());
+    }
+
+    // Try force-remove first, then plain remove, then manual cleanup.
+    if run_git_in(&root, &["worktree", "remove", "--force", &wt_str]).is_ok() {
+        return Ok(());
+    }
+    if run_git_in(&root, &["worktree", "remove", &wt_str]).is_ok() {
+        return Ok(());
+    }
+
+    // Manual fallback: remove directory and prune.
+    let _ = std::fs::remove_dir_all(&info.path);
+    let _ = run_git_in(&root, &["worktree", "prune"]);
+    if info.path.exists() {
+        Err(format!(
+            "failed to remove worktree directory: {}",
+            info.path.display()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// List spawn worktrees under `<repo>/.yoyo/worktrees/spawn-*`.
+#[allow(dead_code)]
+pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
+    let root = repo_root(repo_dir);
+    let wt_dir = root.join(".yoyo").join("worktrees");
+    if !wt_dir.is_dir() {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&wt_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("spawn-") && entry.path().is_dir() {
+                result.push(entry.path());
+            }
+        }
+    }
+    result
+}
+
+/// Clean up worktrees older than `max_age`.
+///
+/// Scans `<repo>/.yoyo/worktrees/spawn-*` and removes any whose directory
+/// modified-time is older than `max_age` ago.
+#[allow(dead_code)]
+pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
+    let root = repo_root(repo_dir);
+    let wt_dir = root.join(".yoyo").join("worktrees");
+    if !wt_dir.is_dir() {
+        return;
+    }
+    let now = std::time::SystemTime::now();
+    if let Ok(entries) = std::fs::read_dir(&wt_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if !name.to_string_lossy().starts_with("spawn-") {
+                continue;
+            }
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            // Check modification time.
+            let stale = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|mt| now.duration_since(mt).ok())
+                .is_some_and(|age| age > max_age);
+            if stale {
+                let wt_str = path.to_string_lossy().to_string();
+                let _ = run_git_in(&root, &["worktree", "remove", "--force", &wt_str]);
+                if path.exists() {
+                    let _ = std::fs::remove_dir_all(&path);
+                }
+            }
+        }
+        // Prune any dangling worktree metadata.
+        let _ = run_git_in(&root, &["worktree", "prune"]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1200,5 +1381,164 @@ mod tests {
         let args = args.unwrap();
         assert!(args.system_prompt.is_none());
         assert_eq!(args.task, "--system");
+    }
+
+    // -------------------------------------------------------------------
+    // Worktree lifecycle tests
+    // -------------------------------------------------------------------
+
+    /// Create a temporary git repo for worktree tests.
+    fn setup_temp_repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let p = tmp.path();
+        // Initialise a repo with at least one commit (worktree add needs a HEAD).
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(p)
+            .output()
+            .expect("git init");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(p)
+            .output()
+            .expect("git config email");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(p)
+            .output()
+            .expect("git config name");
+        std::fs::write(p.join("README.md"), "hello").expect("write file");
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(p)
+            .output()
+            .expect("git add");
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(p)
+            .output()
+            .expect("git commit");
+        tmp
+    }
+
+    #[test]
+    fn test_worktree_create_and_cleanup() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+
+        let info = create_spawn_worktree(repo, 42).expect("create worktree");
+
+        // The path should exist and be under .yoyo/worktrees/spawn-42-*
+        assert!(info.path.exists(), "worktree dir should exist");
+        let name = info.path.file_name().unwrap().to_string_lossy();
+        assert!(
+            name.starts_with("spawn-42-"),
+            "dir name should start with spawn-42-, got: {name}"
+        );
+
+        // The worktree should contain the same file as the original repo.
+        assert!(
+            info.path.join("README.md").exists(),
+            "README.md should be in worktree"
+        );
+
+        // branch field should be a short SHA (non-empty for detached HEAD).
+        assert!(!info.branch.is_empty(), "branch/HEAD should be recorded");
+
+        // Verify the worktree HEAD matches the main repo HEAD.
+        let main_head = run_git_in(repo, &["rev-parse", "HEAD"]).expect("get main HEAD");
+        let wt_head = run_git_in(&info.path, &["rev-parse", "HEAD"]).expect("get wt HEAD");
+        assert_eq!(main_head, wt_head, "worktree HEAD should match main HEAD");
+
+        // Clean up.
+        cleanup_spawn_worktree(repo, &info).expect("cleanup worktree");
+        assert!(!info.path.exists(), "worktree dir should be removed");
+    }
+
+    #[test]
+    fn test_worktree_cleanup_idempotent() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+
+        let info = create_spawn_worktree(repo, 7).expect("create worktree");
+        assert!(info.path.exists());
+
+        // Clean up twice — second call should succeed silently.
+        cleanup_spawn_worktree(repo, &info).expect("first cleanup");
+        cleanup_spawn_worktree(repo, &info).expect("second cleanup (idempotent)");
+    }
+
+    #[test]
+    fn test_worktree_cleanup_after_manual_delete() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+
+        let info = create_spawn_worktree(repo, 99).expect("create worktree");
+        assert!(info.path.exists());
+
+        // Manually remove the directory (simulating a crash).
+        std::fs::remove_dir_all(&info.path).expect("manual delete");
+        assert!(!info.path.exists());
+
+        // Cleanup should still succeed (prune metadata).
+        cleanup_spawn_worktree(repo, &info).expect("cleanup after manual delete");
+    }
+
+    #[test]
+    fn test_list_spawn_worktrees() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+
+        // Initially no spawn worktrees.
+        assert!(list_spawn_worktrees(repo).is_empty());
+
+        let info1 = create_spawn_worktree(repo, 1).expect("create wt 1");
+        let info2 = create_spawn_worktree(repo, 2).expect("create wt 2");
+
+        let wts = list_spawn_worktrees(repo);
+        assert_eq!(wts.len(), 2, "should list 2 worktrees");
+
+        // Clean up.
+        cleanup_spawn_worktree(repo, &info1).unwrap();
+        cleanup_spawn_worktree(repo, &info2).unwrap();
+
+        assert!(list_spawn_worktrees(repo).is_empty());
+    }
+
+    #[test]
+    fn test_cleanup_stale_worktrees() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+
+        let _info = create_spawn_worktree(repo, 10).expect("create worktree");
+
+        // With a very large max_age, nothing should be cleaned.
+        cleanup_stale_worktrees(repo, std::time::Duration::from_secs(999_999));
+        assert_eq!(list_spawn_worktrees(repo).len(), 1);
+
+        // With zero max_age, everything should be cleaned.
+        cleanup_stale_worktrees(repo, std::time::Duration::ZERO);
+        assert!(
+            list_spawn_worktrees(repo).is_empty(),
+            "stale worktree should be cleaned"
+        );
+    }
+
+    #[test]
+    fn test_run_git_in_basic() {
+        let tmp = setup_temp_repo();
+        let repo = tmp.path();
+
+        // Should be able to get the branch.
+        let result = run_git_in(repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        assert!(result.is_ok(), "rev-parse should succeed");
+    }
+
+    #[test]
+    fn test_run_git_in_error() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        // Not a git repo — should fail.
+        let result = run_git_in(tmp.path(), &["status"]);
+        assert!(result.is_err(), "should fail in non-git dir");
     }
 }

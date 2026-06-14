@@ -175,6 +175,9 @@ pub struct DiffOptions {
     pub explain: bool,
     pub functions: bool,
     pub file: Option<String>,
+    /// A git ref or ref range (e.g. `main`, `main..feature`, `HEAD~3`, `v1.0..HEAD`).
+    /// When set, the diff compares the specified commits instead of working tree changes.
+    pub ref_range: Option<String>,
 }
 
 /// Parse `/diff` arguments into structured options.
@@ -186,7 +189,10 @@ pub struct DiffOptions {
 /// - `/diff --functions` — semantic-level change summary (added/modified/removed symbols)
 /// - `/diff --explain` — AI-powered explanation of changes
 /// - `/diff <file>` — diff for a specific file
+/// - `/diff <ref>` — diff against a git ref (branch, tag, commit, HEAD~N)
+/// - `/diff <ref>..<ref>` — diff between two refs
 /// - Combined: `/diff --staged --name-only src/main.rs`
+/// - Combined: `/diff main..feature --stat`
 pub fn parse_diff_args(input: &str) -> DiffOptions {
     let rest = input.strip_prefix("/diff").unwrap_or("").trim();
     let parts: Vec<&str> = rest.split_whitespace().collect();
@@ -196,6 +202,7 @@ pub fn parse_diff_args(input: &str) -> DiffOptions {
     let mut explain = false;
     let mut functions = false;
     let mut file = None;
+    let mut ref_range = None;
 
     for part in parts {
         match part {
@@ -204,8 +211,27 @@ pub fn parse_diff_args(input: &str) -> DiffOptions {
             "--stat" => stat_only = true,
             "--explain" => explain = true,
             "--functions" => functions = true,
-            _ => file = Some(part.to_string()),
+            _ if part.starts_with('-') => {} // ignore unknown flags
+            _ => {
+                // Distinguish file paths from git refs:
+                // 1. Contains ".." → definitely a ref range (e.g. main..feature)
+                // 2. Contains "..." → definitely a ref range (e.g. main...feature)
+                // 3. Exists on disk → file path
+                // 4. Otherwise → git ref
+                if part.contains("..") {
+                    ref_range = Some(part.to_string());
+                } else if std::path::Path::new(part).exists() {
+                    file = Some(part.to_string());
+                } else {
+                    ref_range = Some(part.to_string());
+                }
+            }
         }
+    }
+
+    // When comparing refs, --staged is meaningless — ignore it
+    if ref_range.is_some() {
+        staged_only = false;
     }
 
     DiffOptions {
@@ -215,11 +241,18 @@ pub fn parse_diff_args(input: &str) -> DiffOptions {
         explain,
         functions,
         file,
+        ref_range,
     }
 }
 
 pub fn handle_diff(input: &str) {
     let opts = parse_diff_args(input);
+
+    // When a ref range is specified, compare commits directly
+    if let Some(ref range) = opts.ref_range {
+        handle_diff_ref_range(&opts, range);
+        return;
+    }
 
     // Check if we're in a git repo
     match run_git(&["status", "--short"]) {
@@ -447,6 +480,107 @@ pub fn handle_diff(input: &str) {
     }
 }
 
+/// Handle `/diff` when a ref range is specified (e.g. `main..feature`, `HEAD~3`, `v1.0`).
+/// Runs `git diff <range>` directly — no staged/unstaged logic needed.
+fn handle_diff_ref_range(opts: &DiffOptions, range: &str) {
+    // Validate the ref(s) exist
+    let refs_to_check: Vec<&str> = if range.contains("...") {
+        range.splitn(2, "...").collect()
+    } else if range.contains("..") {
+        range.splitn(2, "..").collect()
+    } else {
+        vec![range]
+    };
+    for r in &refs_to_check {
+        if !r.is_empty() {
+            if let Err(_e) = run_git(&["rev-parse", "--verify", r]) {
+                eprintln!("{RED}  error: unknown revision '{r}'{RESET}\n");
+                return;
+            }
+        }
+    }
+
+    if opts.name_only {
+        let mut args = vec!["diff", "--name-only", range];
+        let file_ref;
+        if let Some(ref f) = opts.file {
+            args.push("--");
+            file_ref = f.as_str();
+            args.push(file_ref);
+        }
+        let names = run_git(&args).unwrap_or_default();
+        if names.trim().is_empty() {
+            println!("{DIM}  (no changed files in {range}){RESET}\n");
+        } else {
+            println!("{DIM}  Changed files ({range}):{RESET}");
+            for f in names.lines().filter(|l| !l.trim().is_empty()) {
+                println!("    {f}");
+            }
+            println!();
+        }
+        return;
+    }
+
+    if opts.stat_only {
+        let mut args = vec!["diff", "--stat", range];
+        let file_ref;
+        if let Some(ref f) = opts.file {
+            args.push("--");
+            file_ref = f.as_str();
+            args.push(file_ref);
+        }
+        let stat_text = run_git(&args).unwrap_or_default();
+        if stat_text.trim().is_empty() {
+            println!("{DIM}  (no changes in {range}){RESET}\n");
+        } else {
+            let summary = parse_diff_stat(&stat_text);
+            let formatted = format_diff_stat(&summary);
+            if !formatted.is_empty() {
+                print!("{formatted}");
+            }
+        }
+        return;
+    }
+
+    if opts.functions {
+        handle_diff_functions(opts);
+        return;
+    }
+
+    // Default: full diff with stat header
+    let mut stat_args = vec!["diff", "--stat", range];
+    let stat_file_ref;
+    if let Some(ref f) = opts.file {
+        stat_args.push("--");
+        stat_file_ref = f.as_str();
+        stat_args.push(stat_file_ref);
+    }
+    let stat_text = run_git(&stat_args).unwrap_or_default();
+    if !stat_text.trim().is_empty() {
+        let summary = parse_diff_stat(&stat_text);
+        let formatted = format_diff_stat(&summary);
+        if !formatted.is_empty() {
+            print!("{formatted}");
+        }
+    }
+
+    let mut diff_args = vec!["diff", range];
+    let diff_file_ref;
+    if let Some(ref f) = opts.file {
+        diff_args.push("--");
+        diff_file_ref = f.as_str();
+        diff_args.push(diff_file_ref);
+    }
+    let full_diff = run_git(&diff_args).unwrap_or_default();
+    if full_diff.trim().is_empty() {
+        println!("{DIM}  (no changes in {range}){RESET}\n");
+    } else {
+        println!("\n{DIM}  ── Diff ({range}) ──{RESET}");
+        print!("{}", colorize_diff(&full_diff));
+        println!();
+    }
+}
+
 /// Combine two stat/diff outputs, deduplicating if both are present.
 fn combine_stats(a: &str, b: &str) -> String {
     if !a.trim().is_empty() && !b.trim().is_empty() {
@@ -464,18 +598,11 @@ const DIFF_EXPLAIN_MAX_BYTES: usize = 50_000;
 /// Gather the current diff text based on options.
 /// Returns the diff content or None if there are no changes.
 fn gather_diff_text(opts: &DiffOptions) -> Option<String> {
-    // Check for changes first
-    let status = run_git(&["status", "--short"]).unwrap_or_default();
-    if status.trim().is_empty() {
-        println!("{DIM}  (no uncommitted changes to explain){RESET}\n");
-        return None;
-    }
-
     let mut diff_text;
 
-    if opts.staged_only {
-        // Only staged changes
-        let mut args = vec!["diff", "--cached"];
+    if let Some(ref range) = opts.ref_range {
+        // Ref range mode: git diff <range>
+        let mut args = vec!["diff", range.as_str()];
         let file_ref;
         if let Some(ref f) = opts.file {
             args.push("--");
@@ -484,36 +611,61 @@ fn gather_diff_text(opts: &DiffOptions) -> Option<String> {
         }
         diff_text = run_git(&args).unwrap_or_default();
     } else {
-        // Both staged and unstaged
-        let mut unstaged_args = vec!["diff"];
-        let file_ref;
-        if let Some(ref f) = opts.file {
-            unstaged_args.push("--");
-            file_ref = f.as_str();
-            unstaged_args.push(file_ref);
+        // Working tree mode: check for changes first
+        let status = run_git(&["status", "--short"]).unwrap_or_default();
+        if status.trim().is_empty() {
+            println!("{DIM}  (no uncommitted changes to explain){RESET}\n");
+            return None;
         }
-        let unstaged = run_git(&unstaged_args).unwrap_or_default();
 
-        let mut staged_args = vec!["diff", "--cached"];
-        let staged_file_ref;
-        if let Some(ref f) = opts.file {
-            staged_args.push("--");
-            staged_file_ref = f.as_str();
-            staged_args.push(staged_file_ref);
-        }
-        let staged = run_git(&staged_args).unwrap_or_default();
-
-        if !unstaged.trim().is_empty() && !staged.trim().is_empty() {
-            diff_text = format!("{unstaged}\n{staged}");
-        } else if !staged.trim().is_empty() {
-            diff_text = staged;
+        if opts.staged_only {
+            // Only staged changes
+            let mut args = vec!["diff", "--cached"];
+            let file_ref;
+            if let Some(ref f) = opts.file {
+                args.push("--");
+                file_ref = f.as_str();
+                args.push(file_ref);
+            }
+            diff_text = run_git(&args).unwrap_or_default();
         } else {
-            diff_text = unstaged;
+            // Both staged and unstaged
+            let mut unstaged_args = vec!["diff"];
+            let file_ref;
+            if let Some(ref f) = opts.file {
+                unstaged_args.push("--");
+                file_ref = f.as_str();
+                unstaged_args.push(file_ref);
+            }
+            let unstaged = run_git(&unstaged_args).unwrap_or_default();
+
+            let mut staged_args = vec!["diff", "--cached"];
+            let staged_file_ref;
+            if let Some(ref f) = opts.file {
+                staged_args.push("--");
+                staged_file_ref = f.as_str();
+                staged_args.push(staged_file_ref);
+            }
+            let staged = run_git(&staged_args).unwrap_or_default();
+
+            if !unstaged.trim().is_empty() && !staged.trim().is_empty() {
+                diff_text = format!("{unstaged}\n{staged}");
+            } else if !staged.trim().is_empty() {
+                diff_text = staged;
+            } else {
+                diff_text = unstaged;
+            }
         }
     }
 
     if diff_text.trim().is_empty() {
-        let scope = if opts.staged_only { "staged " } else { "" };
+        let scope = if opts.ref_range.is_some() {
+            opts.ref_range.as_deref().unwrap_or("")
+        } else if opts.staged_only {
+            "staged "
+        } else {
+            ""
+        };
         println!("{DIM}  (no {scope}changes to explain){RESET}\n");
         return None;
     }
@@ -620,43 +772,60 @@ fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
 /// Handle `/diff --functions`: show semantic-level change summary.
 pub fn handle_diff_functions(opts: &DiffOptions) {
     // Get the list of changed files
-    let mut args = vec!["diff", "--name-only"];
-    if opts.staged_only {
-        args.push("--cached");
-    }
-    let file_ref;
-    if let Some(ref f) = opts.file {
-        args.push("--");
-        file_ref = f.as_str();
-        args.push(file_ref);
-    }
-    let unstaged_names = run_git(&args).unwrap_or_default();
-
-    // Also get staged files if not in staged-only mode
-    let all_files: Vec<String> = if opts.staged_only {
-        unstaged_names
+    let all_files: Vec<String> = if let Some(ref range) = opts.ref_range {
+        // Ref range mode: get files from git diff <range> --name-only
+        let mut args = vec!["diff", "--name-only", range.as_str()];
+        let file_ref;
+        if let Some(ref f) = opts.file {
+            args.push("--");
+            file_ref = f.as_str();
+            args.push(file_ref);
+        }
+        let names = run_git(&args).unwrap_or_default();
+        names
             .lines()
             .filter(|l| !l.trim().is_empty())
             .map(|l| l.to_string())
             .collect()
     } else {
-        let mut staged_args = vec!["diff", "--name-only", "--cached"];
-        let staged_file_ref;
-        if let Some(ref f) = opts.file {
-            staged_args.push("--");
-            staged_file_ref = f.as_str();
-            staged_args.push(staged_file_ref);
+        // Working tree mode: combine unstaged + staged
+        let mut args = vec!["diff", "--name-only"];
+        if opts.staged_only {
+            args.push("--cached");
         }
-        let staged_names = run_git(&staged_args).unwrap_or_default();
-        let mut files: Vec<String> = unstaged_names
-            .lines()
-            .chain(staged_names.lines())
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| l.to_string())
-            .collect();
-        files.sort();
-        files.dedup();
-        files
+        let file_ref;
+        if let Some(ref f) = opts.file {
+            args.push("--");
+            file_ref = f.as_str();
+            args.push(file_ref);
+        }
+        let unstaged_names = run_git(&args).unwrap_or_default();
+
+        if opts.staged_only {
+            unstaged_names
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        } else {
+            let mut staged_args = vec!["diff", "--name-only", "--cached"];
+            let staged_file_ref;
+            if let Some(ref f) = opts.file {
+                staged_args.push("--");
+                staged_file_ref = f.as_str();
+                staged_args.push(staged_file_ref);
+            }
+            let staged_names = run_git(&staged_args).unwrap_or_default();
+            let mut files: Vec<String> = unstaged_names
+                .lines()
+                .chain(staged_names.lines())
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.to_string())
+                .collect();
+            files.sort();
+            files.dedup();
+            files
+        }
     };
 
     if all_files.is_empty() {
@@ -677,12 +846,38 @@ pub fn handle_diff_functions(opts: &DiffOptions) {
             None => continue,
         };
 
-        // Get current file content
-        let new_content: String = std::fs::read_to_string(file_path).unwrap_or_default();
+        // Get old and new content depending on mode
+        let (old_content, new_content) = if let Some(ref range) = opts.ref_range {
+            // Ref range: extract left and right refs
+            let (left_ref, right_ref) = if range.contains("...") {
+                let parts: Vec<&str> = range.splitn(2, "...").collect();
+                (parts[0].to_string(), parts[1].to_string())
+            } else if range.contains("..") {
+                let parts: Vec<&str> = range.splitn(2, "..").collect();
+                (parts[0].to_string(), parts[1].to_string())
+            } else {
+                // Single ref like HEAD~3: compare <ref> to working tree
+                (range.clone(), String::new())
+            };
 
-        // Get base (HEAD) version
-        let git_path = format!("HEAD:{file_path}");
-        let old_content = run_git(&["show", &git_path]).unwrap_or_default();
+            let old_path = format!("{left_ref}:{file_path}");
+            let old = run_git(&["show", &old_path]).unwrap_or_default();
+
+            let new = if right_ref.is_empty() {
+                // Compare against working tree
+                std::fs::read_to_string(file_path).unwrap_or_default()
+            } else {
+                let new_path = format!("{right_ref}:{file_path}");
+                run_git(&["show", &new_path]).unwrap_or_default()
+            };
+            (old, new)
+        } else {
+            // Working tree mode: current file vs HEAD
+            let new_content = std::fs::read_to_string(file_path).unwrap_or_default();
+            let git_path = format!("HEAD:{file_path}");
+            let old_content = run_git(&["show", &git_path]).unwrap_or_default();
+            (old_content, new_content)
+        };
 
         let old_symbols = symbols::extract_symbols(&old_content, language);
         let new_symbols = symbols::extract_symbols(&new_content, language);
@@ -3452,5 +3647,157 @@ mod tests {
         assert!(args.auto_stage);
         assert!(args.ai);
         assert_eq!(args.message, "fix it");
+    }
+
+    // --- ref_range parsing tests ---
+
+    #[test]
+    fn parse_diff_args_ref_range_with_dots() {
+        let opts = parse_diff_args("/diff main..feature");
+        assert_eq!(opts.ref_range, Some("main..feature".to_string()));
+        assert!(!opts.staged_only);
+        assert!(!opts.stat_only);
+        assert!(!opts.name_only);
+        assert!(opts.file.is_none());
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_triple_dot() {
+        let opts = parse_diff_args("/diff main...feature");
+        assert_eq!(opts.ref_range, Some("main...feature".to_string()));
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_head_tilde() {
+        let opts = parse_diff_args("/diff HEAD~3");
+        assert_eq!(opts.ref_range, Some("HEAD~3".to_string()));
+        assert!(opts.file.is_none());
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_tag_to_head() {
+        let opts = parse_diff_args("/diff v1.0..HEAD");
+        assert_eq!(opts.ref_range, Some("v1.0..HEAD".to_string()));
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_with_stat() {
+        let opts = parse_diff_args("/diff main..feature --stat");
+        assert_eq!(opts.ref_range, Some("main..feature".to_string()));
+        assert!(opts.stat_only);
+        assert!(!opts.name_only);
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_with_name_only() {
+        let opts = parse_diff_args("/diff main..feature --name-only");
+        assert_eq!(opts.ref_range, Some("main..feature".to_string()));
+        assert!(opts.name_only);
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_with_functions() {
+        let opts = parse_diff_args("/diff main..feature --functions");
+        assert_eq!(opts.ref_range, Some("main..feature".to_string()));
+        assert!(opts.functions);
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_with_explain() {
+        let opts = parse_diff_args("/diff HEAD~5 --explain");
+        assert_eq!(opts.ref_range, Some("HEAD~5".to_string()));
+        assert!(opts.explain);
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_with_multiple_flags() {
+        let opts = parse_diff_args("/diff main..feature --stat --name-only");
+        assert_eq!(opts.ref_range, Some("main..feature".to_string()));
+        assert!(opts.stat_only);
+        assert!(opts.name_only);
+    }
+
+    #[test]
+    fn parse_diff_args_ref_range_ignores_staged() {
+        // When ref_range is set, --staged is meaningless and should be cleared
+        let opts = parse_diff_args("/diff main..feature --staged");
+        assert_eq!(opts.ref_range, Some("main..feature".to_string()));
+        assert!(
+            !opts.staged_only,
+            "--staged should be ignored with ref range"
+        );
+    }
+
+    #[test]
+    fn parse_diff_args_flags_after_ref() {
+        let opts = parse_diff_args("/diff v1.0..HEAD --stat --explain");
+        assert_eq!(opts.ref_range, Some("v1.0..HEAD".to_string()));
+        assert!(opts.stat_only);
+        assert!(opts.explain);
+    }
+
+    #[test]
+    fn parse_diff_args_existing_file_takes_precedence() {
+        // If a positional arg matches an existing file path, it should be
+        // treated as a file, not a ref. Cargo.toml exists in the repo root.
+        let opts = parse_diff_args("/diff Cargo.toml");
+        assert!(
+            opts.file.is_some(),
+            "existing file should be parsed as file, not ref"
+        );
+        assert_eq!(opts.file, Some("Cargo.toml".to_string()));
+        assert!(
+            opts.ref_range.is_none(),
+            "should not be treated as a ref range"
+        );
+    }
+
+    #[test]
+    fn parse_diff_args_dotdot_always_ref_even_if_path_exists() {
+        // A `..` in the argument always means ref range, even if parts
+        // could look like paths
+        let opts = parse_diff_args("/diff Cargo.toml..HEAD");
+        assert_eq!(opts.ref_range, Some("Cargo.toml..HEAD".to_string()));
+        assert!(opts.file.is_none());
+    }
+
+    #[test]
+    fn parse_diff_args_nonexistent_path_becomes_ref() {
+        // A positional arg that doesn't exist on disk and has no `..`
+        // is treated as a ref (branch name, tag, etc.)
+        let opts = parse_diff_args("/diff some-branch-that-does-not-exist");
+        assert_eq!(
+            opts.ref_range,
+            Some("some-branch-that-does-not-exist".to_string())
+        );
+        assert!(opts.file.is_none());
+    }
+
+    #[test]
+    fn parse_diff_args_no_ref_range_plain() {
+        let opts = parse_diff_args("/diff");
+        assert!(opts.ref_range.is_none());
+        assert!(!opts.staged_only);
+    }
+
+    #[test]
+    fn parse_diff_args_no_ref_range_staged_only() {
+        let opts = parse_diff_args("/diff --staged");
+        assert!(opts.ref_range.is_none());
+        assert!(opts.staged_only);
+    }
+
+    #[test]
+    fn diff_options_stores_ref_range() {
+        let opts = DiffOptions {
+            staged_only: false,
+            name_only: false,
+            stat_only: false,
+            explain: false,
+            functions: false,
+            file: None,
+            ref_range: Some("main..dev".to_string()),
+        };
+        assert_eq!(opts.ref_range, Some("main..dev".to_string()));
     }
 }
