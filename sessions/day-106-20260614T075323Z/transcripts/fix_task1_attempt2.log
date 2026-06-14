@@ -1,0 +1,267 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement I can make. Let me explore the codebase systematically.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 13.7s (4 ✓)
+
+Let me look at the key source files for improvement opportunities:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat memory/active_learnings.md ✓ (3ms)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (40.6s)
+  4 tools completed in 57.8s (4 ✓)
+
+Let me do this analysis more directly:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_retriable_error\|dia… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn is_retriable_error" … ✓ (3ms)
+  ▶ read src/prompt_retry.rs:259..349 ✓ (1ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now let me look at safety.rs to see what destructive patterns are detected:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|struct \|enum \|pu… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn analyze_bash_command… ✓ (3ms)
+  ▶ read src/safety.rs:24..169 ✓ (2ms)
+  3 tools completed in 10.7s (3 ✓)
+
+Let me look at areas where there's likely high-impact improvement potential - the tool_wrappers and the recovery hint system:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_recovery_hint\|fn … ✓ (4ms)
+  ▶ read src/prompt_retry.rs:100..180 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me look at a high-impact area - the `diagnose_api_error function and the is_overflow_error` function:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:200..280 ✓ (1ms)
+
+Let me now look at a very impactful area - the watch.rs error parsing. It has Rust, TypeScript, and Python parsers. Let me check if there are common languages missing:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_.*_errors\|ErrorC… ✓ (4ms)
+  ▶ read src/watch.rs:200..280 ✓ (2ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Let me look at a higher-impact area. Let me check the `RecoveryHintTool` in tool_wrappers.rs - this is a recently-added feature:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct RecoveryHintTool… ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:655..855 ✓ (2ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me look at some critical areas for real bugs or impactful improvements. Let me check the diagnose_api_error more thoroughly:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:344..504 ✓ (1ms)
+
+Now let me look at an area I think will be most impactful - the build_watch_fix_prompt function that generates fix prompts when watch mode detects errors. The quality of this prompt directly affects whether the agent can fix issues automatically:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_watch_fix_prom… ✓ (4ms)
+  ▶ read src/watch.rs:756..836 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me look at how build_watch_fix_prompt works:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:964..1114 ✓ (2ms)
+
+Good. Now let me look at a very specific area I want to improve. Let me look at the `diagnose_api_error to see if it handles the common overloaded_error` from Anthropic properly:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "overloaded" src/prompt_… ✓ (3ms)
+
+The overloaded error is caught by is_retriable_error but there's no branch in diagnose_api_error for it. Let me check what errors are NOT diagnosed:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "overloaded\|500\|502\|5… ✓ (4ms)
+
+OK, so diagnose_api_error doesn't have a branch for server errors (500/502/503/504/overloaded). These are classified as retriable, but the user gets no diagnostic message. Let me look at what other gaps exist. Let me now check the most impactful thing - the smartedit tool since it had recent changes:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|pub " src/smart_ed… ✓ (4ms)
+  ▶ read src/smart_edit.rs:307..407 ✓ (1ms)
+  ▶ read src/smart_edit.rs:406..456 ✓ (1ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now let me look at a real pattern I notice. Let me check how the safety analysis handles multiline/compound commands:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:1..26 ✓ (1ms)
+
+Let me check if multi-command handling exists (semicolons, &&, ||, pipes):
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "semicolon\|&&\|split\|c… ✓ (3ms)
+
+I see that analyze_bash_command doesn't split on ; or && or || to analyze each sub-command independently. This means a command like echo hello; rm -rf / would be analyzed as a whole string, and the rm -rf / part relies on pattern matching that checks for rm AND -rf AND `/` being present in the string - which works in this case. But let me verify a specific evasion:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/safety.r… ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3749 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the failing test and the code it tests:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_hint_no_repeat_sam… ✓ (3ms)
+  ▶ read src/format/mod.rs:1935..1975 ✓ (1ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me look at the `contextual_hint` function to understand the logic:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn contextual_hint\|fn … ✓ (3ms)
+  ▶ read src/format/mod.rs:663..783 ✓ (1ms)
+  2 tools completed in 8.2s (2 ✓)
+
+Now I understand the issue. The test `test_hint_no_repeat_same_category expects that the second call to contextual_hint with had_tool_error: true` won't return a hint containing "/retry". But since "retry" is already marked as shown, the function moves to the next candidate. With had_tool_error: true, the test context also has turn_count: 3 which means `first_turn (turn == 1) is false. Let me check the make_hint_ctx`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn make_hint_ctx" src/f… ✓ (3ms)
+  ▶ read src/format/mod.rs:1827..1847 ✓ (1ms)
+  2 tools completed in 4.1s (2 ✓)
+
+The problem is these tests share global state (SHOWN_HINTS) and tests run in parallel. The reset_shown_hints() in one test can be interleaved with another test's `contextual_hint()` call. Let me run just this test to confirm:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_hint_no_repeat_s… ✓ (129ms)
+
+OK, it passes in isolation. It's a parallel test ordering issue. But that's actually the bug I need to fix now, since the full test suite fails. Let me run the full suite to confirm:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (19.9s)
+
+OK all tests pass now. Let me check if there were any changes I already made from the previous attempt:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (4ms)
+  2 tools completed in 4.1s (2 ✓)
+
+OK, clean tree, tests pass. The evaluator said the git diff was empty — no source code changes were made. I need to identify an improvement, implement it, and make sure tests pass. Let me focus on a concrete, impactful improvement.
+
+Let me look at the hint test flakiness issue more carefully — it's a real bug (shared mutable global state in parallel tests):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_hint_" src/format/… ✓ (3ms)
+  ▶ read src/format/mod.rs:1838..1893 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+This is a clear, real bug — all these hint tests share the global SHOWN_HINTS state and can interfere with each other when run in parallel. The test test_hint_no_repeat_same_category is particularly sensitive because it relies on the "retry" hint being shown first (which won't work if another test has already inserted "retry" into the set).
+
+The fix: make `contextual_hint` accept an injectable hint tracker instead of always using the global, so tests can use their own isolated state. But that's a bigger change. A simpler fix: use a test mutex to serialize the hint tests.
+
+Actually, looking at this more carefully, there's a cleaner solution. The contextual_hint function and related tests use global mutable state. The proper fix is to make it testable by allowing injection of the hint set. But the simplest correct fix for the flaky tests is to use serial_test or a simple mutex. Let me check what's available:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "serial" Cargo.toml ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "serial" src/format/mod.… ✓ (3ms)
+  2 tools completed in 5.4s (2 ✓)
+
+The serial_test crate is already a dependency but not used for these hint tests. That's the bug. But let me think about what the most impactful improvement is overall, rather than just fixing a test flakiness issue.
+
+Let me look at what would be genuinely impactful. Let me check the diagnose_api_error gaps — adding server error (500/overloaded) diagnostics would help users in production:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/*.rs | head… ✓ (7ms)
+
+Good, serial_test is used elsewhere. Now let me identify the best improvement to make. I'll do two things that are concrete and impactful:
+
+1. Fix flaky hint tests by adding #[serial] to prevent parallel test interference (correctness bug)
+2. **Add server error diagnostics to diagnose_api_error** so users get actionable messages for 500/502/503/504/overloaded errors instead of no diagnostic at all (user experience gap)
+
+Let me implement both:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 7.6s (2 ✓)
+
+### Fix 1: Serialize hint tests to fix flaky parallel test failures
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:754..764 ✓ (1ms)
+  ▶ edit src/format/mod.rs (6 → 7 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+    
+        #[test]
+        fn test_truncate_short_string() {
+ ✓ (14.3s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+    
+        #[test]
+        fn test_truncate_short_string() {
+  2 tools completed in 20.5s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+I need to add #[serial] annotations to the hint tests so the import is actually used. Let me add them:
+  ▶ read src/format/mod.rs:1837..1992 ✓ (1ms)
+
+Now I'll add #[serial] to all hint tests that use the shared global state:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (3 → 4 lines)
+        #[test]
+  +     #[serial]
+        fn test_hint_first_turn() {
+            reset_shown_hints();
+ ✓ (1m 4s)
+        #[test]
+  +     #[serial]
+        fn test_hint_first_turn() {
+            reset_shown_hints();
+  ▶ edit src/format/mod.rs (3 → 4 lines)
+        #[test]
+  +     #[serial]
+        fn test_hint_watch_when_files_modified_no_watch() {
+            reset_shown_hints();
+ ✓ (1m 4s)
+        #[test]
+  +     #[serial]
+        fn test_hint_watch_when_files_modified_no_watch() {
+            reset_shown_hints();
+  ▶ edit src/format/mod.rs (3 → 4 lines)
+        #[test]
+  +     #[serial]
+        fn test_hint_no_watch_hint_when_watch_set() {
+            reset_shown_hints();
+ ✓ (1m 4s)
+        #[test]
+  +     #[serial]
+        fn test_hint_no_watch_hint_when_watch_set() {
+            reset_shown_hints();
+  ▶ edit src/format/mod.rs (3 → 4 lines)
+        #[test]
+  +     #[serial]
+        fn test_hint_retry_on_tool_error() {
+            reset_shown_hints();
