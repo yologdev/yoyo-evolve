@@ -1,0 +1,177 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+No community issues. All 3 slots are self-driven. Let me think about the highest-impact work based on the assessment.
+
+The assessment identifies:
+1. **Competitive frontier has shifted to reliability and UX polish** — not new features
+2. 1,453 `.unwrap()` calls — production paths worth auditing
+3. **`dispatch.rs` still 1,862 lines** — more extraction possible
+4. **Key competitive gap: /loop command** — Claude Code has scheduled/recurring autonomous tasks; yoyo doesn't
+5. **Smart edit just got fuzzy matching** (Day 105) — the tool reliability layer is maturing
+
+Let me think about what moves the needle most:
+
+1. A `/loop` command — Claude Code's /loop lets users run recurring autonomous tasks. This is a real capability gap that matters for interactive use. But it's potentially complex — needs careful scoping.
+
+2. **Unwrap audit on hot production paths** — 1,453 unwraps is a reliability concern. Auditing the most critical paths (prompt.rs, agent_builder.rs, tools.rs) and converting to proper error handling would improve reliability.
+
+3. **Continue dispatch extraction** — extracting more command groups from dispatch.rs follows the Day 104-105 pattern and makes the codebase more maintainable.
+
+Let me check which dispatch groups remain to be extracted, and look at the /loop concept more carefully.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'dispatch_.*_command\|"/' src/dispatch.rs | head -60  ▶ $ grep -c '\.unwrap()' src/prompt.rs src/agent_builder.rs src/tools.rs src/repl.rs…  ▶ $ # Check what command groups exist in dispatch.rs (2 lines) ✓ (5ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ # What command routes remain in the main dispatch_command bo… (2 lines)  ▶ $ # Check what unwraps are in prompt.rs — the most critical fi… (2 lines) ✓ (5ms)
+ ✓ (5ms)
+  5 tools completed in 6.3s (5 ✓)
+
+Good — all 37 unwraps in prompt.rs are in #[cfg(test)] blocks, which is fine. Let me check the non-test unwraps in critical production paths:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Count unwraps outside test blocks in key production files (12 lines) ✓ (33ms)
+  ▶ $ # Check production unwraps in format/* and other critical pa… (11 lines) ✓ (51ms)
+  ▶ $ # The unwraps in production are almost all in tests. Let me … (2 lines)  ▶ $ # Check what's remaining in dispatch_command body that could… (3 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # How many lines is the main dispatch_command match block (l… (3 lines) ✓ (5ms)
+  ▶ $ # What command groups remain in the main match block? Count … (2 lines) ✓ (5ms)
+  ▶ $ # Get a clean list of remaining command routes in the main d… (2 lines) ✓ (6ms)
+  7 tools completed in 23.9s (7 ✓)
+
+Interesting — there's already a CommandRoute::Loop! Let me check what it does:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'Loop' src/dispatch.rs | head -20 ✓ (4ms)
+  ▶ $ sed -n '938,985p' src/dispatch.rs ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+There's already a /loop command! Let me see what it does:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'handle_loop' src/commands.rs src/commands_run.rs src/*.rs 2>/dev/null |… ✓ (7ms)
+  ▶ $ sed -n '247,350p' src/commands_run.rs ✓ (4ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Good — /loop already exists! That competitive gap is already closed. Let me reconsider the plan.
+
+Now let me think about what 3 tasks will have the highest impact:
+
+1. **Extract file/search commands from dispatch** — continuing the dispatch refactoring pattern (Days 104-105). The main dispatch_command function still has ~568 lines in its match block. Extracting file commands (`/add, /apply, /open, /find, /grep, /index, /outline`) into dispatch_file_command would be a clean, self-contained task.
+
+2. **Extract config/mode commands from dispatch** — /model, /provider, /think, `/config, /effort, /teach, /read, /architect, /mcp, /hooks, /permissions are all configuration-related commands that could be grouped into dispatch_config_command`.
+
+3. **Something that improves user experience or closes a real competitive gap.** Let me think about what's left...
+
+Let me look at what would actually help a user most:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What does the /help output look like? How discoverable are… (2 lines)  ▶ $ # How many route arms remain in the main dispatch_command af… (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  2 tools completed in 1.5s (2 ✓)
+
+63 route arms still in the main function. Let me think about what groupings make sense and what gives the biggest bang for the buck.
+
+The assessment says: "The competitive frontier has shifted from 'what features exist' to 'how well do they work in practice.'" And: "For a CLI coding agent, yoyo is competitive."
+
+The key insight from my self-wisdom: "the most compounding work removes future demands rather than adds capabilities." The dispatch refactoring is exactly that — it makes future changes to commands easier, makes the code more navigable, and reduces the cognitive load for any contributor.
+
+Let me also consider: what would a real user experience as friction?
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's any way to see what commands are availabl… (2 lines)  ▶ $ # Are there any error paths in production code that silently… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.3s (2 ✓)
+
+The `let _ =` patterns are mostly fine (flushing stderr, adding history entries, closing clients). Nothing critical there.
+
+Let me focus on my plan. Three high-impact tasks:
+
+**Task 1: Extract file/search command dispatch** — `/add, /apply, /open, /find, /grep, /index, /outline` → dispatch_file_command. These are a natural group (file operations and search).
+
+**Task 2: Extract config/mode command dispatch** — /model, /provider, /think, /config, `/config show/edit/set/get, /hooks, /permissions, /effort, /teach, /read, /architect, /mcp → dispatch_config_command`. These are all settings/configuration.
+
+Task 3: Something that improves reliability or UX. Let me look at what smart_edit's production unwraps look like, or find another high-value improvement.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about improving the streaming output? Check if there'… (3 lines) ✓ (10ms)
+  ▶ $ # Check for real TODO/FIXME in production code (2 lines) ✓ (9ms)
+  2 tools completed in 6.5s (2 ✓)
+
+No outstanding TODOs/FIXMEs in production code. The codebase is clean.
+
+Let me think about what else would really help users. One thing I noticed in the assessment: "50+ flags and 40+ slash commands are powerful but may overwhelm newcomers." What about improving the new user experience?
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the /tips command — does it give genuinely useful co… (2 lines)  ▶ $ sed -n '/fn generate_tips/,/^fn /p' src/commands_info.rs | head -60 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Now, let me think about the third task. Rather than more dispatch extraction (which is important but incremental), what about something that really moves the needle for users?
+
+The assessment mentions: "yoyo's next high-value work is probably in reliability, error recovery quality, and user experience polish." 
+
+Let me look at a real UX improvement. One thing Claude Code does well is showing what changed at the end of a session. Let me check yoyo's current session summary:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the exit/quit flow and session changes summary (2 lines)  ▶ $ sed -n '/fn format_exit_summary/,/^pub fn/p' src/commands_retry.rs | head -50 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Good, there's already a solid exit summary. Let me think about what third task would be truly high-impact.
+
+Looking at the assessment again: "the remaining gaps are either platform-level (sandboxing, cloud), modality-level (voice, IDE), or niche." For the CLI experience itself, the biggest remaining improvement would be in how reliable and helpful error recovery is. But smart_edit just got fuzzy matching (Day 105) and tool recovery hints were added (Day 104).
+
+What about the dispatch extraction? That's 2 tasks already. For the third task, let me look at something different — improving the /help system to make the 50+ flags and 40+ commands less overwhelming for newcomers:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the current help output length (2 lines)  ▶ $ # Look at contextual_hint in format/mod.rs — does it already… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ sed -n '736,840p' src/format/mod.rs ✓ (4ms)
+  3 tools completed in 4.3s (3 ✓)
+
+OK, the contextual hints system is already in place and quite good. Let me think about what 3 tasks will genuinely move the needle.
+
+Based on the assessment's guidance ("next high-value work is probably in reliability, error recovery quality, and user experience polish"), let me plan:
+
+Task 1: Extract file/search commands from dispatch — continues the proven Day 104-105 pattern, reduces dispatch.rs by ~100+ lines, makes the codebase more maintainable.
+
+Task 2: Extract config/mode commands from dispatch — another clean group, reducing the main dispatch further by ~200+ lines.
+
+Task 3: Something user-facing. Let me look at what would genuinely help... What about improving the /changes command? Or adding a quick-reference card that shows at startup for new users? Or...
+
+Actually, let me reconsider. The assessment says 18 files exceed 2,000 lines. But dispatch.rs specifically is calling for continued extraction. Two dispatch tasks seems like the right continuation of the Day 104-105 pattern.
+
+For the third task, I should pick something genuinely different. Let me check what config.rs production unwraps look like — those were the only non-test ones I found:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the production unwraps in config.rs (2 lines) ✓ (4ms)
+
+Those unwraps are safe — lines.last().unwrap() is guarded by !lines.is_empty(). Not worth changing.
+
+Let me think about the third task more carefully. What's genuinely high-impact?
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check: does yoyo have a way to show a quick "getting start… (2 lines)  ▶ $ # Check if there's a /quick command for quick questions — wh… (3 lines) ✓ (3ms)
+ ✓ (13ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me think about this differently. The assessment notes: "yoyo's next high-value work is probably in reliability, error recovery quality, and user experience polish." And the trajectory shows 0 reverts in the last 10 sessions, meaning my changes are consistently stable.
+
+For the third task, I want something that's user-visible and valuable. Let me check what commands DON'T have good help text or are missing from the help system:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # How does the /help output look? Let me see the structure (2 lines) ✓ (4ms)
+
+The help text is extensive and well-organized. Let me consider what third task is truly worthwhile.
+
+Let me look at another angle — the assessment mentions format/markdown.rs at 2,865 lines. That's huge for a markdown renderer. And symbols.rs at 3,679 lines. Are there opportunities for splitting either that would be self-contained?
+
+Actually, let me step back and think about what matters most:
+
+1. The dispatch refactoring is proven, low-risk, and compounds future velocity — 2 tasks.
+2. For the third: what about auditing and fixing the let _ = silent error swallowing pattern that was called out in the self-wisdom? The Day 99 lesson says "error-recovery code gets written with less care and trusted more absolutely." Let me check if there are critical places where errors are being silently discarded.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find all let _ = in production code across the codebase (n… (12 lines) ✓ (298ms)
+
+229 in help.rs is a lot but probably intentional (discarding write results). The 11 in format/tools.rs and 9 in format/mod.rs are concerning — those are in the output path.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the ones in format/tools.rs (3 lines) ✓ (6ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
