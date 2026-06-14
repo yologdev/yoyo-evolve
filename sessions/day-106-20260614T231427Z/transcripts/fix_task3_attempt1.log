@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ read src/commands_plan.rs ✓ (5ms)
+  ▶ read src/commands_plan.rs:100..300 ✓ (2ms)
+  ▶ read src/commands_plan.rs:299..499 ✓ (2ms)
+  ▶ read src/commands_plan.rs:498..798 ✓ (2ms)
+  4 tools completed in 15.3s (4 ✓)
+
+Now I have a clear picture. The evaluator found two issues:
+
+1. **Missing tests**: 7 specific tests for `parse_plan_steps`, step marking, status display, empty plan, no-parseable-steps
+2. **PLAN_SUBCOMMANDS not updated**: Missing "status" and "step"
+
+Let me also check that parse_plan_task filters the new subcommands:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_plan.rs:356..372 ✓ (0ms)
+
+I need to:
+1. Update PLAN_SUBCOMMANDS to include "status" and "step"
+2. Update parse_plan_task to also filter `"status" and "step"` 
+3. Add the 7 required tests
+4. Update the existing test_plan_subcommands test to check for the new entries
+
+Let me make all the changes:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (1 → 3 lines)
+  - pub const PLAN_SUBCOMMANDS: &[&str] = &["on", "off", "open", "close", "show", "apply", "clear"];
+  + pub const PLAN_SUBCOMMANDS: &[&str] = &[
+  +     "on", "off", "open", "close", "show", "apply", "clear", "status", "step",
+  + ];
+ ✓ (1m 4s)
+  - pub const PLAN_SUBCOMMANDS: &[&str] = &["on", "off", "open", "close", "show", "apply", "clear"];
+  + pub const PLAN_SUBCOMMANDS: &[&str] = &[
+  +     "on", "off", "open", "close", "show", "apply", "clear", "status", "step",
+  + ];
+  ▶ edit src/commands_plan.rs (1 → 3 lines)
+  -             "on" | "off" | "open" | "close" | "show" | "apply" | "clear" => None,
+  +             "on" | "off" | "open" | "close" | "show" | "apply" | "clear" | "status" | "step" => {
+  +                 None
+  +             }
+ ✓ (1m 5s)
+  -             "on" | "off" | "open" | "close" | "show" | "apply" | "clear" => None,
+  +             "on" | "off" | "open" | "close" | "show" | "apply" | "clear" | "status" | "step" => {
+  +                 None
+  +             }
+  2 tools completed in 2m 15s (2 ✓)
+
+Now update the existing test_plan_subcommands test and add all the missing tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (10 → 154 lines)
+            assert!(PLAN_SUBCOMMANDS.contains(&"show"));
+            assert!(PLAN_SUBCOMMANDS.contains(&"apply"));
+            assert!(PLAN_SUBCOMMANDS.contains(&"clear"));
+  +         assert!(PLAN_SUBCOMMANDS.contains(&"status"));
+  +         assert!(PLAN_SUBCOMMANDS.contains(&"step"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_plan_steps_numbered_list() {
+  +         let plan = "\
+  + 1. **Set up the database** — configure connection pooling
+  + 2. **Create migrations** — add users and posts tables
+  + 3. **Implement models** — define structs for User and Post";
+  +         let steps = parse_plan_steps(plan);
+  +         assert_eq!(steps.len(), 3);
+  +         assert_eq!(steps[0].number, 1);
+  +         assert_eq!(steps[0].title, "Set up the database");
+  +         assert_eq!(steps[0].description, "configure connection pooling");
+  +         assert!(!steps[0].completed);
+  +         assert_eq!(steps[1].number, 2);
+  ... (128 more lines)
+ ✓ (1m 4s)
+            assert!(PLAN_SUBCOMMANDS.contains(&"show"));
+            assert!(PLAN_SUBCOMMANDS.contains(&"apply"));
+            assert!(PLAN_SUBCOMMANDS.contains(&"clear"));
+  +         assert!(PLAN_SUBCOMMANDS.contains(&"status"));
+  +         assert!(PLAN_SUBCOMMANDS.contains(&"step"));
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Now let's run the verification commands:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (48.4s)
+  3 tools completed in 1m 17s (3 ✓)
+
+Let me verify the new tests are specifically running:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test plan 2>&1 | grep "tes… ✓ (133ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test plan 2>&1 | grep "tes… ✓ (132ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test plan -- --list 2>&1 |… ✓ (127ms)
+  3 tools completed in 6.8s (3 ✓)
+
+All 7 new tests are present and passing. Let me confirm the specific ones the evaluator asked for:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test plan -- --list 2>&1 |… ✓ (127ms)
+
+All 7 required tests are present and passing. Let me do a final comprehensive check:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (48.9s)
+
+All checks pass. Here's a summary of the changes made to `src/commands_plan.rs`:
+
+1. **Updated PLAN_SUBCOMMANDS** to include "status" and "step" — this enables tab-completion for the new subcommands.
+
+2. Updated `parse_plan_task` to also filter "status" and "step" so they aren't treated as plan task descriptions.
+
+3. Added 7 required tests:
+   • `test_parse_plan_steps_numbered_list — parses 1. Title — description` format
+   • `test_parse_plan_steps_markdown_checklist — parses - [ ] / - [x]` format, verifies completed state
+   • test_parse_plan_steps_mixed_formats — numbered + `Step N:` + checklist in one plan
+   • test_step_marking_done_and_undo — marks steps done/undone, tests non-existent step error
+   • test_format_plan_status_display — verifies progress line, percentage, checkboxes, `→` marker
+   • test_parse_plan_steps_empty_plan — empty string and whitespace-only produce empty vec
+   • test_parse_plan_steps_no_parseable_steps — plain text with no structure, verifies raw_text preserved and status handles gracefully
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

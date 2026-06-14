@@ -1,0 +1,234 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the git worktree lifecycle module. Let me start by understanding the current state of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -80 src/commands_spawn.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^fn\|^struct\|^en…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .gitignore | grep -i worktre… ✓ (6ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "worktree\|\.yoyo/worktr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -100 src/commands_spawn.rs ✓ (3ms)
+ ✓ (3ms)
+ ✓ (5ms)
+  6 tools completed in 7.1s (6 ✓)
+
+Now let me look at the existing test module and the imports more carefully:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '711,730p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,15p' src/commands_spaw…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_git" src/git.rs | h… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,85p' src/git.rs ✓ (4ms)
+  4 tools completed in 3.9s (4 ✓)
+
+I see that run_git runs commands from the current directory and has a destructive guard for tests. For the worktree module, I need to run git commands in specific directories. Let me check if there's a variant that takes a working directory:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_git_in\|Command::ne… ✓ (3ms)
+
+No run_git_in variant. For the worktree functions, I'll use `std::process::Command directly with -C` flag or similar, since the worktree commands need to run from the repo root (not from a temp dir in tests). Actually, let me think about this more carefully.
+
+The run_git function runs git in the current directory. The destructive guard blocks commands like `checkout, add, branch etc. from the project root during tests. But git worktree add and git worktree remove` are also destructive. The guard checks for "add", "checkout" etc. at the first arg position — but for worktree commands, the first arg would be "worktree", which isn't in the destructive list. Let me verify:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A2 'let subcmd = args.firs… ✓ (3ms)
+
+Good — "worktree" is not in DESTRUCTIVE_GIT_COMMANDS, so `run_git(&["worktree", "add", ...])` will pass through the guard. But the tests need to create worktrees in a temp directory, not the project root. I'll need to use std::process::Command directly with -C to target the temp repo.
+
+Let me now plan and implement:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add WorktreeInfo struct and lifecycle functions to…' ✓ (0ms)
+  ▶ todo add 'Add tests for worktree lifecycle (using temp direc…' ✓ (0ms)
+  ▶ todo add 'Add .yoyo/worktrees/ to .gitignore' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — fix any issue…' ✓ (0ms)
+  ▶ todo add 'Commit the changes' ✓ (0ms)
+  5 tools completed in 16.5s (5 ✓)
+
+Now let me look at what's right before the mod tests section to find the right insertion point:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '680,715p' src/commands_s… ✓ (3ms)
+
+Good. Now I'll implement the worktree lifecycle module. I need a helper to run git commands in a specific directory (for both the actual code and tests). Let me write the implementation:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_spawn.rs (7 → 9 lines)
+    use crate::prompt_utils::summarize_message;
+    use crate::sync_util::lock_or_recover;
+    
+  + use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+  + use std::time::Instant;
+    use yoagent::types::{AgentMessage, Usage};
+ ✓ (14.5s)
+    use crate::prompt_utils::summarize_message;
+    use crate::sync_util::lock_or_recover;
+    
+  + use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+  + use std::time::Instant;
+    use yoagent::types::{AgentMessage, Usage};
+  2 tools completed in 20.9s (2 ✓)
+
+Expected — those imports will be used when I add the actual code. Let me add the implementation now, right before `#[cfg(test)]`:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (5 → 177 lines)
+  + // ---------------------------------------------------------------------------
+  + // Git worktree lifecycle — primitives for parallel sub-agent isolation
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Information about a spawned git worktree.
+  + #[derive(Debug, Clone)]
+  + pub struct WorktreeInfo {
+  +     /// Absolute path to the worktree directory.
+  +     pub path: PathBuf,
+  +     /// The branch/ref name used (detached HEAD label).
+  +     pub branch: String,
+  +     /// When the worktree was created (for stale-cleanup).
+  +     pub created_at: Instant,
+  + }
+  + 
+  + /// Run a git command in a specific directory.
+  + /// Returns stdout on success, stderr message on failure.
+  + fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+  +     match std::process::Command::new("git")
+  +         .arg("-C")
+  ... (155 more lines)
+ ✓ (14.5s)
+  + // ---------------------------------------------------------------------------
+  + // Git worktree lifecycle — primitives for parallel sub-agent isolation
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Information about a spawned git worktree.
+  + #[derive(Debug, Clone)]
+  + pub struct WorktreeInfo {
+  +     /// Absolute path to the worktree directory.
+  ... (13 more lines)
+
+These are dead-code warnings since nothing calls these functions yet (integration is a future task). I need to suppress them. Let me add `#[allow(dead_code)]` on the private helpers and the functions will be public so they should be fine — wait, clippy with -D warnings treats dead_code as error even for `pub` items in this crate. Let me add module-level allowance:
+
+Actually, the functions are pub and the struct is pub, but since they're not used from outside the module yet, Rust flags them. The right approach is to add tests that call them — which will count as "used". Let me add the tests first, then see if the warnings go away.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+Let me find the end of the test module to add the worktree tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_spawn.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs ✓ (2ms)
+  ▶ edit src/commands_spawn.rs (5 → 166 lines)
+            let args = args.unwrap();
+            assert!(args.system_prompt.is_none());
+            assert_eq!(args.task, "--system");
+  +     }
+  + 
+  +     // -------------------------------------------------------------------
+  +     // Worktree lifecycle tests
+  +     // -------------------------------------------------------------------
+  + 
+  +     /// Create a temporary git repo for worktree tests.
+  +     fn setup_temp_repo() -> tempfile::TempDir {
+  +         let tmp = tempfile::tempdir().expect("create temp dir");
+  +         let p = tmp.path();
+  +         // Initialise a repo with at least one commit (worktree add needs a HEAD).
+  +         std::process::Command::new("git")
+  +             .args(["init"])
+  +             .current_dir(p)
+  +             .output()
+  +             .expect("git init");
+  +         std::process::Command::new("git")
+  ... (146 more lines)
+ ✓ (14.4s)
+            let args = args.unwrap();
+            assert!(args.system_prompt.is_none());
+            assert_eq!(args.task, "--system");
+  +     }
+  + 
+  +     // -------------------------------------------------------------------
+  +     // Worktree lifecycle tests
+  +     // -------------------------------------------------------------------
+  ... (13 more lines)
+  3 tools completed in 44.4s (3 ✓)
+
+The dead-code lints fire because in non-test builds nothing references these items yet. The functions are pub but Rust's dead-code lint checks reachability from the crate root. Since integration is a future task, I'll add `#[allow(dead_code)]` on the worktree section:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (7 → 8 lines)
+    // ---------------------------------------------------------------------------
+    
+    /// Information about a spawned git worktree.
+  + #[allow(dead_code)]
+    #[derive(Debug, Clone)]
+    pub struct WorktreeInfo {
+ ✓ (14.6s)
+    // ---------------------------------------------------------------------------
+    
+    /// Information about a spawned git worktree.
+  + #[allow(dead_code)]
+    #[derive(Debug, Clone)]
+    pub struct WorktreeInfo {
+
+I need to mark all the functions too. The cleanest approach is to put them all in a sub-section with #[allow(dead_code)] at the function level, or better yet, I can use #[cfg(test)] to make run_git_in accessible + use #[allow(dead_code)] on all pub functions. Actually, the simplest approach: these functions are called from tests (which compile as #[cfg(test)]), but Rust's dead-code analysis for non-test builds still flags them. Let me just add #[allow(dead_code)] to each function since they'll be used when the integration task lands:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (3 → 4 lines)
+    /// Run a git command in a specific directory.
+    /// Returns stdout on success, stderr message on failure.
+  + #[allow(dead_code)]
+    fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+ ✓ (14.5s)
+    /// Run a git command in a specific directory.
+    /// Returns stdout on success, stderr message on failure.
+  + #[allow(dead_code)]
+    fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+
+Let me add #[allow(dead_code)] to all remaining functions at once:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '745,855p' src/commands_s… ✓ (4ms)
+  ▶ edit src/commands_spawn.rs (3 → 4 lines)
+    /// Resolve the root of the git repository that contains `start`.
+    /// Falls back to `start` itself if rev-parse fails.
+  + #[allow(dead_code)]
+    fn repo_root(start: &Path) -> PathBuf {
+ ✓ (14.5s)
+    /// Resolve the root of the git repository that contains `start`.
+    /// Falls back to `start` itself if rev-parse fails.
+  + #[allow(dead_code)]
+    fn repo_root(start: &Path) -> PathBuf {
+  2 tools completed in 26.8s (2 ✓)
+
+Let me add the remaining #[allow(dead_code)] annotations:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (2 → 3 lines)
+    /// `repo_dir` must be inside an existing git repository.
+  + #[allow(dead_code)]
+    pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<WorktreeInfo, String> {
+ ✓ (14.6s)
+    /// `repo_dir` must be inside an existing git repository.
+  + #[allow(dead_code)]
+    pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<WorktreeInfo, String> {
+  ▶ edit src/commands_spawn.rs (2 → 3 lines)
+    /// This is idempotent — calling it on an already-removed worktree is a no-op.
+  + #[allow(dead_code)]
+    pub fn cleanup_spawn_worktree(repo_dir: &Path, info: &WorktreeInfo) -> Result<(), String> {
+ ✓ (14.5s)
+    /// This is idempotent — calling it on an already-removed worktree is a no-op.
+  + #[allow(dead_code)]
+    pub fn cleanup_spawn_worktree(repo_dir: &Path, info: &WorktreeInfo) -> Result<(), String> {
+  ▶ edit src/commands_spawn.rs (2 → 3 lines)
+    /// List spawn worktrees under `<repo>/.yoyo/worktrees/spawn-*`.
+  + #[allow(dead_code)]
+    pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
+ ✓ (14.5s)
+    /// List spawn worktrees under `<repo>/.yoyo/worktrees/spawn-*`.
+  + #[allow(dead_code)]
+    pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
+  ▶ edit src/commands_spawn.rs (2 → 3 lines)
+    /// modified-time is older than `max_age` ago.
+  + #[allow(dead_code)]
+    pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
+ ✓ (1m 5s)
+    /// modified-time is older than `max_age` ago.
+  + #[allow(dead_code)]
+    pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
+  4 tools completed in 2m 7s (4 ✓)
+
+Now let me run the full build + test + clippy:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (782ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

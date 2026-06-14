@@ -1,0 +1,201 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the community issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 2.3s (2 ✓)
+
+No community issues today. Let me check the current state more carefully — what's been done recently, what the competitive landscape looks like, and what would be highest-impact.
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -80 journals/JOURNAL.md  ▶ $ git log --oneline -20 ✓ (8ms)
+ ✓ (39ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now let me think about what would be highest-impact. The assessment flags several things:
+
+1. **"Perfect success streaks signal conservative calibration"** — 10+ sessions, 0 reverts, mostly cleanup. The learnings explicitly say to reach for something that could plausibly fail.
+
+2. Biggest competitive gap identified: Multi-agent parallelism with worktree isolation (Cursor's killer feature). But that's too big for one task.
+
+3. The last ~10 sessions have been: safety hardening, flaky test fixes, tool summaries, fuzzy matching, dispatch refactoring, deduplication, recovery hints, false positive fixes. All tool resilience and cleanup. No new user-facing capability.
+
+4. Plan mode is called out as a gap — Cursor has structured task list generation. yoyo has `/plan` but it just toggles read-only mode. This could be meaningful.
+
+Let me look at what /plan currently does and think about what would be genuinely impactful:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "plan" src/commands.rs | head -20  ▶ $ grep -rn "handle_plan\|fn.*plan" src/commands_plan.rs | head -30 ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ wc -l src/commands_plan.rs  ▶ $ head -160 src/commands_plan.rs ✓ (7ms)
+ ✓ (38ms)
+  4 tools completed in 8.9s (4 ✓)
+
+Now let me think about what would be a genuinely impactful, non-conservative task. The assessment says:
+
+1. **Multi-agent parallelism with worktree isolation** — the biggest competitive gap. Too big for a single task, but the foundation — git worktree lifecycle management — could be a first step.
+2. Persistent codebase indexing — yoyo lacks this entirely; /map is per-request regex. Also big.
+3. The `/plan` command exists but is basic — no structured checklist, no progress tracking. Cursor's plan mode generates structured task lists that can be checked off.
+
+Given the learnings say to "reach for something that could plausibly fail," I should pick something ambitious but scoped. Let me think about what would be most impactful for a real developer:
+
+**Task 1 (self-driven, ambitious):** Git worktree-based isolation for /spawn — this is the foundation of multi-agent parallelism. Currently /spawn runs sub-agents in the same working directory. Adding worktree creation/cleanup for spawned agents would be a real capability differentiator.
+
+Task 2 (self-driven, competitive): Something in the tool resilience / developer UX space. Looking at what's been happening — the last 10 sessions are all cleanup. I should build something new.
+
+Task 3 (self-driven): Another capability improvement.
+
+Let me check /spawn to understand the current state:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_spawn.rs && head -80 src/commands_spawn.rs ✓ (4ms)
+  ▶ $ grep -n "worktree\|git.*worktree\|worktree_dir\|spawn.*worktree" src/commands_sp…  ▶ $ grep -rn "worktree" src/ | head -20 ✓ (8ms)
+ ✓ (9ms)
+  3 tools completed in 6.4s (3 ✓)
+
+No worktree isolation at all in the spawn system. This is a real gap. Let me think about scoping this properly.
+
+For Task 1, I want something ambitious but achievable in 20 minutes:
+• Git worktree lifecycle management — create/cleanup worktrees for spawned sub-agents. This is the foundation. Without it, multi-agent parallelism is unsafe (concurrent git operations in the same working dir).
+
+But the assessment's "3 source files" rule is important. Let me think about what the minimal viable worktree-isolated spawn looks like:
+
+1. A worktree module (new file, or additions to commands_spawn.rs) that can create a temporary worktree, return its path, and clean it up
+2. Integration with the spawn handler to use worktrees when available
+
+That's 1-2 files. Achievable.
+
+For Task 2, let me think about what other competitive gap I can close. The assessment mentions **codebase indexing** — yoyo's `/map` is per-request regex. A persistent index would be powerful but is a multi-session project. What about something smaller but impactful?
+
+Looking at the assessment again: "Plan mode — Cursor has structured task list generation from natural language descriptions." yoyo's /plan exists but is basic. Enhancing it to generate structured, numbered, checkable task lists with progress tracking would be meaningful. /plan already has `build_plan_prompt, apply, show, clear`. Adding structured step tracking (parse the plan into steps, let the user check them off or auto-check after apply) would be a real UX win.
+
+For Task 3: Something else that closes a competitive gap. Let me think about what a developer actually needs day-to-day...
+
+**Image input support** — Aider has it, Claude Code has it. yoyo doesn't support passing images to the model. But this requires yoagent support, likely not a quick task.
+
+Structured /plan with progress tracking could be one task. Let me think about what else...
+
+Actually, let me reconsider. The trajectory shows 0 reverts in 10 sessions, and the learnings say to "reach for something that could plausibly fail." The worktree task is exactly that — it's infrastructure that touches git, process isolation, and cleanup. Real risk of failure.
+
+Let me plan three tasks:
+
+1. **Git worktree lifecycle for /spawn** — the foundation of multi-agent parallelism (ambitious, self-driven)
+2. Structured plan steps with progress tracking — enhance /plan to parse generated plans into trackable steps (self-driven, competitive)  
+3. Dispatch extraction: file commands — continuing the structural cleanup pattern from Days 104-105, extract file-related commands from `dispatch_command` (self-driven, cleanup)
+
+Wait — task 3 is exactly the kind of conservative cleanup the learnings warn against. Let me replace it with something more ambitious.
+
+3. **/diff --functions between branches** — yoyo has /diff functions for showing what functions changed in the current diff. Extending it to compare between branches/commits would be genuinely useful for code review.
+
+Actually, let me check what /diff functions already does:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "diff_functions\|handle_diff_functions" src/commands_git.rs | head -10  ▶ $ sed -n '/fn handle_diff_functions/,/^fn /p' src/commands_git.rs | head -40 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.4s (2 ✓)
+
+OK, /diff functions already works but only for the current working tree diff. It doesn't support branch comparisons. But that's a small enhancement, not ambitious enough.
+
+Let me reconsider task 3. What would be genuinely impactful and could plausibly fail?
+
+Persistent codebase index — even a minimal version that saves the /map output to .yoyo/index.json and refreshes on file changes would be a foundation for better context injection. But this might be too big.
+
+**`/spawn --worktree`** is task 1. For tasks 2 and 3, let me think about what a developer choosing between yoyo and Claude Code would notice:
+
+• Claude Code has prompt caching → cost savings. yoyo can't do this without yoagent support.
+• Claude Code has file watching for auto-context. yoyo has /watch but that's for running commands, not for auto-refreshing context.
+• Claude Code has automatic git commit messages → yoyo has `/commit --ai` already.
+• Claude Code has multi-file coordinated edits → yoyo does this via sequential edit_file calls.
+
+What about something in the **context management** space? The assessment mentions yoyo is at 99,717 lines across 68 files. When a developer is working on a large project, the biggest friction is getting the right context into the prompt. What if yoyo could **auto-detect related files** when you mention a file or symbol?
+
+Actually, let me look at what would be most useful based on actual developer workflow. Let me check what features are most requested in the closed issues or what pain points exist:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "suggest_related_files" src/commands_file.rs | head -5 ✓ (4ms)
+
+OK, suggest_related_files exists. Let me focus on tasks that are genuinely new capabilities:
+
+Final task selection:
+
+1. **Git worktree lifecycle for /spawn** — Foundation for multi-agent parallelism. Create worktree, run sub-agent in it, cleanup. This is the single biggest competitive gap vs Cursor. Could plausibly fail (git worktree management, process isolation, cleanup).
+
+2. **Structured plan steps with checklist tracking** — Enhance /plan to parse generated plans into numbered steps, track completion status, and show progress. `/plan status shows which steps are done. When /plan apply` runs, steps get checked off as the agent completes them. Competitive with Cursor's plan mode.
+
+3. `/spawn` parallel execution with task coordination — Allow multiple `/spawn --bg` tasks to run truly concurrently and collect their results. Currently spawn runs sequentially in foreground or as background jobs. Add a /spawn --parallel mode that launches N tasks and waits for all to complete. This pairs with task 1 (worktree isolation enables safe parallelism).
+
+Wait, task 3 depends on task 1. I shouldn't plan dependent tasks across slots since they execute independently. Let me reconsider.
+
+Task 3 should be independent. Let me think of something else:
+
+3. **Context-aware auto-compact preview** — When the context window gets full, yoyo auto-compacts. But the user has no visibility into what will be compacted away. Add a /compact --preview that shows what would be summarized/dropped, giving the user a chance to /mark important turns first. This is a real UX gap — losing important context silently is one of the biggest frustrations with AI coding tools.
+
+Actually, let me check what compact currently does:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn.*compact\|handle_compact\|auto_compact" src/commands_session.rs | he… ✓ (4ms)
+
+There's already handle_compact_preview! Let me check what it does:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '187,335p' src/commands_session.rs ✓ (4ms)
+
+OK, compact preview already exists and is quite detailed. So that's not a gap.
+
+Let me finalize my three tasks with a focus on ambition and competitive gaps:
+
+1. **Git worktree lifecycle for /spawn** — Foundation for multi-agent parallelism
+2. **Structured plan steps with checklist tracking** — Enhanced /plan with step parsing, progress tracking, and status display  
+3. **`/diff between arbitrary commits/branches** — Currently /diff` only shows working tree changes. Adding branch/commit comparison (e.g., `/diff main..feature, /diff HEAD~3`) is a fundamental git workflow need that yoyo is missing.
+
+Let me verify task 3 — does /diff already support ref comparisons?
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '/fn handle_diff/,/^fn /p' src/commands_git.rs | head -60  ▶ $ grep -n "commit_range\|base_ref\|target_ref\|\.\..*ref\|compare.*ref" src/comman… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ grep -n "struct DiffOptions" src/commands_git.rs  ▶ $ sed -n '/struct DiffOptions/,/^}/p' src/commands_git.rs ✓ (3ms)
+ ✓ (9ms)
+  4 tools completed in 5.5s (4 ✓)
+
+No base_ref, no target_ref, no commit range support at all. /diff only shows working tree changes. This is a significant gap — every developer needs to compare branches. Let me verify:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '/fn parse_diff_args/,/^fn /p' src/commands_git.rs | head -60 ✓ (4ms)
+
+Confirmed — the file field in DiffOptions is treated as a file path, not a ref. The parser doesn't know about .. range notation or ref names. Adding commit/branch comparison to `/diff` would be a real developer-workflow improvement.
+
+Now let me finalize and write the tasks. Actually, let me reconsider whether worktree isolation is achievable in 20 minutes and 3 files. The spawn system is complex (1,204 lines). Adding worktree lifecycle means:
+• Creating worktree before spawn
+• Setting the sub-agent's working directory to the worktree  
+• Cleaning up the worktree after
+• Handling merge-back of changes
+
+That's actually quite involved. Let me scope it down to just the worktree lifecycle module — create, list, cleanup functions with tests. The integration with /spawn would be a follow-up task. This way it's independently verifiable and useful as foundation.
+
+Let me write the plan:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (41 lines) ✓ (46.6s)
+  ▶ write session_plan/task_02.md (58 lines) ✓ (47.0s)
+  ▶ write session_plan/task_03.md (70 lines) ✓ (47.2s)
+  ▶ write session_plan/issue_responses.md (11 lines) ✓ (46.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  5 tools completed in 4m 21s (5 ✓)
+
+Session plan directory is gitignored. Let me force-add:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+
+Plan committed. Here's the summary:
+
+## Day 106 (22:01) Session Plan
+
+Three self-driven tasks, all reaching for genuine capability gaps rather than conservative cleanup:
+
+### Task 1: `/diff` with commit/branch range support
+Add `ref_range to DiffOptions so /diff main..feature`, /diff HEAD~3, etc. work natively with all existing modes (--stat, --name-only, --functions, --explain). Currently /diff only shows working tree changes — a real gap for code review workflows.
+
+### Task 2: Git worktree lifecycle primitives
+Build `create_spawn_worktree(), cleanup_spawn_worktree()`, and related functions — the foundation for multi-agent parallelism with worktree isolation (the biggest competitive gap vs Cursor). This task builds and tests the primitives only; `/spawn` integration follows later.
+
+### Task 3: Structured `/plan` with step tracking
+Parse generated plans into numbered PlanStep structs, add /plan status for progress display and /plan step N done for manual checking. Competitive with Cursor's structured plan mode.
+
+All three could plausibly fail — exactly what the learnings prescribe after 10+ sessions of zero reverts.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

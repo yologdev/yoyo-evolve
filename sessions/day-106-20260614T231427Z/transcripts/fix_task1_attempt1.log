@@ -1,0 +1,91 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Looking at the evaluator feedback, the implementation is correct but tests for ref_range parsing are missing. Let me examine the current code to understand the implementation, then add the required tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ref_range" src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '170,250p' src/commands_g… ✓ (4ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now let me find the existing tests section:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -n +2133 src/commands_git.r… ✓ (16ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now I have a clear picture. I need to add tests for ref_range parsing. Let me find the exact end of the test module to insert before the closing brace:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_git.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_git.rs ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I'll add the required tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (9 → 158 lines)
+            assert!(args.auto_stage);
+            assert!(args.ai);
+            assert_eq!(args.message, "fix it");
+  +     }
+  + 
+  +     // --- ref_range parsing tests ---
+  + 
+  +     #[test]
+  +     fn parse_diff_args_ref_range_with_dots() {
+  +         let opts = parse_diff_args("/diff main..feature");
+  +         assert_eq!(opts.ref_range, Some("main..feature".to_string()));
+  +         assert!(!opts.staged_only);
+  +         assert!(!opts.stat_only);
+  +         assert!(!opts.name_only);
+  +         assert!(opts.file.is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_diff_args_ref_range_triple_dot() {
+  +         let opts = parse_diff_args("/diff main...feature");
+  ... (134 more lines)
+ ✓ (1m 7s)
+            assert!(args.auto_stage);
+            assert!(args.ai);
+            assert_eq!(args.message, "fix it");
+  +     }
+  + 
+  +     // --- ref_range parsing tests ---
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Now let's run the required verification:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (6.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (51.7s)
+  3 tools completed in 1m 22s (3 ✓)
+
+All 88 tests pass. Let me verify the new tests are being run:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "ref_rang… ✓ (19.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (159ms)
+  2 tools completed in 24.5s (2 ✓)
+
+All 15 new ref_range tests are present and passing:
+
+1. `parse_diff_args_ref_range_with_dots` — recognizes main..feature as ref range
+2. **`parse_diff_args_ref_range_triple_dot** — recognizes main...feature` (three dots)
+3. `parse_diff_args_ref_range_head_tilde` — recognizes `HEAD~3` as ref
+4. `parse_diff_args_ref_range_tag_to_head` — recognizes `v1.0..HEAD`
+5. `parse_diff_args_ref_range_with_stat` — ref + `--stat` flag
+6. `parse_diff_args_ref_range_with_name_only` — ref + --name-only flag
+7. `parse_diff_args_ref_range_with_functions` — ref + --functions flag
+8. `parse_diff_args_ref_range_with_explain` — ref + `--explain` flag
+9. `parse_diff_args_ref_range_with_multiple_flags` — ref + multiple flags combined
+10. **`parse_diff_args_ref_range_ignores_staged** — --staged` cleared when ref_range set
+11. **`parse_diff_args_flags_after_ref`** — flags after ref are parsed correctly
+12. **`parse_diff_args_existing_file_takes_precedence** — existing file path (Cargo.toml`) beats ref
+13. **`parse_diff_args_dotdot_always_ref_even_if_path_exists** — ..` always means ref range
+14. **`parse_diff_args_nonexistent_path_becomes_ref`** — non-existent path treated as ref
+15. `diff_options_stores_ref_range` — DiffOptions struct stores ref_range correctly
+16. **parse_diff_args_no_ref_range_plain / parse_diff_args_no_ref_range_staged_only** — baseline: no ref_range when none provided
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
