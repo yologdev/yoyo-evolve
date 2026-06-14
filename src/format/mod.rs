@@ -469,6 +469,43 @@ pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String 
             }
             summary
         }
+        "rename_symbol" => {
+            let old = args.get("old_name").and_then(|v| v.as_str()).unwrap_or("?");
+            let new = args.get("new_name").and_then(|v| v.as_str()).unwrap_or("?");
+            let scope = args.get("path").and_then(|v| v.as_str());
+            match scope {
+                Some(p) => format!("rename {old} → {new} in {p}"),
+                None => format!("rename {old} → {new}"),
+            }
+        }
+        "todo" => {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+            match action {
+                "add" => {
+                    let desc = args
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("...");
+                    format!("todo add '{}'", truncate_with_ellipsis(desc, 50))
+                }
+                "done" | "wip" | "remove" => {
+                    let id = args.get("id").and_then(|v| v.as_u64());
+                    match id {
+                        Some(n) => format!("todo {action} #{n}"),
+                        None => format!("todo {action}"),
+                    }
+                }
+                _ => format!("todo {action}"),
+            }
+        }
+        "web_search" => {
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("?");
+            format!("web search '{}'", truncate_with_ellipsis(query, 60))
+        }
+        "sub_agent" => {
+            let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("...");
+            format!("sub-agent '{}'", truncate_with_ellipsis(task, 60))
+        }
         _ => tool_name.to_string(),
     }
 }
@@ -1116,6 +1153,111 @@ mod tests {
         assert!(
             result.contains("(2 lines)"),
             "Should indicate line count: {result}"
+        );
+    }
+
+    // --- format_tool_summary: rename_symbol, todo, web_search, sub_agent ---
+
+    #[test]
+    fn test_format_tool_summary_rename_symbol() {
+        let args = serde_json::json!({"old_name": "foo", "new_name": "bar"});
+        let result = format_tool_summary("rename_symbol", &args);
+        assert_eq!(result, "rename foo → bar");
+    }
+
+    #[test]
+    fn test_format_tool_summary_rename_symbol_with_path() {
+        let args = serde_json::json!({"old_name": "Foo", "new_name": "Bar", "path": "src/"});
+        let result = format_tool_summary("rename_symbol", &args);
+        assert_eq!(result, "rename Foo → Bar in src/");
+    }
+
+    #[test]
+    fn test_format_tool_summary_todo_add() {
+        let args = serde_json::json!({"action": "add", "description": "Fix the bug"});
+        let result = format_tool_summary("todo", &args);
+        assert_eq!(result, "todo add 'Fix the bug'");
+    }
+
+    #[test]
+    fn test_format_tool_summary_todo_done() {
+        let args = serde_json::json!({"action": "done", "id": 3});
+        let result = format_tool_summary("todo", &args);
+        assert_eq!(result, "todo done #3");
+    }
+
+    #[test]
+    fn test_format_tool_summary_todo_wip() {
+        let args = serde_json::json!({"action": "wip", "id": 1});
+        let result = format_tool_summary("todo", &args);
+        assert_eq!(result, "todo wip #1");
+    }
+
+    #[test]
+    fn test_format_tool_summary_todo_list() {
+        let args = serde_json::json!({"action": "list"});
+        let result = format_tool_summary("todo", &args);
+        assert_eq!(result, "todo list");
+    }
+
+    #[test]
+    fn test_format_tool_summary_todo_clear() {
+        let args = serde_json::json!({"action": "clear"});
+        let result = format_tool_summary("todo", &args);
+        assert_eq!(result, "todo clear");
+    }
+
+    #[test]
+    fn test_format_tool_summary_todo_remove_no_id() {
+        let args = serde_json::json!({"action": "remove"});
+        let result = format_tool_summary("todo", &args);
+        assert_eq!(result, "todo remove");
+    }
+
+    #[test]
+    fn test_format_tool_summary_web_search() {
+        let args = serde_json::json!({"query": "rust async tutorial"});
+        let result = format_tool_summary("web_search", &args);
+        assert_eq!(result, "web search 'rust async tutorial'");
+    }
+
+    #[test]
+    fn test_format_tool_summary_web_search_long_query() {
+        let query = "a]".repeat(40); // 80 chars
+        let args = serde_json::json!({"query": query});
+        let result = format_tool_summary("web_search", &args);
+        assert!(
+            result.contains("…"),
+            "Long query should be truncated: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_tool_summary_sub_agent() {
+        let args = serde_json::json!({"task": "Analyze the test failures"});
+        let result = format_tool_summary("sub_agent", &args);
+        assert_eq!(result, "sub-agent 'Analyze the test failures'");
+    }
+
+    #[test]
+    fn test_format_tool_summary_sub_agent_long_task() {
+        let task = "x".repeat(100);
+        let args = serde_json::json!({"task": task});
+        let result = format_tool_summary("sub_agent", &args);
+        assert!(
+            result.contains("…"),
+            "Long task should be truncated: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_tool_summary_todo_add_long_description() {
+        let desc = "y".repeat(80);
+        let args = serde_json::json!({"action": "add", "description": desc});
+        let result = format_tool_summary("todo", &args);
+        assert!(
+            result.contains("…"),
+            "Long description should be truncated: {result}"
         );
     }
 
