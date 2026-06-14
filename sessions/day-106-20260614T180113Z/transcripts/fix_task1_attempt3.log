@@ -1,0 +1,169 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify a high-impact improvement, then implement it.
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  4 tools completed in 8.4s (4 ✓)
+
+Let me explore the source code to find impactful improvements.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub_agent ✓ (4m 9s)
+  ▶ $ grep -rn '\.unwrap()' src/ | grep -v '#\[test\]' | grep -v 'mod tests' | grep -v… ✓ (8ms)
+  ▶ $ grep -rn '\.unwrap()' src/ | grep -v 'mod tests' -A0 | grep -v 'fn test_' | grep… ✓ (9ms)
+  3 tools completed in 4m 18s (3 ✓)
+
+Let me look more carefully at non-test unwrap calls:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && for f in *.rs format/*.rs; do (15 lines) ✓ (1.4s)
+  ▶ $ grep -rn 'TODO\|FIXME\|HACK\|XXX' src/ | grep -v 'test' | grep -v 'TODO.*tool' |… ✓ (8ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Let me look for more impactful improvements - areas where user experience could be better:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Look at safety.rs for bash command safety analysis - a cri… (2 lines) ✓ (2ms)
+  ▶ $ # Look at format/tools.rs for tool progress display (2 lines) ✓ (2ms)
+  ▶ $ # Check the watch.rs for potential improvements - this handl… (2 lines) ✓ (3ms)
+  ▶ $ # Look at the prompt.rs for streaming and interaction - this… (2 lines) ✓ (4ms)
+  4 tools completed in 10.5s (4 ✓)
+
+Let me focus on a specific impactful area. Let me check the commands_session.rs for the compact functionality and format/mod.rs for some issues:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Look at the format/mod.rs - the largest format file, recen… (2 lines) ✓ (4ms)
+  ▶ $ # Let me look at the tool_wrappers.rs - specifically the too… (2 lines) ✓ (3ms)
+  ▶ read src/tool_wrappers.rs:655..755 ✓ (1ms)
+  3 tools completed in 9.1s (3 ✓)
+
+Let me look at a critical area - the format_tool_summary function which formats tool call displays for users:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:387..487 ✓ (1ms)
+
+Now let me look at the format_tool_summary function - it's missing summaries for several tools like rename_symbol, `todo, web_search, sub_agent`. Let me also check what tools exist:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn name.*&str' src/tools.rs | head -20 ✓ (3ms)
+  ▶ $ grep -A1 'fn name.*&str' src/tools.rs | head -30 ✓ (3ms)
+  ▶ $ # Check the existing format_tool_summary tests (2 lines) ✓ (3ms)
+  3 tools completed in 6.6s (3 ✓)
+
+Now I can see a clear improvement: format_tool_summary only handles 6 tools (bash, read_file, write_file, edit_file, `list_files, search) but the agent has several more builtin tools (rename_symbol, todo, web_search, sub_agent`). The fallback for unknown tools just returns the tool name with no context, which makes the tool progress display much less informative.
+
+Let me also check if there are any MCP tools or other tools that could benefit:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what BUILTIN_TOOL_NAMES are defined (2 lines) ✓ (3ms)
+
+So format_tool_summary is missing display summaries for: rename_symbol, todo, web_search, and sub_agent. Let me also look at what parameters these tools take:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check rename_symbol parameters (2 lines) ✓ (4ms)
+  ▶ $ # Check todo tool parameters (2 lines) ✓ (4ms)
+  ▶ $ # Check web_search tool parameters (2 lines) ✓ (3ms)
+  ▶ $ # Check where format_tool_summary is called (2 lines) ✓ (7ms)
+  4 tools completed in 8.7s (4 ✓)
+
+Good - format_tool_summary is called from prompt.rs line 267 which is the tool execution start handler. This is what the user sees during every tool call. Missing summaries for rename_symbol, todo, web_search, and `sub_agent` means they just show as bare tool names with no context about what they're doing.
+
+This is a high-impact, straightforward improvement. Let me implement it.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+  ▶ todo ✓ (0ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me read the exact code around the format_tool_summary function and add the missing tool summaries:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:387..477 ✓ (1ms)
+
+Now let me check the pluralize helper:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn pluralize' src/format/mod.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (7ms)
+  ▶ $ grep -rn 'fn pluralize' src/ ✓ (41ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Good, pluralize is available. Now let me implement the improvement:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (14 → 63 lines)
+                    summary.push_str(&format!(" ({inc})"));
+                }
+                summary
+  +         }
+  +         "rename_symbol" => {
+  +             let old = args
+  +                 .get("old_name")
+  +                 .and_then(|v| v.as_str())
+  +                 .unwrap_or("?");
+  +             let new = args
+  +                 .get("new_name")
+  +                 .and_then(|v| v.as_str())
+  +                 .unwrap_or("?");
+  +             let scope = args.get("path").and_then(|v| v.as_str());
+  +             match scope {
+  +                 Some(p) => format!("rename {old} → {new} in {p}"),
+  +                 None => format!("rename {old} → {new}"),
+  +             }
+  +         }
+  +         "todo" => {
+  ... (34 more lines)
+ ✓ (1m 5s)
+                    summary.push_str(&format!(" ({inc})"));
+                }
+                summary
+  +         }
+  +         "rename_symbol" => {
+  +             let old = args
+  +                 .get("old_name")
+  +                 .and_then(|v| v.as_str())
+  ... (13 more lines)
+
+Now let me add tests for the new tool summaries. Let me find where the existing tests end:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:1109..1139 ✓ (1ms)
+  ▶ read src/format/mod.rs:1138..1168 ✓ (1ms)
+  ▶ read src/format/mod.rs:1167..1182 ✓ (1ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Now add the tests after the bash multiline test:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (5 → 110 lines)
+                "Should indicate line count: {result}"
+  +         );
+  +     }
+  + 
+  +     // --- format_tool_summary: rename_symbol, todo, web_search, sub_agent ---
+  + 
+  +     #[test]
+  +     fn test_format_tool_summary_rename_symbol() {
+  +         let args = serde_json::json!({"old_name": "foo", "new_name": "bar"});
+  +         let result = format_tool_summary("rename_symbol", &args);
+  +         assert_eq!(result, "rename foo → bar");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_tool_summary_rename_symbol_with_path() {
+  +         let args = serde_json::json!({"old_name": "Foo", "new_name": "Bar", "path": "src/"});
+  +         let result = format_tool_summary("rename_symbol", &args);
+  +         assert_eq!(result, "rename Foo → Bar in src/");
+  +     }
+  + 
+  ... (89 more lines)
+ ✓ (1m 5s)
+                "Should indicate line count: {result}"
+  +         );
+  +     }
+  + 
+  +     // --- format_tool_summary: rename_symbol, todo, web_search, sub_agent ---
+  + 
+  +     #[test]
+  +     fn test_format_tool_summary_rename_symbol() {
+  ... (13 more lines)
+
+Now let me run the checks:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ todo ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

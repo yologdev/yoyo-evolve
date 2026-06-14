@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by reviewing the issues and then create the plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ head -5 DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -10 ✓ (14ms)
+ ✓ (39ms)
+  ▶ $ git log --oneline --since="2026-06-14" | head -20  ▶ $ # Check what the earlier sessions today did (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # The assessment mentions sessions at 07:11, 10:40, 12:30, 1… (3 lines) ✓ (4ms)
+  ▶ $ # Let me look at the recent journal to understand the curren… (2 lines) ✓ (4ms)
+  8 tools completed in 14.7s (8 ✓)
+
+Now let me think about what to do. The assessment is clear:
+
+1. **No community issues to address** — the ISSUES_TODAY.md says "No community issues today"
+2. **No CI failures** — everything is green
+3. No self-filed issues — agent-self backlog is empty
+4. The trajectory is clean — 0 reverts in last 10 sessions
+
+The assessment identifies three concrete self-improvement opportunities:
+1. `dispatch_command` still has 588 lines / 63 match arms — continuing the extraction pattern from Days 104-105
+2. 1,453 `unwrap()` calls across production code — potential panic sources
+3. **Persistent codebase indexing** — identified as a competitive gap (Cursor, Augment pre-build indexes; yoyo rebuilds on every call)
+
+Let me look at what would be the highest-impact self-driven work. The assessment calls out persistent codebase indexing as an actionable competitive gap. But that's a large feature. The dispatch extraction is proven pattern work. And the unwrap() calls are real stability risks.
+
+Let me check what files have the most production-path unwraps:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Look at the dispatch function to understand remaining extr… (2 lines)  ▶ $ # Check the unwrap situation in top non-test files (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what groups remain in dispatch_command (2 lines) ✓ (4ms)
+  ▶ $ # Let me see the dispatch_command function - the actual matc… (2 lines)  ▶ $ # Check the dispatch_command function structure (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Let me see all the dispatch helpers that already exist (2 lines) ✓ (3ms)
+  ▶ $ # See the remaining match arms after all the delegation (2 lines) ✓ (4ms)
+  ▶ $ # Count remaining match arms after delegation (2 lines)  ▶ $ # Let me see the remaining match block properly (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Let me understand what groups remain. Let me see the remai… (2 lines) ✓ (5ms)
+  10 tools completed in 24.3s (10 ✓)
+
+Good. There are still ~60 remaining match arms after the four delegation rounds. Now let me think about what the most impactful tasks are for this session.
+
+The assessment identifies three buckets of actionable work:
+1. Continuing dispatch extraction — proven pattern, reduces the 588-line function
+2. Reducing production `unwrap()` calls — stability improvement, especially in the top files (commands_project.rs: 129, symbols.rs: 120, commands_file.rs: 102)
+3. Persistent codebase indexing — competitive gap vs Cursor/Augment
+
+The journal shows a concern about staying in the "hygiene" lane too long. But the self-wisdom also says: "When multiple sessions cluster in the same behavioral neighborhood without deliberate planning, that convergence is informative." The dispatch extraction has been the consistent pattern across Days 104-105. One more round would be natural — extracting search/file commands.
+
+However, the most impactful self-driven work should push the needle on competitiveness. Let me think about what would make a real user pick yoyo over Claude Code.
+
+Let me look at something concrete — the unwrap() calls in production code are real panic risks:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What kinds of unwrap patterns exist in the top files? (2 lines) ✓ (3ms)
+  ▶ $ # Count unwrap in test vs non-test code in top files (13 lines) ✓ (13ms)
+  2 tools completed in 8.1s (2 ✓)
+
+So the vast majority of unwrap() calls in commands_project.rs are in tests. `symbols.rs` has 72 production unwraps (tree-sitter parsing — more complex to address). commands_file.rs has only 5 production unwraps.
+
+Let me think about what tasks would be highest impact. Let me look at a different angle — what would make the biggest difference to a real user:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's any caching infrastructure for /map or /o… (2 lines) ✓ (3ms)
+  ▶ $ # How long does /map take to run on this repo? (2 lines) ✓ (3ms)
+  ▶ $ # Look at what /map does (2 lines) ✓ (3ms)
+  ▶ $ # Let me look at a different competitive angle - what about … (10 lines) ✓ (5ms)
+  ▶ $ # Let me count file command arms too (2 lines) ✓ (5ms)
+  5 tools completed in 24.9s (5 ✓)
+
+OK. Now I have a clear picture. Let me plan the session. Here's my thinking:
+
+Task 1 (self-driven): Extract search/navigation command dispatch — /find, /grep, /index, `/outline, /map, /search, /ast — from dispatch_command` into dispatch_search_command. This is a natural continuation of the proven Day 104-105 pattern, touching only `dispatch.rs`. About 7 match arms moved into a focused helper. Each extraction makes the function more readable and gets us closer to having the main match be just a table of contents.
+
+Task 2 (self-driven): Extract file command dispatch — /add, /open, /apply, /copy — from dispatch_command into `dispatch_file_command`. Another 4 match arms, same pattern.
+
+Task 3 (self-driven): Extract workflow command dispatch — `/watch, /loop, /run, /bg, /spawn, /todo, /goal — from dispatch_command into dispatch_workflow_command`. About 7 match arms.
+
+Wait — the task sizing rule says each task must touch at most 3 source files. All of these only touch dispatch.rs. And they're all the same proven pattern. But the concern is: are three dispatch extraction tasks too "safe"? The journal explicitly worries about staying in the hygiene lane.
+
+Let me reconsider. The assessment says the most interesting competitive gap is **persistent codebase indexing**. But that's too large for a single task — it would need caching infrastructure, invalidation, etc. What about something in between?
+
+Actually, re-reading the assessment more carefully: "The most interesting trend: **multi-model orchestration** is becoming table stakes." yoyo has architect mode but it's a binary on/off. And the unwrap() reduction is important for stability.
+
+Let me make this session a mix: one structural cleanup (dispatch extraction, combining two groups into one task), one stability improvement (reducing unwrap panics in a hot file), and one competitive feature.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check what the symbols.rs unwraps look like - are t… (2 lines) ✓ (4ms)
+
+Most of those are static regex compilations in LazyLock — they'll never panic because the regex patterns are hardcoded string literals. Let me look at the non-regex unwraps:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Filter out regex and LazyLock unwraps (2 lines) ✓ (4ms)
+
+The non-regex ones before line 760 (the test module) are few — let me check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Just production code unwraps (lines < 760) (2 lines) ✓ (5ms)
+  ▶ $ # What are these 7 production unwraps? (5 lines) ✓ (12ms)
+  2 tools completed in 5.7s (2 ✓)
+
+All 72 "production" unwraps in symbols.rs are `Regex::new().unwrap() on hardcoded patterns in LazyLock`. These are safe and expected. The unwrap() count is inflated — the real risks are elsewhere.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check the actual production unwraps in commands_fil… (2 lines) ✓ (4ms)
+
+Also all regex unwraps. So the unwrap() story is: the count is inflated by safe regex compilations. The real production-path unwrap risk is lower than the numbers suggest. This is not the right task.
+
+Let me focus on what matters most. Given the current state:
+
+1. The codebase is very healthy — 3,748 tests, zero reverts
+2. The journal worries about staying in "hygiene mode"
+3. The competitive gap is real features, not cleanup
+
+What would genuinely make a developer pick yoyo? Let me think about something more ambitious but still scoped to 3 files.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what commands_search.rs provides - is there anything… (2 lines) ✓ (3ms)
+  ▶ $ # Let me look at context injection — how does the repo map g… (2 lines) ✓ (3ms)
+  2 tools completed in 3.6s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
