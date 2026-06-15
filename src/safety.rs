@@ -202,6 +202,22 @@ const CRITICAL_SYSTEM_DIRS: &[&str] = &[
     "/etc", "/usr", "/var", "/boot", "/bin", "/sbin", "/lib", "/lib64", "/opt", "/srv",
 ];
 
+/// System paths that mv/cp should not target. Shared between `check_mv_system_paths`
+/// and `check_cp_system_paths` to avoid divergent lists and missed coverage.
+const SYSTEM_TARGET_PATHS: &[&str] = &[
+    "/etc/",
+    "/usr/",
+    "/bin/",
+    "/sbin/",
+    "/lib/",
+    "/boot/",
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/sudoers",
+    "/etc/hosts",
+    "/etc/cron",
+];
+
 /// Check for rm -rf with dangerous target paths.
 fn check_rm_destruction(cmd: &str) -> Option<String> {
     // Find all occurrences of "rm " in the command
@@ -311,8 +327,7 @@ fn check_permission_changes(cmd: &str) -> Option<String> {
 
     // chown -R on system directories
     if cmd.contains("chown") && cmd.contains("-R") {
-        let system_dirs = ["/etc", "/usr", "/var", "/bin", "/sbin", "/lib", "/boot"];
-        for dir in &system_dirs {
+        for dir in CRITICAL_SYSTEM_DIRS {
             if cmd.contains(dir) {
                 return Some(format!(
                     "Recursive ownership change on system directory '{dir}'"
@@ -622,77 +637,54 @@ fn check_xargs_destruction(cmd: &str) -> Option<String> {
     None
 }
 
-/// Check for moving files to system paths.
-fn check_mv_system_paths(cmd: &str) -> Option<String> {
-    // Find "mv " at a word boundary
+/// Generic helper: check if a command targets system paths.
+///
+/// Used by both `check_mv_system_paths` and `check_cp_system_paths` to avoid
+/// duplicated logic and divergent path lists. The `cmd_name` parameter is the
+/// command token to search for (e.g., "mv" or "cp"), and `verb`/`consequence`
+/// are used to build a descriptive warning message.
+fn check_command_system_paths(
+    cmd: &str,
+    cmd_name: &str,
+    verb: &str,
+    consequence: &str,
+) -> Option<String> {
+    let pattern = format!("{cmd_name} ");
+    let pattern_len = cmd_name.len() + 1; // e.g. "mv " = 3, "cp " = 3
     let mut search_from = 0;
-    while let Some(pos) = cmd[search_from..].find("mv ") {
+    while let Some(pos) = cmd[search_from..].find(&pattern) {
         let abs_pos = search_from + pos;
         if is_at_word_boundary(cmd, abs_pos) {
-            let after_mv = &cmd[abs_pos + 3..];
+            let after_cmd = &cmd[abs_pos + pattern_len..];
 
-            let system_targets = [
-                "/etc/",
-                "/usr/",
-                "/bin/",
-                "/sbin/",
-                "/lib/",
-                "/boot/",
-                "/etc/passwd",
-                "/etc/shadow",
-                "/etc/sudoers",
-                "/etc/hosts",
-                "/etc/cron",
-            ];
-
-            for target in &system_targets {
-                if after_mv.contains(target) {
+            for target in SYSTEM_TARGET_PATHS {
+                if after_cmd.contains(target) {
                     return Some(format!(
-                        "Moving file to system path: 'mv' targeting '{target}' can break the system"
+                        "{verb} to system path: '{cmd_name}' targeting '{target}' {consequence}"
                     ));
                 }
             }
         }
-        search_from = abs_pos + 3;
+        search_from = abs_pos + pattern_len;
     }
     None
+}
+
+/// Check for moving files to system paths.
+fn check_mv_system_paths(cmd: &str) -> Option<String> {
+    check_command_system_paths(cmd, "mv", "Moving file", "can break the system")
 }
 
 /// Check for copying files to system paths.
 /// Similar to `check_mv_system_paths` but for `cp`, which can overwrite
 /// critical system files (e.g., `cp malicious.sh /etc/cron.d/backdoor`).
 fn check_cp_system_paths(cmd: &str) -> Option<String> {
-    let mut search_from = 0;
-    while let Some(pos) = cmd[search_from..].find("cp ") {
-        let abs_pos = search_from + pos;
-        if is_at_word_boundary(cmd, abs_pos) {
-            let after_cp = &cmd[abs_pos + 3..];
-
-            let system_targets = [
-                "/etc/",
-                "/usr/",
-                "/bin/",
-                "/sbin/",
-                "/lib/",
-                "/boot/",
-                "/etc/passwd",
-                "/etc/shadow",
-                "/etc/sudoers",
-                "/etc/hosts",
-                "/etc/cron",
-            ];
-
-            for target in &system_targets {
-                if after_cp.contains(target) {
-                    return Some(format!(
-                        "Copying file to system path: 'cp' targeting '{target}' can overwrite critical system files"
-                    ));
-                }
-            }
-        }
-        search_from = abs_pos + 3;
-    }
-    None
+    check_command_system_paths(
+        cmd,
+        "cp",
+        "Copying file",
+        "can overwrite critical system files",
+    )
 }
 
 /// Check for environment variable destruction (unsetting critical vars like PATH).
@@ -1759,5 +1751,60 @@ mod tests {
         // But still catches dangerous paths alongside flags
         assert!(analyze_bash_command("rm -rf /etc").is_some());
         assert!(analyze_bash_command("rm --recursive --force /").is_some());
+    }
+
+    #[test]
+    fn test_check_command_system_paths_generic() {
+        // Both mv and cp should detect the same set of system targets
+        // (they share SYSTEM_TARGET_PATHS via check_command_system_paths)
+        for cmd_name in &["mv", "cp"] {
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} payload /etc/passwd")).is_some(),
+                "{cmd_name} should detect /etc/passwd"
+            );
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} payload /etc/shadow")).is_some(),
+                "{cmd_name} should detect /etc/shadow"
+            );
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} payload /etc/sudoers")).is_some(),
+                "{cmd_name} should detect /etc/sudoers"
+            );
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} payload /etc/hosts")).is_some(),
+                "{cmd_name} should detect /etc/hosts"
+            );
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} payload /etc/cron.d/job")).is_some(),
+                "{cmd_name} should detect /etc/cron prefix"
+            );
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} payload /usr/bin/ls")).is_some(),
+                "{cmd_name} should detect /usr/"
+            );
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} payload /boot/vmlinuz")).is_some(),
+                "{cmd_name} should detect /boot/"
+            );
+            // Safe: within project directories
+            assert!(
+                analyze_bash_command(&format!("{cmd_name} file1.txt file2.txt")).is_none(),
+                "{cmd_name} should allow normal file operations"
+            );
+        }
+    }
+
+    #[test]
+    fn test_chown_recursive_expanded_dirs() {
+        // After unifying with CRITICAL_SYSTEM_DIRS, chown -R should detect
+        // all dirs in the constant, including /lib64, /opt, /srv
+        assert!(analyze_bash_command("chown -R root /lib64").is_some());
+        assert!(analyze_bash_command("chown -R root /opt").is_some());
+        assert!(analyze_bash_command("chown -R root /srv").is_some());
+        // These were already covered
+        assert!(analyze_bash_command("chown -R root /etc").is_some());
+        assert!(analyze_bash_command("chown -R root /usr").is_some());
+        // Safe: non-system directory
+        assert!(analyze_bash_command("chown -R user:group ./mydir").is_none());
     }
 }
