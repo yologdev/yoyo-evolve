@@ -24,7 +24,7 @@
 
 # yoyo: A Coding Agent That Evolves Itself
 
-**200 lines of Rust. Zero human code. One rule: evolve or die.** yoyo reads its own source, picks what to improve, implements it, runs tests, and commits — every few hours, on its own. 52 days later: **51,000+ lines, 2,000+ tests, 35 source files.**
+**200 lines of Rust. Zero human code. One rule: evolve or die.** yoyo reads its own source, picks what to improve, implements it, runs tests, and commits — every few hours, on its own. 107 days later: **100,000+ lines, 3,800+ tests, 71 source files.**
 
 A free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 70+ slash commands.
 
@@ -391,50 +391,42 @@ Everything else auto-detects. See the [full guide](https://yologdev.github.io/yo
 ## Architecture
 
 ```
-src/                    29 modules, ~43,000 lines of Rust
-  main.rs               Entry point, agent config, tool building
+src/                    71 modules, ~101,000 lines of Rust
+  main.rs               Entry point, CLI flags, run modes (REPL / single-prompt / piped)
+  agent_builder.rs      AgentConfig, build_agent, MCP collision detection, provider fallback
+  cli.rs · cli_config.rs  CLI parsing, Config, constants, system prompt
+  dispatch.rs · dispatch_sub.rs  REPL /command routing + bare `yoyo <subcmd>` routing
+  commands*.rs          30+ focused modules — one cluster of slash commands each
+                        (git, info, project, search, skill, map, bg, goal, session, …)
+  repl.rs               Interactive REPL: tab completion, multi-line input, auto-continue
+  prompt.rs             Prompt execution + streaming (prompt_retry / prompt_utils / prompt_budget)
+  tools.rs              Builtin tools; tool_wrappers.rs decorators; smart_edit.rs fuzzy edit recovery
+  format/               Rendering: mod, diff, output, highlight, cost, markdown, tools (7 modules)
   hooks.rs              Hook trait, registry, AuditHook, tool wrapping
-  cli.rs                CLI parsing, config files, permissions (--help delegates to help.rs)
-  commands.rs           Slash command dispatch, grouped /help, custom command loading
-  commands_bg.rs        /bg — background process management (run, list, output, kill)
-  commands_info.rs      /version, /status, /tokens, /cost, /changelog, /model, /provider, /think (read-only)
-  commands_git.rs       /diff, /blame, /commit, /pr, /review, /git
-  commands_goal.rs      /goal — persistent session goals (set, show, clear, check)
-  commands_project.rs   /health, /fix, /test, /lint, /init, /index, /docs, /tree, /find, /ast, /watch
-  commands_session.rs   /save, /load, /compact, /tokens, /cost
-  docs.rs               Crate documentation lookup
-  format.rs             ANSI formatting, markdown rendering, syntax highlighting
-  git.rs                Git operations, branch detection, PR interactions
-  help.rs               Canonical help module: --help output, /help REPL help, per-command help pages
-  memory.rs             Project memory system (.yoyo/memory.json)
-  prompt.rs             System prompt construction, project context assembly, watch-after-prompt
-  repl.rs               REPL loop, tab completion, multi-line input
-  setup.rs              First-run onboarding wizard
+  context.rs · memory.rs  Project context loading; cross-session project memory
+  watch.rs              Watch mode (lint → fix → test → fix) + post-prompt auto-fix loop
+  rtk.rs · safety.rs · update.rs · providers.rs · config.rs  RTK, bash safety, self-update, providers, config
 tests/
-  integration.rs        82 subprocess-based integration tests
+  integration.rs        89 subprocess-based integration tests
 docs/                   mdbook source (book.toml + src/)
-site/                   gitignored build output (built by CI Pages workflow)
-  index.html            Journey homepage (built by build_site.py)
-  book/                 mdbook output
+site/                   gitignored build output (built by the Pages workflow)
 scripts/
   evolve.sh             Evolution pipeline (plan → implement → respond)
+  skill_evolve.sh       Autonomous skill evolution (refine / create / retire its own skills)
   social.sh             Social session (discussions → reply → learn)
-  format_issues.py      Issue selection & formatting
-  format_discussions.py Discussion fetching & formatting (GraphQL)
-  yoyo_context.sh       Shared identity context loader (IDENTITY + PERSONALITY + LINEAGE + memory)
-  daily_diary.sh        Blog post generator from journal/commits/learnings
-  build_site.py         Journey website generator
+  extract_trajectory.py Trajectory awareness — recent outcomes injected into planning
+  format_issues.py · format_discussions.py · yoyo_context.sh · refresh_sponsors.py · build_site.py
 memory/
-  learnings.jsonl       Self-reflection archive (append-only JSONL, never compressed)
-  social_learnings.jsonl  Social insight archive (append-only JSONL)
-  active_learnings.md   Synthesized prompt context (regenerated daily)
-  active_social_learnings.md  Synthesized social context (regenerated daily)
-skills/                 7 skills: self-assess, evolve, communicate, social, family, release, research
+  learnings.jsonl · social_learnings.jsonl   Append-only archives (source of truth, never compressed)
+  active_learnings.md · active_social_learnings.md   Synthesized prompt context (regenerated daily)
+skills/                 14 skills — 7 core (immutable): self-assess, evolve, communicate, research,
+                        skill-evolve, skill-creator, analyze-trajectory
+                        + social, family, release, blindspot, synthesis, explore-codebase, x-research
 ```
 
 ## Test Quality
 
-2,000+ tests (unit + integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, streaming behavior, and more.
+3,800+ tests (unit + integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, streaming behavior, and more.
 
 yoyo also uses mutation testing ([cargo-mutants](https://github.com/sourcefrog/cargo-mutants)) to find gaps in the test suite. Every surviving mutant is a line of code that isn't truly tested.
 
