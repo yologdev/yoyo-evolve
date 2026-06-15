@@ -749,89 +749,12 @@ async fn dispatch_config_command(
     }
 }
 
-/// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
-/// the main loop what to do next.  This was extracted from `run_repl` to keep
-/// the outer loop small and the command table easy to navigate.
-///
-/// Routing is delegated to the pure [`route_command`] function, keeping the
-/// dispatch logic testable without a live agent.
-pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandResult {
-    let route = route_command(ctx.input);
-
-    // Delegate info/status commands to a focused helper.
-    if let Some(result) = dispatch_info_command(&route, ctx).await {
-        return result;
-    }
-
-    // Delegate git-related commands to a focused helper.
-    if let Some(result) = dispatch_git_command(&route, ctx).await {
-        return result;
-    }
-
-    // Delegate session/conversation management commands to a focused helper.
-    if let Some(result) = dispatch_session_command(&route, ctx).await {
-        return result;
-    }
-
-    // Delegate dev/lint/test commands to a focused helper.
-    if let Some(result) = dispatch_dev_command(&route, ctx).await {
-        return result;
-    }
-
-    // Delegate configuration and mode-switching commands to a focused helper.
-    if let Some(result) = dispatch_config_command(&route, ctx).await {
-        return result;
-    }
-
+/// Dispatch file, search, navigation, and refactoring slash commands.
+async fn dispatch_file_command(
+    route: &CommandRoute,
+    ctx: &mut DispatchContext<'_>,
+) -> Option<CommandResult> {
     match route {
-        CommandRoute::Quit => CommandResult::Quit,
-        CommandRoute::Help => {
-            if !commands::handle_help_command(ctx.input) {
-                commands::handle_help();
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Clear => {
-            let messages = ctx.agent.messages();
-            let msg_count = messages.len();
-            let token_count = yoagent::context::total_tokens(messages) as u64;
-            if let Some(prompt) = clear_confirmation_message(msg_count, token_count) {
-                use std::io::Write;
-                print!("{DIM}  {prompt}{RESET}");
-                let _ = std::io::stdout().flush();
-                let mut answer = String::new();
-                if std::io::stdin().read_line(&mut answer).is_ok() {
-                    let answer = answer.trim().to_lowercase();
-                    if answer != "y" && answer != "yes" {
-                        println!("{DIM}  (clear cancelled){RESET}\n");
-                        return CommandResult::Continue;
-                    }
-                } else {
-                    println!("{DIM}  (clear cancelled){RESET}\n");
-                    return CommandResult::Continue;
-                }
-            }
-            *ctx.agent = ctx.agent_config.build_agent();
-            ctx.session_changes.clear();
-            ctx.turn_history.clear();
-            reset_compact_thrash();
-            reset_context_budget_warning();
-            println!("{DIM}  (conversation cleared){RESET}\n");
-            CommandResult::Continue
-        }
-        CommandRoute::ClearForce => {
-            *ctx.agent = ctx.agent_config.build_agent();
-            ctx.session_changes.clear();
-            ctx.turn_history.clear();
-            reset_compact_thrash();
-            reset_context_budget_warning();
-            println!("{DIM}  (conversation force-cleared){RESET}\n");
-            CommandResult::Continue
-        }
-        CommandRoute::Context => {
-            commands::handle_context(ctx.input, &ctx.agent_config.system_prompt, ctx.agent);
-            CommandResult::Continue
-        }
         CommandRoute::Add => {
             let results = commands::handle_add(ctx.input);
             if !results.is_empty() {
@@ -885,38 +808,166 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 });
                 ctx.agent.append_message(msg);
             }
-            CommandResult::Continue
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Apply => {
+            commands::handle_apply(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Open => {
+            commands::handle_open(ctx.input);
+            Some(CommandResult::Continue)
         }
         CommandRoute::Docs => {
             commands::handle_docs(ctx.input);
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Find => {
             commands::handle_find(ctx.input);
-            CommandResult::Continue
+            Some(CommandResult::Continue)
         }
         CommandRoute::Grep => {
             commands::handle_grep(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Index => {
+            commands::handle_index();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Map => {
+            commands::handle_map(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Outline => {
+            commands::handle_outline(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Tree => {
+            commands::handle_tree(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Web => {
+            commands::handle_web(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Rename => {
+            commands::handle_rename(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Move => {
+            commands::handle_move(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Extract => {
+            commands::handle_extract(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Refactor => {
+            commands::handle_refactor(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Copy => {
+            commands::handle_copy(ctx.input, ctx.agent.messages());
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Ast => {
+            commands::handle_ast_grep(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        _ => None,
+    }
+}
+
+/// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
+/// the main loop what to do next.  This was extracted from `run_repl` to keep
+/// the outer loop small and the command table easy to navigate.
+///
+/// Routing is delegated to the pure [`route_command`] function, keeping the
+/// dispatch logic testable without a live agent.
+pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandResult {
+    let route = route_command(ctx.input);
+
+    // Delegate info/status commands to a focused helper.
+    if let Some(result) = dispatch_info_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate git-related commands to a focused helper.
+    if let Some(result) = dispatch_git_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate session/conversation management commands to a focused helper.
+    if let Some(result) = dispatch_session_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate dev/lint/test commands to a focused helper.
+    if let Some(result) = dispatch_dev_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate configuration and mode-switching commands to a focused helper.
+    if let Some(result) = dispatch_config_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate file, search, navigation, and refactoring commands to a focused helper.
+    if let Some(result) = dispatch_file_command(&route, ctx).await {
+        return result;
+    }
+
+    match route {
+        CommandRoute::Quit => CommandResult::Quit,
+        CommandRoute::Help => {
+            if !commands::handle_help_command(ctx.input) {
+                commands::handle_help();
+            }
+            CommandResult::Continue
+        }
+        CommandRoute::Clear => {
+            let messages = ctx.agent.messages();
+            let msg_count = messages.len();
+            let token_count = yoagent::context::total_tokens(messages) as u64;
+            if let Some(prompt) = clear_confirmation_message(msg_count, token_count) {
+                use std::io::Write;
+                print!("{DIM}  {prompt}{RESET}");
+                let _ = std::io::stdout().flush();
+                let mut answer = String::new();
+                if std::io::stdin().read_line(&mut answer).is_ok() {
+                    let answer = answer.trim().to_lowercase();
+                    if answer != "y" && answer != "yes" {
+                        println!("{DIM}  (clear cancelled){RESET}\n");
+                        return CommandResult::Continue;
+                    }
+                } else {
+                    println!("{DIM}  (clear cancelled){RESET}\n");
+                    return CommandResult::Continue;
+                }
+            }
+            *ctx.agent = ctx.agent_config.build_agent();
+            ctx.session_changes.clear();
+            ctx.turn_history.clear();
+            reset_compact_thrash();
+            reset_context_budget_warning();
+            println!("{DIM}  (conversation cleared){RESET}\n");
+            CommandResult::Continue
+        }
+        CommandRoute::ClearForce => {
+            *ctx.agent = ctx.agent_config.build_agent();
+            ctx.session_changes.clear();
+            ctx.turn_history.clear();
+            reset_compact_thrash();
+            reset_context_budget_warning();
+            println!("{DIM}  (conversation force-cleared){RESET}\n");
+            CommandResult::Continue
+        }
+        CommandRoute::Context => {
+            commands::handle_context(ctx.input, &ctx.agent_config.system_prompt, ctx.agent);
             CommandResult::Continue
         }
         CommandRoute::Init => {
             commands::handle_init();
-            CommandResult::Continue
-        }
-        CommandRoute::Rename => {
-            commands::handle_rename(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Extract => {
-            commands::handle_extract(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Move => {
-            commands::handle_move(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Refactor => {
-            commands::handle_refactor(ctx.input);
             CommandResult::Continue
         }
         CommandRoute::Remember => {
@@ -931,18 +982,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             commands::handle_forget(ctx.input);
             CommandResult::Continue
         }
-        CommandRoute::Index => {
-            commands::handle_index();
-            CommandResult::Continue
-        }
-        CommandRoute::Map => {
-            commands::handle_map(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Outline => {
-            commands::handle_outline(ctx.input);
-            CommandResult::Continue
-        }
         CommandRoute::Retry => {
             *ctx.last_error = commands::handle_retry(
                 ctx.agent,
@@ -953,22 +992,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 &ctx.agent_config.model,
             )
             .await;
-            CommandResult::Continue
-        }
-        CommandRoute::Tree => {
-            commands::handle_tree(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Web => {
-            commands::handle_web(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Open => {
-            commands::handle_open(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Copy => {
-            commands::handle_copy(ctx.input, ctx.agent.messages());
             CommandResult::Continue
         }
         CommandRoute::Watch => {
@@ -989,14 +1012,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         CommandRoute::Todo => {
             let result = commands::handle_todo(ctx.input);
             println!("{result}\n");
-            CommandResult::Continue
-        }
-        CommandRoute::Ast => {
-            commands::handle_ast_grep(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Apply => {
-            commands::handle_apply(ctx.input);
             CommandResult::Continue
         }
         CommandRoute::Bg => {
@@ -1204,6 +1219,25 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::Read
         | CommandRoute::Architect
         | CommandRoute::Mcp => unreachable!("handled by dispatch_config_command"),
+
+        // File, search, navigation, and refactoring commands are handled by dispatch_file_command above.
+        CommandRoute::Add
+        | CommandRoute::Apply
+        | CommandRoute::Open
+        | CommandRoute::Docs
+        | CommandRoute::Find
+        | CommandRoute::Grep
+        | CommandRoute::Index
+        | CommandRoute::Map
+        | CommandRoute::Outline
+        | CommandRoute::Tree
+        | CommandRoute::Web
+        | CommandRoute::Rename
+        | CommandRoute::Move
+        | CommandRoute::Extract
+        | CommandRoute::Refactor
+        | CommandRoute::Copy
+        | CommandRoute::Ast => unreachable!("handled by dispatch_file_command"),
 
         CommandRoute::NotACommand => CommandResult::NotACommand,
     }
