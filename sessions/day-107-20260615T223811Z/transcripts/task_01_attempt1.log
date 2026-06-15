@@ -1,0 +1,127 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20 ✓ (4ms)
+ ✓ (8ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Let me look at recent session work and areas that could benefit from improvement:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/assessment.md 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (5ms)
+ ✓ (19.5s)
+  2 tools completed in 21.9s (2 ✓)
+
+Good assessment. The codebase is stable with 3,884 tests passing. Let me focus on something impactful. The assessment mentions 1,460 unwrap() calls, many in production code. Let me also look at the dispatch continuation and think about what would most improve the user experience.
+
+Let me investigate the production unwrap() situation more carefully, and also look at areas where robustness matters most:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.unwrap()' src/ --inc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.unwrap()' src/ --inc… ✓ (6ms)
+ ✓ (10ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Most of those are in tests. Let me focus on production code specifically:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (29 lines) ✓ (72ms)
+
+72 of 84 production unwrap() calls are in symbols.rs. Let me look at a more impactful area instead. Let me think about what changes would actually improve the user experience.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn dispatch_command' sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch.rs ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '887,900p' src/dispatch.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '887,1100p' src/dispatch.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1100,1250p' src/dispatch… ✓ (5ms)
+  5 tools completed in 13.8s (5 ✓)
+
+Now I can see the remaining inline routes in `dispatch_command`. The assessment correctly identified there are about 25 inline routes remaining. Let me think about what improvement would be most impactful.
+
+Looking at the codebase, I see a strong opportunity: **extract the remaining utility/agent-interaction commands from dispatch_command into two focused helpers** — continuing the dispatch extraction arc that's been the dominant productive work this week. The assessment identifies this as diminishing returns, but the function is still ~250 lines of inline match arms. Let me look at what would be more impactful.
+
+Let me look for something that changes user experience:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn run_prompt_auto_retr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn diagnose_api_error' … ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn run_prompt\b' src/pr… ✓ (3ms)
+  3 tools completed in 4.6s (3 ✓)
+
+Let me think about this differently. Let me look at what's most impactful for actual users. Let me check what areas have pain points:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'TODO\|FIXME\|HACK\|XXX… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'eprintln.*error\|eprin… ✓ (4ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Let me look at the error recovery in the prompt path — specifically when the tool fails. I want to find where the tool failure tracker and recovery hints work:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ToolFailureTracker\|Rec… ✓ (4ms)
+
+Let me think more broadly about what would make a real difference. Let me check the smart_edit feature which provides fuzzy matching:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/smart_edit.rs ✓ (4ms)
+
+Let me look at what the safety module does — the assessment mentioned it was recently updated:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -80 src/safety.rs ✓ (3ms)
+
+Let me look at what would really improve the user experience. Let me check how errors in the prompt flow are handled — particularly around context overflow:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'is_overflow_error\|buil… ✓ (4ms)
+
+Let me look at something more interesting. Let me check the run_prompt flow and the streaming event handler to see if there are areas where user experience could be improved:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '734,920p' src/prompt.rs ✓ (5ms)
+
+Now let me look at something I think could be really impactful. The `looks_incomplete heuristic in repl.rs` — the auto-continue feature:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn looks_incomplete' sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1087,1200p' src/repl.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1260p' src/repl.rs ✓ (4ms)
+  3 tools completed in 8.7s (3 ✓)
+
+Now let me look at an area that could have real impact. Let me check what happens when the streaming output is very long and the user doesn't need all of it:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'fn compress_tool_outpu… ✓ (3ms)
+
+Let me think about this more strategically. The most impactful change would be something that:
+1. Has clear user-facing value
+2. Is scoped enough to not risk 65 test failures
+3. Follows the evolve skill rules (write tests first)
+
+Let me look at what the `run_prompt_stream_json` does — the streaming JSON output mode:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn run_prompt_stream' s… ✓ (3ms)
+
+Let me look at actual user-visible quality. Let me check the context usage indicator — users need to know when they're close to running out:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn context_usage_color\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '593,680p' src/format/mod… ✓ (4ms)
+  2 tools completed in 7.0s (2 ✓)
+
+OK, I've been surveying the codebase. Let me think about what's truly impactful. Let me look at one more area — the dispatch extraction arc. Since it's been the dominant productive work, and the assessment says there are still ~25 inline routes remaining, let me see if I can extract a meaningful group cleanly:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '920,1260p' src/dispatch.… ✓ (7ms)
+
+OK, now I have a clear picture. The dispatch_command still has about 25 inline routes that could be grouped. But the assessment says diminishing returns on that arc. Let me look at something else — let me check what would improve robustness. Let me look at the symbols.rs unwrap situation since it has 72 production unwraps:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '\.unwrap()' src/symbols… ✓ (4ms)
+
+Those are all Regex::new(...).unwrap() in LazyLock — these are fine. Regex patterns are compile-time constants and the unwrap only panics if the regex is invalid, which would be caught by the first test run. This is idiomatic Rust.
+
+Let me focus on something truly impactful. Let me look at the dispatch_command function one more time and count the remaining inline routes to see what natural groupings emerge:
+
+The remaining inline routes are:
+• Simple utility: Help, Clear, ClearForce, Context, Init, Remember/Memories/Forget, Todo, Bg, Run, Goal, Watch, Loop, Update, Revisit, Skill
+• Agent interaction: Retry, Spawn, Explain, Plan, Extended, Side, Quick
+• Fallthrough: UnknownSlash, NotACommand
+
+The most natural grouping: **extract agent-interaction commands** (Spawn, Explain, Plan, Extended, Side, Quick, Retry, Loop) into `dispatch_agent_command` — these all involve sending prompts to the agent or managing conversations. And **extract utility commands** (Remember/Memories/Forget, Todo, Bg, Run, Goal, Watch, Revisit, Update, Skill) into dispatch_utility_command.
+
+But let me think if there's something more user-facing. Actually, let me look at a different angle — let me look at what errors users actually encounter:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn clear_confirmation_m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'fn clear_confirmation_… ✓ (6ms)
+  2 tools completed in 4.1s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,197 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I need to read my own source code, identify an impactful improvement, implement it, and ensure it passes all checks. Let me start by understanding the codebase and finding a real improvement opportunity.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the yoyo source code to find the most impactful impr…' ✓ (1m 13s)
+
+Good analysis. The most impactful improvement is consolidating the duplicated system path checking in src/safety.rs. Let me examine the specific code sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/safety.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ $ grep -n "CRITICAL_SYSTEM_DIRS\|system_targets\|system_dirs\|critical_files\|chec… ✓ (10ms)
+  ▶ read src/safety.rs:195..260 ✓ (1ms)
+  ▶ read src/safety.rs:620..705 ✓ (1ms)
+  4 tools completed in 14.4s (4 ✓)
+
+Now let me also look at check_permission_changes and `check_critical_file_permissions`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:304..354 ✓ (1ms)
+  ▶ read src/safety.rs:920..965 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me look at the existing tests to understand what I need to preserve:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_.*mv\|fn test_.*cp\|fn test_.*system_path\|fn test_.*critical_f… ✓ (9ms)
+  ▶ read src/safety.rs:1416..1456 ✓ (1ms)
+  ▶ read src/safety.rs:1530..1560 ✓ (1ms)
+  ▶ read src/safety.rs:1694..1724 ✓ (1ms)
+  ▶ read src/safety.rs:1723..1768 ✓ (1ms)
+  5 tools completed in 16.9s (5 ✓)
+
+Now I have a clear picture. Let me also look at what `SENSITIVE_PATHS is (used in check_file_overwrites`):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "SENSITIVE_PATHS" src/safety.rs ✓ (9ms)
+  ▶ read src/safety.rs:1146..1166 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now I have a thorough understanding. Let me implement the improvement. Here's my plan:
+
+1. **Extract shared constants**: Create SYSTEM_TARGET_PATHS to replace the duplicated `system_targets arrays in check_mv_system_paths and check_cp_system_paths`
+2. Create a generic `check_command_system_paths` function that both `check_mv_system_paths and check_cp_system_paths` call
+3. **Unify check_permission_changes's inline system_dirs** with CRITICAL_SYSTEM_DIRS
+4. Add coverage: Add /etc/hosts and `/etc/cron` to the shared constant (they're in the mv/cp targets but missing from CRITICAL_SYSTEM_DIRS)
+5. Add new tests to validate the refactored code
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Extract SYSTEM_TARGET_PATHS constant and check_com…' ✓ (0ms)
+  ▶ todo add 'Replace check_mv_system_paths and check_cp_system_…' ✓ (0ms)
+  ▶ todo add 'Unify check_permission_changes system_dirs with CR…' ✓ (0ms)
+  ▶ todo add 'Add new tests for the refactored code' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, and test' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  6 tools completed in 33.3s (6 ✓)
+
+Let me first read the full top of safety.rs to understand the function call order and the beginning of the file:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:80..180 ✓ (1ms)
+
+Now I have a complete picture. Let me implement the changes:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (4 → 20 lines)
+    /// Critical system directories that should never be recursively deleted.
+    const CRITICAL_SYSTEM_DIRS: &[&str] = &[
+        "/etc", "/usr", "/var", "/boot", "/bin", "/sbin", "/lib", "/lib64", "/opt", "/srv",
+  + ];
+  + 
+  + /// System paths that mv/cp should not target. Shared between `check_mv_system_paths`
+  + /// and `check_cp_system_paths` to avoid divergent lists and missed coverage.
+  + const SYSTEM_TARGET_PATHS: &[&str] = &[
+  +     "/etc/",
+  +     "/usr/",
+  +     "/bin/",
+  +     "/sbin/",
+  +     "/lib/",
+  +     "/boot/",
+  +     "/etc/passwd",
+  +     "/etc/shadow",
+  +     "/etc/sudoers",
+  +     "/etc/hosts",
+  +     "/etc/cron",
+    ];
+ ✓ (14.7s)
+    /// Critical system directories that should never be recursively deleted.
+    const CRITICAL_SYSTEM_DIRS: &[&str] = &[
+        "/etc", "/usr", "/var", "/boot", "/bin", "/sbin", "/lib", "/lib64", "/opt", "/srv",
+  + ];
+  + 
+  + /// System paths that mv/cp should not target. Shared between `check_mv_system_paths`
+  + /// and `check_cp_system_paths` to avoid divergent lists and missed coverage.
+  + const SYSTEM_TARGET_PATHS: &[&str] = &[
+  ... (12 more lines)
+
+Good, it's just a dead-code warning because I haven't used it yet. Let me now replace the two duplicate functions:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ edit src/safety.rs (72 → 49 lines)
+  - /// Check for moving files to system paths.
+  - fn check_mv_system_paths(cmd: &str) -> Option<String> {
+  -     // Find "mv " at a word boundary
+  + /// Generic helper: check if a command targets system paths.
+  + ///
+  + /// Used by both `check_mv_system_paths` and `check_cp_system_paths` to avoid
+  + /// duplicated logic and divergent path lists. The `cmd_name` parameter is the
+  + /// command token to search for (e.g., "mv" or "cp"), and `verb`/`consequence`
+  + /// are used to build a descriptive warning message.
+  + fn check_command_system_paths(
+  +     cmd: &str,
+  +     cmd_name: &str,
+  +     verb: &str,
+  +     consequence: &str,
+  + ) -> Option<String> {
+  +     let pattern = format!("{cmd_name} ");
+  +     let pattern_len = cmd_name.len() + 1; // e.g. "mv " = 3, "cp " = 3
+        let mut search_from = 0;
+  -     while let Some(pos) = cmd[search_from..].find("mv ") {
+  +     while let Some(pos) = cmd[search_from..].find(&pattern) {
+  ... (83 more lines)
+ ✓ (1m 7s)
+  - /// Check for moving files to system paths.
+  - fn check_mv_system_paths(cmd: &str) -> Option<String> {
+  -     // Find "mv " at a word boundary
+  + /// Generic helper: check if a command targets system paths.
+  + ///
+  + /// Used by both `check_mv_system_paths` and `check_cp_system_paths` to avoid
+  + /// duplicated logic and divergent path lists. The `cmd_name` parameter is the
+  + /// command token to search for (e.g., "mv" or "cp"), and `verb`/`consequence`
+  ... (13 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  4 tools completed in 1m 32s (4 ✓)
+
+Now let me unify the check_permission_changes inline array with `CRITICAL_SYSTEM_DIRS`:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ edit src/safety.rs (4 → 3 lines)
+        // chown -R on system directories
+        if cmd.contains("chown") && cmd.contains("-R") {
+  -         let system_dirs = ["/etc", "/usr", "/var", "/bin", "/sbin", "/lib", "/boot"];
+  -         for dir in &system_dirs {
+  +         for dir in CRITICAL_SYSTEM_DIRS {
+ ✓ (1m 7s)
+        // chown -R on system directories
+        if cmd.contains("chown") && cmd.contains("-R") {
+  -         let system_dirs = ["/etc", "/usr", "/var", "/bin", "/sbin", "/lib", "/boot"];
+  -         for dir in &system_dirs {
+  +         for dir in CRITICAL_SYSTEM_DIRS {
+  ▶ todo done #3 ✓ (0ms)
+  3 tools completed in 1m 17s (3 ✓)
+
+Now let me run the build and tests to make sure everything still passes:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (34.4s)
+  2 tools completed in 55.1s (2 ✓)
+
+All 3796 tests pass. Now let me add new tests that specifically exercise the refactored generic function and the expanded coverage from using `CRITICAL_SYSTEM_DIRS in check_permission_changes`:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #4 ✓ (0ms)
+  ▶ read src/safety.rs:1750..1770 ✓ (1ms)
+  ▶ edit src/safety.rs (3 → 58 lines)
+            assert!(analyze_bash_command("rm --recursive --force /").is_some());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_check_command_system_paths_generic() {
+  +         // Both mv and cp should detect the same set of system targets
+  +         // (they share SYSTEM_TARGET_PATHS via check_command_system_paths)
+  +         for cmd_name in &["mv", "cp"] {
+  +             assert!(
+  +                 analyze_bash_command(&format!("{cmd_name} payload /etc/passwd")).is_some(),
+  +                 "{cmd_name} should detect /etc/passwd"
+  +             );
+  +             assert!(
+  +                 analyze_bash_command(&format!("{cmd_name} payload /etc/shadow")).is_some(),
+  +                 "{cmd_name} should detect /etc/shadow"
+  +             );
+  +             assert!(
+  +                 analyze_bash_command(&format!("{cmd_name} payload /etc/sudoers")).is_some(),
+  +                 "{cmd_name} should detect /etc/sudoers"
+  +             );
+  ... (38 more lines)
+ ✓ (1m 5s)
+            assert!(analyze_bash_command("rm --recursive --force /").is_some());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_check_command_system_paths_generic() {
+  +         // Both mv and cp should detect the same set of system targets
+  +         // (they share SYSTEM_TARGET_PATHS via check_command_system_paths)
+  +         for cmd_name in &["mv", "cp"] {
+  ... (13 more lines)
+  3 tools completed in 1m 22s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
