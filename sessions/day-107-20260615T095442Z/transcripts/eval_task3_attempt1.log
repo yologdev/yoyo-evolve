@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (19.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.5s)
+  2 tools completed in 38.8s (2 ✓)
+
+Now let me verify the diff matches the task requirements:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'CommandRoute::' src/dis… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'async fn dispatch_file_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^    match route/,/^   … ✓ (4ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Let me check the main match block to count remaining inline arms (not unreachable):
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^pub\(crate\) async fn dis… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^pub\(crate\) async fn dis… ✓ (9ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Let me verify the delegation call is in the right place (after dispatch_config_command):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'dispatch_config_command… ✓ (4ms)
+
+Let me verify the task asked for a Search route too — check if that exists:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep 'CommandRoute::Search' src/… ✓ (3ms)
+
+The task said "CommandRoute::Search — (if present as a distinct route)" — it is present. Let me check if it was included:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/dispatch_file_command/,/^}… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep 'Search' src/dispatch.rs ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+`CommandRoute::Search is still in the main match block and not in dispatch_file_command`. The task says to move it "if present as a distinct route" — it is present. This is a minor omission but the task explicitly listed it. Let me check if it's handled in another dispatch helper:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/CommandRoute::Search =>/,/… ✓ (5ms)
+
+It's in another dispatch helper already (looks like dispatch_session_command based on position). Let me verify:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'CommandRoute::Search' s… ✓ (3ms)
+
+Line 495 is within dispatch_session_command. Line 1189 is the unreachable arm for session commands. So Search was already extracted in a previous task — the diff correctly doesn't touch it. The task said "(if present as a distinct route)" meaning in the main match, which it isn't — it's already handled.
+
+Everything checks out. The implementation is a clean mechanical extraction.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (33.2s)
+
+Verdict: PASS
+
+The implementation correctly extracts 17 file/search/navigation/refactoring command routes into dispatch_file_command, places the delegation call after dispatch_config_command, adds the unreachable! arm, and is a pure mechanical extraction with no logic changes. All CI checks pass.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

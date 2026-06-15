@@ -1,0 +1,90 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and then create the session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found" ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 1.9s (2 ✓)
+
+No community issues. Let me check the current state of the spawn worktree scaffolding and dispatch decomposition to plan effectively.
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "allow(dead_code)" src/commands_spawn.rs  ▶ $ grep -n "dispatch_command" src/dispatch.rs | head -5  ▶ $ wc -l src/dispatch.rs ✓ (4ms)
+ ✓ (11ms)
+ ✓ (14ms)
+  ▶ $ sed -n '590,620p' src/dispatch.rs  ▶ $ grep -n 'CommandRoute::' src/dispatch.rs | head -60 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ sed -n '620,850p' src/dispatch.rs ✓ (6ms)
+  ▶ $ sed -n '850,1180p' src/dispatch.rs ✓ (7ms)
+  7 tools completed in 11.0s (7 ✓)
+
+Now let me look at what command groups could be extracted next from `dispatch_command`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Count remaining inline arms in the match (excluding unreac… (5 lines) ✓ (5ms)
+  ▶ $ # Look at handle_spawn to see what it currently does (3 lines) ✓ (5ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me understand what the assessment is telling me. Let me check what's happening with the /model command which was noted as 43 lines inline:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me also look at how the existing dispatch helpers are … (2 lines) ✓ (3ms)
+  ▶ $ sed -n '316,380p' src/dispatch.rs ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Good. Now I have enough context to plan the session. Let me think about the three tasks:
+
+**Assessment summary:**
+1. No CI failures, no community issues, no sponsor issues
+2. The biggest structural improvement opportunities are:
+   • Wire worktree isolation into handle_spawn (dead code from Day 106)
+   • Continue dispatch decomposition (extract config/mode commands group)
+   • Extract the 43-line /model handler into a proper function
+
+The trajectory wisdom says "Perfect success streaks signal conservative calibration" — but the assessment also says the most valuable work is wiring existing scaffolding. Let me plan tasks that are concrete, verifiable, and move the codebase forward.
+
+**Task 1: Wire worktree isolation into handle_spawn** — This is the highest-impact self-driven work. Day 106 built and tested all the worktree primitives but handle_spawn doesn't use them. Connecting them means spawn agents can edit files in parallel without git conflicts.
+
+Task 2: Extract config/mode command dispatch group — Continue the dispatch decomposition pattern. Model, Provider, Think, Config*, Hooks, Permissions, Teach, Effort, Read, Architect, Mcp — these are all config/mode commands that can move to a dispatch_config_command helper.
+
+**Task 3: Extract file/navigation command dispatch group** — Add, Apply, Open, Docs, Find, Grep, Index, Map, Outline, Tree, Web — these are file/search/navigation commands.
+
+Wait — task sizing rules say max 3 files per task. Let me check that the dispatch tasks only touch dispatch.rs. And task 1 touches commands_spawn.rs. Good.
+
+Actually, tasks 2 and 3 both only touch dispatch.rs — extracting match arms into a new helper function within the same file. Let me combine them or keep them separate since they're independent and each is small enough for 20 minutes.
+
+Let me also reconsider: is wiring worktrees actually the highest-impact thing? The spawn command with worktree isolation is a significant capability upgrade — it means sub-agents can safely make parallel edits. That's a real Claude Code gap closer.
+
+Let me write the plan:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (30 lines) ✓ (47.6s)
+  ▶ write session_plan/task_02.md (51 lines) ✓ (47.0s)
+  ▶ write session_plan/task_03.md (48 lines) ✓ (48.8s)
+  ▶ write session_plan/issue_responses.md (17 lines) ✓ (47.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+  6 tools completed in 3m 53s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 107 Session Plan
+
+Three self-driven tasks — no community issues to respond to, no CI failures.
+
+### Task 1: Wire worktree isolation into handle_spawn
+File: src/commands_spawn.rs | Impact: Capability gap closure
+
+Day 106 built and fully tested worktree primitives (create_spawn_worktree, cleanup_spawn_worktree, etc.) but left them unconnected — 7 #[allow(dead_code)] items prove the gap. This task wires the worktree lifecycle into the spawn flow so sub-agents execute in isolated git worktrees, enabling parallel file edits without conflicts. Includes stale worktree cleanup and a /spawn worktrees subcommand.
+
+### Task 2: Extract dispatch_config_command helper
+File: src/dispatch.rs | Impact: Structural cleanup
+
+Extract ~15 config/mode commands (Model, Provider, Think, Config*, Hooks, Permissions, Teach, Effort, Read, Architect, Mcp) into a fifth dispatch helper. Pure mechanical extraction — ~150-180 lines out of the main match block.
+
+### Task 3: Extract dispatch_file_command helper  
+File: src/dispatch.rs | Impact: Structural cleanup
+
+Extract ~17 file/search/navigation commands (Add, Apply, Open, Find, Grep, Map, Outline, Tree, Web, Rename, Move, etc.) into a sixth dispatch helper. After tasks 2+3, the main match should drop from ~50 inline arms to <20.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

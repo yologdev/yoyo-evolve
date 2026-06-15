@@ -1,0 +1,555 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of commands_spawn.rs to see the worktree primitives and the handle_spawn flow.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[allow(dead_code)\]" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct WorktreeInfo\|fn… ✓ (6ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs ✓ (3ms)
+  3 tools completed in 4.2s (3 ✓)
+
+Let me read the key sections of the file to understand the full picture.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:1..61  ▶ read src/commands_spawn.rs:310..450  ▶ read src/commands_spawn.rs:443..643  ▶ read src/commands_spawn.rs:640..740  ▶ read src/commands_spawn.rs:710..910 ✓ (2ms)
+ ✓ (3ms)
+ ✓ (4ms)
+ ✓ (5ms)
+ ✓ (7ms)
+  5 tools completed in 1.9s (5 ✓)
+
+Now let me read the rest of the tests section:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:890..1550 ✓ (5ms)
+
+Now let me also check the SpawnArgs struct and parse function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:200..300 ✓ (2ms)
+
+Now I have a full picture. Let me also check what subcommands are handled in the dispatch layer for spawn:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'spawn.*worktree|SPAWN_SUBCOMMANDS|spawn.*subcommand' in src  ▶ search '"worktrees"' in src/commands_spawn.rs ✓ (2ms)
+ ✓ (5ms)
+  ▶ search 'spawn' in src/dispatch.rs ✓ (3ms)
+  ▶ read src/dispatch.rs:1001..1031 ✓ (1ms)
+  4 tools completed in 7.3s (4 ✓)
+
+Good. Now let me check the commands module to see what's re-exported from spawn:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'spawn' in src/commands.rs ✓ (3ms)
+
+Now let me check the line 567 area more carefully and see what tab-completion exists for spawn:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:566..571 ✓ (0ms)
+
+Now let me plan the implementation:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Remove all #[allow(dead_code)] annotations from wo…' ✓ (0ms)
+  ▶ todo add 'Add worktree_path field to SpawnTask for cleanup t…' ✓ (0ms)
+  ▶ todo add 'Wire create_spawn_worktree into handle_spawn (sync…' ✓ (0ms)
+  ▶ todo add 'Wire create_spawn_worktree into handle_spawn_bg (b…' ✓ (0ms)
+  ▶ todo add 'Add worktree path to spawn_context_prompt' ✓ (0ms)
+  ▶ todo add 'Wire cleanup_spawn_worktree after task completion/…' ✓ (0ms)
+  ▶ todo add 'Add cleanup_stale_worktrees call at start of handl…' ✓ (0ms)
+  ▶ todo add 'Add /spawn worktrees subcommand' ✓ (0ms)
+  ▶ todo add 'Write tests for worktree integration in spawn_cont…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test' ✓ (0ms)
+  10 tools completed in 1.7s (10 ✓)
+
+Let me start implementing. First, let me understand the approach:
+
+1. spawn_context_prompt needs an optional worktree_path parameter to tell the sub-agent about its working directory
+2. handle_spawn needs to create a worktree, pass the path to the sub-agent context, and the sub-agent should cd into the worktree
+3. The worktree path needs to be tracked in SpawnTask so cleanup can happen
+4. Cleanup happens after completion (sync) or in the background task's completion path (bg)
+
+Let me also check how the sub-agent's working directory might be set — specifically whether run_prompt or the agent builder allow setting a CWD:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'StreamingBashTool|working_dir|cwd' in src/tools.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct StreamingBashToo… ✓ (4ms)
+  2 tools completed in 4.9s (2 ✓)
+
+The StreamingBashTool has a cwd field. Now let me check how tools are built in the sub-agent config:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'build_agent|build_tools|cwd' in src/agent_builder.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_agent\|fn buil… ✓ (4ms)
+  ▶ read src/agent_builder.rs:552..632 ✓ (1ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now let me check configure_agent to see how tools are passed:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn configure_agent" src… ✓ (3ms)
+  ▶ read src/agent_builder.rs:423..543 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+I see — the tools including StreamingBashTool are built in build_tools. The cwd is not configurable from AgentConfig level. The cleanest approach for worktree isolation is to tell the sub-agent to cd into the worktree via the system prompt/context, rather than trying to set the cwd at the tool level (since the sub-agent is built through AgentConfig.build_agent() which doesn't pass a cwd). 
+
+Actually, looking more carefully, the sub-agent prompt approach is actually fine and more robust — the sub-agent can run cd /path/to/worktree && <command> for all its bash operations. Let me verify that the spawn approach is: build system prompt → build_agent → run_prompt. The worktree info should go into the system prompt/context.
+
+Let me now implement all the changes:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_spawn.rs (4 → 3 lines)
+    /// Information about a spawned git worktree.
+  - #[allow(dead_code)]
+    #[derive(Debug, Clone)]
+    pub struct WorktreeInfo {
+ ✓ (15.1s)
+    /// Information about a spawned git worktree.
+  - #[allow(dead_code)]
+    #[derive(Debug, Clone)]
+    pub struct WorktreeInfo {
+  2 tools completed in 20.2s (2 ✓)
+
+Expected — I need to remove all annotations and then wire everything up so the fields are actually used. Let me do all the #[allow(dead_code)] removals first, then wire the integration.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[allow(dead_code)\]" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '/^#\[allow(dead_code)\]$… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[allow(dead_code)\]" … ✓ (3ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Good, all removed. Now let me implement the changes step by step. Let me do the full implementation in one pass since the changes are interdependent.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 0ms (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: struct `WorktreeInfo` is never constructed[0m
+   [1m[94m--> [0msrc/commands_spawn.rs:718:12
+    [1m[94m|[0m
+[1m[94m718[0m [1m[94m|[0m pub struct WorktreeInfo {
+    [1m[94m|[0m            [1m[91m^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `run_git_in` is never used[0m
+   [1m[94m--> [0msrc/commands_spawn.rs:729:4
+    [1m[94m|[0m
+[1m[94m729[0m [1m[94m|[0m fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `repo_root` is never used[0m
+   [1m[94m--> [0msrc/commands_spawn.rs:746:4
+    [1m[94m|[0m
+[1m[94m746[0m [1m[94m|[0m fn repo_root(start: &Path) -> PathBuf {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `create_spawn_worktree` is never used[0m
+   [1m[94m--> [0msrc/commands_spawn.rs:758:8
+    [1m[94m|[0m
+[1m[94m758[0m [1m[94m|[0m pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<WorktreeInfo, String> {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `cleanup_spawn_worktree` is never used[0m
+   [1m[94m--> [0msrc/commands_spawn.rs:792:8
+    [1m[94m|[0m
+[1m[94m792[0m [1m[94m|[0m pub fn cleanup_spawn_worktree(repo_dir: &Path, info: &WorktreeInfo) -> Result<(), String> {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `list_spawn_worktrees` is never used[0m
+   [1m[94m--> [0msrc/commands_spawn.rs:824:8
+    [1m[94m|[0m
+[1m[94m824[0m [1m[94m|[0m pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
+    [1m[94m|[0m        [...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Looking at the errors, the #[allow(dead_code)] annotations were removed but the functions aren't actually wired into the code yet. The previous attempt hit the token limit before completing the wiring. I need to wire the worktree lifecycle into handle_spawn so all these functions are actually used.
+
+Let me understand the current state and do the full implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+
+So only the #[allow(dead_code)] removals were made. Now I need to wire the worktree functions into the spawn flow. Let me read the key sections I need to modify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:1..61 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:310..460 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:459..559 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:556..656 ✓ (1ms)
+  4 tools completed in 11.3s (4 ✓)
+
+Now let me see the worktree section and tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:705..885 ✓ (2ms)
+
+Now let me check the tests section to understand the existing test structure:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:884..1084 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:1083..1283 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:1282..1542 ✓ (2ms)
+  3 tools completed in 9.0s (3 ✓)
+
+Good, I have the full picture now. The key insight is: these functions are only called from within tests (via #[cfg(test)]), but the functions themselves are not #[cfg(test)] — they're pub in the main module. The compiler sees them as dead code because nothing in the non-test code calls them.
+
+I need to wire these functions into the actual handle_spawn flow. Let me implement the full integration:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (44 → 58 lines)
+    /// Includes:
+    /// - A base instruction explaining the subagent's role
+    /// - Project context (CLAUDE.md, git status, etc.) if available
+  + /// - Worktree working directory instruction (if isolated)
+    /// - A brief summary of the current conversation state
+    pub fn spawn_context_prompt(
+        main_messages: &[AgentMessage],
+        project_context: Option<&str>,
+  +     worktree_path: Option<&Path>,
+    ) -> String {
+        let mut parts = Vec::new();
+    
+  ···
+             Your output will be reported back to the main agent."
+                .to_string(),
+        );
+  + 
+  +     // Include worktree isolation notice
+  +     if let Some(wt) = worktree_path {
+  +         parts.push(format!(
+  ... (11 more lines)
+ ✓ (9.5s)
+    /// Includes:
+    /// - A base instruction explaining the subagent's role
+    /// - Project context (CLAUDE.md, git status, etc.) if available
+  + /// - Worktree working directory instruction (if isolated)
+    /// - A brief summary of the current conversation state
+    pub fn spawn_context_prompt(
+        main_messages: &[AgentMessage],
+        project_context: Option<&str>,
+  ... (13 more lines)
+
+Good — now I need to update all the call sites of spawn_context_prompt and wire in the worktree lifecycle. Let me now update `handle_spawn` (the synchronous path):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (121 → 167 lines)
+    /// Handle the /spawn command: create a subagent with project context, run a task,
+    /// and return the result. Supports output capture, background execution, and task tracking.
+  + ///
+  + /// Sub-agents run in isolated git worktrees when possible, enabling parallel file
+  + /// edits without git conflicts. Falls back to the current directory if worktree
+  + /// creation fails.
+    ///
+    /// Returns Some(context_msg) to be injected back into the main conversation, or None.
+    pub async fn handle_spawn(
+  ···
+        // Handle /spawn status subcommand
+        if rest == "status" {
+            handle_spawn_status(tracker);
+  +         return None;
+  +     }
+  + 
+  +     // Handle /spawn worktrees subcommand
+  +     if rest == "worktrees" {
+  +         handle_spawn_worktrees();
+            return None;
+  ... (75 more lines)
+ ✓ (9.1s)
+    /// Handle the /spawn command: create a subagent with project context, run a task,
+    /// and return the result. Supports output capture, background execution, and task tracking.
+  + ///
+  + /// Sub-agents run in isolated git worktrees when possible, enabling parallel file
+  + /// edits without git conflicts. Falls back to the current directory if worktree
+  + /// creation fails.
+    ///
+    /// Returns Some(context_msg) to be injected back into the main conversation, or None.
+  ... (13 more lines)
+
+I need to: 1) Create the handle_spawn_worktrees function, 2) Update handle_spawn_bg to use worktrees. Let me also update the background spawn path and add the worktrees display function:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (3 → 22 lines)
+  + /// Display active spawn worktrees.
+  + fn handle_spawn_worktrees() {
+  +     let cwd = std::env::current_dir().unwrap_or_default();
+  +     let worktrees = list_spawn_worktrees(&cwd);
+  +     if worktrees.is_empty() {
+  +         println!("{DIM}  (no active spawn worktrees){RESET}\n");
+  +         return;
+  +     }
+  +     println!("{DIM}  Active spawn worktrees:{RESET}");
+  +     for wt in &worktrees {
+  +         let name = wt
+  +             .file_name()
+  +             .map(|n| n.to_string_lossy().to_string())
+  +             .unwrap_or_else(|| wt.display().to_string());
+  +         println!("    {CYAN}{name}{RESET}  {DIM}{}{RESET}", wt.display());
+  +     }
+  +     println!();
+  + }
+  + 
+    /// Launch a spawn in the background using tokio::spawn.
+  ... (2 more lines)
+ ✓ (9.3s)
+  + /// Display active spawn worktrees.
+  + fn handle_spawn_worktrees() {
+  +     let cwd = std::env::current_dir().unwrap_or_default();
+  +     let worktrees = list_spawn_worktrees(&cwd);
+  +     if worktrees.is_empty() {
+  +         println!("{DIM}  (no active spawn worktrees){RESET}\n");
+  +         return;
+  +     }
+  ... (13 more lines)
+
+Now I need to update handle_spawn_bg to use worktrees and fix all the test call sites. Let me read the bg function:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:638..718 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (78 → 109 lines)
+            println!("{DIM}  system: (custom){RESET}");
+        }
+        println!("{DIM}  use /spawn status to check progress, /spawn collect {spawn_id} to get results{RESET}\n");
+  + 
+  +     // Try to create an isolated worktree for the background spawn
+  +     let cwd = std::env::current_dir().unwrap_or_default();
+  +     let worktree = match create_spawn_worktree(&cwd, spawn_id) {
+  +         Ok(info) => {
+  +             println!(
+  +                 "{DIM}  worktree: {}{RESET}",
+  +                 info.path.display()
+  +             );
+  +             Some(info)
+  +         }
+  +         Err(e) => {
+  +             eprintln!("{YELLOW}  ⚠ worktree isolation unavailable: {e} (using current dir){RESET}");
+  +             None
+  +         }
+  +     };
+    
+  ... (35 more lines)
+ ✓ (9.5s)
+            println!("{DIM}  system: (custom){RESET}");
+        }
+        println!("{DIM}  use /spawn status to check progress, /spawn collect {spawn_id} to get results{RESET}\n");
+  + 
+  +     // Try to create an isolated worktree for the background spawn
+  +     let cwd = std::env::current_dir().unwrap_or_default();
+  +     let worktree = match create_spawn_worktree(&cwd, spawn_id) {
+  +         Ok(info) => {
+  ... (13 more lines)
+  2 tools completed in 30.2s (2 ✓)
+
+Two things to fix: 1) branch and created_at fields are never read outside of tests, and 2) test call sites need updating. The branch field IS read in the `test_worktree_create_and_cleanup test via info.branch, and created_at` is a metadata field — let me check if it's used anywhere or just stored:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\.branch\|\.created_at"… ✓ (3ms)
+
+`branch is only used in tests. created_at` is never used at all (even in tests). The branch field is useful metadata and the created_at field is useful for display. Let me use branch in `handle_spawn_worktrees display and use created_at` conceptually. But actually, neither field is read by non-test code. The simplest fix for created_at is to note it's needed for future use (e.g., display). But clippy is strict — fields must be read.
+
+Let me use branch in the handle_spawn_worktrees display. For created_at, it's metadata stored in the struct but never actually read — it was designed for tracking but the stale cleanup uses filesystem mtime instead. I should just remove created_at since it's genuinely unused and the cleanup function uses filesystem mtime. Actually wait — looking at the task instructions more carefully, the task says to remove #[allow(dead_code)] which means I need to make all these items non-dead. Let me use branch in display and for created_at, I'll read it in the worktree display to show age.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (18 → 21 lines)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| wt.display().to_string());
+  -         println!("    {CYAN}{name}{RESET}  {DIM}{}{RESET}", wt.display());
+  +         // Show the HEAD ref if we can read it
+  +         let head = run_git_in(wt, &["rev-parse", "--short", "HEAD"])
+  +             .unwrap_or_else(|_| "?".to_string());
+  +         println!("    {CYAN}{name}{RESET}  {DIM}@ {head}  {}{RESET}", wt.display());
+        }
+        println!();
+    }
+ ✓ (9.3s)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| wt.display().to_string());
+  -         println!("    {CYAN}{name}{RESET}  {DIM}{}{RESET}", wt.display());
+  +         // Show the HEAD ref if we can read it
+  +         let head = run_git_in(wt, &["rev-parse", "--short", "HEAD"])
+  +             .unwrap_or_else(|_| "?".to_string());
+  +         println!("    {CYAN}{name}{RESET}  {DIM}@ {head}  {}{RESET}", wt.display());
+  ... (3 more lines)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+Let me fix both issues: 1) the unused branch/created_at fields, and 2) the test call sites missing the third argument.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn_context_prompt" s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\.branch\|\.created_at"… ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me fix both issues. First, use branch in non-test code by logging it when creating worktrees. For created_at, read it in handle_spawn_worktrees display as elapsed time. Actually, `handle_spawn_worktrees lists directories from filesystem, not WorktreeInfo` objects. Let me use branch in the sync spawn log line (where we already print the worktree path), and for created_at I'll use it in the completion log. Let me look at what I have:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "info.path.display\|wt.p… ✓ (9ms)
+
+I'll read info.branch in the worktree log lines and info.created_at in the cleanup logging. Let me make targeted edits:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (77 → 81 lines)
+            Ok(info) => {
+                println!(
+  -                 "{DIM}  worktree: {}{RESET}",
+  -                 info.path.display()
+  +                 "{DIM}  worktree: {} (@ {}){RESET}",
+  +                 info.path.display(),
+  +                 info.branch
+                );
+                Some(info)
+            }
+  ···
+    
+        // Clean up the worktree
+        if let Some(ref wt) = worktree {
+  +         let elapsed = wt.created_at.elapsed();
+            if let Err(e) = cleanup_spawn_worktree(&cwd, wt) {
+                eprintln!("{YELLOW}  ⚠ worktree cleanup failed: {e}{RESET}");
+  +         } else {
+  +             eprintln!("{DIM}  worktree cleaned up ({elapsed:.1?}){RESET}");
+            }
+  ... (2 more lines)
+ ✓ (9.3s)
+            Ok(info) => {
+                println!(
+  -                 "{DIM}  worktree: {}{RESET}",
+  -                 info.path.display()
+  +                 "{DIM}  worktree: {} (@ {}){RESET}",
+  +                 info.path.display(),
+  +                 info.branch
+                );
+  ... (13 more lines)
+
+Good — the only remaining errors are the test call sites. Also I need to check if the bg path worktree log also needs `branch`. Let me also update the bg worktree log line and then fix all 4 test call sites:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '670,685p' src/commands_s… ✓ (3ms)
+  ▶ edit src/commands_spawn.rs (6 → 7 lines)
+            Ok(info) => {
+                println!(
+  -                 "{DIM}  worktree: {}{RESET}",
+  -                 info.path.display()
+  +                 "{DIM}  worktree: {} (@ {}){RESET}",
+  +                 info.path.display(),
+  +                 info.branch
+                );
+                Some(info)
+ ✓ (9.4s)
+            Ok(info) => {
+                println!(
+  -                 "{DIM}  worktree: {}{RESET}",
+  -                 info.path.display()
+  +                 "{DIM}  worktree: {} (@ {}){RESET}",
+  +                 info.path.display(),
+  +                 info.branch
+                );
+                Some(info)
+  2 tools completed in 15.4s (2 ✓)
+
+Now I also need to read created_at in the bg path. Let me check:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '720,745p' src/commands_s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '745,760p' src/commands_s… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me update the bg cleanup to also read created_at:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (6 → 9 lines)
+            // Clean up worktree after completion
+            if let Some(ref wt) = worktree {
+  +             let elapsed = wt.created_at.elapsed();
+                if let Err(e) = cleanup_spawn_worktree(&cwd, wt) {
+                    eprintln!("{YELLOW}  ⚠ bg spawn #{spawn_id}: worktree cleanup failed: {e}{RESET}");
+  +             } else {
+  +                 eprintln!("{DIM}  bg spawn #{spawn_id}: worktree cleaned up ({elapsed:.1?}){RESET}");
+                }
+            }
+ ✓ (9.9s)
+            // Clean up worktree after completion
+            if let Some(ref wt) = worktree {
+  +             let elapsed = wt.created_at.elapsed();
+                if let Err(e) = cleanup_spawn_worktree(&cwd, wt) {
+                    eprintln!("{YELLOW}  ⚠ bg spawn #{spawn_id}: worktree cleanup failed: {e}{RESET}");
+  +             } else {
+  +                 eprintln!("{DIM}  bg spawn #{spawn_id}: worktree cleaned up ({elapsed:.1?}){RESET}");
+                }
+            }
+
+Good — only the test call sites remain. Let me fix all 4:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn_context_prompt(" … ✓ (3ms)
+  ▶ edit src/commands_spawn.rs (1 → 1 lines)
+  -         let prompt = spawn_context_prompt(&[], None);
+  +         let prompt = spawn_context_prompt(&[], None, None);
+ ✓ (9.8s)
+  -         let prompt = spawn_context_prompt(&[], None);
+  +         let prompt = spawn_context_prompt(&[], None, None);
+  ▶ edit src/commands_spawn.rs (1 → 1 lines)
+  -         let prompt = spawn_context_prompt(&[], Some("# My Project\nA great tool."));
+  +         let prompt = spawn_context_prompt(&[], Some("# My Project\nA great tool."), None);
+ ✓ (9.9s)
+  -         let prompt = spawn_context_prompt(&[], Some("# My Project\nA great tool."));
+  +         let prompt = spawn_context_prompt(&[], Some("# My Project\nA great tool."), None);
+  3 tools completed in 27.2s (3 ✓)
+
+  ✗ Attempt 2 failed, retrying...
+  → Auto-fixing (attempt 3/3)...
+
+
+
+Two remaining test call sites need the third None argument added to spawn_context_prompt.
+  ▶ edit src/commands_spawn.rs (1 → 1 lines)
+  -         let prompt = spawn_context_prompt(&messages, None);
+  +         let prompt = spawn_context_prompt(&messages, None, None);
+ ✓ (9.3s)
+  -         let prompt = spawn_context_prompt(&messages, None);
+  +         let prompt = spawn_context_prompt(&messages, None, None);
+  ▶ edit src/commands_spawn.rs (1 → 1 lines)
+  -         let prompt = spawn_context_prompt(&[], Some(&large_context));
+  +         let prompt = spawn_context_prompt(&[], Some(&large_context), None);
+ ✓ (1m 4s)
+  -         let prompt = spawn_context_prompt(&[], Some(&large_context));
+  +         let prompt = spawn_context_prompt(&[], Some(&large_context), None);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.6s)
+  3 tools completed in 1m 35s (3 ✓)
+
+Clippy passes. Now run tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (32.3s)
+
+All 88 tests pass and clippy is clean. Let me also verify fmt:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check ✓ (793ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (776ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 5s)
+  3 tools completed in 1m 14s (3 ✓)
+
+All checks pass. Now let me add the test for worktree path in spawn context prompt, and then commit:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:1155..1170 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (8 → 24 lines)
+            assert!(prompt.contains("(truncated)"));
+            // Should contain less than the full 10000 chars
+            assert!(prompt.len() < 10000);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_spawn_context_prompt_with_worktree_path() {
+  +         let wt = Path::new("/tmp/yoyo-worktree/spawn-1-12345");
+  +         let prompt = spawn_context_prompt(&[], None, Some(wt));
+  +         assert!(prompt.contains("Working Directory"));
+  +         assert!(prompt.contains("/tmp/yoyo-worktree/spawn-1-12345"));
+  +         assert!(prompt.contains("isolated git worktree"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_spawn_context_prompt_without_worktree() {
+  +         let prompt = spawn_context_prompt(&[], None, None);
+  +         assert!(!prompt.contains("Working Directory"));
+  +         assert!(!prompt.contains("worktree"));
+        }
+ ✓ (1m 4s)
+            assert!(prompt.contains("(truncated)"));
+            // Should contain less than the full 10000 chars
+            assert!(prompt.len() < 10000);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_spawn_context_prompt_with_worktree_path() {
+  +         let wt = Path::new("/tmp/yoyo-worktree/spawn-1-12345");
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (49.7s)
+  3 tools completed in 2m 5s (3 ✓)
+
+Wait — 88 still, but I added 2 tests. Let me check the test count more carefully:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (25.8s)
+
+  ✓ Watch passed after fix (attempt 3)
+

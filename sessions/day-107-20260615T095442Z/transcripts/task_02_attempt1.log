@@ -1,0 +1,312 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing pattern in dispatch.rs — how the other helper dispatchers are structured.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "dispatch_info_command\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch.rs ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '316,600p' src/dispatch.r… ✓ (6ms)
+  3 tools completed in 4.5s (3 ✓)
+
+Now let me see the config-related command arms in the main match block:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,1200p' src/dispatch.… ✓ (10ms)
+
+Now let me see the specific config-related command arms I need to extract. Let me get the exact lines:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Model\|Co… ✓ (5ms)
+
+Now let me read the exact lines of each config-related command arm:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '658,800p' src/dispatch.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '950,1000p' src/dispatch.… ✓ (4ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me see the existing unreachable blocks to understand the exact pattern:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1130,1180p' src/dispatch… ✓ (3ms)
+
+Let me see the full unreachable blocks without truncation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1133,1177p' src/dispatch… ✓ (3ms)
+
+The file is being truncated. Let me use read_file directly:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1133..1183 ✓ (1ms)
+
+Good. Now I have a clear picture. Let me also check what imports are used in the config handlers:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/dispatch.rs ✓ (3ms)
+
+Now I have everything I need. Let me plan and execute:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Create dispatch_config_command helper function' ✓ (0ms)
+  ▶ todo add 'Add delegation call in dispatch_command' ✓ (0ms)
+  ▶ todo add 'Replace extracted arms with unreachable! block' ✓ (0ms)
+  ▶ todo add 'Verify with cargo fmt, clippy, build, test' ✓ (0ms)
+  4 tools completed in 9.8s (4 ✓)
+
+First, let me read all the exact arms I need to move. I need to see them without truncation:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:658..798 ✓ (2ms)
+
+Now let me see the Teach, Effort, Read, Architect, Mcp arms:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:954..994 ✓ (2ms)
+
+Now I have all the information I need. Note that the Model, Provider, and Think handlers use return CommandResult::Continue instead of just returning from the match — in the helper function, those return statements will need to become return Some(CommandResult::Continue). Let me now implement the extraction.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+Step 1: Create the dispatch_config_command function. I'll insert it right after dispatch_dev_command (which ends around line 590):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:575..595 ✓ (1ms)
+
+Now I'll insert the new helper function right before dispatch_command:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (7 → 175 lines)
+  + /// Dispatch configuration and mode-switching slash commands.
+  + async fn dispatch_config_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  +         CommandRoute::Model => {
+  +             let s = ctx.input;
+  +             if s == "/model" {
+  +                 commands::handle_model_show(&ctx.agent_config.model);
+  +                 return Some(CommandResult::Continue);
+  +             }
+  +             let arg = s.trim_start_matches("/model ").trim();
+  +             if arg.is_empty() {
+  +                 println!("{DIM}  current model: {}", ctx.agent_config.model);
+  +                 println!("  usage: /model <name>{RESET}\n");
+  +                 return Some(CommandResult::Continue);
+  +             }
+  +             if arg == "list" || arg.starts_with("list ") {
+  +                 let filter = arg.strip_prefix("list").unwrap_or("").trim();
+  ... (151 more lines)
+ ✓ (14.4s)
+  + /// Dispatch configuration and mode-switching slash commands.
+  + async fn dispatch_config_command(
+  +     route: &CommandRoute,
+  +     ctx: &mut DispatchContext<'_>,
+  + ) -> Option<CommandResult> {
+  +     match route {
+  +         CommandRoute::Model => {
+  +             let s = ctx.input;
+  ... (13 more lines)
+
+Expected — I need to add the delegation call and remove the old arms. Let me do both now.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+Step 2: Add the delegation call after dispatch_dev_command:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:770..785 ✓ (0ms)
+  ▶ edit src/dispatch.rs (6 → 11 lines)
+        // Delegate dev/lint/test commands to a focused helper.
+        if let Some(result) = dispatch_dev_command(&route, ctx).await {
+  +         return result;
+  +     }
+  + 
+  +     // Delegate configuration and mode-switching commands to a focused helper.
+  +     if let Some(result) = dispatch_config_command(&route, ctx).await {
+            return result;
+        }
+    
+ ✓ (1m 4s)
+        // Delegate dev/lint/test commands to a focused helper.
+        if let Some(result) = dispatch_dev_command(&route, ctx).await {
+  +         return result;
+  +     }
+  + 
+  +     // Delegate configuration and mode-switching commands to a focused helper.
+  +     if let Some(result) = dispatch_config_command(&route, ctx).await {
+            return result;
+        }
+    
+  2 tools completed in 1m 10s (2 ✓)
+
+Now Step 3: Remove the old arms from the main match. First, remove Model/Provider/Think/Config/ConfigShow/ConfigEdit/ConfigSet/ConfigGet/Hooks/Permissions (lines 663-795 area):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:830..975 ✓ (2ms)
+
+Now remove the Model through Permissions arms (lines 831-963), replacing them with nothing (the Context arm at line 964 stays):
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (135 → 2 lines)
+  -         }
+  -         CommandRoute::Model => {
+  -             let s = ctx.input;
+  -             if s == "/model" {
+  -                 commands::handle_model_show(&ctx.agent_config.model);
+  -                 return CommandResult::Continue;
+  -             }
+  -             let arg = s.trim_start_matches("/model ").trim();
+  -             if arg.is_empty() {
+  -                 println!("{DIM}  current model: {}", ctx.agent_config.model);
+  -                 println!("  usage: /model <name>{RESET}\n");
+  -                 return CommandResult::Continue;
+  -             }
+  -             if arg == "list" || arg.starts_with("list ") {
+  -                 let filter = arg.strip_prefix("list").unwrap_or("").trim();
+  -                 commands::handle_model_list(
+  -                     &ctx.agent_config.model,
+  -                     &ctx.agent_config.provider,
+  -                     filter,
+  -                 );
+  ... (115 more lines)
+ ✓ (9.0s)
+  -         }
+  -         CommandRoute::Model => {
+  -             let s = ctx.input;
+  -             if s == "/model" {
+  -                 commands::handle_model_show(&ctx.agent_config.model);
+  -                 return CommandResult::Continue;
+  -             }
+  -             let arg = s.trim_start_matches("/model ").trim();
+  ... (13 more lines)
+
+Good — now I need to remove the Teach/Effort/Read/Architect/Mcp arms and add the unreachable block. Let me find and remove those:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Teach\|Co… ✓ (5ms)
+
+Lines 723-747 are the Teach/Effort/Read/Architect/Mcp arms in the match:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:720..750 ✓ (1ms)
+
+Wait — those are in the `dispatch_config_command` function! That's correct. The duplicates in the main match need to be found. Let me check the lines around 994:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:990..1020 ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0004][0m[1m: non-exhaustive patterns: `dispatch::CommandRoute::Model`, `dispatch::CommandRoute::Provider`, `dispatch::CommandRoute::Think` and 7 more not covered[0m
+    [1m[94m--> [0msrc/dispatch.rs:786:11
+     [1m[94m|[0m
+[1m[94m 786[0m [1m[94m|[0m     match route {
+     [1m[94m|[0m           [1m[91m^^^^^[0m [1m[91mpatterns `dispatch::CommandRoute::Model`, `dispatch::CommandRoute::Provider`, `dispatch::CommandRoute::Think` and 7 more not covered[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: `dispatch::CommandRoute` defined here
+    [1m[94m--> [0msrc/dispatch.rs:30:17
+     [1m[94m|[0m
+[1m[94m  30[0m [1m[94m|[0m pub(crate) enum CommandRoute {
+     [1m[94m|[0m                 [1m[92m^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m  42[0m [1m[94m|[0m     Model,
+     [1m[94m|[0m     [1m[94m-----[0m [1m[94mnot covered[0m
+[1m[94m  43[0m [1m[94m|[0m     Provider,
+     [1m[94m|[0m     [1m[94m--------[0m [1m[94mnot covered[0m
+[1m[94m  44[0m [1m[94m|[0m     Think,
+     [1m[94m|[0m     [1m[94m-----[0m [1m[94mnot covered[0m
+[1m[94m...[0m
+[1m[94m  67[0m [1m[94m|[0m     Config,
+     [1m[94m|[0m     [1m[94m------[0m [1m[94mnot covered[0m
+[1m[94m  68[0m [1m[94m|[0m     ConfigShow,
+     [1m[94m|[0m     [1m[94m----------[0m [1m[94mnot covered[0m
+     [1m[94m= [0m[1mnote[0m: the matched value is of type `dispatch::CommandRoute`
+[1m[96mhelp[0m: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern as shown, or multiple match arms
+     [1m[94m|[0m
+[1m[94m1216[0m [92m~ [0m        CommandRoute::NotACommand => CommandResult::NotACommand[92m,[0m
+[1m[94m1217[0m [92m~         _ => todo!()[0m,
+     [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0004`.[0m
+[1m[91merror[0m: could not com...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+The error is clear — I removed the config command arms from the main match route block but forgot to also remove the Teach/Effort/Read/Architect/Mcp arms AND add the unreachable! block. Let me fix both.
+  ▶ read src/dispatch.rs:988..1023 ✓ (1ms)
+
+Now let me also see the existing unreachable blocks to know where to add the new one:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1195..1225 ✓ (1ms)
+
+Now I'll make both fixes: (1) remove the Teach/Effort/Read/Architect/Mcp arms from the main match, and (2) add the unreachable block for all config commands.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (26 → 1 lines)
+  -         CommandRoute::Teach => {
+  -             commands::handle_teach(ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Effort => {
+  -             crate::commands_config::handle_effort(ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Read => {
+  -             commands::handle_read(ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Architect => {
+  -             commands::handle_architect(ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Mcp => {
+  -             commands::handle_mcp(
+  -                 ctx.input,
+  -                 ctx.mcp_cli_servers,
+  ... (6 more lines)
+ ✓ (8.9s)
+  -         CommandRoute::Teach => {
+  -             commands::handle_teach(ctx.input);
+  -             CommandResult::Continue
+  -         }
+  -         CommandRoute::Effort => {
+  -             crate::commands_config::handle_effort(ctx.input);
+  -             CommandResult::Continue
+  -         }
+  ... (13 more lines)
+
+Still need the unreachable! block. Let me add it:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (3 → 20 lines)
+            | CommandRoute::Fix => unreachable!("handled by dispatch_dev_command"),
+  + 
+  +         // Config/mode commands are handled by dispatch_config_command above.
+  +         CommandRoute::Model
+  +         | CommandRoute::Provider
+  +         | CommandRoute::Think
+  +         | CommandRoute::Config
+  +         | CommandRoute::ConfigShow
+  +         | CommandRoute::ConfigEdit
+  +         | CommandRoute::ConfigSet
+  +         | CommandRoute::ConfigGet
+  +         | CommandRoute::Hooks
+  +         | CommandRoute::Permissions
+  +         | CommandRoute::Teach
+  +         | CommandRoute::Effort
+  +         | CommandRoute::Read
+  +         | CommandRoute::Architect
+  +         | CommandRoute::Mcp => unreachable!("handled by dispatch_config_command"),
+    
+            CommandRoute::NotACommand => CommandResult::NotACommand,
+ ✓ (1m 5s)
+            | CommandRoute::Fix => unreachable!("handled by dispatch_dev_command"),
+  + 
+  +         // Config/mode commands are handled by dispatch_config_command above.
+  +         CommandRoute::Model
+  +         | CommandRoute::Provider
+  +         | CommandRoute::Think
+  +         | CommandRoute::Config
+  +         | CommandRoute::ConfigShow
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (34.1s)
+  3 tools completed in 2m 4s (3 ✓)
+
+All clean. Let me verify the main match block shrank as expected:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/dispatch.rs ✓ (3ms)
+
+Started at 1862 lines, now 1894 — that's because we added 168 lines for the new function but removed ~133 from the main match plus added ~17 for the unreachable block. The net is +32 lines, but the main match block shrank by ~158 lines. Let me commit:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (15ms)
+
+All checks pass — build, clippy, tests — and the commit is done. The extraction moved 15 config/mode command arms (Model, Provider, Think, Config, ConfigShow, ConfigEdit, ConfigSet, ConfigGet, Hooks, Permissions, Teach, Effort, Read, Architect, Mcp) into dispatch_config_command, following the exact same pattern as the four existing helpers. The main match route block is ~158 lines lighter.
+
+  ✓ Watch passed after fix (attempt 1)
+
