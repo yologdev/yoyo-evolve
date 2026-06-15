@@ -319,10 +319,12 @@ pub fn parse_spawn_task(input: &str) -> Option<String> {
 /// Includes:
 /// - A base instruction explaining the subagent's role
 /// - Project context (CLAUDE.md, git status, etc.) if available
+/// - Worktree working directory instruction (if isolated)
 /// - A brief summary of the current conversation state
 pub fn spawn_context_prompt(
     main_messages: &[AgentMessage],
     project_context: Option<&str>,
+    worktree_path: Option<&Path>,
 ) -> String {
     let mut parts = Vec::new();
 
@@ -332,6 +334,18 @@ pub fn spawn_context_prompt(
          Your output will be reported back to the main agent."
             .to_string(),
     );
+
+    // Include worktree isolation notice
+    if let Some(wt) = worktree_path {
+        parts.push(format!(
+            "## Working Directory\n\n\
+             You are working in an isolated git worktree at: {}\n\
+             All file operations and bash commands should run inside this directory. \
+             Use `cd {}` before running commands, or use absolute paths within this worktree.",
+            wt.display(),
+            wt.display()
+        ));
+    }
 
     // Include project context if available
     if let Some(ctx) = project_context {
@@ -439,6 +453,10 @@ pub fn handle_spawn_status(tracker: &SpawnTracker) {
 /// Handle the /spawn command: create a subagent with project context, run a task,
 /// and return the result. Supports output capture, background execution, and task tracking.
 ///
+/// Sub-agents run in isolated git worktrees when possible, enabling parallel file
+/// edits without git conflicts. Falls back to the current directory if worktree
+/// creation fails.
+///
 /// Returns Some(context_msg) to be injected back into the main conversation, or None.
 pub async fn handle_spawn(
     input: &str,
@@ -456,6 +474,16 @@ pub async fn handle_spawn(
         return None;
     }
 
+    // Handle /spawn worktrees subcommand
+    if rest == "worktrees" {
+        handle_spawn_worktrees();
+        return None;
+    }
+
+    // Clean up stale worktrees from crashed sessions (max age: 1 hour)
+    let cwd = std::env::current_dir().unwrap_or_default();
+    cleanup_stale_worktrees(&cwd, std::time::Duration::from_secs(3600));
+
     let args = match parse_spawn_args(input) {
         Some(a) => a,
         None => {
@@ -466,8 +494,10 @@ pub async fn handle_spawn(
             println!("         /spawn --system <prompt> <task> (custom system prompt)");
             println!("         /spawn collect <id>             (collect background result)");
             println!("         /spawn status                   (show tracked spawns)");
+            println!("         /spawn worktrees                (list active spawn worktrees)");
             println!("  Spawn a subagent with project context to handle a task.");
             println!("  The result is summarized back into your main conversation.");
+            println!("  Sub-agents run in isolated git worktrees for parallel safety.");
             println!("  Example: /spawn read src/main.rs and summarize the architecture");
             println!("           /spawn --model claude-haiku-4-5 summarize this file");
             println!("           /spawn --system \"You are a security auditor\" review src/safety.rs{RESET}\n");
@@ -504,9 +534,29 @@ pub async fn handle_spawn(
         println!("{DIM}  system: (custom){RESET}");
     }
 
+    // Try to create an isolated worktree for this spawn
+    let worktree = match create_spawn_worktree(&cwd, spawn_id) {
+        Ok(info) => {
+            println!(
+                "{DIM}  worktree: {} (@ {}){RESET}",
+                info.path.display(),
+                info.branch
+            );
+            Some(info)
+        }
+        Err(e) => {
+            eprintln!("{YELLOW}  ⚠ worktree isolation unavailable: {e} (using current dir){RESET}");
+            None
+        }
+    };
+
     // Load project context for the subagent
     let project_context = crate::cli::load_project_context();
-    let context_prompt = spawn_context_prompt(main_messages, project_context.as_deref());
+    let context_prompt = spawn_context_prompt(
+        main_messages,
+        project_context.as_deref(),
+        worktree.as_ref().map(|w| w.path.as_path()),
+    );
 
     // Prepend custom system prompt if provided
     let effective_prompt = if let Some(ref sp) = args.system_prompt {
@@ -543,6 +593,10 @@ pub async fn handle_spawn(
             Err(e) => {
                 eprintln!("{RED}  error writing to {output_path}: {e}{RESET}");
                 tracker.fail(spawn_id, format!("write error: {e}"));
+                // Clean up worktree even on failure
+                if let Some(ref wt) = worktree {
+                    let _ = cleanup_spawn_worktree(&cwd, wt);
+                }
                 return None;
             }
         }
@@ -551,11 +605,46 @@ pub async fn handle_spawn(
     // Mark completed in tracker
     tracker.complete(spawn_id, response.clone());
 
+    // Clean up the worktree
+    if let Some(ref wt) = worktree {
+        let elapsed = wt.created_at.elapsed();
+        if let Err(e) = cleanup_spawn_worktree(&cwd, wt) {
+            eprintln!("{YELLOW}  ⚠ worktree cleanup failed: {e}{RESET}");
+        } else {
+            eprintln!("{DIM}  worktree cleaned up ({elapsed:.1?}){RESET}");
+        }
+    }
+
     println!("\n{GREEN}  ✓ subagent #{spawn_id} completed{RESET}");
     println!("{DIM}  injecting result into main conversation...{RESET}\n");
 
     let context_msg = format_spawn_result(&args.task, &response, spawn_id);
     Some(context_msg)
+}
+
+/// Display active spawn worktrees.
+fn handle_spawn_worktrees() {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let worktrees = list_spawn_worktrees(&cwd);
+    if worktrees.is_empty() {
+        println!("{DIM}  (no active spawn worktrees){RESET}\n");
+        return;
+    }
+    println!("{DIM}  Active spawn worktrees:{RESET}");
+    for wt in &worktrees {
+        let name = wt
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| wt.display().to_string());
+        // Show the HEAD ref if we can read it
+        let head =
+            run_git_in(wt, &["rev-parse", "--short", "HEAD"]).unwrap_or_else(|_| "?".to_string());
+        println!(
+            "    {CYAN}{name}{RESET}  {DIM}@ {head}  {}{RESET}",
+            wt.display()
+        );
+    }
+    println!();
 }
 
 /// Launch a spawn in the background using tokio::spawn.
@@ -586,9 +675,30 @@ fn handle_spawn_bg(
     }
     println!("{DIM}  use /spawn status to check progress, /spawn collect {spawn_id} to get results{RESET}\n");
 
+    // Try to create an isolated worktree for the background spawn
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let worktree = match create_spawn_worktree(&cwd, spawn_id) {
+        Ok(info) => {
+            println!(
+                "{DIM}  worktree: {} (@ {}){RESET}",
+                info.path.display(),
+                info.branch
+            );
+            Some(info)
+        }
+        Err(e) => {
+            eprintln!("{YELLOW}  ⚠ worktree isolation unavailable: {e} (using current dir){RESET}");
+            None
+        }
+    };
+
     // Prepare everything the background task needs (clone before moving)
     let project_context = crate::cli::load_project_context();
-    let context_prompt = spawn_context_prompt(main_messages, project_context.as_deref());
+    let context_prompt = spawn_context_prompt(
+        main_messages,
+        project_context.as_deref(),
+        worktree.as_ref().map(|w| w.path.as_path()),
+    );
 
     // Prepend custom system prompt if provided
     let effective_prompt = if let Some(ref sp) = args.system_prompt {
@@ -625,12 +735,28 @@ fn handle_spawn_bg(
             if let Err(e) = std::fs::write(out_path, &response) {
                 eprintln!("{RED}  ✗ bg spawn #{spawn_id}: error writing to {out_path}: {e}{RESET}");
                 tracker_clone.fail(spawn_id, format!("write error: {e}"));
+                // Clean up worktree on failure
+                if let Some(ref wt) = worktree {
+                    let _ = cleanup_spawn_worktree(&cwd, wt);
+                }
                 return;
             }
         }
 
         // Mark completed in tracker
         tracker_clone.complete(spawn_id, response);
+
+        // Clean up worktree after completion
+        if let Some(ref wt) = worktree {
+            let elapsed = wt.created_at.elapsed();
+            if let Err(e) = cleanup_spawn_worktree(&cwd, wt) {
+                eprintln!("{YELLOW}  ⚠ bg spawn #{spawn_id}: worktree cleanup failed: {e}{RESET}");
+            } else {
+                eprintln!(
+                    "{DIM}  bg spawn #{spawn_id}: worktree cleaned up ({elapsed:.1?}){RESET}"
+                );
+            }
+        }
     });
 
     tracker.store_handle(spawn_id, handle);
@@ -714,7 +840,6 @@ fn clone_agent_config(config: &crate::AgentConfig) -> crate::AgentConfig {
 // ---------------------------------------------------------------------------
 
 /// Information about a spawned git worktree.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
     /// Absolute path to the worktree directory.
@@ -727,7 +852,6 @@ pub struct WorktreeInfo {
 
 /// Run a git command in a specific directory.
 /// Returns stdout on success, stderr message on failure.
-#[allow(dead_code)]
 fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
     match std::process::Command::new("git")
         .arg("-C")
@@ -745,7 +869,6 @@ fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Resolve the root of the git repository that contains `start`.
 /// Falls back to `start` itself if rev-parse fails.
-#[allow(dead_code)]
 fn repo_root(start: &Path) -> PathBuf {
     run_git_in(start, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
@@ -758,7 +881,6 @@ fn repo_root(start: &Path) -> PathBuf {
 /// and is detached at the current HEAD of `repo_dir`.
 ///
 /// `repo_dir` must be inside an existing git repository.
-#[allow(dead_code)]
 pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<WorktreeInfo, String> {
     let root = repo_root(repo_dir);
     let ts = std::time::SystemTime::now()
@@ -793,7 +915,6 @@ pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<Worktree
 /// Remove a spawn worktree, cleaning up both the directory and the git metadata.
 ///
 /// This is idempotent — calling it on an already-removed worktree is a no-op.
-#[allow(dead_code)]
 pub fn cleanup_spawn_worktree(repo_dir: &Path, info: &WorktreeInfo) -> Result<(), String> {
     let root = repo_root(repo_dir);
     let wt_str = info.path.to_string_lossy().to_string();
@@ -826,7 +947,6 @@ pub fn cleanup_spawn_worktree(repo_dir: &Path, info: &WorktreeInfo) -> Result<()
 }
 
 /// List spawn worktrees under `<repo>/.yoyo/worktrees/spawn-*`.
-#[allow(dead_code)]
 pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
     let root = repo_root(repo_dir);
     let wt_dir = root.join(".yoyo").join("worktrees");
@@ -850,7 +970,6 @@ pub fn list_spawn_worktrees(repo_dir: &Path) -> Vec<PathBuf> {
 ///
 /// Scans `<repo>/.yoyo/worktrees/spawn-*` and removes any whose directory
 /// modified-time is older than `max_age` ago.
-#[allow(dead_code)]
 pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
     let root = repo_root(repo_dir);
     let wt_dir = root.join(".yoyo").join("worktrees");
@@ -1015,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_spawn_context_prompt_without_context() {
-        let prompt = spawn_context_prompt(&[], None);
+        let prompt = spawn_context_prompt(&[], None, None);
         assert!(prompt.contains("subagent"));
         assert!(!prompt.contains("Project Context"));
         assert!(!prompt.contains("Conversation Context"));
@@ -1023,7 +1142,7 @@ mod tests {
 
     #[test]
     fn test_spawn_context_prompt_with_project_context() {
-        let prompt = spawn_context_prompt(&[], Some("# My Project\nA great tool."));
+        let prompt = spawn_context_prompt(&[], Some("# My Project\nA great tool."), None);
         assert!(prompt.contains("subagent"));
         assert!(prompt.contains("## Project Context"));
         assert!(prompt.contains("My Project"));
@@ -1032,7 +1151,7 @@ mod tests {
     #[test]
     fn test_spawn_context_prompt_with_messages() {
         let messages = vec![AgentMessage::Llm(Message::user("hello world"))];
-        let prompt = spawn_context_prompt(&messages, None);
+        let prompt = spawn_context_prompt(&messages, None, None);
         assert!(prompt.contains("subagent"));
         assert!(prompt.contains("Conversation Context"));
         assert!(prompt.contains("hello world"));
@@ -1041,10 +1160,26 @@ mod tests {
     #[test]
     fn test_spawn_context_prompt_truncates_large_context() {
         let large_context = "x".repeat(10000);
-        let prompt = spawn_context_prompt(&[], Some(&large_context));
+        let prompt = spawn_context_prompt(&[], Some(&large_context), None);
         assert!(prompt.contains("(truncated)"));
         // Should contain less than the full 10000 chars
         assert!(prompt.len() < 10000);
+    }
+
+    #[test]
+    fn test_spawn_context_prompt_with_worktree_path() {
+        let wt = Path::new("/tmp/yoyo-worktree/spawn-1-12345");
+        let prompt = spawn_context_prompt(&[], None, Some(wt));
+        assert!(prompt.contains("Working Directory"));
+        assert!(prompt.contains("/tmp/yoyo-worktree/spawn-1-12345"));
+        assert!(prompt.contains("isolated git worktree"));
+    }
+
+    #[test]
+    fn test_spawn_context_prompt_without_worktree() {
+        let prompt = spawn_context_prompt(&[], None, None);
+        assert!(!prompt.contains("Working Directory"));
+        assert!(!prompt.contains("worktree"));
     }
 
     // ── summarize_conversation_for_spawn tests ──────────────────────────

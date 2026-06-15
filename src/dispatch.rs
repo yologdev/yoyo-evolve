@@ -581,6 +581,174 @@ async fn dispatch_dev_command(
     }
 }
 
+/// Dispatch configuration and mode-switching slash commands.
+async fn dispatch_config_command(
+    route: &CommandRoute,
+    ctx: &mut DispatchContext<'_>,
+) -> Option<CommandResult> {
+    match route {
+        CommandRoute::Model => {
+            let s = ctx.input;
+            if s == "/model" {
+                commands::handle_model_show(&ctx.agent_config.model);
+                return Some(CommandResult::Continue);
+            }
+            let arg = s.trim_start_matches("/model ").trim();
+            if arg.is_empty() {
+                println!("{DIM}  current model: {}", ctx.agent_config.model);
+                println!("  usage: /model <name>{RESET}\n");
+                return Some(CommandResult::Continue);
+            }
+            if arg == "list" || arg.starts_with("list ") {
+                let filter = arg.strip_prefix("list").unwrap_or("").trim();
+                commands::handle_model_list(
+                    &ctx.agent_config.model,
+                    &ctx.agent_config.provider,
+                    filter,
+                );
+                return Some(CommandResult::Continue);
+            }
+            if arg == "info" || arg.starts_with("info ") {
+                let model_name = arg.strip_prefix("info").unwrap_or("").trim();
+                let target = if model_name.is_empty() {
+                    &ctx.agent_config.model
+                } else {
+                    model_name
+                };
+                commands::handle_model_info(target, &ctx.agent_config.model);
+                return Some(CommandResult::Continue);
+            }
+            let new_model = arg;
+            ctx.agent_config.model = new_model.to_string();
+            // Rebuild ctx.agent with new model, preserving conversation
+            let restored = ctx.agent_config.rebuild_preserving_messages(ctx.agent);
+            if restored {
+                println!("{DIM}  (switched to {new_model}, conversation preserved){RESET}\n");
+            } else {
+                println!("{YELLOW}  (switched to {new_model}, conversation could not be preserved){RESET}\n");
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Provider => {
+            let s = ctx.input;
+            if s == "/provider" {
+                commands::handle_provider_show(&ctx.agent_config.provider);
+                return Some(CommandResult::Continue);
+            }
+            let new_provider = s.trim_start_matches("/provider ").trim();
+            if new_provider.is_empty() {
+                commands::handle_provider_show(&ctx.agent_config.provider);
+                return Some(CommandResult::Continue);
+            }
+            commands::handle_provider_switch(new_provider, ctx.agent_config, ctx.agent);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Think => {
+            let s = ctx.input;
+            if s == "/think" {
+                commands::handle_think_show(ctx.agent_config.thinking);
+                return Some(CommandResult::Continue);
+            }
+            let level_str = s.trim_start_matches("/think ").trim();
+            if level_str.is_empty() {
+                let current = thinking_level_name(ctx.agent_config.thinking);
+                println!("{DIM}  thinking: {current}");
+                println!("  usage: /think <off|minimal|low|medium|high>{RESET}\n");
+                return Some(CommandResult::Continue);
+            }
+            let new_thinking = parse_thinking_level(level_str);
+            if new_thinking == ctx.agent_config.thinking {
+                let current = thinking_level_name(ctx.agent_config.thinking);
+                println!("{DIM}  thinking already set to {current}{RESET}\n");
+                return Some(CommandResult::Continue);
+            }
+            ctx.agent_config.thinking = new_thinking;
+            // Rebuild ctx.agent with new thinking level, preserving conversation
+            let restored = ctx.agent_config.rebuild_preserving_messages(ctx.agent);
+            let level_name = thinking_level_name(ctx.agent_config.thinking);
+            if restored {
+                println!("{DIM}  (thinking set to {level_name}, conversation preserved){RESET}\n");
+            } else {
+                println!("{YELLOW}  (thinking set to {level_name}, conversation could not be preserved){RESET}\n");
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Config => {
+            commands::handle_config(&ConfigDisplay {
+                provider: &ctx.agent_config.provider,
+                model: &ctx.agent_config.model,
+                base_url: &ctx.agent_config.base_url,
+                thinking: ctx.agent_config.thinking,
+                max_tokens: ctx.agent_config.max_tokens,
+                max_turns: ctx.agent_config.max_turns,
+                temperature: ctx.agent_config.temperature,
+                skills: &ctx.agent_config.skills,
+                system_prompt: &ctx.agent_config.system_prompt,
+                mcp_count: ctx.mcp_count,
+                openapi_count: ctx.openapi_count,
+                hook_count: ctx.agent_config.shell_hooks.len(),
+                agent: ctx.agent,
+                cwd: ctx.cwd,
+            });
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::ConfigShow => {
+            commands::handle_config_show();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::ConfigEdit => {
+            commands::handle_config_edit();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::ConfigSet => {
+            commands::handle_config_set(ctx.input, ctx.agent_config, ctx.agent);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::ConfigGet => {
+            commands::handle_config_get(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Hooks => {
+            commands::handle_hooks(&ctx.agent_config.shell_hooks);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Permissions => {
+            commands::handle_permissions(
+                ctx.agent_config.auto_approve,
+                &ctx.agent_config.permissions,
+                &ctx.agent_config.dir_restrictions,
+            );
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Teach => {
+            commands::handle_teach(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Effort => {
+            crate::commands_config::handle_effort(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Read => {
+            commands::handle_read(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Architect => {
+            commands::handle_architect(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Mcp => {
+            commands::handle_mcp(
+                ctx.input,
+                ctx.mcp_cli_servers,
+                ctx.mcp_server_configs,
+                ctx.mcp_count,
+            );
+            Some(CommandResult::Continue)
+        }
+        _ => None,
+    }
+}
+
 /// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
 /// the main loop what to do next.  This was extracted from `run_repl` to keep
 /// the outer loop small and the command table easy to navigate.
@@ -607,6 +775,11 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
 
     // Delegate dev/lint/test commands to a focused helper.
     if let Some(result) = dispatch_dev_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate configuration and mode-switching commands to a focused helper.
+    if let Some(result) = dispatch_config_command(&route, ctx).await {
         return result;
     }
 
@@ -653,139 +826,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             reset_compact_thrash();
             reset_context_budget_warning();
             println!("{DIM}  (conversation force-cleared){RESET}\n");
-            CommandResult::Continue
-        }
-        CommandRoute::Model => {
-            let s = ctx.input;
-            if s == "/model" {
-                commands::handle_model_show(&ctx.agent_config.model);
-                return CommandResult::Continue;
-            }
-            let arg = s.trim_start_matches("/model ").trim();
-            if arg.is_empty() {
-                println!("{DIM}  current model: {}", ctx.agent_config.model);
-                println!("  usage: /model <name>{RESET}\n");
-                return CommandResult::Continue;
-            }
-            if arg == "list" || arg.starts_with("list ") {
-                let filter = arg.strip_prefix("list").unwrap_or("").trim();
-                commands::handle_model_list(
-                    &ctx.agent_config.model,
-                    &ctx.agent_config.provider,
-                    filter,
-                );
-                return CommandResult::Continue;
-            }
-            if arg == "info" || arg.starts_with("info ") {
-                let model_name = arg.strip_prefix("info").unwrap_or("").trim();
-                let target = if model_name.is_empty() {
-                    &ctx.agent_config.model
-                } else {
-                    model_name
-                };
-                commands::handle_model_info(target, &ctx.agent_config.model);
-                return CommandResult::Continue;
-            }
-            let new_model = arg;
-            ctx.agent_config.model = new_model.to_string();
-            // Rebuild ctx.agent with new model, preserving conversation
-            let restored = ctx.agent_config.rebuild_preserving_messages(ctx.agent);
-            if restored {
-                println!("{DIM}  (switched to {new_model}, conversation preserved){RESET}\n");
-            } else {
-                println!("{YELLOW}  (switched to {new_model}, conversation could not be preserved){RESET}\n");
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Provider => {
-            let s = ctx.input;
-            if s == "/provider" {
-                commands::handle_provider_show(&ctx.agent_config.provider);
-                return CommandResult::Continue;
-            }
-            let new_provider = s.trim_start_matches("/provider ").trim();
-            if new_provider.is_empty() {
-                commands::handle_provider_show(&ctx.agent_config.provider);
-                return CommandResult::Continue;
-            }
-            commands::handle_provider_switch(new_provider, ctx.agent_config, ctx.agent);
-            CommandResult::Continue
-        }
-        CommandRoute::Think => {
-            let s = ctx.input;
-            if s == "/think" {
-                commands::handle_think_show(ctx.agent_config.thinking);
-                return CommandResult::Continue;
-            }
-            let level_str = s.trim_start_matches("/think ").trim();
-            if level_str.is_empty() {
-                let current = thinking_level_name(ctx.agent_config.thinking);
-                println!("{DIM}  thinking: {current}");
-                println!("  usage: /think <off|minimal|low|medium|high>{RESET}\n");
-                return CommandResult::Continue;
-            }
-            let new_thinking = parse_thinking_level(level_str);
-            if new_thinking == ctx.agent_config.thinking {
-                let current = thinking_level_name(ctx.agent_config.thinking);
-                println!("{DIM}  thinking already set to {current}{RESET}\n");
-                return CommandResult::Continue;
-            }
-            ctx.agent_config.thinking = new_thinking;
-            // Rebuild ctx.agent with new thinking level, preserving conversation
-            let restored = ctx.agent_config.rebuild_preserving_messages(ctx.agent);
-            let level_name = thinking_level_name(ctx.agent_config.thinking);
-            if restored {
-                println!("{DIM}  (thinking set to {level_name}, conversation preserved){RESET}\n");
-            } else {
-                println!("{YELLOW}  (thinking set to {level_name}, conversation could not be preserved){RESET}\n");
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Config => {
-            commands::handle_config(&ConfigDisplay {
-                provider: &ctx.agent_config.provider,
-                model: &ctx.agent_config.model,
-                base_url: &ctx.agent_config.base_url,
-                thinking: ctx.agent_config.thinking,
-                max_tokens: ctx.agent_config.max_tokens,
-                max_turns: ctx.agent_config.max_turns,
-                temperature: ctx.agent_config.temperature,
-                skills: &ctx.agent_config.skills,
-                system_prompt: &ctx.agent_config.system_prompt,
-                mcp_count: ctx.mcp_count,
-                openapi_count: ctx.openapi_count,
-                hook_count: ctx.agent_config.shell_hooks.len(),
-                agent: ctx.agent,
-                cwd: ctx.cwd,
-            });
-            CommandResult::Continue
-        }
-        CommandRoute::ConfigShow => {
-            commands::handle_config_show();
-            CommandResult::Continue
-        }
-        CommandRoute::ConfigEdit => {
-            commands::handle_config_edit();
-            CommandResult::Continue
-        }
-        CommandRoute::ConfigSet => {
-            commands::handle_config_set(ctx.input, ctx.agent_config, ctx.agent);
-            CommandResult::Continue
-        }
-        CommandRoute::ConfigGet => {
-            commands::handle_config_get(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Hooks => {
-            commands::handle_hooks(&ctx.agent_config.shell_hooks);
-            CommandResult::Continue
-        }
-        CommandRoute::Permissions => {
-            commands::handle_permissions(
-                ctx.agent_config.auto_approve,
-                &ctx.agent_config.permissions,
-                &ctx.agent_config.dir_restrictions,
-            );
             CommandResult::Continue
         }
         CommandRoute::Context => {
@@ -949,31 +989,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         CommandRoute::Todo => {
             let result = commands::handle_todo(ctx.input);
             println!("{result}\n");
-            CommandResult::Continue
-        }
-        CommandRoute::Teach => {
-            commands::handle_teach(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Effort => {
-            crate::commands_config::handle_effort(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Read => {
-            commands::handle_read(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Architect => {
-            commands::handle_architect(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Mcp => {
-            commands::handle_mcp(
-                ctx.input,
-                ctx.mcp_cli_servers,
-                ctx.mcp_server_configs,
-                ctx.mcp_count,
-            );
             CommandResult::Continue
         }
         CommandRoute::Ast => {
@@ -1172,6 +1187,23 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::LintFix
         | CommandRoute::Lint
         | CommandRoute::Fix => unreachable!("handled by dispatch_dev_command"),
+
+        // Config/mode commands are handled by dispatch_config_command above.
+        CommandRoute::Model
+        | CommandRoute::Provider
+        | CommandRoute::Think
+        | CommandRoute::Config
+        | CommandRoute::ConfigShow
+        | CommandRoute::ConfigEdit
+        | CommandRoute::ConfigSet
+        | CommandRoute::ConfigGet
+        | CommandRoute::Hooks
+        | CommandRoute::Permissions
+        | CommandRoute::Teach
+        | CommandRoute::Effort
+        | CommandRoute::Read
+        | CommandRoute::Architect
+        | CommandRoute::Mcp => unreachable!("handled by dispatch_config_command"),
 
         CommandRoute::NotACommand => CommandResult::NotACommand,
     }
