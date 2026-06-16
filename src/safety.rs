@@ -76,7 +76,7 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
     }
 
     // 11. Fork bombs
-    if let Some(reason) = check_fork_bomb(cmd) {
+    if let Some(reason) = check_fork_bomb(cmd, &cmd_lower) {
         return Some(reason);
     }
 
@@ -141,7 +141,7 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
     }
 
     // 23. find -delete / find -exec rm (destructive find operations)
-    if let Some(reason) = check_find_destruction(cmd) {
+    if let Some(reason) = check_find_destruction(cmd, &cmd_lower) {
         return Some(reason);
     }
 
@@ -262,10 +262,12 @@ fn check_rm_destruction(cmd: &str) -> Option<String> {
                         ));
                     }
                     // Also catch critical system directories like /etc, /usr, /var, /boot, etc.
+                    // Use strip_suffix instead of format!() to avoid heap allocations
+                    // in this hot inner loop (tokens × critical dirs).
                     for dir in CRITICAL_SYSTEM_DIRS {
                         if *token == *dir
-                            || *token == format!("{dir}/")
-                            || *token == format!("{dir}/*")
+                            || token.strip_suffix('/').is_some_and(|t| t == *dir)
+                            || token.strip_suffix("/*").is_some_and(|t| t == *dir)
                         {
                             let severity = if has_f { "force-" } else { "" };
                             return Some(format!(
@@ -574,7 +576,7 @@ fn check_process_substitution(cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for fork bomb patterns.
-fn check_fork_bomb(cmd: &str) -> Option<String> {
+fn check_fork_bomb(cmd: &str, cmd_lower: &str) -> Option<String> {
     // Classic bash fork bomb: :(){ :|:& };:
     // Detect the pattern: function that pipes to itself and backgrounds
     if cmd.contains(":|:") && cmd.contains("&") {
@@ -582,7 +584,6 @@ fn check_fork_bomb(cmd: &str) -> Option<String> {
     }
 
     // Perl/Python/Ruby fork bombs
-    let cmd_lower = cmd.to_lowercase();
     let fork_patterns = [
         "fork while",     // perl -e "fork while 1"
         "fork() while",   // perl variant
@@ -1036,9 +1037,7 @@ fn check_reverse_shell(cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for destructive `find` operations: -delete, -exec rm, -exec shred.
-fn check_find_destruction(cmd: &str) -> Option<String> {
-    let cmd_lower = cmd.to_lowercase();
-
+fn check_find_destruction(cmd: &str, cmd_lower: &str) -> Option<String> {
     // Only check commands that contain "find"
     if !cmd_lower.contains("find") {
         return None;
@@ -1806,5 +1805,45 @@ mod tests {
         assert!(analyze_bash_command("chown -R root /usr").is_some());
         // Safe: non-system directory
         assert!(analyze_bash_command("chown -R user:group ./mydir").is_none());
+    }
+
+    #[test]
+    fn test_rm_system_dirs_with_trailing_variants() {
+        // Verify strip_suffix matching catches all variants for every critical dir
+        for dir in CRITICAL_SYSTEM_DIRS {
+            // Bare dir
+            let msg = analyze_bash_command(&format!("rm -rf {dir}"));
+            assert!(msg.is_some(), "should catch: rm -rf {dir}");
+            // Trailing slash
+            let msg = analyze_bash_command(&format!("rm -rf {dir}/"));
+            assert!(msg.is_some(), "should catch: rm -rf {dir}/");
+            // Trailing wildcard
+            let msg = analyze_bash_command(&format!("rm -rf {dir}/*"));
+            assert!(msg.is_some(), "should catch: rm -rf {dir}/*");
+        }
+    }
+
+    #[test]
+    fn test_fork_bomb_case_insensitive() {
+        // Perl fork bomb (case-insensitive via cmd_lower pass-through)
+        assert!(analyze_bash_command("perl -e 'fork while 1'").is_some());
+        // Python fork bomb with while loop
+        assert!(analyze_bash_command("python -c 'import os; \nwhile True: os.fork()'").is_some());
+        // Classic bash fork bomb
+        assert!(analyze_bash_command(":(){ :|:& };:").is_some());
+        // Safe: "fork" in a non-bomb context (no while/backgrounding)
+        assert!(analyze_bash_command("git fork myrepo").is_none());
+    }
+
+    #[test]
+    fn test_find_destruction_case_insensitive() {
+        // find -delete
+        assert!(analyze_bash_command("find /tmp -name '*.log' -delete").is_some());
+        // find -exec rm
+        assert!(analyze_bash_command("find . -exec rm {} \\;").is_some());
+        // find -exec shred
+        assert!(analyze_bash_command("find /data -exec shred {} +").is_some());
+        // Safe: find without destructive actions
+        assert!(analyze_bash_command("find . -name '*.rs' -print").is_none());
     }
 }
