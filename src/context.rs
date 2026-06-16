@@ -372,15 +372,29 @@ mod tests {
         // changes between the two calls (seen as flaky failure in CI).
         let result = load_project_context();
         if let Some(context) = &result {
-            // In this repo we always have recent commits, so the section should be present.
             // If the git command failed internally (rare in CI), the section is simply absent
             // and we skip the assertion rather than flaking.
             if context.contains("## Git Status") {
-                // Git is working — recently changed files should also be present
-                assert!(
-                    context.contains("## Recently Changed Files"),
-                    "Context should contain Recently Changed Files section when git is available"
-                );
+                // CI often uses shallow clones (fetch-depth: 1) which have only one commit
+                // and no parent to diff against. In that case `git log --diff-filter=M`
+                // correctly returns nothing, so "Recently Changed Files" is absent.
+                // Only assert its presence when there's enough history.
+                let has_history = std::process::Command::new("git")
+                    .args(["rev-list", "--count", "HEAD"])
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .map(|n| n > 1)
+                    .unwrap_or(false);
+
+                if has_history {
+                    assert!(
+                        context.contains("## Recently Changed Files"),
+                        "Context should contain Recently Changed Files section when git history is available"
+                    );
+                }
+                // In shallow clones (1 commit), it's expected that recently-changed-files is absent
             }
         }
     }
