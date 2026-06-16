@@ -1,0 +1,218 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ read src/commands_memory.rs ✓ (2ms)
+
+Now let me look at the relevant parts of memory.rs to see what's already been done:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'add_memory_with_category' in src/memory.rs  ▶ search 'pub category' in src/memory.rs  ▶ search 'MEMORY_CATEGORIES' in src/memory.rs ✓ (4ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  3 tools completed in 2.1s (3 ✓)
+
+Good - the memory.rs core changes are done. Now I need to:
+
+1. Update `handle_remember to parse [category:X]` prefix syntax
+2. Update handle_memories to show category tags
+3. Add tests for those changes
+
+Let me also check what's exported from memory.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search '^pub fn|^pub const' in src/memory.rs ✓ (2ms)
+  ▶ search 'pub fn|pub const' in src/memory.rs ✓ (2ms)
+  ▶ $ grep -n 'pub ' src/memory.rs | head -30 ✓ (5ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Good. Now let me implement the changes to commands_memory.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (4 → 5 lines)
+    use crate::format::*;
+    use crate::memory::{
+  -     add_memory, format_relative_time, load_memories, remove_memory, save_memories, search_memories,
+  +     add_memory, add_memory_with_category, format_relative_time, is_valid_category,
+  +     load_memories, remove_memory, save_memories, search_memories, MEMORY_CATEGORIES,
+    };
+ ✓ (13.6s)
+    use crate::format::*;
+    use crate::memory::{
+  -     add_memory, format_relative_time, load_memories, remove_memory, save_memories, search_memories,
+  +     add_memory, add_memory_with_category, format_relative_time, is_valid_category,
+  +     load_memories, remove_memory, save_memories, search_memories, MEMORY_CATEGORIES,
+    };
+
+Expected - they're unused until I add the code that uses them. Let me now update handle_remember to parse [category:X]:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (29 → 54 lines)
+  + /// Parse an optional `[category:X]` prefix from a note string.
+  + /// Returns `(category, remaining_note)`. If no prefix, category is `"general"`.
+  + fn parse_category_prefix(note: &str) -> (&str, &str) {
+  +     if let Some(rest) = note.strip_prefix("[category:") {
+  +         if let Some(end) = rest.find(']') {
+  +             let cat = &rest[..end];
+  +             let remaining = rest[end + 1..].trim();
+  +             if is_valid_category(cat) && !remaining.is_empty() {
+  +                 return (cat, remaining);
+  +             }
+  +         }
+  +     }
+  +     ("general", note)
+  + }
+  + 
+    pub fn handle_remember(input: &str) {
+        let note = input
+            .strip_prefix("/remember")
+  ···
+            .trim()
+  ... (34 more lines)
+ ✓ (13.6s)
+  + /// Parse an optional `[category:X]` prefix from a note string.
+  + /// Returns `(category, remaining_note)`. If no prefix, category is `"general"`.
+  + fn parse_category_prefix(note: &str) -> (&str, &str) {
+  +     if let Some(rest) = note.strip_prefix("[category:") {
+  +         if let Some(end) = rest.find(']') {
+  +             let cat = &rest[..end];
+  +             let remaining = rest[end + 1..].trim();
+  +             if is_valid_category(cat) && !remaining.is_empty() {
+  ... (13 more lines)
+
+`add_memory` is still used in tests. Let me check:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'add_memory' in src/commands_memory.rs ✓ (2ms)
+
+`add_memory` is imported in the test module separately. Remove it from the main import:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (4 → 4 lines)
+    use crate::memory::{
+  -     add_memory, add_memory_with_category, format_relative_time, is_valid_category,
+  -     load_memories, remove_memory, save_memories, search_memories, MEMORY_CATEGORIES,
+  +     add_memory_with_category, format_relative_time, is_valid_category, load_memories,
+  +     remove_memory, save_memories, search_memories, MEMORY_CATEGORIES,
+    };
+ ✓ (1m 3s)
+    use crate::memory::{
+  -     add_memory, add_memory_with_category, format_relative_time, is_valid_category,
+  -     load_memories, remove_memory, save_memories, search_memories, MEMORY_CATEGORIES,
+  +     add_memory_with_category, format_relative_time, is_valid_category, load_memories,
+  +     remove_memory, save_memories, search_memories, MEMORY_CATEGORIES,
+    };
+
+Now update handle_memories to show category tags:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (47 → 49 lines)
+            // Show all memories
+            println!("{DIM}  Project memories ({}):", memory.entries.len());
+            for (i, entry) in memory.entries.iter().enumerate() {
+  +             let cat_tag = format!("[{}]", entry.category);
+                println!(
+  -                 "    [{i}] {} ({})",
+  +                 "    [{i}] {cat_tag} {} ({})",
+                    entry.note,
+                    format_relative_time(&entry.timestamp)
+                );
+  ···
+                    }
+                );
+                for (i, entry) in &results {
+  +                 let cat_tag = format!("[{}]", entry.category);
+                    println!(
+  -                     "    [{i}] {} ({})",
+  +                     "    [{i}] {cat_tag} {} ({})",
+                        entry.note,
+                        format_relative_time(&entry.timestamp)
+  ... (1 more lines)
+ ✓ (1m 2s)
+            // Show all memories
+            println!("{DIM}  Project memories ({}):", memory.entries.len());
+            for (i, entry) in memory.entries.iter().enumerate() {
+  +             let cat_tag = format!("[{}]", entry.category);
+                println!(
+  -                 "    [{i}] {} ({})",
+  +                 "    [{i}] {cat_tag} {} ({})",
+                    entry.note,
+  ... (13 more lines)
+
+Now let me add the tests for the new functionality. Let me see the current test module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_memory.rs:150.. ✓ (1ms)
+
+Now add the new tests at the end of the test module:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (33 → 86 lines)
+    
+            let results = search_memories(&memory, "python");
+            assert!(results.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_category_prefix_with_valid_category() {
+  +         use super::parse_category_prefix;
+  +         let (cat, note) = parse_category_prefix("[category:build] always run cargo fmt");
+  +         assert_eq!(cat, "build");
+  +         assert_eq!(note, "always run cargo fmt");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_category_prefix_without_category() {
+  +         use super::parse_category_prefix;
+  +         let (cat, note) = parse_category_prefix("just a plain note");
+  +         assert_eq!(cat, "general");
+  +         assert_eq!(note, "just a plain note");
+  +     }
+  ... (38 more lines)
+ ✓ (1m 3s)
+    
+            let results = search_memories(&memory, "python");
+            assert!(results.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_category_prefix_with_valid_category() {
+  +         use super::parse_category_prefix;
+  ... (13 more lines)
+
+Now let's run the full check:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (51.1s)
+  2 tools completed in 1m 10s (2 ✓)
+
+All 88 tests pass. Let me also specifically run the memory-related tests to confirm:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test memory 2>&1 ✓ (158ms)
+
+All 74 memory-related tests pass. Let me also run the format check:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (748ms)
+
+All checks pass. Let me verify the final state of the file:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_memory.rs ✓ (3ms)
+
+Everything is complete. Here's a summary of what was done:
+
+### Changes to `src/commands_memory.rs`:
+
+1. Updated imports — Added add_memory_with_category, is_valid_category, and `MEMORY_CATEGORIES from memory.rs; removed unused add_memory` from the main imports (it's still imported in the test module).
+
+2. **Added `parse_category_prefix** — A helper function that parses [category:X] prefix syntax from a note string. Returns (category, remaining_note). Falls back to ("general", full_note)` when:
+   • No [category: prefix is present
+   • The category is not in MEMORY_CATEGORIES (invalid)
+   • The note after the prefix is empty or whitespace-only
+
+3. Updated `handle_remember` — Now calls parse_category_prefix to extract category, uses add_memory_with_category instead of add_memory, shows category in the confirmation message (for non-general categories), and updated usage text to show category syntax with examples.
+
+4. Updated `handle_memories` — Both the "show all" and "search results" paths now display a [category] tag next to each memory entry (e.g., `[0] [build] always run cargo fmt (2 hours ago)`).
+
+5. Added 5 new tests:
+   • `test_parse_category_prefix_with_valid_category — verifies [category:build]` parsing
+   • test_parse_category_prefix_without_category — defaults to "general"
+   • `test_parse_category_prefix_invalid_category` — unknown categories fall back to "general"
+   • test_parse_category_prefix_all_valid_categories — all 5 categories parse correctly
+   • test_parse_category_prefix_empty_note_after_prefix — edge case: prefix with no note
+   • test_parse_category_prefix_whitespace_only_after_prefix — edge case: prefix with only whitespace
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

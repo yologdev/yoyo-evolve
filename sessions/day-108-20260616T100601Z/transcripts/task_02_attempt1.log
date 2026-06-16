@@ -1,0 +1,342 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code in src/watch.rs and src/memory.rs to plan the implementation.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read and summarize the relevant parts of these files for imp…' ✓ (1m 5s)
+
+Now let me look at the specific area around the auto_remember call in run_watch_after_prompt more closely:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1240..1320 ✓ (1ms)
+
+Now let me look at the build_watch_fix_prompt to understand what structured error data is available:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1032..1112 ✓ (1ms)
+
+Now let me look at how parse_rust_errors works and the full ErrorCategory:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:95..165 ✓ (1ms)
+
+Now let me look at error_category_hint:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:756..796 ✓ (1ms)
+
+Now let me look at the auto_remember_to function more closely and the memory test patterns:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:100..160 ✓ (1ms)
+
+Now let me find existing tests to understand the test patterns:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/memory.rs ✓ (2ms)
+  ▶ read src/memory.rs:567..667 ✓ (2ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me also check what tests exist in watch.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/watch.rs ✓ (2ms)
+  ▶ read src/watch.rs:1447..1547 ✓ (2ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I have a clear picture. Let me plan the implementation:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add `build_learn_memory_note` to src/memory.rs' ✓ (0ms)
+  ▶ todo add 'Add `maybe_learn_from_fix` to src/watch.rs' ✓ (0ms)
+  ▶ todo add 'Wire `maybe_learn_from_fix` into `run_watch_after_…' ✓ (0ms)
+  ▶ todo add 'Write tests for build_learn_memory_note and maybe_…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  ▶ todo add 'Commit with proper message' ✓ (0ms)
+  6 tools completed in 18.3s (6 ✓)
+
+Let me start writing the tests first, then the implementation. First, I need to understand the error patterns I should detect. Let me look at the full `run_watch_after_prompt` flow more carefully to understand where the error data lives:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1195..1245 ✓ (2ms)
+
+I see — the build_watch_fix_prompt is called at line 1260 to build the prompt, but the structured errors parsed inside that function aren't returned. The `current_output` string (the raw output) is what's available. So maybe_learn_from_fix will need to parse errors itself from the output. That's fine — parse_rust_errors is a pub function.
+
+Let me check what the initial failing output looks like — it's the current_output variable that started as output (the first failure). After each fix attempt, if it fails again, current_output is updated. But on success, we need the previous failed output to learn from.
+
+Looking at the flow again:
+1. Line 1246: current_output = output (initial failure)
+2. Line 1260: build_watch_fix_prompt(watch_cmd, &current_output) — uses current_output to build prompt
+3. Line 1266: (fix_ok, fix_output) = run_watch_command(watch_cmd) — re-runs
+4. If fix_ok (line 1267): success! current_output still has the last failing output
+5. If not (line 1281): `current_output = fix_output` — update with new failure
+
+So when we're at the success point (line 1267-1274), current_output contains the error output that the agent fixed. Perfect — we can pass that to maybe_learn_from_fix.
+
+Now let me implement. I'll write tests first, then the code.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ todo wip #4 ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+First, add build_learn_memory_note to src/memory.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (7 → 54 lines)
+            "Watch fix: '{}' failed, fixed on attempt {}",
+            watch_cmd, attempt
+        )
+  + }
+  + 
+  + /// Build a learning note from a watch-mode fix, capturing the *project fact* discovered.
+  + ///
+  + /// Takes the watch command and the error hint (from `error_category_hint`) and
+  + /// constructs a note that captures the specific project knowledge learned from
+  + /// the fix. Returns `None` if the error hint is too generic to be worth
+  + /// remembering as a project fact (e.g. "other" category).
+  + pub fn build_learn_memory_note(
+  +     watch_cmd: &str,
+  +     error_messages: &[String],
+  +     error_category: &str,
+  + ) -> Option<String> {
+  +     // Only learn from recognizable patterns — generic "other" errors are too vague
+  +     if error_category == "other" || error_messages.is_empty() {
+  +         return None;
+  +     }
+  ... (31 more lines)
+ ✓ (13.6s)
+            "Watch fix: '{}' failed, fixed on attempt {}",
+            watch_cmd, attempt
+        )
+  + }
+  + 
+  + /// Build a learning note from a watch-mode fix, capturing the *project fact* discovered.
+  + ///
+  + /// Takes the watch command and the error hint (from `error_category_hint`) and
+  ... (13 more lines)
+
+Expected — the function isn't used yet. Let me add tests for it first, then wire it up. Now add tests for build_learn_memory_note:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn test_build_fix_memory_note' in src/memory.rs ✓ (2ms)
+  ▶ read src/memory.rs:1316..1346 ✓ (1ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Good. Now I'll add tests for build_learn_memory_note right after the test_build_fix_memory_note test:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (13 → 99 lines)
+                note,
+                "Watch fix: 'cargo clippy && cargo test' failed, fixed on attempt 3"
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_learn_memory_note_import_error() {
+  +         let msgs = vec!["cannot find value `foo` in this scope".to_string()];
+  +         let note = build_learn_memory_note("cargo build", &msgs, "import");
+  +         assert!(note.is_some());
+  +         let note = note.unwrap();
+  +         assert!(note.starts_with("[build]"));
+  +         assert!(note.contains("cargo build"));
+  +         assert!(note.contains("cannot find value `foo`"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_learn_memory_note_type_error() {
+  +         let msgs = vec!["expected `usize`, found `&str`".to_string()];
+  +         let note = build_learn_memory_note("cargo test", &msgs, "type");
+  ... (72 more lines)
+ ✓ (13.7s)
+                note,
+                "Watch fix: 'cargo clippy && cargo test' failed, fixed on attempt 3"
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_learn_memory_note_import_error() {
+  +         let msgs = vec!["cannot find value `foo` in this scope".to_string()];
+  ... (13 more lines)
+
+The tests exist but can't compile yet because the function isn't used from main code. Let me now add maybe_learn_from_fix in src/watch.rs and wire it up. That will resolve the dead code warning.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now add maybe_learn_from_fix to src/watch.rs. I'll place it right before `run_watch_after_prompt`:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1190..1205 ✓ (1ms)
+
+Now let me check the imports at the top of watch.rs to see what's already imported:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1..21 ✓ (2ms)
+
+I need to add build_learn_memory_note to the import. Let me also check if parse_rust_errors and related functions are already accessible:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ search '^pub fn parse_rust_errors' in src/watch.rs ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `build_learn_memory_note` is never used[0m
+   [1m[94m--> [0msrc/memory.rs:115:8
+    [1m[94m|[0m
+[1m[94m115[0m [1m[94m|[0m pub fn build_learn_memory_note(
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+I need to complete the implementation by adding maybe_learn_from_fix to src/watch.rs and wiring it into run_watch_after_prompt. The build_learn_memory_note function exists in memory.rs but isn't called yet, causing the dead-code lint error.
+
+Let me first check the current state of the files:
+  ▶ read src/watch.rs:1..21 ✓ (1ms)
+  ▶ read src/watch.rs:1188..1203 ✓ (1ms)
+  ▶ read src/watch.rs:1260..1310 ✓ (1ms)
+  3 tools completed in 10.8s (3 ✓)
+
+Now let me check what language detection and error parsing looks like:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn detect_watch_language"' in src/watch.rs ✓ (3ms)
+  ▶ search 'fn detect_watch_language' in src/watch.rs ✓ (2ms)
+  ▶ read src/watch.rs:706..731 ✓ (1ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Good. Now I have everything I need. Let me do all three changes:
+
+1. Update the import in watch.rs
+2. Add maybe_learn_from_fix function
+3. Wire it into run_watch_after_prompt
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (1 → 1 lines)
+  - use crate::memory::{auto_remember, build_fix_memory_note};
+  + use crate::memory::{auto_remember, build_fix_memory_note, build_learn_memory_note};
+ ✓ (13.5s)
+  - use crate::memory::{auto_remember, build_fix_memory_note};
+  + use crate::memory::{auto_remember, build_fix_memory_note, build_learn_memory_note};
+
+Expected — still need to add the function that uses it. Let me add maybe_learn_from_fix right before `run_watch_after_prompt`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (1 → 66 lines)
+  + /// Try to extract a project learning from a successful watch-mode fix.
+  + ///
+  + /// Parses structured errors from the failed output, identifies the dominant
+  + /// error category, and (if recognizable) builds a learning note via
+  + /// [`build_learn_memory_note`]. Conservative: only learns from clear patterns,
+  + /// not every fix.
+  + ///
+  + /// Called after a successful fix attempt — `failed_output` is the error output
+  + /// that the agent just fixed.
+  + pub fn maybe_learn_from_fix(watch_cmd: &str, failed_output: &str) {
+  +     // Detect language and parse structured errors
+  +     let lang = detect_watch_language(watch_cmd);
+  +     let errors: Vec<CompilerError> = match lang {
+  +         WatchLanguage::Rust => parse_rust_errors(failed_output),
+  +         WatchLanguage::TypeScript => parse_typescript_errors(failed_output),
+  +         WatchLanguage::Python => parse_python_errors(failed_output),
+  +         WatchLanguage::Unknown => {
+  +             let rust_errs = parse_rust_errors(failed_output);
+  +             if !rust_errs.is_empty() {
+  +                 rust_errs
+  ... (46 more lines)
+ ✓ (13.7s)
+  + /// Try to extract a project learning from a successful watch-mode fix.
+  + ///
+  + /// Parses structured errors from the failed output, identifies the dominant
+  + /// error category, and (if recognizable) builds a learning note via
+  + /// [`build_learn_memory_note`]. Conservative: only learns from clear patterns,
+  + /// not every fix.
+  + ///
+  + /// Called after a successful fix attempt — `failed_output` is the error output
+  ... (13 more lines)
+
+Still dead code because I haven't wired it into run_watch_after_prompt yet. Let me do that now:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (8 → 10 lines)
+                    );
+                    let note = build_fix_memory_note(watch_cmd, attempt);
+                    auto_remember(&note);
+  +                 // Try to learn a project fact from the error that was fixed
+  +                 maybe_learn_from_fix(watch_cmd, &current_output);
+                    phase_passed = true;
+                    break;
+ ✓ (1m 2s)
+                    );
+                    let note = build_fix_memory_note(watch_cmd, attempt);
+                    auto_remember(&note);
+  +                 // Try to learn a project fact from the error that was fixed
+  +                 maybe_learn_from_fix(watch_cmd, &current_output);
+                    phase_passed = true;
+                    break;
+
+Now let me run the full check:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.4s)
+
+Clippy passes. Now tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (49.9s)
+
+All 88 tests pass. Now let me add tests for maybe_learn_from_fix in `src/watch.rs`:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn test_build_watch_fix_prompt\b"' in src/watch.rs ✓ (3ms)
+  ▶ search 'fn test_build_watch_fix_prompt' in src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs:1540..1555 ✓ (1ms)
+  3 tools completed in 8.6s (3 ✓)
+
+I'll add tests for maybe_learn_from_fix right before the test_build_watch_fix_prompt test:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (2 → 83 lines)
+  +     #[test]
+  +     fn test_maybe_learn_from_fix_import_error() {
+  +         // Simulate a Rust import error output
+  +         let output = "error[E0433]: failed to resolve: use of undeclared crate or module `serde`\n\
+  +                        --> src/main.rs:1:5\n\
+  +                        |\n\
+  +                        1 | use serde::Deserialize;\n\
+  +                        |     ^^^^^ use of undeclared crate or module `serde`\n";
+  +         let path = std::path::PathBuf::from(
+  +             std::env::temp_dir().join("yoyo_test_learn_import"),
+  +         );
+  +         let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+  +         let mem_path = path.join("memory.json");
+  +         let _ = std::fs::remove_file(&mem_path);
+  + 
+  +         // Verify errors are parsed
+  +         let errors = parse_rust_errors(output);
+  +         assert!(!errors.is_empty(), "should parse at least one error");
+  +         assert_eq!(
+  +             errors[0].category,
+  ... (63 more lines)
+ ✓ (13.6s)
+  +     #[test]
+  +     fn test_maybe_learn_from_fix_import_error() {
+  +         // Simulate a Rust import error output
+  +         let output = "error[E0433]: failed to resolve: use of undeclared crate or module `serde`\n\
+  +                        --> src/main.rs:1:5\n\
+  +                        |\n\
+  +                        1 | use serde::Deserialize;\n\
+  +                        |     ^^^^^ use of undeclared crate or module `serde`\n";
+  ... (13 more lines)
+  ▶ edit src/watch.rs (3 → 1 lines)
+  -         let path = std::path::PathBuf::from(
+  -             std::env::temp_dir().join("yoyo_test_learn_import"),
+  -         );
+  +         let path = std::env::temp_dir().join("yoyo_test_learn_import");
+ ✓ (1m 3s)
+  -         let path = std::path::PathBuf::from(
+  -             std::env::temp_dir().join("yoyo_test_learn_import"),
+  -         );
+  +         let path = std::env::temp_dir().join("yoyo_test_learn_import");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (51.0s)
+  4 tools completed in 2m 39s (4 ✓)
+
+Wait — still 88 tests. Let me check if the new tests are being counted. The test binary compiles both lib tests and integration tests, so let me specifically check:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test_… ✓ (16.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "(lear… ✓ (19.6s)
+  2 tools completed in 44.3s (2 ✓)
+
+3824 passed in the main test binary, 88 in the integration test binary. Let me see the new tests specifically:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test "learn" 2>&1 | grep "… ✓ (145ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

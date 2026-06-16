@@ -1,0 +1,315 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code structure, then implement the changes step by step.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read and summarize the following files, focusing on:
+
+1. `sr…' ✓ (1m 1s)
+
+Now let me look at the exact code I need to modify:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'parse_timestamp_to_epoch\|fn now_epoch_secs\|fn current_timestamp\|fn f…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ read src/memory.rs:485..515 ✓ (1ms)
+  ▶ read src/memory.rs:514..574 ✓ (1ms)
+  ▶ read src/memory.rs:573..603 ✓ (1ms)
+  4 tools completed in 18.5s (4 ✓)
+
+Now let me look at format_exit_summary in detail:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'format_exit_summary\|session_learnings' src/commands_retry.rs | head -2… ✓ (3ms)
+  ▶ read src/commands_retry.rs:155..255 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now I see how the exit summary is called. Let me check how it's invoked in `repl.rs`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'format_exit_summary\|session_start\|auto_save_on_exit' src/repl.rs | he… ✓ (3ms)
+  ▶ read src/repl.rs:1035..1060 ✓ (1ms)
+  2 tools completed in 11.0s (2 ✓)
+
+Now let me check what the `commands module exports vs what's in commands_retry.rs`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'format_exit_summary\|commands_retry\|pub use\|pub mod' src/commands.rs … ✓ (4ms)
+
+Now let me check the existing tests in commands_retry.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:520..720 ✓ (2ms)
+
+Now let me check the imports at the top of commands_retry.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:1..31 ✓ (0ms)
+
+Good. Now let me check how MemoryEntry struct and ProjectMemory look, and see the existing test infrastructure:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:1..51 ✓ (1ms)
+
+Now let me check the existing tests in memory.rs to understand the pattern:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '#\[cfg(test)\]\|#\[test\]\|mod tests' src/memory.rs | head -30 ✓ (4ms)
+  ▶ read src/memory.rs:611..651 ✓ (1ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Now I have a complete understanding. Let me create a plan and implement:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add `pub(crate) fn memories_since()` to memory.rs …' ✓ (0ms)
+  ▶ todo add 'Add tests for memories_since in memory.rs' ✓ (0ms)
+  ▶ todo add 'Add session_learnings() and update format_exit_sum…' ✓ (0ms)
+  ▶ todo add 'Add tests for session_learnings and format_exit_su…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt + clippy + build + test, fix issues,…' ✓ (0ms)
+  5 tools completed in 19.2s (5 ✓)
+
+Let me start with the memory.rs changes.
+
+## Step 1: Make `parse_timestamp_to_epoch` pub(crate) and add `memories_since`
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/memory.rs (3 → 3 lines)
+    /// Parse `YYYY-MM-DD HH:MM` (local time) into epoch seconds.
+    /// Returns `None` on any parse failure.
+  - fn parse_timestamp_to_epoch(s: &str) -> Option<i64> {
+  + pub(crate) fn parse_timestamp_to_epoch(s: &str) -> Option<i64> {
+ ✓ (1m 3s)
+    /// Parse `YYYY-MM-DD HH:MM` (local time) into epoch seconds.
+    /// Returns `None` on any parse failure.
+  - fn parse_timestamp_to_epoch(s: &str) -> Option<i64> {
+  + pub(crate) fn parse_timestamp_to_epoch(s: &str) -> Option<i64> {
+  2 tools completed in 1m 11s (2 ✓)
+
+Now add now_epoch_secs as `pub(crate)` too (we'll need it for the session learnings function):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (2 → 2 lines)
+    /// Current local time as epoch seconds (same basis as `current_timestamp`).
+  - fn now_epoch_secs() -> i64 {
+  + pub(crate) fn now_epoch_secs() -> i64 {
+ ✓ (1m 5s)
+    /// Current local time as epoch seconds (same basis as `current_timestamp`).
+  - fn now_epoch_secs() -> i64 {
+  + pub(crate) fn now_epoch_secs() -> i64 {
+
+Now add the memories_since function. Let me find a good place for it — after load_memories_from:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:49..79 ✓ (1ms)
+  ▶ read src/memory.rs:78..83 ✓ (0ms)
+  2 tools completed in 16.2s (2 ✓)
+
+Now I'll add `memories_since` right after the load/save block:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/memory.rs (2 → 16 lines)
+  + /// Return entries whose timestamp parses to an epoch ≥ `since_epoch`.
+  + /// Entries with unparseable timestamps are silently skipped.
+  + pub fn memories_since(memory: &ProjectMemory, since_epoch: i64) -> Vec<&MemoryEntry> {
+  +     memory
+  +         .entries
+  +         .iter()
+  +         .filter(|entry| {
+  +             parse_timestamp_to_epoch(entry.timestamp.trim())
+  +                 .map(|ts| ts >= since_epoch)
+  +                 .unwrap_or(false)
+  +         })
+  +         .collect()
+  + }
+  + 
+    /// Add a new memory entry with the current timestamp and default category ("general").
+    pub fn add_memory(memory: &mut ProjectMemory, note: &str) {
+ ✓ (13.7s)
+  + /// Return entries whose timestamp parses to an epoch ≥ `since_epoch`.
+  + /// Entries with unparseable timestamps are silently skipped.
+  + pub fn memories_since(memory: &ProjectMemory, since_epoch: i64) -> Vec<&MemoryEntry> {
+  +     memory
+  +         .entries
+  +         .iter()
+  +         .filter(|entry| {
+  +             parse_timestamp_to_epoch(entry.timestamp.trim())
+  ... (8 more lines)
+
+Expected — I'll add the consumer next. Let me first add the tests, then wire up the consumer.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+
+## Step 2: Add tests for memories_since in memory.rs
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `memories_since` is never used[0m
+  [1m[94m--> [0msrc/memory.rs:83:8
+   [1m[94m|[0m
+[1m[94m83[0m [1m[94m|[0m pub fn memories_since(memory: &ProjectMemory, since_epoch: i64) -> Vec<&MemoryEntry> {
+   [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the current state of the code to understand what's been done and what still needs to be wired up.
+  ▶ $ grep -n 'memories_since\|session_learnings' src/memory.rs src/commands_retry.rs … ✓ (3ms)
+
+The function `memories_since was added but never consumed anywhere. I need to wire it up in commands_retry.rs` to fix the dead-code lint. Let me first check the full current state of the changes:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git diff --stat ✓ (10ms)
+  ▶ $ git diff src/memory.rs | head -80 ✓ (6ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Let me see the rest of the diff more fully:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git diff src/memory.rs | wc -l ✓ (5ms)
+
+There's a lot of changes already in memory.rs. The task description says I need to:
+1. Wire up `memories_since as a consumer in commands_retry.rs` (add session_learnings fn + update `format_exit_summary`)
+2. The memories_since function itself is already added
+
+Let me look at the current format_exit_summary and commands_retry.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:1..26 ✓ (1ms)
+  ▶ read src/commands_retry.rs:155..225 ✓ (2ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now I need to add session_learnings() and update format_exit_summary to consume memories_since. Let me add the import and function:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (11 → 12 lines)
+    use crate::commands_session::auto_compact_if_needed;
+    use crate::format::*;
+    use crate::git::{colorize_diff, run_git};
+  + use crate::memory::{load_memories, memories_since, now_epoch_secs};
+    use crate::prompt::run_prompt;
+    use crate::prompt_retry::build_retry_prompt;
+    use crate::session::{format_changes, ChangeKind, FileChange, SessionChanges};
+ ✓ (13.6s)
+    use crate::commands_session::auto_compact_if_needed;
+    use crate::format::*;
+    use crate::git::{colorize_diff, run_git};
+  + use crate::memory::{load_memories, memories_since, now_epoch_secs};
+    use crate::prompt::run_prompt;
+    use crate::prompt_retry::build_retry_prompt;
+    use crate::session::{format_changes, ChangeKind, FileChange, SessionChanges};
+
+Good — now I need to add the session_learnings function and wire it into format_exit_summary. Let me add the function right before format_exit_summary and update it:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:148..158 ✓ (0ms)
+  ▶ edit src/commands_retry.rs (6 → 25 lines)
+        }
+  + }
+  + 
+  + /// Collect memory notes that were added during this session.
+  + ///
+  + /// Loads `.yoyo/memory.json` and returns the notes of entries whose
+  + /// timestamp falls at or after `session_start_epoch` (local-time epoch
+  + /// seconds, same basis as `memory::now_epoch_secs`).
+  + pub fn session_learnings(session_start_epoch: i64) -> Vec<String> {
+  +     let memory = load_memories();
+  +     memories_since(&memory, session_start_epoch)
+  +         .into_iter()
+  +         .map(|entry| {
+  +             if entry.category != "general" {
+  +                 format!("[{}] {}", entry.category, entry.note)
+  +             } else {
+  +                 entry.note.clone()
+  +             }
+  +         })
+  +         .collect()
+  ... (3 more lines)
+ ✓ (13.7s)
+        }
+  + }
+  + 
+  + /// Collect memory notes that were added during this session.
+  + ///
+  + /// Loads `.yoyo/memory.json` and returns the notes of entries whose
+  + /// timestamp falls at or after `session_start_epoch` (local-time epoch
+  + /// seconds, same basis as `memory::now_epoch_secs`).
+  ... (13 more lines)
+  2 tools completed in 24.4s (2 ✓)
+
+I need to: (1) use session_learnings inside `format_exit_summary, and (2) export it from commands.rs`. Let me also update format_exit_summary to accept a session start epoch and show learnings:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:175..230 ✓ (1ms)
+  ▶ read src/commands_retry.rs:229..244 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I need to add a session_start_epoch parameter to `format_exit_summary. But wait — the existing callers use Instant`, not epoch. The task says to add a session start epoch. Let me check how format_exit_summary is called:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'format_exit_summary' src/ | grep -v 'test\|#\[test\]' ✓ (7ms)
+
+The real call site is repl.rs:1043. Let me check what's available there:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1038..1058 ✓ (1ms)
+
+The cleanest approach: rather than changing the format_exit_summary signature (which would break many tests), I'll have format_exit_summary compute the session start epoch from session_start: Instant internally, and call session_learnings itself. Let me update format_exit_summary:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (22 → 32 lines)
+                    lines.push(String::new()); // blank separator
+                    lines.push(truncated);
+                }
+  +         }
+  +     }
+  + 
+  +     // Session learnings: show memories added during this session
+  +     let session_start_epoch = now_epoch_secs() - elapsed.as_secs() as i64;
+  +     let learnings = session_learnings(session_start_epoch);
+  +     if !learnings.is_empty() {
+  +         lines.push(format!("{DIM}  📝 Learned this session:{RESET}"));
+  +         for note in &learnings {
+  +             lines.push(format!("{DIM}    • {note}{RESET}"));
+            }
+        }
+    
+ ✓ (1m 4s)
+                    lines.push(String::new()); // blank separator
+                    lines.push(truncated);
+                }
+  +         }
+  +     }
+  + 
+  +     // Session learnings: show memories added during this session
+  +     let session_start_epoch = now_epoch_secs() - elapsed.as_secs() as i64;
+  ... (8 more lines)
+
+Now let me also export session_learnings from commands.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:26..31 ✓ (1ms)
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry};
+  + pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry, session_learnings};
+ ✓ (13.6s)
+  - pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry};
+  + pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry, session_learnings};
+  2 tools completed in 22.3s (2 ✓)
+
+`session_learnings is called internally within format_exit_summary now, so the re-export from commands.rs` isn't consumed externally. I don't need it re-exported since nothing outside uses it directly. Let me revert that re-export change:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry, session_learnings};
+  + pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry};
+ ✓ (1m 3s)
+  - pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry, session_learnings};
+  + pub use crate::commands_retry::{format_exit_summary, handle_changes, handle_retry};
+
+Now check if now_epoch_secs is actually used in `commands_retry.rs — it is, in the format_exit_summary` body. Let me verify the build:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 ✓ (13.6s)
+
+Clippy passes. Now let's run tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 ✓ (32.8s)
+
+All 3825 tests pass. Now let me add the tests for the new functionality. Let me also run fmt:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check 2>&1 ✓ (753ms)
+
+Good, formatting is clean. Now let me add the tests. First, let me find the test section in memory.rs to add tests for `memories_since`:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'test_parse_timestamp_to_epoch\|fn test_' src/memory.rs | tail -20 ✓ (3ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

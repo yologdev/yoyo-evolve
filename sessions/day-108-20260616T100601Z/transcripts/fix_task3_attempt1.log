@@ -1,0 +1,214 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code to see what's already implemented.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "memories_since\|session… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_learnings" src/… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Good, the functions exist. Now let me look at the test sections in both files.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "memories_since\|session… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "memories_since\|session… ✓ (3ms)
+  3 tools completed in 7.5s (3 ✓)
+
+So the functions are implemented but no tests exist for memories_since, session_learnings, or format_exit_summary including learnings. Let me look at the existing implementations and test infrastructure.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/memory.rs:1..121 ✓ (3ms)
+
+Now let me see `parse_timestamp_to_epoch and now_epoch_secs`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_timestamp_to_epoc… ✓ (3ms)
+  ▶ read src/memory.rs:500..620 ✓ (2ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me look at the existing tests section in memory.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/mem… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/memory.rs ✓ (2ms)
+  ▶ read src/memory.rs:625..675 ✓ (1ms)
+  3 tools completed in 7.8s (3 ✓)
+
+Now let me look at `session_learnings and format_exit_summary` in commands_retry.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:150..270 ✓ (1ms)
+
+Now let me see the existing test section of commands_retry.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/com… ✓ (4ms)
+  ▶ read src/commands_retry.rs:447..507 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now let me see the existing exit summary tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:560..760 ✓ (2ms)
+  ▶ read src/commands_retry.rs:760..1010 ✓ (2ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now I have a clear picture. I need to add:
+
+1. **3 tests in src/memory.rs** for `memories_since`
+2. 3 tests in `src/commands_retry.rs` for session_learnings and `format_exit_summary` with learnings
+
+The challenge for session_learnings is that it calls load_memories() which reads from the real `.yoyo/memory.json. I need to either test through memories_since (which takes a ProjectMemory` directly) or create a temp file. Let me look at how session_learnings works more carefully, and how I can test it.
+
+Looking at the code: session_learnings calls load_memories() which reads from the working directory. For unit tests, I should test the logic that session_learnings depends on (which is memories_since) and also test `session_learnings` itself by creating a temp memory file, or test the format output. 
+
+Actually, let me re-read the task requirements:
+
+│ ### Tests in src/commands_retry.rs:
+│ - session_learnings returns empty vec when no memories in window
+│ - session_learnings returns entries that fall within the session window
+│ - format_exit_summary includes learnings section when memories exist
+
+For session_learnings tests, since it reads from load_memories() (the real file), I'll need to work with the actual memory system. But I can use a different approach — I can create a testable version or write integration-style tests. Let me check if there's a way to test with temp dir.
+
+Actually, looking at `session_learnings`:
+```rust
+pub fn session_learnings(session_start_epoch: i64) -> Vec<String> {
+    let memory = load_memories();
+    memories_since(&memory, session_start_epoch)
+        .into_iter()
+        .map(|entry| { ... })
+        .collect()
+}
+```
+
+It loads from .yoyo/memory.json in the current directory. For tests, I can either:
+1. Create a helper that takes a path (but the task says not to refactor what works)
+2. Write tests that work with the existing .yoyo/memory.json in the project
+3. Use a temp directory and chdir (not great for parallel tests)
+
+Looking at this pragmatically, I think the best approach is:
+1. Add a session_learnings_from function that takes a &ProjectMemory (testable, thin wrapper)
+2. Have session_learnings call session_learnings_from
+3. Test session_learnings_from directly
+
+Actually, let me look at what's simpler — just test the logic inline by creating a ProjectMemory with known entries and calling session_learnings with a far-future epoch (empty) and a far-past epoch (all match). But session_learnings always reads from disk...
+
+The simplest approach that matches the task requirements: add a `pub(crate) fn session_learnings_from(memory: &ProjectMemory, session_start_epoch: i64) -> Vec<String> and have session_learnings delegate to it. Then test session_learnings_from`. This is a minimal change.
+
+For the format_exit_summary test with learnings, the function also calls session_learnings internally which reads from disk. I need to look at this more carefully.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:238..258 ✓ (1ms)
+
+OK, for the format_exit_summary test, the function calls session_learnings which calls load_memories() from the real .yoyo/memory.json. The existing test project likely has a .yoyo/memory.json with some entries. Since the test uses Instant::now(), the session_start_epoch will be very recent, so no memories will typically match — meaning the learnings section won't appear in existing tests.
+
+To test the learnings section appearing in format_exit_summary, I'd need to either:
+1. Refactor to make it injectable — add an internal version that takes learnings as param
+2. Write to .yoyo/memory.json before the test and clean up after (risky with parallel tests)
+
+The cleanest approach: extract the learnings-formatting logic so it's testable, and have session_learnings delegate to a testable function. Let me make minimal changes:
+
+1. Add `pub(crate) fn session_learnings_from(memory: &ProjectMemory, session_start_epoch: i64) -> Vec<String>` 
+2. Have session_learnings call it
+3. Add `pub(crate) fn format_exit_summary_with_learnings(...) that takes learnings as a parameter, have format_exit_summary` delegate to it
+
+This keeps the public API unchanged while making things testable.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:1..31 ✓ (1ms)
+
+Now let me implement the changes. I'll:
+
+1. Refactor session_learnings to delegate to a testable session_learnings_from
+2. Refactor format_exit_summary to delegate to a testable inner function
+3. Add all 6 required tests
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (18 → 26 lines)
+    /// seconds, same basis as `memory::now_epoch_secs`).
+    pub fn session_learnings(session_start_epoch: i64) -> Vec<String> {
+        let memory = load_memories();
+  -     memories_since(&memory, session_start_epoch)
+  +     session_learnings_from(&memory, session_start_epoch)
+  + }
+  + 
+  + /// Testable inner: collect learning notes from a pre-loaded `ProjectMemory`.
+  + pub(crate) fn session_learnings_from(
+  +     memory: &crate::memory::ProjectMemory,
+  +     session_start_epoch: i64,
+  + ) -> Vec<String> {
+  +     memories_since(memory, session_start_epoch)
+            .into_iter()
+            .map(|entry| {
+                if entry.category != "general" {
+ ✓ (1m 3s)
+    /// seconds, same basis as `memory::now_epoch_secs`).
+    pub fn session_learnings(session_start_epoch: i64) -> Vec<String> {
+        let memory = load_memories();
+  -     memories_since(&memory, session_start_epoch)
+  +     session_learnings_from(&memory, session_start_epoch)
+  + }
+  + 
+  + /// Testable inner: collect learning notes from a pre-loaded `ProjectMemory`.
+  ... (8 more lines)
+
+Now refactor format_exit_summary to delegate the learnings part to a testable inner function:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_retry.rs:178..258 ✓ (1ms)
+
+I'll refactor format_exit_summary to call an inner function that accepts learnings as a parameter:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_retry.rs (79 → 91 lines)
+    ///   Files changed: 3 (src/main.rs, src/lib.rs +new, tests/test.rs)
+    /// ```
+    pub fn format_exit_summary(
+  +     changes: &SessionChanges,
+  +     session_total: &Usage,
+  +     model: &str,
+  +     session_start: Instant,
+  + ) -> Option<String> {
+  +     let elapsed = session_start.elapsed();
+  +     let session_start_epoch = now_epoch_secs() - elapsed.as_secs() as i64;
+  +     let learnings = session_learnings(session_start_epoch);
+  +     format_exit_summary_inner(changes, session_total, model, session_start, &learnings)
+  + }
+  + 
+  + /// Testable inner: builds the exit summary with pre-computed learnings.
+  + pub(crate) fn format_exit_summary_inner(
+        changes: &SessionChanges,
+        session_total: &Usage,
+        model: &str,
+        session_start: Instant,
+  ... (17 more lines)
+ ✗ (3ms)
+    │ old_text not found in src/commands_retry.rs.
+  ▶ read src/commands_retry.rs:178..268 ✓ (1ms)
+  2 tools completed in 5.1s (1 ✓, 1 ✗)
+
+I see the issue - lines 203-205 have content I can't see. Let me get the exact content:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '202,206p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '204p' src/commands_retry… ✓ (4ms)
+  2 tools completed in 1m 13s (2 ✓)
+
+OK, it has box-drawing characters (─). Now I know the exact format. Let me just use a targeted approach to edit only the function body:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '188,257p' src/commands_r… ✓ (4ms)
+
+I'll use a Python script to do the replacement since the file has Unicode box-drawing characters that are tricky:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 << '… (79 lines) ✓ (24ms)
+
+Now let me verify the refactoring compiles:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (7.2s)
+
+Good. Now let me check that existing tests still pass:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (48.0s)
+
+All tests pass. Now I need to check the existing format_exit_summary tests — they call the public function, which now delegates. Let me make sure they still work by looking at whether format_exit_summary is called in tests:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format_exit_summary 2… ✓ (128ms)
+
+All existing tests pass. Now let me add the 6 required tests. Let me start with the 3 tests for `memories_since in memory.rs`:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/memory.rs | tai… ✓ (3ms)
+  ▶ read src/memory.rs:1590..1620 ✓ (1ms)
+  2 tools completed in 2.7s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
