@@ -355,10 +355,9 @@ impl PromptEventState {
                 // Indent error output under the tool header
                 println!("{}", indent_tool_output(&preview));
             }
-            // Track the last tool error for /retry context
-            let error_text = tool_result_preview(&result, 200);
-            if !error_text.is_empty() {
-                self.last_tool_error = Some(error_text);
+            // Track the last tool error for /retry context (reuse preview)
+            if !preview.is_empty() {
+                self.last_tool_error = Some(preview);
             } else {
                 self.last_tool_error = Some("tool execution failed".to_string());
             }
@@ -1230,7 +1229,7 @@ pub async fn run_prompt_stream_json_with_content(
 
     let messages = vec![AgentMessage::Llm(Message::User {
         content,
-        timestamp: 0,
+        timestamp: now_ms(),
     })];
     let rx = agent.prompt_messages(messages).await;
     let outcome = handle_stream_json_events(agent, rx, model).await;

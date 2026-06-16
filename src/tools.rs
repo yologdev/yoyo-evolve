@@ -358,13 +358,43 @@ impl AgentTool for StreamingBashTool {
         // Wait for the reader to finish consuming remaining buffered output
         let _ = tokio::time::timeout(Duration::from_secs(2), reader_handle).await;
 
-        let exit_code = exit_status.code().unwrap_or(-1);
+        let exit_code = exit_status.code().unwrap_or_else(|| {
+            // On Unix, if code() is None the process was killed by a signal.
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                if let Some(sig) = exit_status.signal() {
+                    return -sig; // e.g. SIGSEGV=11 → -11
+                }
+            }
+            -1
+        });
         let output = accumulated.lock().await.clone();
 
         // One final update with the complete output
         emit_update(&ctx, &output);
 
-        let formatted = format!("Exit code: {exit_code}\n{output}");
+        // Include signal name when the process was killed by a signal
+        let exit_line = if exit_code < 0 && exit_code != -1 {
+            let sig = -exit_code;
+            let sig_name = match sig {
+                1 => "SIGHUP",
+                2 => "SIGINT",
+                4 => "SIGILL",
+                6 => "SIGABRT",
+                8 => "SIGFPE",
+                9 => "SIGKILL",
+                11 => "SIGSEGV",
+                13 => "SIGPIPE",
+                14 => "SIGALRM",
+                15 => "SIGTERM",
+                _ => "signal",
+            };
+            format!("Exit code: {exit_code} ({sig_name})")
+        } else {
+            format!("Exit code: {exit_code}")
+        };
+        let formatted = format!("{exit_line}\n{output}");
 
         Ok(TR {
             content: vec![Content::Text { text: formatted }],

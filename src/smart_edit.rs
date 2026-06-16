@@ -18,25 +18,30 @@ const FUZZY_MIN_SIMILARITY: f64 = 0.6;
 
 /// Edit distance between two strings (Levenshtein). Used for fuzzy matching
 /// when exact trimmed matches fail.
+///
+/// Uses only O(min(n,m)) memory instead of the naive O(n*m) 2-D table —
+/// we only keep two rows (previous and current) and swap them each iteration.
+/// For large edit blocks this avoids multi-megabyte allocations.
 fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
-    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for (i, row) in dp.iter_mut().enumerate() {
-        row[0] = i;
-    }
-    for (j, val) in dp[0].iter_mut().enumerate() {
-        *val = j;
-    }
+
+    // Ensure `b` is the shorter side so the rows are as small as possible.
+    let (a, b) = if a.len() < b.len() { (b, a) } else { (a, b) };
+
+    let b_len = b.len();
+    let mut prev = (0..=b_len).collect::<Vec<usize>>();
+    let mut curr = vec![0usize; b_len + 1];
+
     for i in 1..=a.len() {
-        for j in 1..=b.len() {
+        curr[0] = i;
+        for j in 1..=b_len {
             let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            dp[i][j] = (dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1)
-                .min(dp[i - 1][j - 1] + cost);
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
+        std::mem::swap(&mut prev, &mut curr);
     }
-    dp[a.len()][b.len()]
+    prev[b_len]
 }
 
 /// Compute similarity between two strings as a ratio in 0.0..=1.0.
