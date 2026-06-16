@@ -1,0 +1,217 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify an impactful improvement, then implement it.
+  ▶ todo add 'Read source code to identify most impactful improv…' ✓ (0ms)
+  ▶ todo add 'Implement the improvement' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  4 tools completed in 23.3s (4 ✓)
+
+Let me examine the source code for improvement opportunities, focusing on areas that could have the most impact.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.8s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the following files in /home/runner/work/yoyo-evolve/yo…' ✓ (1m 17s)
+  3 tools completed in 1m 43s (3 ✓)
+
+Good analysis. Let me focus on the most impactful improvements. The safety.rs performance issues with redundant allocations and redundant to_lowercase() calls are concrete, easy to fix, and affect the hot path that runs on every bash command. Let me examine these more closely.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn check_' src/safety.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn analyze_bash_command… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:24..224 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:222..292 ✓ (1ms)
+  6 tools completed in 17.2s (6 ✓)
+
+Now let me look at check_fork_bomb and check_find_destruction to see the redundant to_lowercase():
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:577..627 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn check_find_destructi… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1039..1119 ✓ (1ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Now let me look at the check_rm_destruction inner loop allocation issue more carefully and think about the best improvement. The inner-loop format!() allocations in check_rm_destruction are the clearest performance win — they run for every token × every critical dir.
+
+Let me also look at what tests exist:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/saf… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1221..1231 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs && grep -c '… ✓ (4ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Good. Let me plan a focused improvement. I'll tackle multiple improvements in safety.rs:
+
+1. **Eliminate heap allocations in check_rm_destruction inner loop* — replace `format!("{dir}/")` and `format!("{dir}/") with strip_suffix` checks
+2. **Pass `cmd_lower to check_fork_bomb and check_find_destruction`** — avoid redundant to_lowercase() calls
+3. **Add tests for the improved code paths**
+
+Let me implement these:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:260..285 ✓ (1ms)
+
+Now let me make the changes. First, fix the inner-loop allocations:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (6 → 8 lines)
+                        // Also catch critical system directories like /etc, /usr, /var, /boot, etc.
+  +                     // Use strip_suffix instead of format!() to avoid heap allocations
+  +                     // in this hot inner loop (tokens × critical dirs).
+                        for dir in CRITICAL_SYSTEM_DIRS {
+                            if *token == *dir
+  -                             || *token == format!("{dir}/")
+  -                             || *token == format!("{dir}/*")
+  +                             || token.strip_suffix('/').is_some_and(|t| t == *dir)
+  +                             || token.strip_suffix("/*").is_some_and(|t| t == *dir)
+                            {
+ ✓ (1m 6s)
+                        // Also catch critical system directories like /etc, /usr, /var, /boot, etc.
+  +                     // Use strip_suffix instead of format!() to avoid heap allocations
+  +                     // in this hot inner loop (tokens × critical dirs).
+                        for dir in CRITICAL_SYSTEM_DIRS {
+                            if *token == *dir
+  -                             || *token == format!("{dir}/")
+  -                             || *token == format!("{dir}/*")
+  +                             || token.strip_suffix('/').is_some_and(|t| t == *dir)
+  +                             || token.strip_suffix("/*").is_some_and(|t| t == *dir)
+                            {
+
+Now fix check_fork_bomb to accept cmd_lower instead of recomputing it:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (10 → 9 lines)
+  - fn check_fork_bomb(cmd: &str) -> Option<String> {
+  + fn check_fork_bomb(cmd: &str, cmd_lower: &str) -> Option<String> {
+        // Classic bash fork bomb: :(){ :|:& };:
+        // Detect the pattern: function that pipes to itself and backgrounds
+        if cmd.contains(":|:") && cmd.contains("&") {
+  ···
+        }
+    
+        // Perl/Python/Ruby fork bombs
+  -     let cmd_lower = cmd.to_lowercase();
+        let fork_patterns = [
+ ✓ (8.9s)
+  - fn check_fork_bomb(cmd: &str) -> Option<String> {
+  + fn check_fork_bomb(cmd: &str, cmd_lower: &str) -> Option<String> {
+        // Classic bash fork bomb: :(){ :|:& };:
+        // Detect the pattern: function that pipes to itself and backgrounds
+        if cmd.contains(":|:") && cmd.contains("&") {
+  ···
+        }
+    
+  ... (3 more lines)
+
+Fix the call site:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (2 → 2 lines)
+        // 11. Fork bombs
+  -     if let Some(reason) = check_fork_bomb(cmd) {
+  +     if let Some(reason) = check_fork_bomb(cmd, &cmd_lower) {
+ ✓ (1m 5s)
+        // 11. Fork bombs
+  -     if let Some(reason) = check_fork_bomb(cmd) {
+  +     if let Some(reason) = check_fork_bomb(cmd, &cmd_lower) {
+
+Now fix check_find_destruction to accept cmd_lower:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (5 → 3 lines)
+  - fn check_find_destruction(cmd: &str) -> Option<String> {
+  -     let cmd_lower = cmd.to_lowercase();
+  - 
+  + fn check_find_destruction(cmd: &str, cmd_lower: &str) -> Option<String> {
+        // Only check commands that contain "find"
+        if !cmd_lower.contains("find") {
+ ✓ (8.8s)
+  - fn check_find_destruction(cmd: &str) -> Option<String> {
+  -     let cmd_lower = cmd.to_lowercase();
+  - 
+  + fn check_find_destruction(cmd: &str, cmd_lower: &str) -> Option<String> {
+        // Only check commands that contain "find"
+        if !cmd_lower.contains("find") {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (2 → 2 lines)
+        // 23. find -delete / find -exec rm (destructive find operations)
+  -     if let Some(reason) = check_find_destruction(cmd) {
+  +     if let Some(reason) = check_find_destruction(cmd, &cmd_lower) {
+ ✓ (1m 6s)
+        // 23. find -delete / find -exec rm (destructive find operations)
+  -     if let Some(reason) = check_find_destruction(cmd) {
+  +     if let Some(reason) = check_find_destruction(cmd, &cmd_lower) {
+  2 tools completed in 1m 21s (2 ✓)
+
+Now let me also look at check_find_destruction — it uses `is_at_word_boundary(cmd, abs_pos) on the original cmd but searches on cmd_lower. The abs_pos is the position in cmd_lower`, which should be the same since to_lowercase() preserves ASCII byte positions. But let me verify the code is consistent now:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1038..1078 ✓ (1ms)
+
+Good. Now let me build and test:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (121ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (20.2s)
+  2 tools completed in 35.3s (2 ✓)
+
+All 88 tests pass. Now let me add tests specifically for the improved code paths to make sure the strip_suffix approach works correctly:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:1710..1810 ✓ (2ms)
+
+Now let me add tests that specifically exercise the edge cases of the improved code:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (14 → 54 lines)
+            assert!(analyze_bash_command("chown -R root /usr").is_some());
+            // Safe: non-system directory
+            assert!(analyze_bash_command("chown -R user:group ./mydir").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_rm_system_dirs_with_trailing_variants() {
+  +         // Verify strip_suffix matching catches all variants for every critical dir
+  +         for dir in CRITICAL_SYSTEM_DIRS {
+  +             // Bare dir
+  +             let msg = analyze_bash_command(&format!("rm -rf {dir}"));
+  +             assert!(msg.is_some(), "should catch: rm -rf {dir}");
+  +             // Trailing slash
+  +             let msg = analyze_bash_command(&format!("rm -rf {dir}/"));
+  +             assert!(msg.is_some(), "should catch: rm -rf {dir}/");
+  +             // Trailing wildcard
+  +             let msg = analyze_bash_command(&format!("rm -rf {dir}/*"));
+  +             assert!(msg.is_some(), "should catch: rm -rf {dir}/*");
+  +         }
+  +     }
+  ... (25 more lines)
+ ✓ (1m 3s)
+            assert!(analyze_bash_command("chown -R root /usr").is_some());
+            // Safe: non-system directory
+            assert!(analyze_bash_command("chown -R user:group ./mydir").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_rm_system_dirs_with_trailing_variants() {
+  +         // Verify strip_suffix matching catches all variants for every critical dir
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (17.2s)
+  2 tools completed in 1m 31s (2 ✓)
+
+The Python fork bomb test is failing because the fork bomb detector requires both fork and while to be present together. Let me fix the test to match the actual logic:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:578..603 ✓ (1ms)
+
+I see — the os.fork() pattern matches, but then the guard requires while OR & — and the `python -c 'import os; os.fork()'` command doesn't contain either. Let me fix the test to use a command that actually triggers the detection:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (11 → 13 lines)
+        fn test_fork_bomb_case_insensitive() {
+            // Perl fork bomb (case-insensitive via cmd_lower pass-through)
+            assert!(analyze_bash_command("perl -e 'fork while 1'").is_some());
+  -         // Python fork bomb
+  -         assert!(analyze_bash_command("python -c 'import os; os.fork()'").is_some());
+  +         // Python fork bomb with while loop
+  +         assert!(
+  +             analyze_bash_command("python -c 'import os; \nwhile True: os.fork()'").is_some()
+  +         );
+            // Classic bash fork bomb
+            assert!(analyze_bash_command(":(){ :|:& };:").is_some());
+  -         // Safe: "fork" in a non-bomb context
+  +         // Safe: "fork" in a non-bomb context (no while/backgrounding)
+            assert!(analyze_bash_command("git fork myrepo").is_none());
+        }
