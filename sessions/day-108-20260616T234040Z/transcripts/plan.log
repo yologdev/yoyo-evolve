@@ -1,0 +1,178 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and understanding the CI failure, then create a focused session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd src && sed -n '350,420p' context.rs ✓ (4ms)
+  ▶ $ cd src && grep -n 'fn get_recently_changed_files' context.rs  ▶ $ cd src && grep -n 'fn load_project_context' context.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ cd src && sed -n '96,126p' context.rs ✓ (3ms)
+  ▶ $ cd src && sed -n '127,210p' context.rs ✓ (4ms)
+  7 tools completed in 13.6s (7 ✓)
+
+Now I understand the problem clearly. The test assumes that if `## Git Status is present, ## Recently Changed Files` should also be present. But in a shallow clone (CI with fetch-depth: 1), `git log --diff-filter=M` returns nothing because there's only one commit — no parent to diff against.
+
+Now let me check what other improvements would be most impactful. Let me look at the trajectory's recurring CI error and think about what matters most.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -c 'fn test_' context.rs ✓ (3ms)
+
+Now let me plan the tasks. The assessment is very clear:
+
+1. **Task 1 (critical):** Fix the flaky CI test — this has been failing for 5+ consecutive runs
+2. Task 2 (self-driven): Something that moves me closer to Claude Code
+3. No community/sponsor issues to handle today
+
+Let me think about what self-driven work would be most impactful. The memory system just landed today — it should be hardened. And looking at competitive gaps, let me think about what's most achievable in 20 minutes...
+
+Let me check what the memory system looks like now to understand what hardening it needs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && head -80 memory.rs ✓ (3ms)
+  ▶ $ cd src && grep -n 'fn auto_remember' memory.rs watch.rs ✓ (3ms)
+  ▶ $ cd src && sed -n '130,220p' memory.rs ✓ (4ms)
+  3 tools completed in 7.7s (3 ✓)
+
+Good. Now I have a solid understanding of the landscape. Let me create the plan.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (45 lines) ✓ (48.0s)
+
+Now for task 2 — a self-driven improvement that moves closer to Claude Code. Let me think about what's most impactful. The memory system just landed but needs hardening. But more importantly, looking at competitive gaps, one thing Claude Code does well is memory deduplication and memory limits — preventing unbounded growth. The current memory system has no cap on entries. Let me also look at what other meaningful gaps exist...
+
+Actually, let me think about what would be most impactful for a real developer using yoyo. The memory system is brand new (Day 108 session 1) and the assessment notes "Edge cases around category parsing, memory deduplication, and formatting are likely." Let me check the dedup and think about what hardening is needed:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fuzzy_score\|search_memories\|format_memories' memory.rs | he… ✓ (4ms)
+  ▶ $ cd src && sed -n '411,470p' memory.rs ✓ (4ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Let me think about what's really the highest-value self-driven work right now. The assessment mentions:
+
+1. Memory system is new and lightly exercised — but it works, it has tests
+2. No open bugs, no agent-self issues
+3. All competitive gaps are either identity choices or large projects
+
+Looking at the trajectory, there are no reverts in the window, sessions are consistently succeeding. The self-wisdom says "Perfect success streaks signal conservative calibration" — I should reach for something that could plausibly fail.
+
+Let me look at what would genuinely help a developer. One thing Claude Code does that yoyo doesn't: memory cap / pruning. Right now the memory system has no limit — it'll grow forever. And there's no way to see memory age or relevance. But that's small.
+
+A bigger gap: **the memory system doesn't persist across sessions well for context injection**. The format_memories_for_prompt shows timestamps as raw ISO strings. Let me check...
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'format_relative_time\|memories_since\|MAX.*MEMOR' memory.rs |… ✓ (4ms)
+
+Interesting — format_relative_time exists but isn't used in format_memories_for_prompt. The prompt shows raw ISO timestamps to the model. That's wasteful token-wise. But that's a small fix.
+
+Let me think about what a real developer would notice. Let me check what /memories actually shows:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && cat commands_memory.rs ✓ (6ms)
+
+OK. Now let me think about a high-value self-driven task. Looking at what would genuinely make a developer's experience better:
+
+1. **Memory cap with auto-pruning** — prevent unbounded growth, keep most recent/relevant
+2. **Use relative timestamps in prompt injection** — save tokens, more useful to the model
+3. **Memory export/import** — not high priority
+
+Actually, the most impactful thing I see is: the format_memories_for_prompt function shows raw ISO timestamps like 2026-06-16 08:00 which wastes tokens and is less useful to the model than 2h ago. The format_relative_time function already exists but isn't used in prompt injection. Plus, there's no memory cap — memories will grow unbounded.
+
+Let me also think about what's more competitive. Looking at the assessment more carefully:
+
+│ **The flaky CI test is the most urgent concrete problem — it's failing on every push.**
+
+That's task 1. For task 2, let me think about something that's genuinely competitive...
+
+One thing that strikes me: the format_memories_for_prompt uses raw timestamps, and there's no cap. Both are real issues. But these are small. Let me think bigger.
+
+Actually, looking at the trajectory section: 
+
+│ `[4×] thread 'context::tests::test_load_project_context_includes_recently_changed'`
+
+This has been the **sole** CI failure for many runs. Once I fix it, CI will be fully green. That's task 1.
+
+For task 2, let me look at something that would genuinely help. Let me check if there's a memory cap issue:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat .yoyo/memory.json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys… ✓ (25ms)
+
+Only 1 memory so far — so the cap isn't urgent yet. Let me think about what's more impactful for a real developer.
+
+Looking at the competitive analysis more carefully: Claude Code has persistent memory (CLAUDE.md) and yoyo just built categorized .yoyo/memory.json. The memory system is there but lightly tested. What would make it more robust and useful?
+
+Actually, let me think about something different. One major gap: **the memory system doesn't have a way to automatically inject relevant memories into the agent's context based on what the user is working on**. Right now it just dumps all memories. Claude Code's CLAUDE.md is always loaded as full context. But as memories grow, you'd want relevance-based injection.
+
+But that's a bigger project. Let me focus on practical improvements that a 20-minute task can deliver.
+
+Here's what I'll do for task 2: Add a memory cap with oldest-first pruning and use relative timestamps in prompt injection. This hardens the memory system against unbounded growth (a real production concern) and makes the injected context more useful while saving tokens. Both changes are in `memory.rs` only.
+
+For task 3: Let me think about what competitive gap to close. Let me look at something concrete...
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn handle_forget\|fn handle_remember\|fn handle_memories' com… ✓ (3ms)
+  ▶ $ cd src && grep -n 'memory\|remember\|forget\|memories' dispatch.rs | head -20 ✓ (4ms)
+  2 tools completed in 4.7s (2 ✓)
+
+OK wait — the dispatch routes to commands::handle_remember, not commands_memory::handle_remember. Let me check:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep 'handle_remember\|handle_memories\|handle_forget' commands.rs | h… ✓ (4ms)
+
+OK, re-exported through commands.rs. Good.
+
+Now let me think about task 3. What would be genuinely competitive? Let me look at one thing Claude Code does well that yoyo is missing: **contextual file mentions expansion in prompts**. Let me check if yoyo already has this:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'expand_file_mentions' commands_file.rs | head -5 ✓ (4ms)
+  ▶ $ cd src && sed -n '331,380p' commands_file.rs ✓ (4ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Good, yoyo already has @file mention expansion. That's competitive.
+
+Let me think about what's genuinely missing and impactful. Looking at the assessment:
+
+• "Persistent memory across sessions" — just built, needs hardening ✓ (task 2)
+• "Multi-model orchestration (cheap model for planning, expensive for execution)" — this is interesting but complex
+• "Git auto-commit" — Aider does this, could be competitive
+• "Codebase indexing/RAG" — big project, not 20 minutes
+
+Actually, let me think about a different angle. What about **memory aging and relevance scoring for prompt injection**? Right now all memories are dumped into the prompt equally. What if memories had a relevance boost when they match the current working context (files being edited, recent errors)? That would make the memory system actually smart rather than just a dump.
+
+But that's complex. Let me keep it focused.
+
+For task 2, I'll do the hardening: **memory cap + relative timestamps in prompt**. 
+
+For task 3, let me look at something more tangible for a developer. How about **`/memory clear` command to reset all memories**? Or better yet, looking at the competitive landscape... Let me check what's actually missing that a developer would notice:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn handle_forget' commands_memory.rs ✓ (3ms)
+
+OK let me think about this differently. What bugs or friction would a real developer hit? Let me check the `auto_remember` dedup logic more carefully:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && sed -n '172,215p' memory.rs ✓ (4ms)
+
+The dedup is prefix-based (first 50 chars). That's reasonable but could miss cases where the same error appears with slightly different formatting. But it's fine for now.
+
+Let me think about what would be genuinely impactful for task 3. Looking at this from a "what would make me choose yoyo over Claude Code" perspective:
+
+One concrete gap: **yoyo doesn't have /compact as a slash command**. The context compaction is handled by yoagent internally, but a user can't manually trigger it when they notice the context is getting large. Claude Code has /compact to summarize and shrink the conversation. Let me check:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -rn 'compact\|/compact' dispatch.rs commands.rs repl.rs | head -2… ✓ (4ms)
+
+OK, /compact already exists. Good. Let me look at other gaps...
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n '/loop\|handle_loop' dispatch.rs commands.rs | head -10 ✓ (4ms)
+
+Oh, yoyo already has /loop! Let me check /run:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn handle_loop\|fn handle_run ' commands_run.rs | head -5 ✓ (3ms)
+
+OK, so /loop exists. What about something that's genuinely missing? Let me check what Claude Code does that yoyo doesn't from the assessment:
+
+• **Parallel sub-agents with isolation** — has sub_agent and spawn worktrees but no polished orchestration
+• Computer Use / GUI — out of scope
+
+Let me look at a different angle. What about **the memory system using relative time in prompt context**? That's a concrete, small improvement that helps the model reason about recency. And a memory cap to prevent unbounded growth. These are both in memory.rs.
+
+For task 3, let me think about something impactful that touches at most 3 files...
+
+How about **enhancing the exit summary to show a session cost recap alongside learned memories**? Let me check the current exit flow:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn format_exit_summary\|fn wants_summary\|fn handle_changes' … ✓ (4ms)
+  ▶ $ cd src && sed -n '188,322p' commands_retry.rs ✓ (4ms)
+  2 tools completed in 3.8s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

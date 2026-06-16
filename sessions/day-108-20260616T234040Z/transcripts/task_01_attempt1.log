@@ -1,0 +1,76 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Looking at the task — fix a flaky CI test that fails in shallow clones. Let me start by finding the test.
+  ▶ search 'test_load_project_context_includes_recently_changed' in src/context.rs ✓ (3ms)
+  ▶ read src/context.rs:360..410 ✓ (1ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Clear. The test assumes that if ## Git Status is present, then ## Recently Changed Files must also be present. But in shallow clones, git status works (it doesn't need history) while `git log --diff-filter=M` returns nothing (no parent commit to diff against).
+
+Let me apply the fix:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (20 → 34 lines)
+            // changes between the two calls (seen as flaky failure in CI).
+            let result = load_project_context();
+            if let Some(context) = &result {
+  -             // In this repo we always have recent commits, so the section should be present.
+                // If the git command failed internally (rare in CI), the section is simply absent
+                // and we skip the assertion rather than flaking.
+                if context.contains("## Git Status") {
+  -                 // Git is working — recently changed files should also be present
+  -                 assert!(
+  -                     context.contains("## Recently Changed Files"),
+  -                     "Context should contain Recently Changed Files section when git is available"
+  -                 );
+  +                 // CI often uses shallow clones (fetch-depth: 1) which have only one commit
+  +                 // and no parent to diff against. In that case `git log --diff-filter=M`
+  +                 // correctly returns nothing, so "Recently Changed Files" is absent.
+  +                 // Only assert its presence when there's enough history.
+  +                 let has_history = std::process::Command::new("git")
+  +                     .args(["rev-list", "--count", "HEAD"])
+  +                     .output()
+  +                     .ok()
+  ... (15 more lines)
+ ✓ (1m 6s)
+            // changes between the two calls (seen as flaky failure in CI).
+            let result = load_project_context();
+            if let Some(context) = &result {
+  -             // In this repo we always have recent commits, so the section should be present.
+                // If the git command failed internally (rare in CI), the section is simply absent
+                // and we skip the assertion rather than flaking.
+                if context.contains("## Git Status") {
+  -                 // Git is working — recently changed files should also be present
+  ... (13 more lines)
+
+Now run the full CI check suite:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (159ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (33.1s)
+  3 tools completed in 56.9s (3 ✓)
+
+All 88 tests pass, clippy clean, fmt clean. Let me verify the specific test ran:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_load_project_con… ✓ (151ms)
+
+Let me also verify what this CI environment actually looks like — is it a shallow clone?
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rev-list --count HEAD ✓ (4ms)
+
+This environment has 50 commits, so the test exercised the has_history path and still asserted. Good — it's not just silently skipping.
+
+Now commit:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (13ms)
+
+Done. The fix is clean and minimal:
+
+What was broken: The test coupled ## Git Status (works with zero history — just reads index state) to `## Recently Changed Files` (needs ≥2 commits to diff). In CI's shallow clone (1 commit), git status works but git log has nothing to diff, so the assertion always failed.
+
+What changed: Before asserting, we now check git rev-list --count HEAD. If there's only 1 commit (shallow clone), we skip the assertion — the function is correctly returning no results. If there's real history (>1 commit), we keep the assertion to catch regressions.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
