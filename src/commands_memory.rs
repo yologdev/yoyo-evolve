@@ -8,10 +8,26 @@
 
 use crate::format::*;
 use crate::memory::{
-    add_memory, format_relative_time, load_memories, remove_memory, save_memories, search_memories,
+    add_memory_with_category, format_relative_time, is_valid_category, load_memories,
+    remove_memory, save_memories, search_memories, MEMORY_CATEGORIES,
 };
 
 // ── /remember ────────────────────────────────────────────────────────────
+
+/// Parse an optional `[category:X]` prefix from a note string.
+/// Returns `(category, remaining_note)`. If no prefix, category is `"general"`.
+fn parse_category_prefix(note: &str) -> (&str, &str) {
+    if let Some(rest) = note.strip_prefix("[category:") {
+        if let Some(end) = rest.find(']') {
+            let cat = &rest[..end];
+            let remaining = rest[end + 1..].trim();
+            if is_valid_category(cat) && !remaining.is_empty() {
+                return (cat, remaining);
+            }
+        }
+    }
+    ("general", note)
+}
 
 pub fn handle_remember(input: &str) {
     let note = input
@@ -20,20 +36,27 @@ pub fn handle_remember(input: &str) {
         .trim()
         .to_string();
     if note.is_empty() {
-        println!("{DIM}  usage: /remember <note>");
+        println!("{DIM}  usage: /remember [category:TYPE] <note>");
         println!("  Save a project-specific memory that persists across sessions.");
+        println!("  Categories: {}", MEMORY_CATEGORIES.join(", "));
         println!("  Examples:");
         println!("    /remember this project uses sqlx for database access");
-        println!("    /remember tests require docker running");
-        println!("    /remember always run cargo fmt before committing{RESET}\n");
+        println!("    /remember [category:build] always run cargo fmt before committing");
+        println!("    /remember [category:bug] watch out for UTF-8 panics in truncate{RESET}\n");
         return;
     }
+    let (category, actual_note) = parse_category_prefix(&note);
     let mut memory = load_memories();
-    add_memory(&mut memory, &note);
+    add_memory_with_category(&mut memory, actual_note, category);
     match save_memories(&memory) {
         Ok(_) => {
+            let cat_label = if category == "general" {
+                String::new()
+            } else {
+                format!(" [{category}]")
+            };
             println!(
-                "{GREEN}  ✓ Remembered: \"{note}\" ({} total memories){RESET}\n",
+                "{GREEN}  ✓ Remembered{cat_label}: \"{actual_note}\" ({} total memories){RESET}\n",
                 memory.entries.len()
             );
         }
@@ -59,8 +82,9 @@ pub fn handle_memories(input: &str) {
         // Show all memories
         println!("{DIM}  Project memories ({}):", memory.entries.len());
         for (i, entry) in memory.entries.iter().enumerate() {
+            let cat_tag = format!("[{}]", entry.category);
             println!(
-                "    [{i}] {} ({})",
+                "    [{i}] {cat_tag} {} ({})",
                 entry.note,
                 format_relative_time(&entry.timestamp)
             );
@@ -82,8 +106,9 @@ pub fn handle_memories(input: &str) {
                 }
             );
             for (i, entry) in &results {
+                let cat_tag = format!("[{}]", entry.category);
                 println!(
-                    "    [{i}] {} ({})",
+                    "    [{i}] {cat_tag} {} ({})",
                     entry.note,
                     format_relative_time(&entry.timestamp)
                 );
@@ -227,6 +252,7 @@ mod tests {
             entries: vec![MemoryEntry {
                 note: "always run cargo fmt".to_string(),
                 timestamp: "2026-03-15 08:00".to_string(),
+                category: "general".to_string(),
             }],
         };
         let prompt = format_memories_for_prompt(&memory);
@@ -250,14 +276,17 @@ mod tests {
                 MemoryEntry {
                     note: "uses sqlx for DB".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker required".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "sqlx migrations in ./migrations".to_string(),
                     timestamp: "t2".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -271,5 +300,58 @@ mod tests {
 
         let results = search_memories(&memory, "python");
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_category_prefix_with_valid_category() {
+        use super::parse_category_prefix;
+        let (cat, note) = parse_category_prefix("[category:build] always run cargo fmt");
+        assert_eq!(cat, "build");
+        assert_eq!(note, "always run cargo fmt");
+    }
+
+    #[test]
+    fn test_parse_category_prefix_without_category() {
+        use super::parse_category_prefix;
+        let (cat, note) = parse_category_prefix("just a plain note");
+        assert_eq!(cat, "general");
+        assert_eq!(note, "just a plain note");
+    }
+
+    #[test]
+    fn test_parse_category_prefix_invalid_category() {
+        use super::parse_category_prefix;
+        // Invalid category falls back to general, entire string is the note
+        let (cat, note) = parse_category_prefix("[category:unknown] some note");
+        assert_eq!(cat, "general");
+        assert_eq!(note, "[category:unknown] some note");
+    }
+
+    #[test]
+    fn test_parse_category_prefix_all_valid_categories() {
+        use super::parse_category_prefix;
+        for &valid_cat in crate::memory::MEMORY_CATEGORIES {
+            let input = format!("[category:{valid_cat}] test note");
+            let (cat, note) = parse_category_prefix(&input);
+            assert_eq!(cat, valid_cat, "category {valid_cat} should be parsed");
+            assert_eq!(note, "test note");
+        }
+    }
+
+    #[test]
+    fn test_parse_category_prefix_empty_note_after_prefix() {
+        use super::parse_category_prefix;
+        // If note after prefix is empty, treat whole string as note with general category
+        let (cat, note) = parse_category_prefix("[category:build]");
+        assert_eq!(cat, "general");
+        assert_eq!(note, "[category:build]");
+    }
+
+    #[test]
+    fn test_parse_category_prefix_whitespace_only_after_prefix() {
+        use super::parse_category_prefix;
+        let (cat, note) = parse_category_prefix("[category:build]   ");
+        assert_eq!(cat, "general");
+        assert_eq!(note, "[category:build]   ");
     }
 }

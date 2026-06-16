@@ -7,11 +7,26 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Valid memory categories.
+pub const MEMORY_CATEGORIES: &[&str] = &["general", "build", "convention", "architecture", "bug"];
+
+/// Default category for memories without one (backward compatibility).
+fn default_category() -> String {
+    "general".to_string()
+}
+
+/// Check whether a string is a valid memory category.
+pub fn is_valid_category(cat: &str) -> bool {
+    MEMORY_CATEGORIES.contains(&cat)
+}
+
 /// A single project memory entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MemoryEntry {
     pub note: String,
     pub timestamp: String,
+    #[serde(default = "default_category")]
+    pub category: String,
 }
 
 /// The in-memory store of project memories.
@@ -63,12 +78,37 @@ pub fn save_memories_to(memory: &ProjectMemory, path: &Path) -> Result<(), Strin
     std::fs::write(path, json).map_err(|e| format!("Failed to write {}: {}", path.display(), e))
 }
 
-/// Add a new memory entry with the current timestamp.
+/// Return entries whose timestamp parses to an epoch ≥ `since_epoch`.
+/// Entries with unparseable timestamps are silently skipped.
+pub fn memories_since(memory: &ProjectMemory, since_epoch: i64) -> Vec<&MemoryEntry> {
+    memory
+        .entries
+        .iter()
+        .filter(|entry| {
+            parse_timestamp_to_epoch(entry.timestamp.trim())
+                .map(|ts| ts >= since_epoch)
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+/// Add a new memory entry with the current timestamp and default category ("general").
 pub fn add_memory(memory: &mut ProjectMemory, note: &str) {
+    add_memory_with_category(memory, note, "general");
+}
+
+/// Add a new memory entry with the current timestamp and a specific category.
+pub fn add_memory_with_category(memory: &mut ProjectMemory, note: &str, category: &str) {
     let timestamp = current_timestamp();
+    let cat = if is_valid_category(category) {
+        category.to_string()
+    } else {
+        default_category()
+    };
     memory.entries.push(MemoryEntry {
         note: note.to_string(),
         timestamp,
+        category: cat,
     });
 }
 
@@ -78,6 +118,51 @@ pub fn build_fix_memory_note(watch_cmd: &str, attempt: usize) -> String {
         "Watch fix: '{}' failed, fixed on attempt {}",
         watch_cmd, attempt
     )
+}
+
+/// Build a learning note from a watch-mode fix, capturing the *project fact* discovered.
+///
+/// Takes the watch command and the error hint (from `error_category_hint`) and
+/// constructs a note that captures the specific project knowledge learned from
+/// the fix. Returns `None` if the error hint is too generic to be worth
+/// remembering as a project fact (e.g. "other" category).
+pub fn build_learn_memory_note(
+    watch_cmd: &str,
+    error_messages: &[String],
+    error_category: &str,
+) -> Option<String> {
+    // Only learn from recognizable patterns — generic "other" errors are too vague
+    if error_category == "other" || error_messages.is_empty() {
+        return None;
+    }
+
+    // Extract the most informative error message (first one, trimmed)
+    let primary_msg = error_messages[0].trim();
+    if primary_msg.is_empty() {
+        return None;
+    }
+
+    // Truncate long error messages to keep notes concise
+    let msg_display: String = primary_msg.chars().take(120).collect();
+    let msg_display = if msg_display.len() < primary_msg.len() {
+        format!("{msg_display}…")
+    } else {
+        msg_display
+    };
+
+    // Map category to a useful prefix that categorizes the memory
+    let prefix = match error_category {
+        "import" => "[build] Missing import pattern",
+        "type" => "[build] Type issue",
+        "borrow" => "[build] Ownership pattern",
+        "lifetime" => "[build] Lifetime pattern",
+        "unused" => "[build] Lint: unused code",
+        "syntax" => "[build] Syntax issue",
+        "test_assertion" => "[bug] Test expectation",
+        _ => return None,
+    };
+
+    Some(format!("{prefix} in `{watch_cmd}`: {msg_display}",))
 }
 
 /// Automatically remember a note if it's not a near-duplicate of an existing memory.
@@ -320,6 +405,9 @@ pub fn search_memories<'a>(
 
 /// Format memories for display in the system prompt.
 /// Returns None if there are no memories.
+///
+/// When there are 3 or more memories, groups them by category with headers.
+/// Below 3, keeps the flat list for simplicity.
 pub fn format_memories_for_prompt(memory: &ProjectMemory) -> Option<String> {
     if memory.entries.is_empty() {
         return None;
@@ -327,10 +415,42 @@ pub fn format_memories_for_prompt(memory: &ProjectMemory) -> Option<String> {
     let mut lines = Vec::new();
     lines.push("## Project Memories".to_string());
     lines.push(String::new());
-    for entry in &memory.entries {
-        lines.push(format!("- {} ({})", entry.note, entry.timestamp));
+
+    if memory.entries.len() < 3 {
+        // Flat list for small counts
+        for entry in &memory.entries {
+            lines.push(format!("- {} ({})", entry.note, entry.timestamp));
+        }
+    } else {
+        // Group by category
+        let category_order = MEMORY_CATEGORIES;
+        for &cat in category_order {
+            let cat_entries: Vec<_> = memory
+                .entries
+                .iter()
+                .filter(|e| e.category == cat)
+                .collect();
+            if cat_entries.is_empty() {
+                continue;
+            }
+            lines.push(format!("### {}", capitalize_category(cat)));
+            for entry in &cat_entries {
+                lines.push(format!("- {} ({})", entry.note, entry.timestamp));
+            }
+            lines.push(String::new());
+        }
     }
+
     Some(lines.join("\n"))
+}
+
+/// Capitalize a category name for display (e.g., "build" → "Build").
+fn capitalize_category(cat: &str) -> String {
+    let mut chars = cat.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
 }
 
 /// Format an ISO-like timestamp as a human-readable relative time.
@@ -379,7 +499,7 @@ fn format_relative_time_from(iso_timestamp: &str, now_secs: i64) -> String {
 
 /// Parse `YYYY-MM-DD HH:MM` (local time) into epoch seconds.
 /// Returns `None` on any parse failure.
-fn parse_timestamp_to_epoch(s: &str) -> Option<i64> {
+pub(crate) fn parse_timestamp_to_epoch(s: &str) -> Option<i64> {
     // Expected format: "2026-03-15 08:32"
     if s.len() < 16 {
         return None;
@@ -460,7 +580,7 @@ fn simple_local_epoch(year: i32, month: u32, day: u32, hour: u32, min: u32) -> i
 }
 
 /// Current local time as epoch seconds (same basis as `current_timestamp`).
-fn now_epoch_secs() -> i64 {
+pub(crate) fn now_epoch_secs() -> i64 {
     // Parse the output of `date +%s` for a local-consistent epoch.
     // Falls back to UNIX_EPOCH-based SystemTime if shell fails.
     std::process::Command::new("date")
@@ -524,6 +644,7 @@ mod tests {
         let entry = MemoryEntry {
             note: "uses sqlx for database access".to_string(),
             timestamp: "2026-03-15 08:32".to_string(),
+            category: "general".to_string(),
         };
         let json = serde_json::to_string(&entry).unwrap();
         let parsed: MemoryEntry = serde_json::from_str(&json).unwrap();
@@ -537,10 +658,12 @@ mod tests {
                 MemoryEntry {
                     note: "tests require docker running".to_string(),
                     timestamp: "2026-03-15 08:00".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "use pnpm not npm".to_string(),
                     timestamp: "2026-03-15 09:00".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -573,14 +696,17 @@ mod tests {
                 MemoryEntry {
                     note: "note 0".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "note 1".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "note 2".to_string(),
                     timestamp: "t2".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -599,6 +725,7 @@ mod tests {
             entries: vec![MemoryEntry {
                 note: "only one".to_string(),
                 timestamp: "t0".to_string(),
+                category: "general".to_string(),
             }],
         };
 
@@ -622,10 +749,12 @@ mod tests {
                 MemoryEntry {
                     note: "first note".to_string(),
                     timestamp: "2026-03-15 08:00".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "second note".to_string(),
                     timestamp: "2026-03-15 09:00".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -673,6 +802,7 @@ mod tests {
             entries: vec![MemoryEntry {
                 note: "test".to_string(),
                 timestamp: "now".to_string(),
+                category: "general".to_string(),
             }],
         };
 
@@ -700,10 +830,12 @@ mod tests {
                 MemoryEntry {
                     note: "uses sqlx".to_string(),
                     timestamp: "2026-03-15 08:00".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "2026-03-15 09:00".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -766,14 +898,17 @@ mod tests {
                 MemoryEntry {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "always run cargo fmt".to_string(),
                     timestamp: "t2".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -791,10 +926,12 @@ mod tests {
                 MemoryEntry {
                     note: "Uses SQLx for Database".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker NEEDED".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -814,6 +951,7 @@ mod tests {
             entries: vec![MemoryEntry {
                 note: "uses sqlx".to_string(),
                 timestamp: "t0".to_string(),
+                category: "general".to_string(),
             }],
         };
 
@@ -828,10 +966,12 @@ mod tests {
                 MemoryEntry {
                     note: "first".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "second".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -847,14 +987,17 @@ mod tests {
                 MemoryEntry {
                     note: "cargo build first".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker needed".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "cargo fmt before commit".to_string(),
                     timestamp: "t2".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -1062,14 +1205,17 @@ mod tests {
                 MemoryEntry {
                     note: "this project has a complex database layer using sqlx".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "sqlx config in .env".to_string(),
                     timestamp: "t2".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -1091,14 +1237,17 @@ mod tests {
                 MemoryEntry {
                     note: "uses sqlx for database access".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "sqlx migrations in ./migrations".to_string(),
                     timestamp: "t2".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -1120,10 +1269,12 @@ mod tests {
                 MemoryEntry {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "t0".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "docker needed".to_string(),
                     timestamp: "t1".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -1141,10 +1292,12 @@ mod tests {
                 MemoryEntry {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "2020-01-01 00:00".to_string(),
+                    category: "general".to_string(),
                 },
                 MemoryEntry {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "2026-05-24 12:00".to_string(),
+                    category: "general".to_string(),
                 },
             ],
         };
@@ -1181,6 +1334,92 @@ mod tests {
             note,
             "Watch fix: 'cargo clippy && cargo test' failed, fixed on attempt 3"
         );
+    }
+
+    #[test]
+    fn test_build_learn_memory_note_import_error() {
+        let msgs = vec!["cannot find value `foo` in this scope".to_string()];
+        let note = build_learn_memory_note("cargo build", &msgs, "import");
+        assert!(note.is_some());
+        let note = note.unwrap();
+        assert!(note.starts_with("[build]"));
+        assert!(note.contains("cargo build"));
+        assert!(note.contains("cannot find value `foo`"));
+    }
+
+    #[test]
+    fn test_build_learn_memory_note_type_error() {
+        let msgs = vec!["expected `usize`, found `&str`".to_string()];
+        let note = build_learn_memory_note("cargo test", &msgs, "type");
+        assert!(note.is_some());
+        let note = note.unwrap();
+        assert!(note.starts_with("[build]"));
+        assert!(note.contains("Type issue"));
+    }
+
+    #[test]
+    fn test_build_learn_memory_note_test_assertion() {
+        let msgs = vec!["assertion `left == right` failed".to_string()];
+        let note = build_learn_memory_note("cargo test", &msgs, "test_assertion");
+        assert!(note.is_some());
+        let note = note.unwrap();
+        assert!(note.starts_with("[bug]"));
+        assert!(note.contains("Test expectation"));
+    }
+
+    #[test]
+    fn test_build_learn_memory_note_other_category_returns_none() {
+        let msgs = vec!["some unknown error".to_string()];
+        let note = build_learn_memory_note("cargo build", &msgs, "other");
+        assert!(note.is_none(), "other category should not produce a note");
+    }
+
+    #[test]
+    fn test_build_learn_memory_note_empty_messages_returns_none() {
+        let msgs: Vec<String> = vec![];
+        let note = build_learn_memory_note("cargo build", &msgs, "import");
+        assert!(note.is_none(), "empty messages should not produce a note");
+    }
+
+    #[test]
+    fn test_build_learn_memory_note_truncates_long_message() {
+        let long_msg = "x".repeat(200);
+        let msgs = vec![long_msg];
+        let note = build_learn_memory_note("cargo build", &msgs, "type");
+        assert!(note.is_some());
+        let note = note.unwrap();
+        // Message should be truncated to 120 chars + ellipsis
+        assert!(note.contains('…'));
+        assert!(note.len() < 200);
+    }
+
+    #[test]
+    fn test_build_learn_memory_note_all_categories() {
+        let msgs = vec!["test error".to_string()];
+        // All recognized categories should produce Some
+        for cat in &[
+            "import",
+            "type",
+            "borrow",
+            "lifetime",
+            "unused",
+            "syntax",
+            "test_assertion",
+        ] {
+            let note = build_learn_memory_note("cargo test", &msgs, cat);
+            assert!(
+                note.is_some(),
+                "category '{cat}' should produce a learning note"
+            );
+        }
+        // Unrecognized should produce None
+        for cat in &["other", "unknown", ""] {
+            let note = build_learn_memory_note("cargo test", &msgs, cat);
+            assert!(
+                note.is_none(),
+                "category '{cat}' should NOT produce a learning note"
+            );
+        }
     }
 
     #[test]
@@ -1232,6 +1471,142 @@ mod tests {
 
         let memory = load_memories_from(&path);
         assert_eq!(memory.entries.len(), 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_category_deserialization_missing_field() {
+        // Old-format JSON without category field should deserialize with "general"
+        let json = r#"{"entries":[{"note":"old note","timestamp":"2026-01-01 00:00"}]}"#;
+        let memory: ProjectMemory = serde_json::from_str(json).unwrap();
+        assert_eq!(memory.entries.len(), 1);
+        assert_eq!(memory.entries[0].category, "general");
+    }
+
+    #[test]
+    fn test_category_deserialization_with_field() {
+        let json = r#"{"entries":[{"note":"build note","timestamp":"2026-01-01 00:00","category":"build"}]}"#;
+        let memory: ProjectMemory = serde_json::from_str(json).unwrap();
+        assert_eq!(memory.entries[0].category, "build");
+    }
+
+    #[test]
+    fn test_add_memory_with_category() {
+        let mut memory = ProjectMemory::default();
+        add_memory_with_category(&mut memory, "use cargo fmt", "build");
+        assert_eq!(memory.entries.len(), 1);
+        assert_eq!(memory.entries[0].note, "use cargo fmt");
+        assert_eq!(memory.entries[0].category, "build");
+    }
+
+    #[test]
+    fn test_add_memory_with_invalid_category_falls_back() {
+        let mut memory = ProjectMemory::default();
+        add_memory_with_category(&mut memory, "some note", "invalid_cat");
+        assert_eq!(memory.entries[0].category, "general");
+    }
+
+    #[test]
+    fn test_add_memory_default_category() {
+        let mut memory = ProjectMemory::default();
+        add_memory(&mut memory, "plain note");
+        assert_eq!(memory.entries[0].category, "general");
+    }
+
+    #[test]
+    fn test_is_valid_category() {
+        assert!(is_valid_category("general"));
+        assert!(is_valid_category("build"));
+        assert!(is_valid_category("convention"));
+        assert!(is_valid_category("architecture"));
+        assert!(is_valid_category("bug"));
+        assert!(!is_valid_category("random"));
+        assert!(!is_valid_category(""));
+    }
+
+    #[test]
+    fn test_format_memories_grouped_by_category() {
+        let memory = ProjectMemory {
+            entries: vec![
+                MemoryEntry {
+                    note: "use cargo fmt".to_string(),
+                    timestamp: "2026-01-01 00:00".to_string(),
+                    category: "build".to_string(),
+                },
+                MemoryEntry {
+                    note: "snake_case only".to_string(),
+                    timestamp: "2026-01-02 00:00".to_string(),
+                    category: "convention".to_string(),
+                },
+                MemoryEntry {
+                    note: "tests need docker".to_string(),
+                    timestamp: "2026-01-03 00:00".to_string(),
+                    category: "build".to_string(),
+                },
+            ],
+        };
+        let prompt = format_memories_for_prompt(&memory).unwrap();
+        assert!(prompt.contains("### Build"), "should have Build header");
+        assert!(
+            prompt.contains("### Convention"),
+            "should have Convention header"
+        );
+        assert!(prompt.contains("use cargo fmt"));
+        assert!(prompt.contains("snake_case only"));
+        assert!(prompt.contains("tests need docker"));
+        // Build entries should be grouped together
+        let build_pos = prompt.find("### Build").unwrap();
+        let convention_pos = prompt.find("### Convention").unwrap();
+        let fmt_pos = prompt.find("use cargo fmt").unwrap();
+        let docker_pos = prompt.find("tests need docker").unwrap();
+        // Both build entries should appear after the Build header and before Convention
+        assert!(fmt_pos > build_pos);
+        assert!(docker_pos > build_pos);
+        assert!(fmt_pos < convention_pos);
+        assert!(docker_pos < convention_pos);
+    }
+
+    #[test]
+    fn test_format_memories_flat_when_few() {
+        let memory = ProjectMemory {
+            entries: vec![
+                MemoryEntry {
+                    note: "note one".to_string(),
+                    timestamp: "t0".to_string(),
+                    category: "build".to_string(),
+                },
+                MemoryEntry {
+                    note: "note two".to_string(),
+                    timestamp: "t1".to_string(),
+                    category: "convention".to_string(),
+                },
+            ],
+        };
+        let prompt = format_memories_for_prompt(&memory).unwrap();
+        // Should NOT have category headers when < 3 entries
+        assert!(!prompt.contains("### Build"));
+        assert!(!prompt.contains("### Convention"));
+        assert!(prompt.contains("note one"));
+        assert!(prompt.contains("note two"));
+    }
+
+    #[test]
+    fn test_category_roundtrip_through_file() {
+        let path = temp_memory_path("category_roundtrip");
+        cleanup(&path);
+
+        let mut memory = ProjectMemory::default();
+        add_memory_with_category(&mut memory, "lint command", "build");
+        add_memory_with_category(&mut memory, "naming rule", "convention");
+        add_memory(&mut memory, "plain note");
+
+        save_memories_to(&memory, &path).unwrap();
+        let loaded = load_memories_from(&path);
+
+        assert_eq!(loaded.entries[0].category, "build");
+        assert_eq!(loaded.entries[1].category, "convention");
+        assert_eq!(loaded.entries[2].category, "general");
 
         cleanup(&path);
     }

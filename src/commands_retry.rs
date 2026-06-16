@@ -10,6 +10,7 @@
 use crate::commands_session::auto_compact_if_needed;
 use crate::format::*;
 use crate::git::{colorize_diff, run_git};
+use crate::memory::{load_memories, memories_since, now_epoch_secs};
 use crate::prompt::run_prompt;
 use crate::prompt_retry::build_retry_prompt;
 use crate::session::{format_changes, ChangeKind, FileChange, SessionChanges};
@@ -147,6 +148,33 @@ pub async fn handle_retry(
     }
 }
 
+/// Collect memory notes that were added during this session.
+///
+/// Loads `.yoyo/memory.json` and returns the notes of entries whose
+/// timestamp falls at or after `session_start_epoch` (local-time epoch
+/// seconds, same basis as `memory::now_epoch_secs`).
+pub fn session_learnings(session_start_epoch: i64) -> Vec<String> {
+    let memory = load_memories();
+    session_learnings_from(&memory, session_start_epoch)
+}
+
+/// Testable inner: collect learning notes from a pre-loaded `ProjectMemory`.
+pub(crate) fn session_learnings_from(
+    memory: &crate::memory::ProjectMemory,
+    session_start_epoch: i64,
+) -> Vec<String> {
+    memories_since(memory, session_start_epoch)
+        .into_iter()
+        .map(|entry| {
+            if entry.category != "general" {
+                format!("[{}] {}", entry.category, entry.note)
+            } else {
+                entry.note.clone()
+            }
+        })
+        .collect()
+}
+
 /// Returns a compact 2–3 line session summary for display on REPL exit, or
 /// `None` if neither files were modified nor tokens were used (i.e., no real
 /// interaction happened).
@@ -162,6 +190,20 @@ pub fn format_exit_summary(
     session_total: &Usage,
     model: &str,
     session_start: Instant,
+) -> Option<String> {
+    let elapsed = session_start.elapsed();
+    let session_start_epoch = now_epoch_secs() - elapsed.as_secs() as i64;
+    let learnings = session_learnings(session_start_epoch);
+    format_exit_summary_inner(changes, session_total, model, session_start, &learnings)
+}
+
+/// Testable inner: builds the exit summary with pre-computed learnings.
+pub(crate) fn format_exit_summary_inner(
+    changes: &SessionChanges,
+    session_total: &Usage,
+    model: &str,
+    session_start: Instant,
+    learnings: &[String],
 ) -> Option<String> {
     let snapshot = changes.snapshot();
     let has_files = !snapshot.is_empty();
@@ -212,6 +254,14 @@ pub fn format_exit_summary(
                 lines.push(String::new()); // blank separator
                 lines.push(truncated);
             }
+        }
+    }
+
+    // Session learnings: show memories added during this session
+    if !learnings.is_empty() {
+        lines.push(format!("{DIM}  📝 Learned this session:{RESET}"));
+        for note in learnings {
+            lines.push(format!("{DIM}    • {note}{RESET}"));
         }
     }
 

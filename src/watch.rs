@@ -9,7 +9,7 @@ use crate::commands_file::extract_file_paths_from_output;
 use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
 use crate::commands_project::detect_project_type;
 use crate::format::*;
-use crate::memory::{auto_remember, build_fix_memory_note};
+use crate::memory::{auto_remember, build_fix_memory_note, build_learn_memory_note};
 use crate::prompt::run_prompt_auto_retry;
 use crate::prompt_budget::session_budget_exhausted;
 use crate::session::SessionChanges;
@@ -1192,6 +1192,71 @@ pub fn run_watch_command(cmd: &str) -> (bool, String) {
     (status, combined)
 }
 
+/// Try to extract a project learning from a successful watch-mode fix.
+///
+/// Parses structured errors from the failed output, identifies the dominant
+/// error category, and (if recognizable) builds a learning note via
+/// [`build_learn_memory_note`]. Conservative: only learns from clear patterns,
+/// not every fix.
+///
+/// Called after a successful fix attempt — `failed_output` is the error output
+/// that the agent just fixed.
+pub fn maybe_learn_from_fix(watch_cmd: &str, failed_output: &str) {
+    // Detect language and parse structured errors
+    let lang = detect_watch_language(watch_cmd);
+    let errors: Vec<CompilerError> = match lang {
+        WatchLanguage::Rust => parse_rust_errors(failed_output),
+        WatchLanguage::TypeScript => parse_typescript_errors(failed_output),
+        WatchLanguage::Python => parse_python_errors(failed_output),
+        WatchLanguage::Unknown => {
+            let rust_errs = parse_rust_errors(failed_output);
+            if !rust_errs.is_empty() {
+                rust_errs
+            } else {
+                let ts_errs = parse_typescript_errors(failed_output);
+                if !ts_errs.is_empty() {
+                    ts_errs
+                } else {
+                    parse_python_errors(failed_output)
+                }
+            }
+        }
+    };
+
+    if errors.is_empty() {
+        return;
+    }
+
+    // Find the dominant error category (most frequent non-Other)
+    let mut category_counts: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for e in &errors {
+        *category_counts.entry(e.category.label()).or_insert(0) += 1;
+    }
+    // Pick the most frequent category, preferring non-"other"
+    let dominant = category_counts
+        .iter()
+        .filter(|(k, _)| **k != "other")
+        .max_by_key(|(_, v)| **v)
+        .map(|(k, _)| *k);
+
+    let dominant = match dominant {
+        Some(cat) => cat,
+        None => return, // all errors are "other" — too generic to learn from
+    };
+
+    // Collect error messages for the dominant category
+    let messages: Vec<String> = errors
+        .iter()
+        .filter(|e| e.category.label() == dominant)
+        .map(|e| e.message.clone())
+        .collect();
+
+    if let Some(note) = build_learn_memory_note(watch_cmd, &messages, dominant) {
+        auto_remember(&note);
+    }
+}
+
 /// Run the watch command(s) after a prompt completes.
 ///
 /// If watch commands are active, iterates through each phase in order.
@@ -1270,6 +1335,8 @@ pub async fn run_watch_after_prompt(
                 );
                 let note = build_fix_memory_note(watch_cmd, attempt);
                 auto_remember(&note);
+                // Try to learn a project fact from the error that was fixed
+                maybe_learn_from_fix(watch_cmd, &current_output);
                 phase_passed = true;
                 break;
             } else if attempt == MAX_WATCH_FIX_ATTEMPTS {
@@ -1473,6 +1540,91 @@ mod tests {
         clear_watch_command();
         let _guard = WatchStateGuard;
         f();
+    }
+
+    #[test]
+    fn test_maybe_learn_from_fix_import_error() {
+        // Simulate a Rust import error output
+        let output = "error[E0433]: failed to resolve: use of undeclared crate or module `serde`\n\
+                       --> src/main.rs:1:5\n\
+                       |\n\
+                       1 | use serde::Deserialize;\n\
+                       |     ^^^^^ use of undeclared crate or module `serde`\n";
+        let path = std::env::temp_dir().join("yoyo_test_learn_import");
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+        let mem_path = path.join("memory.json");
+        let _ = std::fs::remove_file(&mem_path);
+
+        // Verify errors are parsed
+        let errors = parse_rust_errors(output);
+        assert!(!errors.is_empty(), "should parse at least one error");
+        assert_eq!(
+            errors[0].category,
+            ErrorCategory::Import,
+            "should classify as import error"
+        );
+
+        // The function runs auto_remember internally (to the global path),
+        // so we test the building blocks instead:
+        let messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
+        let note = crate::memory::build_learn_memory_note("cargo build", &messages, "import");
+        assert!(
+            note.is_some(),
+            "import errors should produce a learning note"
+        );
+        let note = note.unwrap();
+        assert!(
+            note.starts_with("[build]"),
+            "note should be categorized: {note}"
+        );
+        assert!(
+            note.contains("cargo build"),
+            "note should mention the command: {note}"
+        );
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn test_maybe_learn_from_fix_no_pattern() {
+        // Output with no recognizable structured errors → should not learn
+        let output = "some random output that is not an error";
+        let errors = parse_rust_errors(output);
+        assert!(
+            errors.is_empty(),
+            "random output should not parse as errors"
+        );
+        // With no errors, maybe_learn_from_fix returns without calling auto_remember
+        // (we just verify the logic path — the function is a no-op)
+        maybe_learn_from_fix("cargo test", output);
+    }
+
+    #[test]
+    fn test_maybe_learn_from_fix_other_category_skipped() {
+        // Errors that are all "other" category should not produce a learning
+        let messages = vec!["some unknown error".to_string()];
+        let note = crate::memory::build_learn_memory_note("cargo build", &messages, "other");
+        assert!(
+            note.is_none(),
+            "other-category errors should not produce learning notes"
+        );
+    }
+
+    #[test]
+    fn test_maybe_learn_from_fix_type_error() {
+        let output = "error[E0308]: mismatched types\n\
+                       --> src/lib.rs:10:5\n\
+                       |\n\
+                       10 |     foo()\n\
+                       |     ^^^^^ expected `usize`, found `&str`\n";
+        let errors = parse_rust_errors(output);
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].category, ErrorCategory::Type);
+
+        let messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
+        let note = crate::memory::build_learn_memory_note("cargo test", &messages, "type");
+        assert!(note.is_some());
+        assert!(note.unwrap().contains("Type issue"));
     }
 
     #[test]

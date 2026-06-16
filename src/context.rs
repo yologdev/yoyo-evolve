@@ -366,13 +366,20 @@ mod tests {
 
     #[test]
     fn test_load_project_context_includes_recently_changed() {
-        // In a git repo with commits, context should include recently changed files
+        // In a git repo with commits, context should include recently changed files.
+        // We call load_project_context() once and check the result — avoid a separate
+        // get_recently_changed_files() guard to prevent TOCTOU races where git state
+        // changes between the two calls (seen as flaky failure in CI).
         let result = load_project_context();
         if let Some(context) = &result {
-            if get_recently_changed_files(MAX_RECENT_FILES).is_some() {
+            // In this repo we always have recent commits, so the section should be present.
+            // If the git command failed internally (rare in CI), the section is simply absent
+            // and we skip the assertion rather than flaking.
+            if context.contains("## Git Status") {
+                // Git is working — recently changed files should also be present
                 assert!(
                     context.contains("## Recently Changed Files"),
-                    "Context should contain Recently Changed Files section"
+                    "Context should contain Recently Changed Files section when git is available"
                 );
             }
         }
