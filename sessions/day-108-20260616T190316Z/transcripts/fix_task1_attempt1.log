@@ -1,0 +1,217 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement I can make. Let me explore the codebase systematically.
+  ▶ todo add 'Read source code and identify most impactful impro…' ✓ (0ms)
+  ▶ todo add 'Implement the improvement' ✓ (0ms)
+  ▶ todo add 'Run fmt, clippy, build, test' ✓ (0ms)
+  ▶ todo add 'Commit the changes' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  5 tools completed in 11.7s (5 ✓)
+
+Let me look at the current state and explore files for improvement opportunities:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs | sort -rn | head… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (33.4s)
+  4 tools completed in 1m 1s (4 ✓)
+
+Good - all 88 tests pass. Now let me look at key areas for improvement. Let me focus on the safety module and the prompt module since they're critical paths:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the following Rust source files and identify concrete, …' ✓ (1m 26s)
+
+Excellent analysis. Let me now focus on the most impactful improvements. Let me verify the key findings:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "timestamp: 0" src/promp… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "now_ms\|timestamp:" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_result_preview" sr… ✓ (3ms)
+  ▶ read src/prompt.rs:345..370 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "exit_status\|exit_code\… ✓ (4ms)
+  ▶ read src/tools.rs:335..365 ✓ (1ms)
+  6 tools completed in 15.1s (6 ✓)
+
+Now let me check the smart_edit edit_distance function:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/smart_edit.rs:1..56 ✓ (1ms)
+
+Now let me check the safety.rs issue with single-quoted PATH:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "check_env_destruction\|… ✓ (4ms)
+  ▶ read src/safety.rs:690..745 ✓ (1ms)
+  2 tools completed in 8.3s (2 ✓)
+
+Good - I can see the issues clearly now. Let me also check the `watch.rs` expect call:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1120..1165 ✓ (1ms)
+
+Now I have a clear picture. Let me plan my approach. I'll focus on a cohesive set of improvements that are high-impact and correctness-related:
+
+1. **`smart_edit.rs`: Optimize edit_distance from O(n*m) memory to O(min(n,m))** - This is the most impactful single improvement. The fuzzy edit matcher is on the hot path for every failed edit, and with 100KB files it can allocate megabytes. The two-row optimization is a classic well-known improvement.
+
+2. **`prompt.rs: Fix duplicate tool_result_preview` call** - Wasteful duplicate computation.
+
+3. **prompt.rs: Fix timestamp: 0 to use now_ms()** - Correctness bug.
+
+4. **`tools.rs`: Show signal information when process is killed** - Better UX for the agent.
+
+5. **safety.rs: Detect export PATH='' (single-quoted empty)** - Correctness gap in safety analysis.
+
+6. **watch.rs: Replace expect() with graceful error handling** - Prevent potential panic.
+
+Let me implement all of these:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 4.3s (2 ✓)
+
+### 1. Optimize edit_distance in smart_edit.rs — O(n*m) memory → O(min(n,m))
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (22 → 29 lines)
+    /// Edit distance between two strings (Levenshtein). Used for fuzzy matching
+    /// when exact trimmed matches fail.
+  + ///
+  + /// Uses only O(min(n,m)) memory instead of the naive O(n*m) 2-D table —
+  + /// we only keep two rows (previous and current) and swap them each iteration.
+  + /// For large edit blocks this avoids multi-megabyte allocations.
+    fn edit_distance(a: &str, b: &str) -> usize {
+        let a: Vec<char> = a.chars().collect();
+        let b: Vec<char> = b.chars().collect();
+  -     let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+  -     for (i, row) in dp.iter_mut().enumerate() {
+  -         row[0] = i;
+  -     }
+  -     for (j, val) in dp[0].iter_mut().enumerate() {
+  -         *val = j;
+  -     }
+  + 
+  +     // Ensure `b` is the shorter side so the rows are as small as possible.
+  +     let (a, b) = if a.len() < b.len() { (b, a) } else { (a, b) };
+  + 
+  ... (21 more lines)
+ ✓ (1m 6s)
+    /// Edit distance between two strings (Levenshtein). Used for fuzzy matching
+    /// when exact trimmed matches fail.
+  + ///
+  + /// Uses only O(min(n,m)) memory instead of the naive O(n*m) 2-D table —
+  + /// we only keep two rows (previous and current) and swap them each iteration.
+  + /// For large edit blocks this avoids multi-megabyte allocations.
+    fn edit_distance(a: &str, b: &str) -> usize {
+        let a: Vec<char> = a.chars().collect();
+  ... (13 more lines)
+
+### 2. Fix duplicate tool_result_preview call in prompt.rs
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (15 → 14 lines)
+                    // Indent error output under the tool header
+                    println!("{}", indent_tool_output(&preview));
+                }
+  -             // Track the last tool error for /retry context
+  -             let error_text = tool_result_preview(&result, 200);
+  -             if !error_text.is_empty() {
+  -                 self.last_tool_error = Some(error_text);
+  +             // Track the last tool error for /retry context (reuse preview)
+  +             if !preview.is_empty() {
+  +                 self.last_tool_error = Some(preview);
+                } else {
+                    self.last_tool_error = Some("tool execution failed".to_string());
+                }
+ ✓ (1m 6s)
+                    // Indent error output under the tool header
+                    println!("{}", indent_tool_output(&preview));
+                }
+  -             // Track the last tool error for /retry context
+  -             let error_text = tool_result_preview(&result, 200);
+  -             if !error_text.is_empty() {
+  -                 self.last_tool_error = Some(error_text);
+  +             // Track the last tool error for /retry context (reuse preview)
+  ... (5 more lines)
+
+### 3. Fix `timestamp: 0 in prompt.rs`
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt.rs:1225..1240 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use yoagent.*now_ms\|fn… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "now_ms" src/prompt.rs |… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn now_ms\|use.*now_ms"… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn now_ms\|now_ms" src… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use " src/prompt.rs | … ✓ (3ms)
+  6 tools completed in 22.9s (6 ✓)
+
+Good, now_ms is available via yoagent::*. Let me fix it:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt.rs (4 → 4 lines)
+        let messages = vec![AgentMessage::Llm(Message::User {
+            content,
+  -         timestamp: 0,
+  +         timestamp: now_ms(),
+        })];
+ ✓ (1m 6s)
+        let messages = vec![AgentMessage::Llm(Message::User {
+            content,
+  -         timestamp: 0,
+  +         timestamp: now_ms(),
+        })];
+
+### 4. Show signal information in tools.rs when process is killed by signal
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:357..377 ✓ (1ms)
+  ▶ edit src/tools.rs (7 → 37 lines)
+  -         let exit_code = exit_status.code().unwrap_or(-1);
+  +         let exit_code = exit_status.code().unwrap_or_else(|| {
+  +             // On Unix, if code() is None the process was killed by a signal.
+  +             #[cfg(unix)]
+  +             {
+  +                 use std::os::unix::process::ExitStatusExt;
+  +                 if let Some(sig) = exit_status.signal() {
+  +                     return -(sig as i32); // e.g. SIGSEGV=11 → -11
+  +                 }
+  +             }
+  +             -1
+  +         });
+            let output = accumulated.lock().await.clone();
+    
+            // One final update with the complete output
+            emit_update(&ctx, &output);
+    
+  -         let formatted = format!("Exit code: {exit_code}\n{output}");
+  +         // Include signal name when the process was killed by a signal
+  +         let exit_line = if exit_code < 0 && exit_code != -1 {
+  ... (19 more lines)
+ ✓ (15.0s)
+  -         let exit_code = exit_status.code().unwrap_or(-1);
+  +         let exit_code = exit_status.code().unwrap_or_else(|| {
+  +             // On Unix, if code() is None the process was killed by a signal.
+  +             #[cfg(unix)]
+  +             {
+  +                 use std::os::unix::process::ExitStatusExt;
+  +                 if let Some(sig) = exit_status.signal() {
+  +                     return -(sig as i32); // e.g. SIGSEGV=11 → -11
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn signal" src/tools.rs… ✓ (3ms)
+  3 tools completed in 27.2s (3 ✓)
+
+The signal() on Unix already returns i32. Let me check:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn signal" ~/.cargo/re… ✓ (4ms)
+
+The signal() returns Option<i32> on Unix. So sig is already i32.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (1 → 1 lines)
+  -                     return -(sig as i32); // e.g. SIGSEGV=11 → -11
+  +                     return -sig; // e.g. SIGSEGV=11 → -11
+ ✓ (1m 6s)
+  -                     return -(sig as i32); // e.g. SIGSEGV=11 → -11
+  +                     return -sig; // e.g. SIGSEGV=11 → -11
+
+Now I also need to fix the sig type downstream since signal returns i32:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (4 → 4 lines)
+            // Include signal name when the process was killed by a signal
+            let exit_line = if exit_code < 0 && exit_code != -1 {
+  -             let sig = (-exit_code) as u32;
+  +             let sig = -exit_code;
+                let sig_name = match sig {

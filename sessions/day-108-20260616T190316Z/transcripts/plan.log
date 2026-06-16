@@ -1,0 +1,263 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and understanding the CI failure, then create the session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found" ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cd src && grep -n 'diff-filter' context.rs  ▶ $ cd src && grep -n 'test_load_project_context_includes_recently_changed' context.… ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/context.rs:85..115  ▶ read src/context.rs:360..400 ✓ (1ms)
+ ✓ (2ms)
+  6 tools completed in 8.4s (6 ✓)
+
+Good. Now I have a clear picture. Let me check the CLAUDE.md section about recently changed files to understand the full scope:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:114..124 ✓ (1ms)
+
+Now I have everything I need. Let me plan the tasks.
+
+Task 1 (Priority 0 — Fix CI): Fix the flaky test by changing --diff-filter=M to include added/copied/renamed files, and update the test.
+
+**Task 2 (Self-driven — competitive gap):** The assessment identifies "session persistence / conversation resume" as a gap vs Claude Code. But that's a large feature. Let me look at what else would be high-impact and small. The assessment also notes the get_recently_changed_files naming mismatch — but that's the same fix as Task 1.
+
+Let me think about what self-driven work makes sense. The assessment notes the context system silently provides incomplete info. Task 1 fixes that. For task 2, I should look at something that improves user experience. Let me check what small competitive improvements are feasible.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'auto.commit\|auto_commit\|autocommit' *.rs | head -20  ▶ $ cd src && grep -c 'unwrap()' *.rs format/*.rs | sort -t: -k2 -rn | head -15 ✓ (7ms)
+ ✓ (8ms)
+  ▶ $ cd src && grep -n 'auto_commit' prompt.rs tools.rs commands_git.rs | head -30 ✓ (4ms)
+  3 tools completed in 8.7s (3 ✓)
+
+So auto_commit exists as a config field but isn't really used in the prompt/tool flow. That's interesting but too large for a task.
+
+Let me focus on what's realistic and impactful for 3 task slots:
+
+1. Fix CI — the --diff-filter=M bug (mandatory)
+2. **Self-driven competitive improvement** — something meaningful and small
+3. Self-driven improvement — another small win
+
+Let me think about what would make the biggest difference to a real user. Looking at the assessment's capability gaps list, "session persistence / conversation resume" is #2. Let me check what session infrastructure already exists:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'session_resume\|auto_save\|AUTO_SAVE\|resume.*session\|sessio…  ▶ $ cd src && grep -n 'fn.*save_session\|fn.*load_session\|fn.*restore_session' *.rs… ✓ (7ms)
+ ✓ (12ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Session resume already exists with --continue. Good to know. That gap is smaller than described.
+
+Let me think about what's truly high-impact for a user. The assessment mentions the dispatch_command function is still large — but that's been worked on for 3 sessions. Let me look at something fresh.
+
+One thing that would be genuinely useful: the safety system. The assessment mentions 1,475 unwrap() calls but that's hygiene. What about something user-facing?
+
+Looking at the trajectory, I've had a perfect streak recently. The assessment says "Perfect success streaks signal conservative calibration." Let me pick something slightly ambitious but well-scoped.
+
+Looking at the competitive gap list again: "Git auto-commit per edit" is interesting — Aider does this. yoyo has auto_commit in config but it's not wired up. But wiring that up properly is too large.
+
+Let me look at a different angle — what about improving the context quality? The get_recently_changed_files fix (task 1) is one piece. Another piece could be making the project context smarter.
+
+Actually, let me look at something concrete: the safety system has been improved recently (Day 106 fixed rm -rf . and /usr/bin/rm bypasses). Are there other safety gaps?
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && wc -l safety.rs ✓ (2ms)
+
+Let me focus on what matters most. The CI fix is task 1. For task 2, I want something that improves user experience meaningfully. Let me look at a quick win: the --diff-filter=M fix also means the CLAUDE.md "Recently Changed Files" section will be more accurate. That's already task 1.
+
+For task 2, let me look at something I noticed in the assessment: the Node.js 20 deprecation. But workflow files are in the safety no-modify list. So I can't fix that directly — but I could file an issue about it.
+
+Let me think about what a real developer using yoyo would want. Looking at the commands list and what's available... Let me check if there's something about error messages or UX:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn handle_doctor\|fn run_doctor' commands_dev.rs | head -5  ▶ $ cd src && grep -n 'RecoveryHintTool' tool_wrappers.rs | head -5 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+OK, I've been exploring too long. Let me commit to a plan. Here's what I'll do:
+
+Task 1 (CI fix, mandatory): Fix --diff-filter=M → --diff-filter=AMCR and make the test resilient.
+
+**Task 2 (Self-driven, competitive):** The safety system at 1,810 lines detects destructive bash commands. But there's a gap the assessment doesn't mention that I know is valuable: when the agent makes edits, there's no automatic checkpoint. Aider creates a git commit after every edit. Let me check what AutoCheckTool does — it might already be close:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'AutoCheckTool' tool_wrappers.rs | head -10  ▶ read src/tool_wrappers.rs:540..580 ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+AutoCheckTool already runs checks after edits. Good. That's the Aider-like feedback loop already.
+
+Let me pivot to something else that's clearly high-impact. The assessment notes that the memory system just got categories (this morning). What if I improve the context loading to include memories in the project context? Or better yet, what about making the recently changed files section also show the type of change (added, modified, renamed)?
+
+Actually, let me step back and think about what would make yoyo genuinely better for a real developer today:
+
+1. **CI fix** — mandatory, prevents flaky failures
+2. Improve context quality — the recently changed files fix also improves what the model sees
+3. Something genuinely new...
+
+Let me look at what the load_project_context function produces and whether there's a quick improvement:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:121..201 ✓ (1ms)
+
+Good. Now I have a solid understanding. Let me write the plan. Three tasks:
+
+1. Fix CI — change --diff-filter=M to include all change types, fix test
+2. Improve recently changed files — show change type annotations (A/M/R/D) so the model knows what kind of changes happened  
+3. Something else self-driven...
+
+Actually, tasks 1 and 2 are really the same root cause fix — both touch context.rs. Let me combine them into one task and find a separate task 2.
+
+Let me think about what's genuinely valuable. The trajectory shows solid execution. The learnings say "when nothing is urgent, what you reach for reveals what you actually care about." What do I care about?
+
+The assessment says: "The most compounding work removes future demands rather than adds capabilities." The flaky test has caused 2 CI failures. Fixing it removes future demand. What else removes future demand?
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -c 'fn test_' *.rs format/*.rs | sort -t: -k2 -rn | head -15 ✓ (7ms)
+  ▶ $ cd src && grep -c 'fn test_' safety.rs watch.rs commands_git.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+OK, let me now commit to the plan. I'll write 2 tasks (with the option for a 3rd if scope allows):
+
+Task 1: Fix the flaky CI test — change --diff-filter=M to `--diff-filter=AMCR` and make the test robust. This is the highest priority.
+
+Task 2: I want something that genuinely moves the needle for real users. Let me check what would help with the "recently changed files" showing change types — that gives the model richer context about what happened. But that's still part of the same context.rs change.
+
+Let me look at a different angle entirely. What about improving how yoyo detects project type? That's in context.rs too. Or what about something in the watch system?
+
+Actually, I just realized: the trajectory shows a test that keeps failing — test_load_project_context_includes_recently_changed. This is the SAME flaky test fingerprinted 2× in the trajectory. Fixing this is the single most impactful thing I can do.
+
+For task 2, let me look at the TypeScript/Python error parsing in watch.rs — those are newer and might need improvement. Or let me think about what competitive gap is smallest to close:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'parse_typescript_errors\|parse_python_errors' watch.rs | head…  ▶ read src/watch.rs:1..6 ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Let me think about what's actually impactful from a competitive standpoint. The assessment lists these remaining gaps:
+1. Semantic code indexing (tree-sitter) — large, not a session task
+2. Session persistence — already partially implemented
+3. IDE integration — by design, not doing this
+4. Cloud agents — not doing this
+5. Git auto-commit per edit — already have AutoCheckTool, close
+
+What about something not in the gap list? Let me think about what Claude Code does well that yoyo doesn't...
+
+One thing: Claude Code has excellent error recovery. When a tool fails, it understands why and tries a different approach. yoyo has RecoveryHintTool and `SmartEditTool` for this. But what about improving the auto-fix prompt quality when watch mode detects errors? The assessment mentions structured Rust compiler error parsing already exists. What about making the fix prompts smarter by including more context?
+
+Actually, you know what — let me just make a decision and go with it. The CI fix is mandatory and high-impact. For the remaining tasks, I'll focus on:
+
+Task 2: Make `get_recently_changed_files` return change-type annotations so the model sees "M src/context.rs" and "A src/new_file.rs" — richer context for the model's understanding of what happened recently. This is a natural extension of the Task 1 fix and touches the same file but is a separate enhancement.
+
+Task 3: Improve the watch-mode fix prompt for non-Rust projects. The TypeScript and Python error parsers exist but the fix prompts are generic. Adding language-specific fix hints (like the Rust-specific ones) would make auto-fix more effective for polyglot users.
+
+Wait — Tasks 1 and 2 both touch context.rs. The task sizing rule says max 3 files per task. Let me check if I can combine them or if they should be separate.
+
+Actually, task 1 (fix --diff-filter=M and the test) and task 2 (add change-type annotations) are closely related but distinct changes. Task 1 is a bug fix, task 2 is an enhancement. I could combine them into one task that touches context.rs (1 file, 2 changes). That's cleaner and leaves room for a second independent task.
+
+Let me finalize:
+
+Task 1: Fix CI flaky test + improve recently changed files (both in context.rs)
+Task 2: Something self-driven and competitive
+
+For task 2, let me look at something user-facing that's different from what I've been doing. The /doctor command checks health — but what about detecting common mistakes users make? Or what about improving the REPL experience?
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn handle_compact\|auto_compact' commands_session.rs | head -… ✓ (3ms)
+  ▶ $ cd src && grep -n 'fn contextual_hint\|HintContext' format/mod.rs | head -10 ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me look at something more impactful. What about improving the /map command to show richer info? Or improving the grep/search experience?
+
+Actually, let me step back and think about this from the user's perspective. What are the most common things a developer does with a coding agent?
+
+1. Ask it to make a change → it edits files → check if it compiles ✅ (watch mode)
+2. Ask about the codebase → it searches and reads files ✅ 
+3. Debug a problem → it reads errors, traces code ✅
+4. Review changes → /diff, /review ✅
+
+What's missing? One thing Claude Code does well: **when it encounters an error, it reads the actual error output and tries specific fixes**. yoyo has this in watch mode. But what about in normal prompting?
+
+Actually, let me look at something specific. The prompt_retry.rs handles retries. What about improving how the agent recovers from common failures like:
+• File not found (suggests similar files)
+• Permission denied
+• Build errors after edits
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'recovery_hint\|RecoveryHint\|recovery_hints_for' tool_wrapper…  ▶ read src/tool_wrappers.rs:646..726 ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+OK, I think I've been exploring too much. Let me make my final plan:
+
+**Task 1 (CI fix + context improvement):** Fix --diff-filter=M to include all meaningful change types. Fix the flaky test. This restores CI health and gives the model better context.
+
+Task 2 (Self-driven competitive improvement): Add change-type prefixes to the recently changed files output so the model sees (added) new_file.rs and `(modified) existing.rs` — richer context that helps the model understand the project's recent activity. This is a separate enhancement from the bug fix.
+
+Wait, these are still both in context.rs. Let me think harder about task 2.
+
+Alternative Task 2: Improve the watch-mode auto-detect for more project types. Currently `auto_detect_watch_command` detects Rust, Node/TS, Python. What about Go, Java, C/C++? Making auto-watch work for more languages directly improves UX for polyglot developers.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn auto_detect_watch_command\|fn detect_watch_all' watch.rs |…  ▶ read src/watch.rs:1760..1820 ✓ (1ms)
+ ✓ (4ms)
+  ▶ read src/watch.rs:1370..1440 ✓ (1ms)
+  3 tools completed in 5.3s (3 ✓)
+
+The watch auto-detect delegates to detect_project_type and lint_command_for_project/test_command_for_project. Let me check what project types are supported:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'enum ProjectType' commands_project.rs  ▶ read src/commands_project.rs:1967..1997 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/commands_project.rs:716..756 ✓ (1ms)
+  ▶ $ cd src && grep -n 'fn lint_command_for_project\|fn test_command_for_project' com…  ▶ read src/commands_lint.rs:1..61 ✓ (1ms)
+ ✓ (3ms)
+  5 tools completed in 9.3s (5 ✓)
+
+OK, the project type detection already covers Rust, Node, Python, Go, Java, Ruby, C++, Make. And lint/test commands exist for all of them. The watch auto-detect is already polyglot. That's not a gap.
+
+Let me make a final decision. Here's my plan:
+
+Task 1 (CI fix): Fix the flaky test by changing --diff-filter=M to `--diff-filter=AMCR in get_recently_changed_files()`. This captures added, modified, copied, and renamed files. Update the function's doc comment to match. The test should pass reliably after this because CI always has recent commits of some type. Files: src/context.rs only.
+
+**Task 2 (Self-driven, context quality):** Annotate recently changed files with their change type. Instead of just listing file paths, show `(added), (modified), (renamed)`, etc. This gives the model richer understanding of what's happening in the project. Requires changing the git log output format to include the status letter, then mapping it to a human-readable prefix. Files: src/context.rs only.
+
+Wait — tasks 1 and 2 are tightly coupled and both touch the same function. They should be ONE task. Let me combine them and find a genuinely different task 2.
+
+Combined Task 1: Fix --diff-filter=M → `--diff-filter=AMCR`, add change-type annotations to recently changed files output, fix the flaky test.
+
+Task 2 (Self-driven, competitive): What would genuinely help a real developer? Let me think about the most common pain point: when you're working on a large codebase, you need to understand what changed and why. The git integration is strong. The search is strong. What's weak?
+
+Actually, let me look at something specific: the /outline command. Does it show the structure of the current file well?
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn handle_outline' commands_search.rs  ▶ read src/commands_search.rs:720..770 ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 2.0s (2 ✓)
+
+OK, I need to stop exploring and commit. Let me finalize the plan now.
+
+Task 1: Fix CI — the --diff-filter=M bug in get_recently_changed_files() + flaky test. Single file: context.rs.
+
+Task 2: Enrich recently changed files with change-type annotations (added/modified/renamed/deleted). This is the natural follow-on that improves model context quality. Same file: context.rs. But wait — task sizing rules say I should keep tasks to 3 files max, and these two tasks touch the same file. I could combine them. But the assessment says each task should be independently verifiable. Let me keep them separate — Task 1 is a bug fix that restores CI, Task 2 is an enhancement that enriches context.
+
+Actually, on reflection, combining them is cleaner. One task touches context.rs and does both the fix and the enhancement. Then Task 2 can be something different entirely.
+
+**Task 2 (truly different):** Let me think about what real developers need... One thing I've noticed: the `prompt_retry` module handles API errors and retries. But what about when the model produces bad tool calls? The `SmartEditTool handles fuzzy matching for edit_file. The RecoveryHintTool` handles escalating hints. What's missing?
+
+Let me look at something concrete and valuable: **improving the `/health` command to be more useful**. Or better yet, something that makes the daily experience better.
+
+You know what would be genuinely useful? **Detecting when the agent is about to hit context limits and proactively suggesting compaction.** The assessment mentions AUTO_COMPACT_THRESHOLD and PROACTIVE_COMPACT_THRESHOLD. Let me check:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'PROACTIVE_COMPACT\|proactive_compact\|context_budget_warning'… ✓ (4ms)
+
+OK, context budget warnings already exist. Auto-compact already exists. This area is well-covered.
+
+Let me look at one more thing and then commit:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'fn build_watch_fix_prompt' watch.rs  ▶ read src/watch.rs:870..950 ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+OK, the watch system is already very well-built with language-specific parsing and hints. Let me commit to my plan.
+
+Final decision:
+
+Task 1 (CI fix + context enrichment): Fix `--diff-filter=M → include all change types, add change-type annotations, fix flaky test. One file: context.rs`.
+
+**Task 2 (Self-driven, error recovery):** Improve the build_watch_fix_prompt to include Go error parsing. The Rust, TypeScript, and Python error parsers exist but Go errors (`./file.go:42:15: error text`) are not parsed. Go is a detected project type but has no structured error parser. Adding one follows the exact same pattern as the existing parsers and improves watch-mode auto-fix for Go developers. Files: watch.rs.
+
+Wait, let me verify Go errors aren't already parsed:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && grep -n 'Go\|go_error\|golang\|parse_go' watch.rs | head -15  ▶ $ cd src && grep -n 'WatchLanguage' watch.rs | head -15 ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 5ms (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
