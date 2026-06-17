@@ -119,7 +119,7 @@ Run these steps in order, every cycle.
 ### 1. Read evidence
 
 ```bash
-# Latest cycles:
+# Latest cycles (note prior rejections — eval-result: regression/tie — so you don't re-propose them; R2b rechecks before any refine):
 tail -n 200 skills/_journal.md
 
 # Recent self-reflection:
@@ -169,6 +169,7 @@ For each eligible skill, count:
 - **Failure signals**: tool-call failures in `${YOYO_AUDIT_DIR}/day-*/audit.jsonl` where the bash command or args reference the skill's domain.
 - **Use signals**: number of sessions where any string from the skill's frontmatter `keywords:` list appears in that session's `audit.jsonl`. This is `uses`.
 - **Win signals**: out of those sessions, count the ones where `outcome.json` has `test_ok: true` AND `tasks_succeeded >= 1`. This is `wins`.
+- **Applied signals** (issue #501): for a candidate `pattern_key`, the number of distinct sessions whose `outcome.json.applied_pattern_keys` contains that key. This is `applied` — the "acted on it" signal, distinct from `uses` (keyword merely *present* = recalled/exposed). `applied` is the honest "use after recall"; it gates promotion in step 4.3, **not** the EMA score (keep scores stable). `scripts/skill_evolve_report.py` surfaces it under "Session outcomes".
 
 If a skill's frontmatter is missing `keywords:`, fall back to its name as the only keyword (likely noisy — flag in `_journal.md` so the operator can add proper keywords).
 
@@ -194,6 +195,7 @@ For each skill where `complaint_signals ≥ 2` OR `(wins/uses) < 0.5` (with `use
 | `success: false` with the same `tool` and similar `args` across multiple sessions | Skill's procedure has a recurring blind spot | Add a `## Pitfalls` entry; consider a "do this first" prelude |
 | Long bash sequences (10+ tool calls) without intermediate `read_file` of relevant docs | Skill points at non-existent docs OR doesn't tell agent to verify state | Add a "verify your assumptions" step in `## Procedure` |
 | Tool calls that *should* be there per `keywords:` are absent | Skill isn't actually being invoked when it should be | The `description:` is too weak — refine that field instead of the body |
+| Skill body cites a file/flag/procedure that no longer exists, or contradicts a newer rule (cross-check recent `journals/JOURNAL.md` + `CLAUDE.md`) | Guidance is stale or superseded — the skill is *longer than it should be*, not missing a line | **Replace** the stale lines or **delete** them. Subtraction is a first-class refine (SkillOpt: skills get sharper, not longer) |
 
 For each candidate refinement target, write a **1-2 sentence cause hypothesis**:
 
@@ -213,8 +215,8 @@ Carry this hypothesis into step 4 (action selection) and step 5 (Refine — it t
 Decision order (first match wins):
 
 1. **Retire** (third cycle onward only): if any skill has `score < 0.3` AND `last_used` ≥ 10 sessions ago, retire the lowest-scoring one. Skip if there are < 2 active eligible skills (don't bottom out the library).
-2. **Refine**: if any skill (a) has `complaint_signals ≥ 2`, OR (b) has `(wins/uses) < 0.5` with `uses ≥ 3`, AND in either case has not been refined in the last 3 sessions (`last_evolved` check), refine it. This matches the diagnosis-trigger condition in step 3b. Pick the target with the strongest evidence (highest complaint count, or lowest wins-ratio if no complaints).
-3. **Create** (second cycle onward only, and only if active skill count < 25): if any `pattern_key` appears in ≥3 distinct sessions of `learnings.jsonl` AND no existing eligible skill covers it (≥3 keyword overlap → refine that one instead), draft a new skill.
+2. **Refine**: if any skill (a) has `complaint_signals ≥ 2`, OR (b) has `(wins/uses) < 0.5` with `uses ≥ 3`, AND in either case has not been refined in the last 3 sessions (`last_evolved` check), refine it. This matches the diagnosis-trigger condition in step 3b. Pick the target with the strongest evidence (highest complaint count, or lowest wins-ratio if no complaints). A refine may be **subtractive**: deleting or replacing stale/superseded guidance is as valid as adding, and a net-negative diff is often the best outcome — a skill should get sharper over time, not longer.
+3. **Create** (second cycle onward only, and only if active skill count < 25): if any `pattern_key` appears in ≥3 distinct sessions of `learnings.jsonl`, AND a learning carrying that `pattern_key` has a `validation_case` (issue #501 — **required**: a pattern with no `validation_case` may not become a skill; leave it as a note, or write a learning suggesting one be authored), AND no existing eligible skill covers it (≥3 keyword overlap → refine that one instead), draft a new skill. **Applied gate (bootstrap):** also require `applied ≥ 1` for that `pattern_key` (it was acted on, not just recurred); while `applied_pattern_keys` is still sparse (the first ~10 sessions after this field ships), recurrence ≥3 alone may stand in — once the signal is populated, tighten to require both. (Only the `applied` gate has a bootstrap; the `validation_case` requirement above is never relaxed.)
 4. **NO-OP**: nothing meets the bars. Write a `NO-OP` event with a one-line note about what evidence you considered.
 
 If you've written 3 consecutive `NO-OP` events, also write `evolution_saturation: true` to the event — the harness reads this and extends the cooldown.
@@ -246,9 +248,16 @@ Write them to `/tmp/skill-evolve-eval/<target>/prompts.json`:
 ]
 ```
 
+**Step R2b — Check rejection history (don't rediscover bad ideas).**
+Before writing a candidate diff, scan `skills/_journal.md` for a prior rejection of this same edit. A rejection is a `NO-OP` event whose `eval-result:` is `regression`/`tie` (R5) or whose `eval-summary:` says `baseline-better … Reverted` (R6):
+```bash
+grep -iE "eval-result: (regression|tie)|eval-summary:.*baseline-better" skills/_journal.md
+```
+This grep is a recall pre-filter — read each hit's event block and confirm it is genuinely a rejection of the **same** `skill:` and the same section/idea (not a passing refine that merely says "0 regressions"). If so, do **not** re-run the A/B — write a `NO-OP` citing that `evt-NNNN` (`note: prior regression on <target>/<area>, evt-NNNN`) and stop. Only proceed if the candidate is genuinely new or the skill has changed since the rejection.
+
 **Step R3 — Write the candidate diff.**
 Use `edit_file` to apply your refinement. Constraints:
-- ≤30 added lines, ≤15 removed lines (diff stat)
+- ≤30 added lines, ≤15 removed lines (diff stat). **Deleting or replacing** stale/superseded guidance is a valid refinement (not only adding) — spend the removed-line budget deliberately; a sharper, shorter skill is a good outcome.
 - Touch only the `## Pitfalls` and `## Procedure` sections (or the skill's "what to do" body) — never the top-level `description:`, never any frontmatter field except the four bookkeeping fields established in step 3a: `score`, `uses`, `wins`, `last_used`. (`last_evolved` is also updated, to today's date.)
 
 **Step R4 — A/B compare.**

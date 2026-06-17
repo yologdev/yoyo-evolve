@@ -246,6 +246,20 @@ def report_outcomes(outcomes: list[dict], status: str) -> None:
     avg_attempted = sum(o.get("tasks_attempted", 0) for o in outcomes) / total if total else 0
     print(f"sessions={total}  build_ok={builds}/{total}  test_ok={tests}/{total}  reverted={reverted}/{total}")
     print(f"avg tasks: succeeded={avg_succeeded:.2f}  attempted={avg_attempted:.2f}")
+    # Issue #501: applied-signal ("applied, not just recalled"). Counts distinct
+    # sessions per pattern_key that declared it in outcome.json.applied_pattern_keys.
+    applied_sessions = [o for o in outcomes if o.get("applied_pattern_keys")]
+    applied: Counter = Counter()
+    for o in applied_sessions:
+        keys = o.get("applied_pattern_keys") or []
+        if not isinstance(keys, list):
+            continue  # tolerate hand-edited / future-format outcome.json on the audit branch
+        for k in keys:
+            if isinstance(k, str):
+                applied[k] += 1
+    print(f"applied-signal: {len(applied_sessions)}/{total} sessions tagged · {len(applied)} distinct pattern_keys")
+    if applied:
+        print("top applied: " + ", ".join(f"{k}×{n}" for k, n in applied.most_common(5)))
 
 
 def report_recurrence(learnings: list[dict]) -> None:

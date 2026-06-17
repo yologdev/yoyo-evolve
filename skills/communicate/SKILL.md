@@ -163,7 +163,8 @@ This is self-reflection — witnessing and evaluating your own patterns, decisio
 **Admission gate — ask yourself before writing:**
 1. Is this genuinely novel vs what's already in the archive?
 2. Would this change how I act in a future session?
-If both aren't yes, skip it. A sparse archive of genuine wisdom beats a long file of noise.
+3. Is it a reusable rule that prevents a concrete future mistake or improves a repeatable workflow — *not* praise, a success summary, or "I learned X is important"? If it's reflection for its own sake, its classification is `IGNORE` — skip it.
+If all three aren't yes, skip it. A sparse archive of genuine wisdom beats a long file of noise.
 
 Read memory/active_learnings.md first to avoid writing duplicates.
 
@@ -182,7 +183,14 @@ entry = {
     # Optional: add pattern_key when the lesson is structural enough to recur.
     # Format: kebab-case <verb>.<object>, e.g. "tests.add_before_change", "docs.cite_url_after_fact".
     # Skill-evolve clusters by this field across sessions. Leave it out if you're unsure.
-    "pattern_key": "verb.object"
+    "pattern_key": "verb.object",
+    # Optional triage (issue #501). Default is ADD_LEARNING_NOTE.
+    # Use CREATE_SKILL / UPDATE_SKILL ONLY together with a validation_case below —
+    # skill-evolve will not promote a learning into a skill without one.
+    "classification": "ADD_LEARNING_NOTE",  # CREATE_SKILL | UPDATE_SKILL | ADD_LEARNING_NOTE | IGNORE
+    # Optional behavior check — the concrete future behavior this lesson enforces.
+    # Include it when the lesson is a real rule (this is what earns promotion); omit for plain notes.
+    "validation_case": {"given": "...", "when": "...", "then": "..."},
 }
 with open("memory/learnings.jsonl", "a") as f:
     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -197,6 +205,8 @@ Fields:
 - `context`: what happened (1-2 sentences)
 - `takeaway`: the reusable insight (1-3 sentences)
 - `pattern_key` (optional): kebab-case `<verb>.<object>` tag — add when the lesson is structural enough to recur, omit otherwise
+- `classification` (optional): one of `CREATE_SKILL | UPDATE_SKILL | ADD_LEARNING_NOTE | IGNORE`, default `ADD_LEARNING_NOTE`. Use `IGNORE` for praise / one-off noise (better yet, don't write it). Set `CREATE_SKILL`/`UPDATE_SKILL` only alongside a `validation_case`.
+- `validation_case` (optional): a `{given, when, then}` behavior check — the concrete future behavior this lesson should enforce. **Required** for `CREATE_SKILL`/`UPDATE_SKILL`: a learning without one can recur forever but is never promoted into a skill (it stays "mostly diary text"). Omit for plain notes.
 
 Don't force it — not every session produces a lesson.
 

@@ -265,6 +265,10 @@ export YOYO_AUDIT=1
 SESSION_STAGING=".yoyo/session_staging"
 rm -rf "$SESSION_STAGING"
 mkdir -p "$SESSION_STAGING/transcripts"
+# Issue #501: clear any stale applied-patterns handoff from a prior session that was
+# canceled before its end-of-session truncate ran (#262 overlap-cancel). Pairs with the
+# end-of-session truncate to keep .yoyo/applied_pattern_keys.txt strictly intra-session.
+: > .yoyo/applied_pattern_keys.txt
 # Track session-level outcome flags (read by Step 7c2 to populate outcome.json).
 SESSION_BUILD_OK="false"
 SESSION_TEST_OK="false"
@@ -1867,6 +1871,10 @@ PYEOF
 Then commit:
   git add memory/learnings.jsonl && git commit -m "Day $DAY ($SESSION_TIME): update learnings" || true
 
+Separately — the "applied, not just recalled" signal: if a prior learning from your loaded SELF-WISDOM actually changed what you DID this session (you acted on it, not just saw it in context), append its pattern_key(s), one per line, to .yoyo/applied_pattern_keys.txt:
+  printf '%s\n' "verb.object" >> .yoyo/applied_pattern_keys.txt
+Only list keys you genuinely applied; skip entirely if none. Do NOT pad it — an empty signal is correct most sessions.
+
 If nothing non-obvious came up, do nothing. Not every session produces a lesson.
 REOF
 
@@ -2074,6 +2082,7 @@ if [ -d "$SESSION_STAGING" ]; then
         YOYO_OUT_TASKS_ATTEMPTED="${SESSION_TASKS_ATTEMPTED:-0}" \
         YOYO_OUT_TASKS_SUCCEEDED="${SESSION_TASKS_SUCCEEDED:-0}" \
         YOYO_OUT_REVERTED="${SESSION_REVERTED:-false}" \
+        YOYO_OUT_APPLIED_FILE=".yoyo/applied_pattern_keys.txt" \
         YOYO_OUT_PATH="$SESSION_STAGING/outcome.json" \
         python3 - <<'PYEOF'
 import json, os, time
@@ -2088,12 +2097,29 @@ out = {
     "tasks_succeeded": int(os.environ.get("YOYO_OUT_TASKS_SUCCEEDED", "0") or 0),
     "reverted": os.environ.get("YOYO_OUT_REVERTED", "false") == "true",
 }
+# Issue #501: the "applied, not just recalled" signal. The reflection step writes
+# pattern_keys it genuinely acted on to this file; default to [] when absent.
+applied = []
+_af = os.environ.get("YOYO_OUT_APPLIED_FILE", "")
+if _af and os.path.exists(_af):
+    try:
+        with open(_af, encoding="utf-8") as _f:
+            for _line in _f:
+                _k = _line.strip()
+                if _k and _k not in applied:
+                    applied.append(_k)
+    except OSError:
+        applied = []
+out["applied_pattern_keys"] = applied
 with open(os.environ["YOYO_OUT_PATH"], "w") as f:
     json.dump(out, f, indent=2)
 PYEOF
     then
         echo "  WARNING: outcome.json write failed — continuing session-end cleanup anyway" >&2
     fi
+    # Issue #501: reset the applied-patterns handoff (read into outcome.json above)
+    # so it doesn't bleed into the next session. Best-effort; mirrors audit.jsonl.
+    [ -f .yoyo/applied_pattern_keys.txt ] && : > .yoyo/applied_pattern_keys.txt
 
     # Push to audit-log branch. Failures are non-fatal but tracked: after 3
     # consecutive misses we emit a loud warning so a misconfigured token (push
