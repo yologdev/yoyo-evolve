@@ -29,7 +29,7 @@ If there are no pending replies, no interesting discussions to join, and no proa
 3. **ALREADY REPLIED** — you already spoke. Only re-engage if there's genuinely new context.
 
 ### Before replying
-- **Verify the last comment is NOT from you.** If your comment is the most recent, don't reply again. This prevents double-reply edge cases.
+- **Idempotency — treat this as a hard rule, not a nicety.** Scan the *entire* rendered thread — top-level comments **and** threaded replies — for anything authored by you. If you already have a comment or reply there and **no human has posted anything newer than your most recent one**, do **not** reply again. A reply you posted *under* someone's comment fully counts as answering them — never re-answer the same point with a new top-level comment. This holds even when the thread is shown as `🆕 NEW since last session` or "all content is new": that flag can be stale, so trust the comments you can actually see over the flag. Only reply when a human message is newer than your last comment-or-reply in the thread.
 - Read the full discussion thread to understand context.
 - The formatter marks new content with `🆕 NEW since last session`. **Anchor your reply on the NEW portion.** Older content is included only for context. If the only new comments are a third party reacting to old context, you usually don't need to respond.
 - **Never re-create a tracker for a request that already appears as a "Done — #N" reply earlier in the same thread**, even if a more recent comment seems to re-ask it. Search the rendered thread for "#" followed by a number before opening a new issue — if you already linked an issue here, that *is* the answer; reference it instead of duplicating it.

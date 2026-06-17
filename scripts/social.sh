@@ -369,7 +369,9 @@ if [ -n "$ALL_CHANGED" ]; then
     UNEXPECTED=""
     while IFS= read -r file; do
         [ -z "$file" ] && continue
-        if [ "$file" != "memory/social_learnings.jsonl" ]; then
+        # social_learnings.jsonl = agent output; social-state.json = pipeline seen-state
+        # (written by format_discussions.py). Both are expected; everything else is reverted.
+        if [ "$file" != "memory/social_learnings.jsonl" ] && [ "$file" != ".yoyo/social-state.json" ]; then
             UNEXPECTED="${UNEXPECTED} ${file}"
         fi
     done <<< "$ALL_CHANGED"
@@ -402,33 +404,31 @@ fi
 echo "  Safety check passed."
 echo ""
 
-# ── Step 9: Commit if social learnings archive changed ──
-echo "→ Checking for social learnings..."
-# Check both tracked changes (git diff) and untracked new file
-SOCIAL_CHANGED=false
-if ! git diff --quiet memory/social_learnings.jsonl 2>/dev/null; then
-    SOCIAL_CHANGED=true
-elif [ -f memory/social_learnings.jsonl ] && ! git ls-files --error-unmatch memory/social_learnings.jsonl >/dev/null 2>&1; then
-    SOCIAL_CHANGED=true
-fi
-if [ "$SOCIAL_CHANGED" = "true" ]; then
-    git add memory/social_learnings.jsonl
-    if ! git commit -m "Day $DAY ($SESSION_TIME): social learnings"; then
-        echo "  ERROR: Failed to commit social learnings (check pre-commit hooks or signing requirements)."
+# ── Step 9: Commit social learnings + per-discussion seen-state ──
+# Persist BOTH the social learnings archive AND .yoyo/social-state.json (the
+# per-discussion seen-state written by format_discussions.py). If the seen-state
+# is not persisted, every session treats threads as "first run — all content is
+# new" and can re-reply to the same comment (regression seen on discussion #454).
+# Step 8 exempts social-state.json from the safety revert so it survives to here.
+echo "→ Persisting social learnings + seen-state..."
+git add memory/social_learnings.jsonl .yoyo/social-state.json 2>/dev/null || true
+if git diff --cached --quiet 2>/dev/null; then
+    echo "  Nothing to persist this session."
+else
+    if ! git commit -m "Day $DAY ($SESSION_TIME): social session (learnings + seen-state)"; then
+        echo "  ERROR: Failed to commit social session state (check pre-commit hooks or signing requirements)."
         exit 1
     fi
-    echo "  Committed social learnings."
+    echo "  Committed social session state."
 
     # ── Step 10: Push ──
     echo ""
     echo "→ Pushing..."
     git pull --rebase || echo "  WARNING: Pull --rebase failed (will attempt push anyway)"
     if ! git push; then
-        echo "  ERROR: Push failed. Social learnings committed locally but will be lost in ephemeral CI."
+        echo "  ERROR: Push failed. Committed locally but will be lost in ephemeral CI."
         exit 1
     fi
-else
-    echo "  No new social learnings this session."
 fi
 
 echo ""
