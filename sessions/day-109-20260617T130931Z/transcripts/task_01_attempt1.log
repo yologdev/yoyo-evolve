@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to find the most impactful improvement I can make. Let me assess the codebase systematically.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs 2>/de…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (7ms)
+ ✓ (20.4s)
+  2 tools completed in 23.4s (2 ✓)
+
+Good, all tests pass. Let me look for areas with potential bugs, missing safety checks, or high-impact improvements.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'unwrap()' src/*.rs src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.truncate\|split_at\|… ✓ (10ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'truncate\|split_at\|\[\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'TODO\|FIXME\|HACK\|SAF… ✓ (5ms)
+ ✓ (8ms)
+  4 tools completed in 10.9s (4 ✓)
+
+Let me look for areas where there are real bugs or meaningful improvement opportunities. Let me check recent issues and the most recently touched files for patterns:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'panic!' src/*.rs 2>/de… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'expect(' src/*.rs src/… ✓ (9ms)
+  3 tools completed in 6.5s (3 ✓)
+
+Let me look at areas where there are real opportunities for impactful improvements. Let me examine the byte-indexing patterns more closely — the CLAUDE.md warns about this being a real production crash source:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\[\.\..*\]' src/comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\[\.\..*\]\|\[.*\.\.\]… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B5 -A5 'step.description\[… ✓ (3ms)
+  3 tools completed in 6.6s (3 ✓)
+
+Good, that one already has the char boundary check. Let me look for patterns that are actually dangerous — byte indexing on user-provided string data without char boundary checks:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\[\.\..*pos\]\|\[pos\.… ✓ (9ms)
+
+These are all using pos from find() or rfind() which returns byte positions of ASCII characters, so they're safe (finding ASCII characters always gives you a valid char boundary). Let me look for a more impactful area.
+
+Let me focus on examining areas with real user impact. Let me check the tools and prompt system for improvements:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.1s)
+
+Clean clippy. Let me look for a meaningful improvement. Let me check the tool_wrappers for the failure tracker - it could benefit from better error reporting:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'RecoveryHintTool\|ToolF…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'struct\|impl\|fn ' src/… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 2.3s (2 ✓)
+
+Let me take a different tack — let me look at the prompt and watch systems for meaningful improvements:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn run_watch_after_prom…  ▶ read src/watch.rs:1..31 ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Wait — I see duplicated lock recovery helpers! Let me check:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'rw_read_or_recover\|rw… ✓ (7ms)
+
+There it is! There are duplicated rw_read_or_recover and rw_write_or_recover helper functions copy-pasted across four files (watch.rs, `commands_fork.rs, commands_stash.rs, commands_todo.rs) when sync_util.rs already has lock_or_recover` for Mutex. The fix is to add `rw_read_or_recover and rw_write_or_recover to sync_util.rs` and deduplicate all those copies.
+
+But wait — let me think about whether there's something even more impactful. Let me look at the actual user experience and tools:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'rw_read_or_recover\|rw_… ✓ (3ms)
+
+That's 4 copies of the same two helper functions. This is exactly the reinvented-duplication pattern from Day 101's learning. Let me also look for other high-impact improvements:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'fn simplify_command_pa…  ▶ read src/tools.rs:1..51 ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 2.7s (2 ✓)
+
+Let me focus on the RwLock deduplication — it's a concrete improvement that eliminates reinvented code across 4 files. But actually, let me look for something with more user impact. Let me check the safety module and see if there are gaps:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -80 src/safety.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn check_' src/safety.r… ✓ (4ms)
+  2 tools completed in 6.3s (2 ✓)
+
+OK, the safety module is comprehensive. Let me look at a truly impactful improvement. Let me check the deduplication opportunity more closely — but also look for something that actually impacts user experience:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Examine the yoyo-evolve Rust codebase in /home/runner/work/y…' ✓ (2m 54s)
+
+Let me look directly at what I found:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'rw_read_or_recover\|rw_…  ▶ read src/sync_util.rs ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 6.7s (2 ✓)
+
+This is the improvement. On Day 58, lock_or_recover was extracted for Mutex into sync_util.rs. But the exact same pattern for RwLock — `rw_read_or_recover and rw_write_or_recover` — was independently reinvented in 4 different files. This is exactly the Day 101 learning: "Reinvented duplication hides longer than copied duplication."
+
+Let me implement this:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add rw_read_or_recover and rw_write_or_recover to …' ✓ (0ms)
+  ▶ todo add 'Remove duplicate rw_read/write_or_recover from wat…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && clippy && build && test' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  4 tools completed in 13.1s (4 ✓)
+
+First, let me write the tests and add the functions to sync_util.rs:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/sync_util.rs (59 → 132 lines)
+  - //! Shared synchronisation helpers — lock-recovery for poisoned mutexes.
+  + //! Shared synchronisation helpers — lock-recovery for poisoned locks.
+    //!
+  - //! When a thread panics while holding a `Mutex` the lock becomes "poisoned".
+  - //! Rather than cascading the panic to every subsequent caller we recover the
+  - //! inner data — the data itself is still valid, only the invariant *might* be
+  - //! broken, and for our use-cases (counters, output buffers, session state) that
+  - //! is acceptable.
+  + //! When a thread panics while holding a `Mutex` or `RwLock` the lock becomes
+  + //! "poisoned".  Rather than cascading the panic to every subsequent caller we
+  + //! recover the inner data — the data itself is still valid, only the invariant
+  + //! *might* be broken, and for our use-cases (counters, output buffers, session
+  + //! state) that is acceptable.
+    //!
+  - //! Extracted on Day 58 to deduplicate identical 1-line helpers that lived in
+  + //! `lock_or_recover` (Mutex) was extracted on Day 58 to deduplicate helpers in
+    //! `commands_bg`, `commands_spawn`, and `session`.
+  + //!
+  + //! `rw_read_or_recover` / `rw_write_or_recover` (RwLock) were added on Day 109
+  + //! to deduplicate identical helpers independently reinvented in `watch`,
+  ... (90 more lines)
+ ✓ (15.3s)
+  - //! Shared synchronisation helpers — lock-recovery for poisoned mutexes.
+  + //! Shared synchronisation helpers — lock-recovery for poisoned locks.
+    //!
+  - //! When a thread panics while holding a `Mutex` the lock becomes "poisoned".
+  - //! Rather than cascading the panic to every subsequent caller we recover the
+  - //! inner data — the data itself is still valid, only the invariant *might* be
+  - //! broken, and for our use-cases (counters, output buffers, session state) that
+  - //! is acceptable.
+  ... (13 more lines)
+
+Expected — the new functions aren't used yet because the old copies still exist. Let me now update all four files to use the centralized versions.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now let me look at each file and replace the local definitions with imports:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1..81 ✓ (2ms)
+  ▶ edit src/watch.rs (22 → 13 lines)
+    use crate::prompt::run_prompt_auto_retry;
+    use crate::prompt_budget::session_budget_exhausted;
+    use crate::session::SessionChanges;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    use std::io::{self, IsTerminal, Write};
+    use std::sync::RwLock;
+    use yoagent::agent::Agent;
+    use yoagent::*;
+  - 
+  - /// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+  -     lock.read().unwrap_or_else(|e| e.into_inner())
+  - }
+  - 
+  - /// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
+  - fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+  -     lock.write().unwrap_or_else(|e| e.into_inner())
+  - }
+ ✓ (1m 7s)
+    use crate::prompt::run_prompt_auto_retry;
+    use crate::prompt_budget::session_budget_exhausted;
+    use crate::session::SessionChanges;
+  + use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
+    use std::io::{self, IsTerminal, Write};
+    use std::sync::RwLock;
+    use yoagent::agent::Agent;
+    use yoagent::*;
+  ... (10 more lines)
+  2 tools completed in 1m 21s (2 ✓)
+
+Now commands_fork.rs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_fork.rs:1..31 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
