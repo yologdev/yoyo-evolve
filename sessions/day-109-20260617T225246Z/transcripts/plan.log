@@ -1,0 +1,229 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (6ms)
+ ✓ (2ms)
+  2 tools completed in 3.9s (2 ✓)
+
+No community issues today. Let me check the open issues and recent context to plan well.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -20 ✓ (16ms)
+ ✓ (41ms)
+  ▶ $ git log --oneline -40 | tail -20 ✓ (5ms)
+  3 tools completed in 4.2s (3 ✓)
+
+Now let me think about what to plan. The assessment is comprehensive. Let me focus on the highest-impact self-driven work:
+
+**From the assessment's P0 capability gaps:**
+1. Automatic checkpoints — Claude Code v2.0 has time-travel debugging with automatic snapshots. This is table stakes.
+2. Multi-model support — yoagent supports multiple providers; I just haven't wired up the UX.
+
+Let me check what checkpoint infrastructure already exists and what the multi-model situation looks like:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "checkpoint" src/ --include="*.rs" -l  ▶ $ grep -rn "checkpoint" src/ --include="*.rs" | head -30 ✓ (8ms)
+ ✓ (45ms)
+  ▶ $ grep -rn "auto.*checkpoint\|checkpoint.*auto\|AutoCheckpoint\|auto_checkpoint\|a… ✓ (10ms)
+  ▶ $ wc -l src/commands_fork.rs  ▶ $ grep -n "^pub fn\|^fn\|^pub struct\|^struct\|^impl " src/commands_fork.rs | head… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ grep -n "AutoCheck\|auto_check\|with_auto_check" src/tool_wrappers.rs | head -10 ✓ (4ms)
+  6 tools completed in 11.6s (6 ✓)
+
+Now let me check what TurnHistory and `TurnSnapshot` do — these are the closest things to automatic checkpoints:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "TurnSnapshot\|TurnHistory\|undo_last\|snapshot_file\|record_created" sr… ✓ (4ms)
+
+Good — there's already TurnSnapshot and TurnHistory with undo_last. Let me check if snapshots are being taken automatically before tool calls:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "TurnSnapshot\|turn_snapshot\|snapshot" src/prompt.rs | head -20  ▶ $ grep -n "TurnSnapshot\|turn_history\|TURN_HISTORY\|snapshot" src/tool_wrappers.r… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ grep -rn "TurnSnapshot\|TurnHistory\|TURN_HISTORY\|turn_history" src/ --include=… ✓ (13ms)
+  ▶ $ grep -rn "snapshot_file\|record_created" src/ --include="*.rs" | grep -v "test\|… ✓ (15ms)
+  4 tools completed in 7.9s (4 ✓)
+
+So TurnSnapshot is used in commands_git.rs (undo), but not wired into the tool layer for automatic snapshotting before every file edit. This is the gap — Claude Code automatically snapshots before every agent action. Let me check how the /undo command works:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_undo" src/commands_git.rs | head -5  ▶ $ sed -n '3160,3260p' src/commands_git.rs ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now let me understand how TurnHistory is wired into the REPL:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "TurnHistory\|TurnSnapshot\|turn_history\|turn_snap" src/repl.rs | head …  ▶ $ grep -n "TurnHistory\|TurnSnapshot\|turn_history\|turn_snap" src/dispatch.rs | h… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Good. So TurnSnapshot is taken before each prompt turn by snapshotting files that were changed. But it's reactive — it captures the changed files after seeing them in `SessionChanges`. This means the snapshot captures what files looked like before the current turn started, which is correct for undo.
+
+Now let me think about what the highest-impact tasks would be. Looking at the assessment:
+
+1. **Automatic checkpoints** — The assessment says this is P0 table stakes. But the current TurnSnapshot already provides per-turn undo. What Claude Code v2.0 adds is *named* automatic snapshots and time-travel. The existing `/checkpoint system requires manual save`. Making it automatic (auto-checkpoint before each agent turn) would close this gap meaningfully.
+
+2. **Multi-model provider support** — Also P0. yoagent supports multiple providers but the UX isn't wired. This would be huge for the open-source story.
+
+3. Issue #501 — Has a yoyo-able item about applied_pattern_keys in outcomes.
+
+Let me check what #501 says:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 501 --repo yologdev/yoyo-evolve 2>/dev/null | head -60 ✓ (413ms)
+
+The issue is mostly [creator] owned. Only item 4 has a [yoyo-able] tag — adding `applied_pattern_keys` to outcome.json. That's in the evolve shell script though, which I can't modify. Let me re-read what's yoyo-able:
+
+│ **4. "Applied, not just recalled" signal — `[yoyo-able: tagging]`**
+│ Tag the pattern_key(s) a session actually acted on (commit trailer or outcome.json: applied_pattern_keys[])
+
+The tagging side — adding applied_pattern_keys to outcomes — touches `scripts/evolve.sh` which is in the safety-protected list. So even the yoyo-able part may not be actionable by me. Let me focus on the highest-impact self-driven work.
+
+Let me think about the three best tasks:
+
+**Task 1: Auto-checkpoint before agent turns** — The assessment calls this P0. The infrastructure exists (`TurnSnapshot, CheckpointStore`). The gap is making it automatic. When the agent modifies files, the checkpoint should be taken automatically. But looking at it more carefully, TurnSnapshot already does per-turn snapshotting in repl.rs (lines 842-849, 981-987). The real gap vs Claude Code is a *named* auto-checkpoint that's visible to the user and can be listed/restored by name. Let me think about this more carefully.
+
+Actually, rereading the assessment: "My /checkpoint exists but isn't automatic — it requires manual push/`pop`." The biggest UX win would be auto-saving a checkpoint before each prompt turn, so the user can always roll back to any previous state without having to manually save.
+
+**Task 2: Provider list/switch UX** — The multi-model gap. yoagent supports multiple providers. I need to wire up the ability to configure and switch providers beyond just Anthropic. This is the #1 open-source advantage I'm not leveraging.
+
+**Task 3: Something from the dispatch extraction or other housekeeping** — But the assessment says the extraction arc "may be complete enough." Let me think about what else would be high-impact.
+
+Let me look at providers to understand the current state:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat src/providers.rs | head -80 ✓ (4ms)
+
+Good — providers are already defined. Let me check how provider selection works in the agent builder:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "provider\|Provider\|AnthropicProvider\|OpenAI\|Google" src/agent_builde… ✓ (4ms)
+
+So yoyo already supports multi-provider! The agent_builder has Anthropic, Google, Bedrock, and OpenAI-compatible providers. The providers.rs lists them all. The --provider flag exists. Let me verify:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\-\-provider" src/cli.rs | head -10 ✓ (4ms)
+
+Good — --provider already exists as a CLI flag. So multi-model is actually already wired! The assessment said "yoagent supports multiple providers; I just haven't wired up the UX" but it actually IS wired. Let me check what's missing in the UX:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_provider" src/commands_config.rs 2>/dev/null || grep -rn "handle…  ▶ $ grep -rn "/provider" src/ --include="*.rs" | grep -v "test\|Test\|assert" | head… ✓ (4ms)
+ ✓ (8ms)
+  2 tools completed in 3.6s (2 ✓)
+
+OK so /provider already works for switching. Multi-model is actually already there. The assessment overestimates this gap. Let me refocus.
+
+Let me reconsider what would be the most impactful work. Looking at the assessment again:
+
+│  P0 — Table stakes I'm missing:
+│ 1. Checkpoints / rollback — automatic snapshots. Users should be able to roll back any agent action with one command.
+
+The current system has:
+• `TurnSnapshot + TurnHistory` for per-turn undo (already automatic)
+• `/checkpoint save/list/restore/diff/delete` for named checkpoints (manual)
+
+What's missing: automatic named checkpoints — automatically saving a checkpoint before each agent turn so the user can see a timeline and jump to any point. This would be the Claude Code "time-travel" feature.
+
+Let me also think about what else is high-value. Let me look at what areas have rough edges:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_fork.rs  ▶ $ grep -n "CheckpointStore\|Checkpoint " src/commands_fork.rs | head -20 ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ sed -n '337,410p' src/commands_fork.rs ✓ (6ms)
+  3 tools completed in 9.8s (3 ✓)
+
+Now I understand the full picture. The CheckpointStore saves snapshots of changed files. It uses `Instant` (not persisted across sessions) and requires manual save. Making it automatic would mean:
+
+1. Auto-save a checkpoint before each prompt turn
+2. Name them automatically (e.g., "turn-1", "turn-2", etc.)
+3. Show them in `/checkpoint list`
+
+This is a clean, well-scoped task. Let me also think about task 3.
+
+Looking at the trajectory, the recurring CI error was fixed. No bugs. What else is high-impact?
+
+Let me think about what a real developer would want:
+
+1. **Auto-checkpoint** — time travel (P0 gap)
+2. `/diff --functions` improvements or **symbol-aware features** — but these already exist
+3. Context management — proactive compaction is already there
+
+Actually, let me look at something the assessment mentions but doesn't elaborate on: the /checkpoint using Instant means checkpoints don't survive session reload. That's a real limitation. But fixing that would require serialization changes and is bigger than one task.
+
+Let me focus on: (1) auto-checkpoint, (2) something competitive, (3) something that improves daily UX.
+
+For task 3, let me think about what /spawn needs — the assessment mentions worktree isolation was scaffolded but isn't complete:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "worktree\|Worktree\|parallel" src/commands_spawn.rs | head -20 ✓ (4ms)
+  ▶ $ grep -n "create_spawn_worktree\|cleanup_spawn_worktree\|WorktreeInfo" src/comman…  ▶ $ sed -n '1620,1700p' src/commands_spawn.rs ✓ (4ms)
+ ✓ (4ms)
+  3 tools completed in 7.6s (3 ✓)
+
+OK spawn worktrees are implemented. Let me think about what would genuinely move the needle.
+
+Looking at the assessment more carefully:
+
+│ **P1 — Differentiators I lack:**
+│ 4. **Repo-map / codebase indexing** — I have `/map and /index` but no AST-based or embedding-based whole-repo understanding.
+
+And from my learnings:
+│ **Unconstrained choice reveals values** — when nothing is urgent, what you reach for reveals what you actually care about.
+
+Let me think about what would make the biggest difference for a developer choosing me over alternatives:
+
+1. **Auto-checkpoint with timeline** — P0 table stakes. This is the single biggest UX gap.
+2. `/checkpoint timeline` — Show a visual timeline of all changes per turn, allowing time-travel.
+3. Improved context awareness — Better repo understanding.
+
+Actually, let me focus on something very concrete and high-impact. Let me check one more thing:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto_checkpoint\|AutoCheckpoint\|auto.*check.*point" src/ -r --include=… ✓ (10ms)
+
+No auto-checkpoint exists. Let me now plan three focused tasks:
+
+**Task 1: Auto-checkpoint before each agent turn** — Wire the existing `CheckpointStore` to automatically save a named checkpoint (e.g., "auto-1", "auto-2") before each prompt turn. This gives users time-travel without any manual work. Touches repl.rs (where turns happen), commands_fork.rs (CheckpointStore), and maybe dispatch.rs.
+
+Task 2: `/checkpoint timeline` subcommand — After auto-checkpoints exist, users need a way to see the timeline: "turn 1: modified 3 files, turn 2: modified 1 file" etc. and diff between any two checkpoints. This enhances the existing /checkpoint command. Touches commands_fork.rs.
+
+Wait — but Task 2 depends on Task 1. Let me make them independent.
+
+Actually, let me reconsider. The tasks should be independently valuable and verifiable. Let me also think about what the "self-driven competitive improvement" should be.
+
+Let me look at a different angle. What's something I can build that Claude Code doesn't have?
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_health\|handle_fix\|handle_doctor" src/commands_dev.rs | head -1… ✓ (4ms)
+
+Let me focus on three concrete, high-value tasks:
+
+Task 1: Auto-checkpoint — Make CheckpointStore automatically save a snapshot before each agent prompt turn. Name them "turn-N". This is the single highest-impact feature for closing the P0 gap.
+
+**Task 2: /checkpoint timeline** — Add a timeline view that shows all checkpoints (auto and manual) with file counts and ages, and a restore that works seamlessly for both.
+
+Wait, these two are coupled. Let me combine them into one and find a different second task.
+
+Actually, the task sizing rules say max 3 files per task. Let me think about what files auto-checkpoint would touch:
+• `repl.rs` — where turns happen, need to auto-save checkpoint
+• commands_fork.rs — CheckpointStore needs a method for auto-save + maybe timeline display
+
+That's 2 files. I can include the timeline display in the same task.
+
+For task 2 and 3, let me think about something else. Let me check if there's an area where a quality-of-life improvement would matter:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn handle_model_info\|fn handle_model_list\|fn handle_model_show" src/c… ✓ (4ms)
+  ▶ $ sed -n '630,700p' src/commands_info.rs ✓ (4ms)
+  2 tools completed in 4.4s (2 ✓)
+
+OK. Let me plan three concrete, high-impact tasks now. Here's my thinking:
+
+**Task 1: Auto-checkpoint before agent turns** (P0 gap closure)
+• Auto-save checkpoint in CheckpointStore before each prompt turn
+• Name them "turn-1", "turn-2", etc.
+• Add `/checkpoint timeline` to show the history
+• Files: repl.rs, `commands_fork.rs`
+
+Task 2: Provider validation and diagnostics (Multi-model UX polish)
+• When switching providers via /provider, validate the API key exists, show the default model, warn about missing keys
+• Add /provider show to display current provider info with connection status
+• Files: commands_info.rs (handle_provider_show), commands.rs (handle_provider_switch)
+
+Wait, let me check what `/provider show` already does:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_provider_show" src/commands_info.rs | head -5  ▶ $ sed -n '860,910p' src/commands_info.rs ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 5ms (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
