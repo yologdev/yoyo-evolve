@@ -878,6 +878,64 @@ async fn dispatch_file_command(
     }
 }
 
+/// Dispatch utility commands (watch, todo, run, goal, revisit, update, skill, memory).
+async fn dispatch_utility_command(
+    route: &CommandRoute,
+    ctx: &mut DispatchContext<'_>,
+) -> Option<CommandResult> {
+    match route {
+        CommandRoute::Watch => {
+            commands::handle_watch(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Todo => {
+            let result = commands::handle_todo(ctx.input);
+            println!("{result}\n");
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Run => {
+            if ctx.input == "/run" {
+                commands::handle_run_usage();
+            } else {
+                commands::handle_run(ctx.input);
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Goal => Some(commands::handle_goal(ctx.input)),
+        CommandRoute::Revisit => {
+            let result = commands::handle_revisit(ctx.input);
+            println!("{result}\n");
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Update => {
+            match commands::handle_update() {
+                Ok(_) => println!(
+                    "Update completed successfully. Please restart yoyo to use the new version."
+                ),
+                Err(e) => eprintln!("Update failed: {}", e),
+            }
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Skill => {
+            commands::handle_skill(ctx.input, &ctx.agent_config.skills);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Remember => {
+            commands::handle_remember(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Memories => {
+            commands::handle_memories(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Forget => {
+            commands::handle_forget(ctx.input);
+            Some(CommandResult::Continue)
+        }
+        _ => None,
+    }
+}
+
 /// Handles all `/`-prefixed commands, returning a [`CommandResult`] that tells
 /// the main loop what to do next.  This was extracted from `run_repl` to keep
 /// the outer loop small and the command table easy to navigate.
@@ -914,6 +972,11 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
 
     // Delegate file, search, navigation, and refactoring commands to a focused helper.
     if let Some(result) = dispatch_file_command(&route, ctx).await {
+        return result;
+    }
+
+    // Delegate utility commands (watch, todo, goal, memory, etc.)
+    if let Some(result) = dispatch_utility_command(&route, ctx).await {
         return result;
     }
 
@@ -970,18 +1033,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             commands::handle_init();
             CommandResult::Continue
         }
-        CommandRoute::Remember => {
-            commands::handle_remember(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Memories => {
-            commands::handle_memories(ctx.input);
-            CommandResult::Continue
-        }
-        CommandRoute::Forget => {
-            commands::handle_forget(ctx.input);
-            CommandResult::Continue
-        }
         CommandRoute::Retry => {
             *ctx.last_error = commands::handle_retry(
                 ctx.agent,
@@ -992,10 +1043,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 &ctx.agent_config.model,
             )
             .await;
-            CommandResult::Continue
-        }
-        CommandRoute::Watch => {
-            commands::handle_watch(ctx.input);
             CommandResult::Continue
         }
         CommandRoute::Loop => {
@@ -1009,25 +1056,11 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             .await;
             CommandResult::Continue
         }
-        CommandRoute::Todo => {
-            let result = commands::handle_todo(ctx.input);
-            println!("{result}\n");
-            CommandResult::Continue
-        }
         CommandRoute::Bg => {
             let args = ctx.input.strip_prefix("/bg").unwrap_or("").trim();
             commands::handle_bg(args, ctx.bg_tracker).await;
             CommandResult::Continue
         }
-        CommandRoute::Run => {
-            if ctx.input == "/run" {
-                commands::handle_run_usage();
-            } else {
-                commands::handle_run(ctx.input);
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Goal => commands::handle_goal(ctx.input),
         CommandRoute::Spawn => {
             if let Some(context_msg) = commands::handle_spawn(
                 ctx.input,
@@ -1053,24 +1086,6 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                 *ctx.last_error = outcome.last_tool_error;
                 auto_compact_if_needed(ctx.agent);
             }
-            CommandResult::Continue
-        }
-        CommandRoute::Revisit => {
-            let result = commands::handle_revisit(ctx.input);
-            println!("{result}\n");
-            CommandResult::Continue
-        }
-        CommandRoute::Update => {
-            match commands::handle_update() {
-                Ok(_) => println!(
-                    "Update completed successfully. Please restart yoyo to use the new version."
-                ),
-                Err(e) => eprintln!("Update failed: {}", e),
-            }
-            CommandResult::Continue
-        }
-        CommandRoute::Skill => {
-            commands::handle_skill(ctx.input, &ctx.agent_config.skills);
             CommandResult::Continue
         }
         CommandRoute::Explain => {
@@ -1238,6 +1253,18 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::Refactor
         | CommandRoute::Copy
         | CommandRoute::Ast => unreachable!("handled by dispatch_file_command"),
+
+        // Utility commands are handled by dispatch_utility_command above.
+        CommandRoute::Watch
+        | CommandRoute::Todo
+        | CommandRoute::Run
+        | CommandRoute::Goal
+        | CommandRoute::Revisit
+        | CommandRoute::Update
+        | CommandRoute::Skill
+        | CommandRoute::Remember
+        | CommandRoute::Memories
+        | CommandRoute::Forget => unreachable!("handled by dispatch_utility_command"),
 
         CommandRoute::NotACommand => CommandResult::NotACommand,
     }

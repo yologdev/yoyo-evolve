@@ -786,15 +786,21 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /goal show         Show current goal\n\
              \x20 /goal set <desc>   Set a new goal\n\
              \x20 /goal clear        Remove current goal\n\
-             \x20 /goal check        Ask AI to evaluate progress\n\n\
+             \x20 /goal check        Ask AI to evaluate progress\n\
+             \x20 /goal verify <cmd>  Set a verification command\n\
+             \x20 /goal verify        Show current verify command\n\
+             \x20 /goal verify clear  Remove verify command\n\n\
              Goals are stored in .yoyo/goal.md — human-readable, version-controllable.\n\
              Persists across sessions so you can pick up where you left off.\n\n\
              Your goal is automatically included in the AI's context, so it stays aware\n\
              of what you're working toward across the entire conversation.\n\n\
              /goal check sends the goal to the AI, which reviews conversation history\n\
              and project state to evaluate progress, remaining work, and next steps.\n\n\
+             When a verify command is set, /goal check runs it first and includes the\n\
+             result in the AI's evaluation.\n\n\
              Examples:\n\
              \x20 /goal set Refactor auth module to use JWT\n\
+             \x20 /goal verify cargo test --test auth\n\
              \x20 /goal check\n\
              \x20 /goal clear",
         ),
@@ -861,6 +867,8 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Usage:\n\
              \x20 /spawn <task description>\n\
              \x20 /spawn --bg <task>              Run in background (returns immediately)\n\
+             \x20 /spawn --parallel <task1> --- <task2> [--- <task3>...]\n\
+             \x20                                 Run multiple tasks concurrently\n\
              \x20 /spawn -o <file> <task>         Capture output to a file\n\
              \x20 /spawn --model <name> <task>    Use a specific model for the subagent\n\
              \x20 /spawn --system <prompt> <task> Custom system prompt for the subagent\n\
@@ -879,12 +887,17 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Background spawns (--bg) return control immediately so you can\n\
              keep working while the subagent runs in parallel. Use\n\
              /spawn collect <id> to retrieve the result when ready.\n\n\
+             Parallel spawns launch all tasks as background agents simultaneously.\n\
+             Use /spawn status to monitor and /spawn collect <id> to retrieve\n\
+             results. Maximum 10 parallel tasks.\n\n\
              Examples:\n\
              \x20 /spawn write unit tests for the parser module\n\
              \x20 /spawn --model claude-haiku-4-5 summarize this file\n\
              \x20 /spawn --system \"You are a security auditor\" review src/safety.rs\n\
              \x20 /spawn --bg analyze test coverage for src/\n\
              \x20 /spawn --bg --model gpt-4o -o report.md review error handling\n\
+             \x20 /spawn --parallel fix auth tests --- write parser docs --- add error handling\n\
+             \x20 /spawn --parallel -m claude-sonnet-4-20250514 task A --- task B\n\
              \x20 /spawn collect 1\n\
              \x20 /spawn status",
         ),

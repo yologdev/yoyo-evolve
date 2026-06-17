@@ -185,6 +185,9 @@ impl SpawnTracker {
     }
 }
 
+/// Maximum number of parallel tasks allowed in a single `/spawn --parallel`.
+pub const MAX_PARALLEL_TASKS: usize = 10;
+
 /// Parsed `/spawn` command input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnArgs {
@@ -200,6 +203,9 @@ pub struct SpawnArgs {
     pub model: Option<String>,
     /// Optional custom system prompt for the subagent (`--system <prompt>`).
     pub system_prompt: Option<String>,
+    /// If set, multiple tasks to run in parallel (from `--parallel` flag).
+    /// `None` for normal spawn, `Some(tasks)` for parallel dispatch.
+    pub parallel_tasks: Option<Vec<String>>,
 }
 
 /// Parse the `/spawn` command input, extracting flags and task.
@@ -231,6 +237,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
                 collect_id: Some(id),
                 model: None,
                 system_prompt: None,
+                parallel_tasks: None,
             });
         }
         // "collect" without valid id — fall through to show usage
@@ -239,6 +246,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
 
     let mut words: Vec<&str> = rest.split_whitespace().collect();
     let mut background = false;
+    let mut parallel = false;
     let mut output_path = None;
     let mut model = None;
     let mut system_prompt = None;
@@ -251,6 +259,9 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
     while !words.is_empty() {
         if words[0] == "--bg" {
             background = true;
+            words.remove(0);
+        } else if words[0] == "--parallel" {
+            parallel = true;
             words.remove(0);
         } else if words[0] == "-o" && words.len() > 1 {
             output_path = Some(words[1].to_string());
@@ -295,6 +306,27 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
         return None;
     }
 
+    // In parallel mode, split the task text on triple-dash separators
+    if parallel {
+        let tasks: Vec<String> = task
+            .split("---")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if tasks.is_empty() {
+            return None;
+        }
+        return Some(SpawnArgs {
+            task: String::new(),
+            output_path: None, // -o is incompatible with --parallel
+            background: false, // --parallel is implicitly background
+            collect_id: None,
+            model,
+            system_prompt,
+            parallel_tasks: Some(tasks),
+        });
+    }
+
     Some(SpawnArgs {
         task,
         output_path,
@@ -302,6 +334,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
         collect_id: None,
         model,
         system_prompt,
+        parallel_tasks: None,
     })
 }
 
@@ -489,6 +522,7 @@ pub async fn handle_spawn(
         None => {
             println!("{DIM}  usage: /spawn <task>");
             println!("         /spawn --bg <task>              (run in background)");
+            println!("         /spawn --parallel <t1> --- <t2> (run multiple tasks concurrently)");
             println!("         /spawn -o <file> <task>         (capture output to file)");
             println!("         /spawn --model <name> <task>    (use a specific model)");
             println!("         /spawn --system <prompt> <task> (custom system prompt)");
@@ -508,6 +542,11 @@ pub async fn handle_spawn(
     // Handle /spawn collect <id>
     if let Some(id) = args.collect_id {
         return handle_spawn_collect(tracker, id);
+    }
+
+    // Handle --parallel: launch multiple tasks concurrently
+    if let Some(ref tasks) = args.parallel_tasks {
+        return handle_spawn_parallel(tasks, &args, agent_config, model, main_messages, tracker);
     }
 
     // Handle --bg: launch in background
@@ -760,6 +799,62 @@ fn handle_spawn_bg(
     });
 
     tracker.store_handle(spawn_id, handle);
+    None
+}
+
+/// Launch multiple tasks concurrently as background spawns.
+///
+/// Each task is registered in the tracker and launched via the same background
+/// infrastructure as `--bg`. Returns `None` (all tasks are background).
+fn handle_spawn_parallel(
+    tasks: &[String],
+    args: &SpawnArgs,
+    agent_config: &crate::AgentConfig,
+    model: &str,
+    main_messages: &[AgentMessage],
+    tracker: &SpawnTracker,
+) -> Option<String> {
+    if tasks.len() > MAX_PARALLEL_TASKS {
+        eprintln!(
+            "{RED}  ✗ too many parallel tasks ({}, max {MAX_PARALLEL_TASKS}){RESET}",
+            tasks.len()
+        );
+        return None;
+    }
+
+    println!(
+        "{CYAN}  🐙 spawning {} parallel subagents...{RESET}",
+        tasks.len()
+    );
+
+    let mut ids = Vec::with_capacity(tasks.len());
+    for task_text in tasks.iter() {
+        // Build a SpawnArgs for each individual task, inheriting model/system
+        let single_args = SpawnArgs {
+            task: task_text.clone(),
+            output_path: None,
+            background: true,
+            collect_id: None,
+            model: args.model.clone(),
+            system_prompt: args.system_prompt.clone(),
+            parallel_tasks: None,
+        };
+        // Reuse the existing --bg infrastructure — it prints per-task info
+        // and registers + launches the background task, returning None.
+        handle_spawn_bg(&single_args, agent_config, model, main_messages, tracker);
+        // The most recently registered task has the highest ID. We can read
+        // it back from the tracker.
+        let last_id = {
+            let tasks_vec = lock_or_recover(&tracker.inner);
+            tasks_vec.last().map(|t| t.id).unwrap_or(0)
+        };
+        ids.push(last_id);
+    }
+
+    println!(
+        "\n{DIM}  Use /spawn status to check progress.\n  Use /spawn collect <id> to retrieve results.{RESET}\n"
+    );
+
     None
 }
 
@@ -1675,5 +1770,47 @@ mod tests {
         // Not a git repo — should fail.
         let result = run_git_in(tmp.path(), &["status"]);
         assert!(result.is_err(), "should fail in non-git dir");
+    }
+
+    #[test]
+    fn test_parse_spawn_parallel_flag() {
+        let args = parse_spawn_args("/spawn --parallel fix tests --- write docs");
+        assert!(args.is_some());
+        let args = args.unwrap();
+        assert!(args.parallel_tasks.is_some());
+    }
+
+    #[test]
+    fn test_parse_spawn_parallel_tasks() {
+        let args =
+            parse_spawn_args("/spawn --parallel fix the auth tests --- write docs for the parser --- add error handling to main");
+        assert!(args.is_some());
+        let args = args.unwrap();
+        let tasks = args.parallel_tasks.unwrap();
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0], "fix the auth tests");
+        assert_eq!(tasks[1], "write docs for the parser");
+        assert_eq!(tasks[2], "add error handling to main");
+    }
+
+    #[test]
+    fn test_parse_spawn_parallel_with_model() {
+        let args = parse_spawn_args(
+            "/spawn --parallel --model claude-sonnet-4-20250514 task A --- task B",
+        );
+        assert!(args.is_some());
+        let args = args.unwrap();
+        assert_eq!(args.model.as_deref(), Some("claude-sonnet-4-20250514"));
+        let tasks = args.parallel_tasks.unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0], "task A");
+        assert_eq!(tasks[1], "task B");
+    }
+
+    #[test]
+    fn test_parse_spawn_parallel_no_tasks() {
+        // --parallel with no task text should return None
+        let args = parse_spawn_args("/spawn --parallel");
+        assert!(args.is_none());
     }
 }

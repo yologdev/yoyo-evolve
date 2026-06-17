@@ -11,6 +11,12 @@ use std::path::Path;
 /// Default goal file path (project-local).
 const GOAL_FILE: &str = ".yoyo/goal.md";
 
+/// Verify command file path (project-local).
+const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
+
+/// Maximum characters of verify output to include in prompts.
+const VERIFY_OUTPUT_MAX: usize = 2000;
+
 /// Load the current goal from `.yoyo/goal.md`, if it exists.
 pub fn load_goal() -> Option<String> {
     let path = Path::new(GOAL_FILE);
@@ -48,6 +54,68 @@ fn clear_goal() -> Result<(), String> {
     Ok(())
 }
 
+// ── Verify command helpers ──────────────────────────────────────────
+
+/// Save a verification command to `.yoyo/goal_verify.md`.
+fn save_verify_command(cmd: &str) -> Result<(), String> {
+    let path = Path::new(VERIFY_FILE);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create .yoyo/ directory: {e}"))?;
+    }
+    fs::write(path, format!("{cmd}\n")).map_err(|e| format!("Failed to write verify file: {e}"))?;
+    Ok(())
+}
+
+/// Load the verification command, if one is set.
+pub fn load_verify_command() -> Option<String> {
+    let path = Path::new(VERIFY_FILE);
+    if path.exists() {
+        fs::read_to_string(path).ok().and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+    } else {
+        None
+    }
+}
+
+/// Remove the verification command file.
+fn clear_verify_command() -> Result<(), String> {
+    let path = Path::new(VERIFY_FILE);
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| format!("Failed to remove verify file: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Run the verification command and return `(exit_code, output)`.
+///
+/// Runs via `sh -c` so pipes, redirects, etc. work. Output is
+/// stdout+stderr merged, truncated to `VERIFY_OUTPUT_MAX` bytes.
+fn run_verify_command(cmd: &str) -> (i32, String) {
+    match std::process::Command::new("sh").args(["-c", cmd]).output() {
+        Ok(output) => {
+            let code = output.status.code().unwrap_or(-1);
+            let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.is_empty() {
+                if !combined.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str(&stderr);
+            }
+            let truncated = safe_truncate(&combined, VERIFY_OUTPUT_MAX).to_string();
+            (code, truncated)
+        }
+        Err(e) => (-1, format!("Failed to run verify command: {e}")),
+    }
+}
+
 /// Format the current goal for display.
 fn format_goal(goal: &str) -> String {
     format!("{BOLD}Current goal:{RESET}\n\n  {goal}\n\n{DIM}(stored in {GOAL_FILE}){RESET}")
@@ -64,6 +132,9 @@ pub fn handle_goal(input: &str) -> CommandResult {
         match load_goal() {
             Some(goal) => {
                 println!("{}\n", format_goal(&goal));
+                if let Some(vcmd) = load_verify_command() {
+                    println!("{BOLD}Verify command:{RESET} {vcmd}\n");
+                }
                 CommandResult::Continue
             }
             None => {
@@ -96,33 +167,101 @@ pub fn handle_goal(input: &str) -> CommandResult {
         }
     } else if arg == "clear" {
         match load_goal() {
-            Some(_) => match clear_goal() {
-                Ok(()) => {
-                    println!("{GREEN}Goal cleared.{RESET}\n");
-                    CommandResult::Continue
-                }
-                Err(e) => {
+            Some(_) => {
+                let mut ok = true;
+                if let Err(e) = clear_goal() {
                     eprintln!("{RED}{e}{RESET}\n");
-                    CommandResult::Continue
+                    ok = false;
                 }
-            },
+                if let Err(e) = clear_verify_command() {
+                    eprintln!("{RED}{e}{RESET}\n");
+                    ok = false;
+                }
+                if ok {
+                    println!("{GREEN}Goal cleared.{RESET}\n");
+                }
+                CommandResult::Continue
+            }
             None => {
                 println!("{DIM}No goal to clear.{RESET}\n");
                 CommandResult::Continue
             }
         }
+    } else if let Some(verify_arg) = arg.strip_prefix("verify") {
+        let verify_arg = verify_arg.trim();
+        if verify_arg.is_empty() {
+            // /goal verify — show current verify command
+            match load_verify_command() {
+                Some(vcmd) => {
+                    println!(
+                        "{BOLD}Verify command:{RESET} {vcmd}\n\n\
+                         {DIM}(stored in {VERIFY_FILE}){RESET}\n"
+                    );
+                }
+                None => {
+                    println!(
+                        "{DIM}No verify command set. \
+                         Use /goal verify <command> to set one.{RESET}\n"
+                    );
+                }
+            }
+            CommandResult::Continue
+        } else if verify_arg == "clear" {
+            match load_verify_command() {
+                Some(_) => match clear_verify_command() {
+                    Ok(()) => {
+                        println!("{GREEN}Verify command cleared.{RESET}\n");
+                    }
+                    Err(e) => {
+                        eprintln!("{RED}{e}{RESET}\n");
+                    }
+                },
+                None => {
+                    println!("{DIM}No verify command to clear.{RESET}\n");
+                }
+            }
+            CommandResult::Continue
+        } else {
+            // /goal verify <command>
+            match save_verify_command(verify_arg) {
+                Ok(()) => {
+                    println!(
+                        "{GREEN}Verify command set:{RESET} {verify_arg}\n\n\
+                         {DIM}Saved to {VERIFY_FILE}. \
+                         Will run automatically on /goal check.{RESET}\n"
+                    );
+                }
+                Err(e) => {
+                    eprintln!("{RED}{e}{RESET}\n");
+                }
+            }
+            CommandResult::Continue
+        }
     } else if arg == "check" {
         match load_goal() {
             Some(goal) => {
+                let verify_section = if let Some(vcmd) = load_verify_command() {
+                    let (code, output) = run_verify_command(&vcmd);
+                    format!(
+                        "\n\nVerification command: {vcmd}\n\
+                         Verification output:\n{output}\n\
+                         Exit code: {code}"
+                    )
+                } else {
+                    String::new()
+                };
                 let prompt = format!(
-                    "My current goal is:\n\n{goal}\n\n\
-                     Please evaluate my progress toward this goal. \
-                     Look at what's been done in the conversation so far, \
-                     check relevant files, and give me:\n\
+                    "My current goal is:\n\n{goal}{verify_section}\n\n\
+                     Based on the conversation history{verif_note}, evaluate my progress:\n\
                      1. What's been accomplished so far\n\
                      2. What's remaining\n\
                      3. Any blockers or concerns\n\
-                     4. Suggested next steps"
+                     4. Suggested next steps",
+                    verif_note = if verify_section.is_empty() {
+                        ""
+                    } else {
+                        " and verification results"
+                    }
                 );
                 CommandResult::SendToAgent(prompt)
             }
@@ -139,7 +278,10 @@ pub fn handle_goal(input: &str) -> CommandResult {
              \x20 /goal set <desc>   Set a new goal\n\
              \x20 /goal show         Show current goal\n\
              \x20 /goal clear        Remove current goal\n\
-             \x20 /goal check        Ask AI to evaluate progress\n"
+             \x20 /goal check        Ask AI to evaluate progress\n\
+             \x20 /goal verify <cmd> Set a verification command\n\
+             \x20 /goal verify       Show current verify command\n\
+             \x20 /goal verify clear Remove verify command\n"
         );
         CommandResult::Continue
     }
@@ -403,5 +545,148 @@ mod tests {
             help.contains("automatically included"),
             "goal help should mention automatic context injection"
         );
+    }
+
+    // ── Verify command tests ────────────────────────────────────────
+
+    #[test]
+    #[serial]
+    fn test_save_and_load_verify_command() {
+        with_temp_dir(|| {
+            save_verify_command("cargo test --test auth").unwrap();
+            let loaded = load_verify_command();
+            assert_eq!(loaded.as_deref(), Some("cargo test --test auth"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_clear_verify_removes_file() {
+        with_temp_dir(|| {
+            save_verify_command("make check").unwrap();
+            assert!(load_verify_command().is_some());
+            clear_verify_command().unwrap();
+            assert!(load_verify_command().is_none());
+            assert!(!Path::new(VERIFY_FILE).exists());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_goal_clear_also_clears_verify() {
+        with_temp_dir(|| {
+            save_goal("ship v1").unwrap();
+            save_verify_command("cargo test").unwrap();
+            let result = handle_goal("/goal clear");
+            assert!(matches!(result, CommandResult::Continue));
+            assert!(load_goal().is_none());
+            assert!(load_verify_command().is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_verify_command_captures_output() {
+        with_temp_dir(|| {
+            let (code, output) = run_verify_command("echo hello");
+            assert_eq!(code, 0);
+            assert!(output.contains("hello"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_verify_command_captures_exit_code() {
+        with_temp_dir(|| {
+            let (code, _output) = run_verify_command("false");
+            assert_ne!(code, 0);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_goal_verify_no_args_shows_current() {
+        with_temp_dir(|| {
+            // No verify command set
+            let result = handle_goal("/goal verify");
+            assert!(matches!(result, CommandResult::Continue));
+
+            // With verify command set
+            save_verify_command("cargo test").unwrap();
+            let result = handle_goal("/goal verify");
+            assert!(matches!(result, CommandResult::Continue));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_goal_show_includes_verify() {
+        with_temp_dir(|| {
+            save_goal("Build feature X").unwrap();
+            save_verify_command("cargo test --test feature_x").unwrap();
+            // /goal show should succeed (we can't easily capture println
+            // but we verify it doesn't panic and returns Continue)
+            let result = handle_goal("/goal show");
+            assert!(matches!(result, CommandResult::Continue));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_goal_verify_set_command() {
+        with_temp_dir(|| {
+            let result = handle_goal("/goal verify cargo test --test auth");
+            assert!(matches!(result, CommandResult::Continue));
+            let loaded = load_verify_command();
+            assert_eq!(loaded.as_deref(), Some("cargo test --test auth"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_goal_verify_clear() {
+        with_temp_dir(|| {
+            save_verify_command("make check").unwrap();
+            let result = handle_goal("/goal verify clear");
+            assert!(matches!(result, CommandResult::Continue));
+            assert!(load_verify_command().is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_goal_check_with_verify_includes_output() {
+        with_temp_dir(|| {
+            save_goal("Echo test goal").unwrap();
+            save_verify_command("echo verify_output_marker").unwrap();
+            let result = handle_goal("/goal check");
+            match result {
+                CommandResult::SendToAgent(prompt) => {
+                    assert!(prompt.contains("Echo test goal"));
+                    assert!(prompt.contains("Verification command:"));
+                    assert!(prompt.contains("verify_output_marker"));
+                    assert!(prompt.contains("Exit code: 0"));
+                    assert!(prompt.contains("verification results"));
+                }
+                other => panic!("Expected SendToAgent, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_goal_check_without_verify_unchanged() {
+        with_temp_dir(|| {
+            save_goal("Plain goal").unwrap();
+            let result = handle_goal("/goal check");
+            match result {
+                CommandResult::SendToAgent(prompt) => {
+                    assert!(prompt.contains("Plain goal"));
+                    assert!(!prompt.contains("Verification command:"));
+                    assert!(!prompt.contains("verification results"));
+                }
+                other => panic!("Expected SendToAgent, got {other:?}"),
+            }
+        });
     }
 }
