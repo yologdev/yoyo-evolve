@@ -1,0 +1,198 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the /goal verify feature. Let me start by understanding the existing goal command structure.
+  ▶ read src/commands_goal.rs  ▶ search 'goal' in src/help_data.rs ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Let me see the rest of the goal file and the check implementation:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:97..297  ▶ search 'fn safe_truncate' in src/format/mod.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now let me see the remaining test code and check the GOAL_SUBCOMMANDS definition:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:296..346  ▶ search 'GOAL_SUBCOMMANDS' in src/commands.rs  ▶ search 'goal' in src/dispatch.rs ✓ (3ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  3 tools completed in 1.7s (3 ✓)
+
+Good. Now I have a clear picture. Let me check handle_goal is actually in commands_goal.rs — confirmed. Let me also check the safe_truncate signature and the help_data.rs section I need to update:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:238..268  ▶ read src/help_data.rs:780..805 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Now I have everything I need. Let me also check where handle_goal is called from dispatch, specifically to see if it calls commands::handle_goal or `commands_goal::handle_goal`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_goal' in src/dispatch.rs  ▶ search 'handle_goal' in src/commands.rs ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 2.3s (2 ✓)
+
+Good — handle_goal is re-exported from commands.rs. Now let me plan the implementation and write tests first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add verify command functions: save/load/clear/run_…' ✓ (0ms)
+  ▶ todo add 'Add /goal verify subcommand handling in handle_goa…' ✓ (0ms)
+  ▶ todo add 'Modify /goal check to run verify command when set' ✓ (0ms)
+  ▶ todo add 'Modify /goal clear to also clear verify, /goal sho…' ✓ (0ms)
+  ▶ todo add 'Add tests for verify functionality' ✓ (0ms)
+  ▶ todo add 'Update help_data.rs and GOAL_SUBCOMMANDS' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt + clippy + build + test, fix any iss…' ✓ (0ms)
+  7 tools completed in 22.3s (7 ✓)
+
+Let me start by writing the tests and implementation together. I'll write all the new functions and the modified handle_goal, then add tests.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_goal.rs (2 → 8 lines)
+    /// Default goal file path (project-local).
+    const GOAL_FILE: &str = ".yoyo/goal.md";
+  + 
+  + /// Verify command file path (project-local).
+  + const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
+  + 
+  + /// Maximum characters of verify output to include in prompts.
+  + const VERIFY_OUTPUT_MAX: usize = 2000;
+ ✓ (15.3s)
+    /// Default goal file path (project-local).
+    const GOAL_FILE: &str = ".yoyo/goal.md";
+  + 
+  + /// Verify command file path (project-local).
+  + const VERIFY_FILE: &str = ".yoyo/goal_verify.md";
+  + 
+  + /// Maximum characters of verify output to include in prompts.
+  + const VERIFY_OUTPUT_MAX: usize = 2000;
+  2 tools completed in 23.2s (2 ✓)
+
+Expected — I need to add the functions that use these constants. Let me add all the functions at once:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (8 → 74 lines)
+        let path = Path::new(GOAL_FILE);
+        if path.exists() {
+            fs::remove_file(path).map_err(|e| format!("Failed to remove goal file: {e}"))?;
+  +     }
+  +     Ok(())
+  + }
+  + 
+  + // ── Verify command helpers ──────────────────────────────────────────
+  + 
+  + /// Save a verification command to `.yoyo/goal_verify.md`.
+  + fn save_verify_command(cmd: &str) -> Result<(), String> {
+  +     let path = Path::new(VERIFY_FILE);
+  +     if let Some(parent) = path.parent() {
+  +         fs::create_dir_all(parent)
+  +             .map_err(|e| format!("Failed to create .yoyo/ directory: {e}"))?;
+  +     }
+  +     fs::write(path, format!("{cmd}\n"))
+  +         .map_err(|e| format!("Failed to write verify file: {e}"))?;
+  +     Ok(())
+  + }
+  ... (52 more lines)
+ ✓ (15.4s)
+        let path = Path::new(GOAL_FILE);
+        if path.exists() {
+            fs::remove_file(path).map_err(|e| format!("Failed to remove goal file: {e}"))?;
+  +     }
+  +     Ok(())
+  + }
+  + 
+  + // ── Verify command helpers ──────────────────────────────────────────
+  ... (13 more lines)
+
+Good — the functions compile but aren't used yet. Let me now modify `handle_goal` to wire up the verify subcommand, modify check, clear, and show. Let me do all the handle_goal modifications at once:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me replace the entire handle_goal function. I need to see the exact current state:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:118..218 ✓ (1ms)
+
+Now I'll replace the entire handle_goal function body:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (84 → 158 lines)
+            match load_goal() {
+                Some(goal) => {
+                    println!("{}\n", format_goal(&goal));
+  +                 if let Some(vcmd) = load_verify_command() {
+  +                     println!("{BOLD}Verify command:{RESET} {vcmd}\n");
+  +                 }
+                    CommandResult::Continue
+                }
+                None => {
+  ···
+            }
+        } else if arg == "clear" {
+            match load_goal() {
+  -             Some(_) => match clear_goal() {
+  -                 Ok(()) => {
+  -                     println!("{GREEN}Goal cleared.{RESET}\n");
+  -                     CommandResult::Continue
+  +             Some(_) => {
+  +                 let mut ok = true;
+  +                 if let Err(e) = clear_goal() {
+  ... (115 more lines)
+ ✓ (1m 7s)
+            match load_goal() {
+                Some(goal) => {
+                    println!("{}\n", format_goal(&goal));
+  +                 if let Some(vcmd) = load_verify_command() {
+  +                     println!("{BOLD}Verify command:{RESET} {vcmd}\n");
+  +                 }
+                    CommandResult::Continue
+                }
+  ... (13 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo done #3 ✓ (0ms)
+  ▶ todo done #4 ✓ (0ms)
+  4 tools completed in 1m 28s (4 ✓)
+
+Now let me add the tests. Let me see the current end of the test section:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:430..490 ✓ (0ms)
+  ▶ read src/commands_goal.rs:490..520 ✓ (0ms)
+  ▶ read src/commands_goal.rs:540..555 ✓ (0ms)
+  ▶ todo wip #5 ✓ (0ms)
+  4 tools completed in 15.9s (4 ✓)
+
+Now let me add the tests before the closing }:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (9 → 152 lines)
+                help.contains("automatically included"),
+                "goal help should mention automatic context injection"
+            );
+  +     }
+  + 
+  +     // ── Verify command tests ────────────────────────────────────────
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_save_and_load_verify_command() {
+  +         with_temp_dir(|| {
+  +             save_verify_command("cargo test --test auth").unwrap();
+  +             let loaded = load_verify_command();
+  +             assert_eq!(loaded.as_deref(), Some("cargo test --test auth"));
+  +         });
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_clear_verify_removes_file() {
+  ... (128 more lines)
+ ✓ (1m 8s)
+                help.contains("automatically included"),
+                "goal help should mention automatic context injection"
+            );
+  +     }
+  + 
+  +     // ── Verify command tests ────────────────────────────────────────
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

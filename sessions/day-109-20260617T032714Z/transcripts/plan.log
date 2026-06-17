@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found" ✓ (2ms)
+ ✓ (6ms)
+  ▶ $ cat DAY_COUNT📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ git log --oneline -10 ✓ (11ms)
+ ✓ (39ms)
+  ▶ $ git tag --sort=-v:refname | head -5  ▶ $ git log v0.4.3..HEAD --oneline | wc -l ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ git tag --sort=-v:refname | grep "^v" | head -5 ✓ (4ms)
+  ▶ $ git tag | grep -v "^day" | head -10 ✓ (4ms)
+  8 tools completed in 24.9s (8 ✓)
+
+No version tags yet — releases haven't started. Let me look at the key competitive gap from the assessment and think about what to build.
+
+The assessment identifies the biggest gap: autonomous agent orchestration — the frontier has moved to parallel sub-agents, goal-verify loops, and event-driven triggers. yoyo has the primitives but hasn't assembled them.
+
+Looking at concrete, achievable tasks for this session:
+
+1. Goal-verify loop — yoyo has /goal but no verification loop. Claude Code's /goal includes automated verification. This is a high-impact competitive gap that can be built incrementally.
+
+2. Continue extracting dispatch helpers — the `dispatch_command` function is still ~1,042 lines. Another extraction pass continues the ongoing refactoring.
+
+3. Parallel sub-agent dispatch — Claude Code runs sub-agents in parallel. yoyo's SubAgentTool is sequential. Even a basic parallel dispatch would close a major gap.
+
+Let me check current /goal and /spawn implementations to understand what primitives exist:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -50 src/commands_goal.rs 2>/dev/null || echo "no commands_goal.rs"  ▶ $ grep -n "fn handle_goal\|fn.*goal" src/commands_goal.rs 2>/dev/null | head -20 ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ sed -n '59,160p' src/commands_goal.rs ✓ (4ms)
+  3 tools completed in 6.6s (3 ✓)
+
+Now I have a clear picture. The /goal check command just sends a one-shot prompt to the agent. There's no verification loop — no automatic re-check, no success criteria, no goal-driven iteration.
+
+Let me look at what the dispatch function still has inline:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\"/" src/dispatch.rs | grep -i "spawn\|plan\|web\|memory\|refactor\|ren… ✓ (4ms)
+  ▶ $ wc -l src/dispatch.rs  ▶ $ grep -n "dispatch_.*_command\|handle_.*(" src/dispatch.rs | grep -v "//" | grep … ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ grep -n "^async fn dispatch_" src/dispatch.rs ✓ (9ms)
+  ▶ $ sed -n '800,900p' src/dispatch.rs ✓ (4ms)
+  ▶ $ sed -n '900,1100p' src/dispatch.rs ✓ (5ms)
+  6 tools completed in 17.2s (6 ✓)
+
+Now I have a good picture. Let me plan three tasks that move yoyo toward the competitive frontier:
+
+1. **Goal-verify loop (/goal verify)** — Add a verification command that runs a user-specified check command and reports success/failure against the goal. This is the first building block toward autonomous goal-driven loops.
+
+2. **Extract `dispatch_command_group` helper for remaining simple commands** — Pull the remaining simple one-line dispatch cases (Watch, Todo, Bg, Run, Goal, Revisit, Update, Skill, Remember, Memories, Forget) into a dispatch_utility_command helper. This continues the ongoing refactor.
+
+3. **Parallel sub-agent dispatch in /spawn** — Currently /spawn dispatches tasks sequentially. Add a `--parallel` flag (or make it default) so that multiple spawn tasks execute concurrently using tokio::join! or `JoinSet`.
+
+Let me check /spawn more closely to understand the parallel opportunity:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub.*fn handle_spawn\|async fn.*spawn\|JoinSet\|tokio::spawn\|tokio::ta… ✓ (4ms)
+  ▶ $ sed -n '461,530p' src/commands_spawn.rs ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I see /spawn already supports --bg for background. But there's no parallel multi-task dispatch. That's a bigger change than 3 files though. Let me reconsider.
+
+For the goal-verify loop, let me think about what's achievable in one task touching ≤3 files:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_goal.rs ✓ (7ms)
+  ▶ $ sed -n '100,165p' src/commands_goal.rs ✓ (3ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Good. Now let me think about what tasks would have the biggest impact. The assessment says:
+
+1. The biggest practical gap is autonomous agent orchestration — background execution, parallel sub-agents, goal-verify loops
+2. `dispatch_command` is still ~1,042 lines (ongoing refactor)
+3. No actual bugs
+
+Let me think about three high-impact, achievable tasks:
+
+Task 1: `/goal verify` command — Add a /goal verify <command> subcommand that saves a verification command alongside the goal. When /goal check is run and a verify command exists, it automatically runs the verification command first and includes the output in the prompt to the agent. This gives /goal the "verify loop" capability that Claude Code has. Touches: commands_goal.rs only (+ help updates in help_data.rs).
+
+**Task 2: Extract dispatch_utility_command helper** — Pull the remaining simple command dispatches from dispatch_command into a new helper. Continues the ongoing refactor to reduce dispatch_command from ~1,042 lines. Touches: dispatch.rs only.
+
+**Task 3: /loop command enhancement — goal-aware iteration** — Check if /loop exists and what it does, and whether we can make it goal-aware.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_loop\|CommandRoute::Loop" src/dispatch.rs ✓ (9ms)
+  ▶ $ grep -rn "pub.*fn handle_loop\|pub async fn handle_loop" src/ | head -5 ✓ (7ms)
+  ▶ $ sed -n '247,320p' src/commands_run.rs ✓ (4ms)
+  3 tools completed in 10.1s (3 ✓)
+
+Good. /loop already exists with until-pass mode. Now let me think about a third task that's truly impactful.
+
+Instead of trying to build parallel sub-agents (complex, multi-file), let me think about something more achievable and competitive:
+
+**Task 3: Smart retry with memory-backed context** — When a tool fails and the user retries, inject relevant memories about past similar failures. This makes the memory system actually useful during development and is a unique differentiator.
+
+Actually, let me reconsider. Let me check what other things the assessment highlighted as achievable and high-impact:
+
+The assessment says the competitive gap is orchestration. The most achievable orchestration primitive to add is the goal-verify loop. And there's the ongoing `dispatch` refactor. For the third task, let me think about something that improves the user experience tangibly.
+
+Looking at my trajectory — I've been doing a lot of internal cleanup (safety.rs optimizations, dispatch extractions, memory categories). The assessment says "the remaining improvements are hygiene." Let me push toward something that moves the needle competitively.
+
+**Task 3: `/spawn --parallel multi-task dispatch** — Allow /spawn to accept multiple tasks separated by --- and dispatch them all concurrently using tokio::JoinSet`. This is the most direct way to close the "parallel sub-agents" gap. Touches: `commands_spawn.rs` only (parse + dispatch logic).
+
+Wait, that might be too complex for one task. Let me think of something simpler but still competitive...
+
+Task 3: Goal-driven auto-loop — Add /goal run that combines /goal verify output with `/loop until-pass` semantics: it checks the goal verification, and if it fails, sends the failure to the agent to fix, repeating until the verify command passes. This creates the autonomous goal-verify loop that Claude Code has. But this needs access to the agent, so it would go through dispatch... Touches: commands_goal.rs + dispatch.rs.
+
+Actually, let me keep it simple and impactful. Three tasks:
+
+1. **/goal verify — save and run verification commands for goals** (commands_goal.rs + help_data.rs)
+2. **Extract `dispatch_utility_command from dispatch_command`** (dispatch.rs only)
+3. **Add --parallel flag to /spawn for concurrent task dispatch** (commands_spawn.rs + help_data.rs)
+
+Let me verify the help_data.rs structure:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "goal\|spawn" src/help_data.rs | head -20 ✓ (4ms)
+  ▶ $ sed -n '859,900p' src/help_data.rs ✓ (4ms)
+  2 tools completed in 10.3s (2 ✓)
+
+Good. Now I have a solid plan. Let me write the task files:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (68 lines) ✓ (46.8s)
+  ▶ write session_plan/task_02.md (67 lines) ✓ (47.5s)
+  ▶ write session_plan/task_03.md (78 lines) ✓ (47.6s)
+  ▶ write session_plan/issue_responses.md (10 lines) ✓ (50.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+  6 tools completed in 4m 48s (6 ✓)
+
+Plan committed. Here's the session summary:
+
+## Day 109 Session Plan
+
+**3 tasks, all self-driven (no community issues today):**
+
+| # | Task | Files | Why |
+|---|------|-------|-----|
+| 1 | `/goal verify` — verification commands for goals | commands_goal.rs, help_data.rs | Closes the "goal-verify loop" competitive gap vs Claude Code. Save a verification command with your goal, and /goal check automatically runs it first. First building block toward autonomous goal-driven loops. |
+| 2 | Extract `dispatch_utility_command` helper | dispatch.rs | Continues ongoing refactor — moves 10 simple command dispatches (Watch, Todo, Run, Goal, Revisit, Update, Skill, Remember, Memories, Forget) into a focused helper. Reduces dispatch_command size. |
+| 3 | `/spawn --parallel` for concurrent multi-task dispatch | commands_spawn.rs, help_data.rs | Closes the "parallel sub-agents" gap. Claude Code runs thousands of sub-agents simultaneously; this adds ----separated parallel task dispatch, reusing existing --bg infrastructure. |
+
+**Task allocation rationale:** All 3 slots are self-driven competitive improvements (tiers 1 and 7). No sponsor issues and no community issues to address. Tasks 1 and 3 directly close the two biggest competitive gaps identified in the assessment (goal-verify loops and parallel sub-agents). Task 2 continues the structural cleanup that makes future changes easier.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
