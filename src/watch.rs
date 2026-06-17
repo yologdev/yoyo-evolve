@@ -13,20 +13,11 @@ use crate::memory::{auto_remember, build_fix_memory_note, build_learn_memory_not
 use crate::prompt::run_prompt_auto_retry;
 use crate::prompt_budget::session_budget_exhausted;
 use crate::session::SessionChanges;
+use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
 use std::io::{self, IsTerminal, Write};
 use std::sync::RwLock;
 use yoagent::agent::Agent;
 use yoagent::*;
-
-/// Acquire a read-guard, recovering from a poisoned RwLock instead of panicking.
-fn rw_read_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
-    lock.read().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Acquire a write-guard, recovering from a poisoned RwLock instead of panicking.
-fn rw_write_or_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
-    lock.write().unwrap_or_else(|e| e.into_inner())
-}
 
 // Global state for `/watch` — auto-run a test command after agent edits.
 
