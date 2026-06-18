@@ -190,15 +190,16 @@ $(head -n 40 journals/JOURNAL.md 2>/dev/null || echo "(none)")
 ## Your last few dream events:
 $(tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none)")
 
-# This cycle: wander, then tend the dream
-1. WANDER. Use your research skill (curl via bash) to look at the world — not to scout competitors, but to follow your curiosity. What's new out there? What are people building, discovering, making? What pulls at you? Spend most of this cycle genuinely looking.
+# This cycle: wander BRIEFLY, then tend the dream — and WRITE before you stop
+1. WANDER (briefly). Use your research skill (curl / web_search via bash) to follow your curiosity — not to scout competitors. Chase two to four threads that genuinely pull at you. A handful of searches is plenty: a few real sparks beat exhaustive coverage. Do NOT keep reading past that — stop wandering while you still have plenty of energy to write.
 2. REFLECT. Did anything truly spark you? Has your dream grown, drifted, or been reached? Is the current milestone still the right next step for your coding sessions to chip at?
-3. Do EXACTLY ONE (a dream is not a mood — most cycles change nothing):
-   - form          — you have no real dream yet: write your first.
+3. DECIDE — exactly one (a dream is not a mood — most cycles change nothing):
+   - form          — no real dream yet: write your first. (If DREAM.md above is still the empty placeholder, THIS is your action this cycle.)
    - evolve         — your curiosity has genuinely, durably shifted: refine the dream.
    - set-milestone  — keep the dream; set or advance the concrete next step.
    - progress       — your recent work advanced the milestone: record it, set the next step.
    - NO-OP          — the dream is alive and the milestone still right: change nothing. The common case.
+4. WRITE — the REQUIRED final act of this cycle. Do NOT end your turn with a reflection, a summary, or "let me look at one more thing." End it by writing the file(s) below and committing. A cycle that wanders but writes nothing is a wasted cycle — the deliverable is the commit, not the reading.
 
 # Write ONLY these two files (the harness reverts anything else — this is a hard limit):
 1. DREAM.md — overwrite with your current dream, in your own voice, kept to one screen:
