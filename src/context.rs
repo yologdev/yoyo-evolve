@@ -310,8 +310,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_load_project_context_includes_file_listing() {
-        // load_project_context should include project file listing when in a git repo
+        // load_project_context should include project file listing when in a git repo.
+        // Needs #[serial] because it depends on the cwd being the project root,
+        // and other serial tests (e.g., test_project_context_includes_conventions)
+        // change the working directory.
         let result = load_project_context();
         if let Some(context) = &result {
             // If we're in a git repo, context should include the file listing section

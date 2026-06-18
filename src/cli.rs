@@ -1078,6 +1078,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 mod tests {
     use super::*;
     use crate::config::glob_match;
+    use serial_test::serial;
 
     #[test]
     fn test_version_constant_exists() {
@@ -2175,6 +2176,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_context_strategy_parses_checkpoint() {
         // Set a dummy API key so parse_args doesn't bail
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
@@ -2188,6 +2190,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_context_strategy_parses_compaction_explicit() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec![
@@ -2200,6 +2203,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_context_strategy_unknown_defaults_to_compaction() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into(), "--context-strategy".into(), "banana".into()];
@@ -2208,6 +2212,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_context_strategy_absent_defaults_to_compaction() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into()];
@@ -2232,6 +2237,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_parse_fallback_flag() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into(), "--fallback".into(), "google".into()];
@@ -2244,6 +2250,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_parse_fallback_missing() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into()];
@@ -2253,6 +2260,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_parse_fallback_case_insensitive() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into(), "--fallback".into(), "Google".into()];
@@ -2261,6 +2269,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_parse_fallback_derives_model() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into(), "--fallback".into(), "openai".into()];
@@ -2362,6 +2371,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_print_system_prompt_flag_parsed() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into(), "--print-system-prompt".into()];
@@ -2370,6 +2380,7 @@ system_prompt = "You are a Go expert"
     }
 
     #[test]
+    #[serial]
     fn test_print_system_prompt_flag_default_false() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args: Vec<String> = vec!["yoyo".into(), "--api-key".into(), "sk-test".into()];
@@ -2578,6 +2589,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_auto_commit_flag_default_false() {
         // When --auto-commit is not passed, auto_commit should default to false
         let args = vec!["yoyo".to_string(), "-p".to_string(), "hello".to_string()];
@@ -2587,6 +2599,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_auto_commit_flag_parsed() {
         // When --auto-commit is passed, auto_commit should be true
         let args = vec![
@@ -2725,6 +2738,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_bare_prompt_via_parse_args() {
         // End-to-end: `yoyo "fix bug"` should set prompt_arg
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
@@ -2734,6 +2748,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_bare_prompt_with_model_flag_via_parse_args() {
         // `yoyo --model gpt-4 "do something"` should work
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
@@ -2748,6 +2763,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_explicit_prompt_flag_overrides_positional() {
         // `yoyo -p "explicit" "ignored"` — -p takes precedence
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
@@ -2762,6 +2778,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_no_args_still_none_prompt() {
         // `yoyo` with no args → REPL mode, prompt_arg is None
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
@@ -2776,6 +2793,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_output_format_stream_json() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -2788,6 +2806,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_output_format_json() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -2800,6 +2819,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_output_format_text_explicit() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -2812,6 +2832,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_json_flag_sets_output_format_json() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string(), "--json".to_string()];
@@ -2821,6 +2842,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_output_format_default_is_text() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string()];
@@ -2837,6 +2859,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_print_flag_sets_print_mode() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string(), "--print".to_string()];
@@ -2845,6 +2868,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_print_flag_implies_auto_approve() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string(), "--print".to_string()];
@@ -2856,6 +2880,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_print_flag_without_prompt_warns() {
         // When --print is used without -p, print_mode is still set in Config
         // (the warning is emitted at runtime in main.rs, not during parsing).
@@ -2872,6 +2897,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_disallowed_tools_single() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -2884,6 +2910,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_disallowed_tools_comma_separated() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -2911,6 +2938,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_disallowed_tools_empty_when_not_provided() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string()];
@@ -2922,6 +2950,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_no_tools_flag() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -2959,6 +2988,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_no_tools_default_false() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string()];
@@ -2967,6 +2997,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_no_tools_combined_with_disallowed_tools() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -2993,6 +3024,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_lite_flag_sets_lite_true() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3006,6 +3038,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_lite_flag_sets_context_window() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3019,6 +3052,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_lite_flag_with_explicit_context_window() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3035,6 +3069,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_lite_flag_sets_system_prompt() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3048,6 +3083,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_lite_flag_disallows_non_essential_tools() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3077,6 +3113,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_lite_default_false() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string()];
@@ -3093,6 +3130,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_auto_lite_context_window_8000() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3112,6 +3150,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_no_auto_lite_context_window_32000() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3128,6 +3167,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_auto_lite_preserves_explicit_disallowed_tools() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3156,6 +3196,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_allowed_tools_single() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3168,6 +3209,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_allowed_tools_comma_separated() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3183,6 +3225,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_allowed_and_disallowed_conflict() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec![
@@ -3270,6 +3313,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_parse_auto_edit_flag() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         let args = vec!["yoyo".to_string(), "--auto-edit".to_string()];
@@ -3282,6 +3326,7 @@ command = "server-two"
     }
 
     #[test]
+    #[serial]
     fn test_auto_edit_and_yes_independent() {
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
         // --yes implies --auto-edit
