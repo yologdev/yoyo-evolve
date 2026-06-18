@@ -75,6 +75,59 @@ pub fn run_git(args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Run a git command in a specific directory.
+/// Returns `Ok(stdout_trimmed)` on success, `Err(stderr_trimmed)` on failure.
+///
+/// Uses `git -C <dir>` so the process working directory is unchanged.
+/// The test safety guard checks `dir` (not `cwd`) against the project root.
+pub fn run_git_in_dir(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    #[cfg(test)]
+    if let Some(cmd) = args.first() {
+        if destructive_guard(args, dir).is_some() {
+            panic!(
+                "SAFETY: run_git_in_dir() called with destructive command '{}' targeting project \
+                 root during tests. Use a temp directory or mock instead.",
+                cmd
+            );
+        }
+    }
+    match std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        Err(e) => Err(format!("git not found: {e}")),
+    }
+}
+
+/// Run a git command and return the raw `Output` struct.
+/// Use this when you need both stdout and stderr, or need to inspect the
+/// exit status beyond success/failure (e.g. `git apply --check`).
+///
+/// Callers should prefer `run_git()` or `run_git_in_dir()` for the common
+/// case of just needing stdout on success.
+pub fn run_git_output(args: &[&str]) -> Result<std::process::Output, String> {
+    #[cfg(test)]
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(cmd) = destructive_guard(args, &cwd) {
+            panic!(
+                "SAFETY: run_git_output() called with destructive command '{}' from project root \
+                 during tests. Use a temp directory or mock instead.",
+                cmd
+            );
+        }
+    }
+    std::process::Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| format!("git not found: {e}"))
+}
+
 /// Get the current git branch name, if we're in a git repo.
 pub fn git_branch() -> Option<String> {
     run_git(&["rev-parse", "--abbrev-ref", "HEAD"]).ok()

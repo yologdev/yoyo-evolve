@@ -132,10 +132,7 @@ pub fn handle_version_verbose(provider: &str, model: &str) {
 ///
 /// Returns `(modified, added)` counts, or `None` if git is unavailable.
 fn count_session_file_changes() -> Option<(usize, usize)> {
-    let output = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()
-        .ok()?;
+    let output = crate::git::run_git_output(&["status", "--porcelain"]).ok()?;
     if !output.status.success() {
         return None;
     }

@@ -946,20 +946,10 @@ pub struct WorktreeInfo {
 }
 
 /// Run a git command in a specific directory.
-/// Returns stdout on success, stderr message on failure.
+/// Delegates to the centralized `git::run_git_in_dir` for consistent error
+/// handling and test safety.
 fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
-    match std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
-        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
-        Err(e) => Err(format!("git not found: {e}")),
-    }
+    crate::git::run_git_in_dir(repo, args)
 }
 
 /// Resolve the root of the git repository that contains `start`.
