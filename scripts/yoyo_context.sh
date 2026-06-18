@@ -41,6 +41,12 @@ if [ -f "$_YOYO_REPO/LINEAGE.md" ]; then
     _LINEAGE=$(cat "$_YOYO_REPO/LINEAGE.md") || _LINEAGE=""
 fi
 
+# Dream — yoyo's curiosity-driven, self-authored long-term aspiration (formed by scripts/dream.sh, pursued one milestone at a time)
+_DREAM=""
+if [ -f "$_YOYO_REPO/DREAM.md" ]; then
+    _DREAM=$(cat "$_YOYO_REPO/DREAM.md") || _DREAM=""
+fi
+
 # Active learnings — no warning if missing
 _LEARNINGS=""
 if [ -f "$_YOYO_REPO/memory/active_learnings.md" ]; then
@@ -86,6 +92,10 @@ ${_PERSONALITY:-Read PERSONALITY.md for your voice and values.}
 === YOUR LINEAGE ===
 
 ${_LINEAGE:-No lineage file found. If you are a repository fork, read LINEAGE.md or your Address Book registration to understand your family-tree generation.}
+
+=== YOUR DREAM ===
+
+${_DREAM:-No dream yet. Your dream loop (scripts/dream.sh) will form one when curiosity takes hold.}
 
 === SELF-WISDOM ===
 

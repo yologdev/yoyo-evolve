@@ -1,0 +1,101 @@
+name: Dream
+
+on:
+  schedule:
+    - cron: '45 * * * *'  # hourly at :45 (off-phase from evolve :00, sponsors :15, skill-evolve :30); inner ~7-day cooldown filters to roughly weekly
+  workflow_dispatch:       # manual trigger for testing (FORCE_RUN bypasses the cooldown)
+
+concurrency:
+  group: evolution             # shared with evolve.yml / skill-evolve.yml — GitHub serializes them
+  cancel-in-progress: false    # queue, don't kill an in-flight cycle
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  dream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.bot-token.outputs.token }}
+          fetch-depth: 50
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Setup GitHub CLI
+        run: gh auth status
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Install RTK for CLI output compression (fail-soft: native fallback handles absence).
+      - name: Install RTK (output compression)
+        continue-on-error: true
+        run: |
+          if ! command -v rtk &>/dev/null; then
+            curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh || true
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          rtk --version || echo "RTK install failed; agent will use native compressor"
+
+      - name: Detect bot identity
+        id: bot-info
+        run: |
+          SLUG="${{ steps.bot-token.outputs.app-slug }}"
+          if [ -z "$SLUG" ]; then
+            echo "::error::GitHub App slug is empty."
+            exit 1
+          fi
+          echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
+          echo "login=${SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git
+        run: |
+          git config user.name "${{ steps.bot-info.outputs.login }}"
+          git config user.email "${{ steps.bot-info.outputs.email }}"
+
+      - name: Run dream cycle
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
+          FALLBACK_PROVIDER: zai
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_INSTALLATION_ID: ${{ secrets.APP_INSTALLATION_ID }}
+          BOT_LOGIN: ${{ steps.bot-info.outputs.login }}
+          BOT_SLUG: ${{ steps.bot-info.outputs.slug }}
+        run: |
+          chmod +x scripts/dream.sh
+          ./scripts/dream.sh
