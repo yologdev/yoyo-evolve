@@ -1,0 +1,130 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons… ✓ (7ms)
+
+Let me check the key details I need for planning:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | head -200  ▶ $ grep -n "serial" src/dispatch_sub.rs | head -20  ▶ $ grep -n "test_resolve_api_key" src/dispatch_sub.rs | head -10 ✓ (4ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ grep -n "set_var\|remove_var" src/dispatch_sub.rs | head -20  ▶ $ grep -n "serial_test\|use serial" src/dispatch_sub.rs | head -10  ▶ $ # Check how Day 106 fixed this pattern in format/mod.rs (2 lines) ✓ (5ms)
+ ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # Check if serial_test is already in Cargo.toml (2 lines)  ▶ $ # Check for env var mutation in cli.rs tests (2 lines)  ▶ $ # Check if cli.rs tests use #[serial] (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # How many cli.rs tests mutate env vars? (2 lines)  ▶ $ # Check all files with env var mutations in tests (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Check setup.rs for #[serial] (2 lines)  ▶ $ # What other env vars are mutated in tests? (2 lines) ✓ (5ms)
+ ✓ (10ms)
+  13 tools completed in 24.1s (13 ✓)
+
+Now let me look at the scope of the env var race condition more carefully to size the tasks:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # dispatch_sub.rs - check the two test functions (2 lines) ✓ (3ms)
+  ▶ $ # Check if dispatch_sub.rs has serial_test imported already (2 lines) ✓ (4ms)
+  ▶ $ # How many tests in cli.rs need #[serial]? Count unique test… (2 lines)  ▶ $ # Check the test module in cli.rs for serial usage (2 lines) ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ # Get list of test fns that set_var ANTHROPIC in cli.rs (2 lines) ✓ (5ms)
+  5 tools completed in 17.8s (5 ✓)
+
+That's a lot — 40+ test functions in cli.rs that need #[serial]. That's too big for one task slot. Let me think about the best use of three task slots.
+
+Now let me think about the capability gap work. Let me check what checkpointing might look like:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check existing checkpoint infrastructure (2 lines) ✓ (6ms)
+  ▶ $ # Check existing checkpoint implementation (2 lines) ✓ (4ms)
+  ▶ $ sed -n '337,360p' src/commands_fork.rs ✓ (3ms)
+  3 tools completed in 8.7s (3 ✓)
+
+Good — checkpoints already exist but they're in-memory only and based on SessionChanges. The assessment mentions "No automatic checkpoints/snapshots" as a gap vs Claude Code. What Claude Code has is automatic checkpointing — saving state before each tool use so users can rewind. That's a bigger feature.
+
+Let me think about the three tasks strategically:
+
+1. Bug fix (priority 2): Fix the env var race condition in dispatch_sub.rs — this is the known flaky CI bug that has already caused panics. Small, well-scoped, known pattern.
+
+2. Bug fix (priority 2): Fix the env var race in cli.rs tests — same bug class but in a different file. Both are the exact pattern fixed on Day 106.
+
+3. Self-driven capability (priority 7): Something competitive. Let me think about what would be most impactful...
+
+Actually, looking at the assessment more carefully — the `cli.rs file has 40+ tests that need #[serial]`, which is a big mechanical change. That's risky for a single task. Let me reconsider.
+
+The `dispatch_sub.rs` fix is tiny — 2 tests, add import + annotations. That's a quick win.
+
+For the self-driven work, let me think about what competitive gap to close. The assessment calls out "no automatic checkpoints" as the biggest table-stakes gap. But building automatic checkpointing is a multi-session effort. Let me look for something impactful but scoped.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what let _ = patterns exist in commands_config.rs (2 lines) ✓ (4ms)
+  ▶ $ # Check other silently discarded errors that are non-trivial (3 lines) ✓ (5ms)
+  2 tools completed in 8.6s (2 ✓)
+
+Now let me plan three well-scoped tasks:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (42 lines)
+  + Title: Fix env var race condition in dispatch_sub.rs tests
+  + Files: src/dispatch_sub.rs
+  + Issue: none (self-discovered bug from assessment, confirmed by project memory panic on Day 110 07:41)
+  + 
+  + ## Problem
+  + 
+  + `test_resolve_api_key_from_env` and `test_resolve_api_key_flag_overrides_env` in `dispatch_sub.rs`
+  + mutate the global `ANTHROPIC_API_KEY` env var via `std::env::set_var` / `std::env::remove_var`
+  + without `#[serial]` annotation. When Rust runs tests in parallel, these can race with other tests
+  + that read the same env var, causing flaky panics.
+  + 
+  + This is the **exact same bug class** fixed on Day 106 in `format/mod.rs` — the fix pattern is
+  + well-established in this codebase.
+  + 
+  + ## What To Do
+  + 
+  + 1. Add `use serial_test::serial;` to the test module in `dispatch_sub.rs` (the crate is already
+  +    in Cargo.toml dev-dependencies).
+  + 
+  + 2. Add `#[serial]` annotation to both test functions:
+  ... (22 more lines)
+ ✓ (49.8s)
+  ▶ write session_plan/task_02.md (46 lines) ✓ (46.5s)
+  2 tools completed in 1m 52s (2 ✓)
+
+Now for the self-driven competitive improvement. Let me think about what would be high impact...
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what auto-checkpoint would look like - does the chec… (2 lines) ✓ (9ms)
+  ▶ $ # What does auto-checkpoint mean in Claude Code? It saves be… (7 lines) ✓ (8ms)
+  ▶ $ # Let me think about the `let _ = agent.restore_messages()` … (6 lines) ✓ (7ms)
+  ▶ $ # What about a more impactful feature? Let me check what aut… (8 lines) ✓ (4ms)
+  ▶ $ sed -n '14,50p' src/session.rs ✓ (4ms)
+  5 tools completed in 24.4s (5 ✓)
+
+Let me think about what would be the most high-impact self-driven task. The assessment mentions:
+
+1. Auto-checkpoints (table-stakes for Claude Code) — too big for one task
+2. `let _ =` silently discarding restore errors — small but impactful (users lose conversation without knowing)
+3. Multi-file diff preview — interesting but complex
+
+Let me look at a practical feature: auto-checkpoint before each prompt turn using the existing CheckpointStore. This would let users /undo the agent's last action by restoring the auto-saved checkpoint. That's the foundation of Claude Code's rewind capability.
+
+Actually, that's still multi-file. Let me think about what touches at most 3 files...
+
+What about fixing the let _ = patterns in commands_config.rs? That's a legitimate bug — if restore_messages fails after a model/thinking switch, the user silently loses their conversation. Plus I could add a test. But that's pretty small.
+
+Let me look for something more competitive. What about automatic checkpoint save before each prompt turn? That would be self-contained in prompt.rs + commands_fork.rs (make CheckpointStore accessible) + repl.rs (wire it up).
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ # How does the prompt flow work? Check where run_prompt is c… (2 lines) ✓ (3ms)
+  ▶ $ # Let me look at what git-based undo already exists (2 lines) ✓ (8ms)
+  ▶ $ sed -n '1019,1080p' src/commands_git.rs ✓ (4ms)
+  3 tools completed in 11.0s (3 ✓)
+
+OK — the undo system is git-based. It tracks which files were changed per turn and uses git checkout to revert them. This is already pretty good.
+
+Let me focus on something that would make a real competitive difference. Let me look at what else would be impactful...
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ # How about: fix the silent error discard in commands_config… (20 lines) ✓ (5ms)
+  ▶ $ # Let me see the main REPL loop where the prompt is called (2 lines) ✓ (4ms)
+  ▶ $ # Find the main prompt send in the REPL loop (not in helper … (2 lines) ✓ (4ms)
+  3 tools completed in 7.6s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

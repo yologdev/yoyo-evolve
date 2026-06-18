@@ -1,0 +1,76 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the env var race condition in cli.rs tests by adding #[serial] annotations. Let me start by understanding the current state of the test module.
+  ▶ $ grep -n "mod tests" src/cli.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -c "#\[test\]" src/cli.rs ✓ (20ms)
+ ✓ (41ms)
+  ▶ read src/cli.rs:1078..1108 ✓ (1ms)
+  ▶ $ grep -n "set_var\|remove_var" src/cli.rs | head -60 ✓ (4ms)
+  4 tools completed in 7.9s (4 ✓)
+
+44 test functions use set_var. Now let me identify exactly which test functions need #[serial]. I'll use a script to find all test function names that contain env var mutations.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (72 lines) ✓ (29ms)
+
+Good — 44 tests need #[serial], 125 don't. Let me check if `serial_test` is already imported anywhere in cli.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "serial" src/cli.rs | head -5 ✓ (4ms)
+
+No serial_test usage yet. Let me first add the import, then use a script to mechanically add #[serial] to exactly the 44 tests that need it.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 4 lines)
+    mod tests {
+        use super::*;
+        use crate::config::glob_match;
+  +     use serial_test::serial;
+ ✓ (16.5s)
+    mod tests {
+        use super::*;
+        use crate::config::glob_match;
+  +     use serial_test::serial;
+
+Expected — the import is unused until we add the annotations. Now let me write a script to add #[serial] annotations to the correct test functions:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (61 lines) ✓ (28ms)
+
+Now let me verify the changes look correct:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -c "#\[serial\]" src/cli.rs  ▶ $ grep -B1 -A1 "#\[serial\]" src/cli.rs | head -30 ✓ (3ms)
+ ✓ (40ms)
+  2 tools completed in 2.3s (2 ✓)
+
+Good — all 44 #[serial] annotations inserted correctly, each right after #[test]. Let me also verify some tests that should NOT have serial:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A2 "fn test_version_constant_exists" src/cli.rs  ▶ $ grep -A2 "fn help_text_documents_all_subcommands" src/cli.rs ✓ (39ms)
+ ✓ (40ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Those don't have #[serial] — correct, they don't use env vars. Now let's run the full verification:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (804ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (8.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (1m 3s)
+  4 tools completed in 1m 41s (4 ✓)
+
+All 3847 tests pass, clippy clean, build clean. Let me also run the cli-specific tests to double-check:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -p yoyo-agent -- cli:… ✓ (22.3s)
+
+All 169 cli tests pass. Now let me commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (10 lines) ✓ (16ms)
+
+Done. Clean and precise:
+
+• Added `use serial_test::serial; to the mod tests block in cli.rs`
+• Added `#[serial] to exactly 44 test functions that call std::env::set_var or std::env::remove_var`
+• Left the 125 tests that don't mutate env vars untouched for maximum parallelism
+• No test logic changed — purely mechanical annotation additions
+• All checks pass: `cargo fmt, cargo clippy, cargo build, cargo test` (3847 tests pass)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

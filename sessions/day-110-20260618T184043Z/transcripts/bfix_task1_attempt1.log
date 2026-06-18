@@ -1,0 +1,288 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the failing test and understand what's going on.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_load_project_conte… ✓ (6ms)
+  ▶ read src/context.rs:300..350 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me look at the load_project_context function to understand what it returns:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_project_context… ✓ (3ms)
+  ▶ read src/context.rs:127..227 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+The test at line 313 is checking that load_project_context() contains "## Project Files". The test logic says: if get_project_file_listing() returns Some, then the context should contain "## Project Files". Let me check what get_project_file_listing does:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn get_project_file_lis… ✓ (3ms)
+  ▶ read src/context.rs:40..80 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me check what run_git does - the test guard might be interfering:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:1..51 ✓ (1ms)
+  ▶ read src/git.rs:50..80 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+OK so run_git with ls-files should be fine (non-destructive). The test failure is in `test_load_project_context_includes_file_listing. Let me check what load_project_context returns in this context. The issue is that load_project_context() returns Some(context) but it doesn't contain "## Project Files". But get_project_file_listing() also returns Some` (since the assert inside the if block fires).
+
+Wait - re-reading the panic message: `Context should contain Project Files section`. So the test logic is:
+1. load_project_context() returns Some(context) ✓
+2. get_project_file_listing() returns Some ✓
+3. But context.contains("## Project Files") is `false` ✗
+
+Let me check if something changed in the load_project_context function recently:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~5 -- src/context.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff -- src/context.rs | hea… ✓ (4ms)
+  2 tools completed in 4.3s (2 ✓)
+
+No changes to context.rs. Let me check git status:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD --name-only ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --name-only ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/dispatch_… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- .yoyo/memory.… ✓ (4ms)
+  6 tools completed in 15.1s (6 ✓)
+
+Let me see the full memory diff:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:.yoyo/memory.jso… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo/memory.json ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+OK so the dispatch_sub.rs change looks fine — it just added #[serial] annotations and the use serial_test::serial; import. The memory.json change just removed a stale entry. Neither of these should affect the `context::tests::test_load_project_context_includes_file_listing` test.
+
+Let me try to reproduce the failure:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- test_load_project_… ✓ (181ms)
+
+It passes in isolation. This is a test ordering / parallelism issue. Let me look at the test more carefully. The test calls `load_project_context() which calls get_project_file_listing() which calls run_git(&["ls-files"])`. Under parallel testing, another test could be changing the current directory or environment in a way that affects git.
+
+Let me run the full test suite to see if it fails:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (20.2s)
+
+It passes now. Let me run a few more times to check for flakiness:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do echo "=== Run… ✓ (59.9s)
+
+The test passes now. The failure was likely a flaky race condition during the original test run. But since the user says "the tests broke after your implementation", let me look more carefully at what could cause load_project_context() to not contain `"## Project Files"`.
+
+The test logic is:
+1. Call load_project_context() → get context
+2. Call get_project_file_listing() again → if Some, assert context contains "## Project Files"
+
+The problem: these are two separate calls. If load_project_context() runs while some other parallel test has temporarily changed the environment (e.g., removed ANTHROPIC_API_KEY or something else), and git ls-files fails for some reason in the first call but succeeds in the second... but that seems unlikely for git ls-files.
+
+Actually, wait - let me look at the context test more carefully. The test at line 318 calls get_project_file_listing() again. If the first call during load_project_context() returned None (e.g., due to some transient git issue), but the second standalone call returned Some, then the assertion would fire.
+
+But the real question is: did the change to dispatch_sub.rs cause this? Looking at the change — adding use serial_test::serial; and #[serial] annotations — those should only affect the dispatch_sub tests. They wouldn't cause a context test to fail.
+
+This is most likely a pre-existing flaky test unrelated to the dispatch_sub change. But since the user wants it fixed, let me make it more robust:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:312..332 ✓ (1ms)
+
+The fix is simple: instead of calling get_project_file_listing() separately (which can give a different result than the call inside load_project_context()), just check if the context contains the section directly, or check if the file listing was available from the same context string:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (14 → 18 lines)
+        #[test]
+        fn test_load_project_context_includes_file_listing() {
+  -         // load_project_context should include project file listing when in a git repo
+  +         // load_project_context should include project file listing when in a git repo.
+  +         // We check the file listing *once* before calling load_project_context so that
+  +         // both checks observe the same git state — calling get_project_file_listing()
+  +         // again afterwards is racy because transient git failures can make the two
+  +         // calls disagree.
+  +         let listing_available = get_project_file_listing().is_some();
+            let result = load_project_context();
+            if let Some(context) = &result {
+  -             // If we're in a git repo, context should include the file listing section
+  -             if get_project_file_listing().is_some() {
+  +             if listing_available {
+                    assert!(
+                        context.contains("## Project Files"),
+                        "Context should contain Project Files section"
+ ✓ (1m 9s)
+        #[test]
+        fn test_load_project_context_includes_file_listing() {
+  -         // load_project_context should include project file listing when in a git repo
+  +         // load_project_context should include project file listing when in a git repo.
+  +         // We check the file listing *once* before calling load_project_context so that
+  +         // both checks observe the same git state — calling get_project_file_listing()
+  +         // again afterwards is racy because transient git failures can make the two
+  +         // calls disagree.
+  ... (9 more lines)
+
+Wait, actually this still has a race — the listing could be available before but fail during load_project_context(). The real issue is that the two calls to get_project_file_listing() can return different results. The truly robust fix is to just check the context string itself:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (18 → 19 lines)
+        #[test]
+        fn test_load_project_context_includes_file_listing() {
+            // load_project_context should include project file listing when in a git repo.
+  -         // We check the file listing *once* before calling load_project_context so that
+  -         // both checks observe the same git state — calling get_project_file_listing()
+  -         // again afterwards is racy because transient git failures can make the two
+  -         // calls disagree.
+  -         let listing_available = get_project_file_listing().is_some();
+  +         // We only inspect the returned context string itself — calling
+  +         // get_project_file_listing() separately is racy because transient git
+  +         // failures can make the two calls disagree (observed in CI Day 110).
+            let result = load_project_context();
+            if let Some(context) = &result {
+  -             if listing_available {
+  +             // In a git repo the context should include the file listing section.
+  +             // We're in the yoyo repo during tests, so this should always be true,
+  +             // but guard against unusual CI environments where git may not be set up.
+  +             if context.contains("Cargo.toml") {
+                    assert!(
+                        context.contains("## Project Files"),
+  ... (1 more lines)
+ ✓ (1m 8s)
+        #[test]
+        fn test_load_project_context_includes_file_listing() {
+            // load_project_context should include project file listing when in a git repo.
+  -         // We check the file listing *once* before calling load_project_context so that
+  -         // both checks observe the same git state — calling get_project_file_listing()
+  -         // again afterwards is racy because transient git failures can make the two
+  -         // calls disagree.
+  -         let listing_available = get_project_file_listing().is_some();
+  ... (13 more lines)
+
+Hmm, but that changes the test semantics. Let me think about this differently.
+
+The original test's logic was: "if git works (we can list files), then load_project_context should include those files." The problem is it called get_project_file_listing() AFTER load_project_context(), so the two calls could disagree.
+
+The cleanest fix that preserves the intent: check if the listing was available first, then verify it's in the context:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (19 → 17 lines)
+        #[test]
+        fn test_load_project_context_includes_file_listing() {
+            // load_project_context should include project file listing when in a git repo.
+  -         // We only inspect the returned context string itself — calling
+  -         // get_project_file_listing() separately is racy because transient git
+  -         // failures can make the two calls disagree (observed in CI Day 110).
+  +         // Check listing availability *before* calling load_project_context so both
+  +         // observe the same git state — the previous ordering (listing check after
+  +         // load) was racy under parallel tests.
+  +         let has_listing = get_project_file_listing().is_some();
+            let result = load_project_context();
+            if let Some(context) = &result {
+  -             // In a git repo the context should include the file listing section.
+  -             // We're in the yoyo repo during tests, so this should always be true,
+  -             // but guard against unusual CI environments where git may not be set up.
+  -             if context.contains("Cargo.toml") {
+  +             if has_listing {
+                    assert!(
+                        context.contains("## Project Files"),
+                        "Context should contain Project Files section"
+ ✓ (1m 8s)
+        #[test]
+        fn test_load_project_context_includes_file_listing() {
+            // load_project_context should include project file listing when in a git repo.
+  -         // We only inspect the returned context string itself — calling
+  -         // get_project_file_listing() separately is racy because transient git
+  -         // failures can make the two calls disagree (observed in CI Day 110).
+  +         // Check listing availability *before* calling load_project_context so both
+  +         // observe the same git state — the previous ordering (listing check after
+  ... (12 more lines)
+
+Actually wait — the race isn't between two calls to get_project_file_listing(). Let me reconsider. The test was called in a full cargo test run, which runs tests in parallel. If another test somehow changes the working directory or messes with git, `run_git(&["ls-files"]) inside load_project_context()` could fail while it succeeds when called independently.
+
+But actually the more likely issue given the recent change: the `#[serial] tests in dispatch_sub.rs are now using serial_test::serial`, which serializes their execution. This means tests that were previously running quickly in parallel now wait for the serial tests. But serial_test serializes ALL `#[serial]` tests, not just those in the same module. If other tests also use #[serial], the ordering could change.
+
+Let me check:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "#\[serial\]" src/ ✓ (7ms)
+
+OK there are many #[serial] tests. Let me look at the serial tests in context.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:475..505 ✓ (1ms)
+
+Ah ha! There it is. Tests like test_project_context_includes_conventions (line 481) use std::env::set_current_dir to change the working directory and they have #[serial]. But the test test_load_project_context_includes_file_listing (line 312) does NOT have #[serial]. If it runs at the same time as one of these serial tests that changes the current directory, git ls-files would run in the temp dir instead of the project root.
+
+Wait, actually #[serial] tests synchronize with each other, but non-serial tests CAN run concurrently with serial tests... No wait, that's wrong. serial_test ensures that #[serial] tests run exclusively — no other #[serial] test runs at the same time. But non-serial tests CAN run concurrently with serial tests.
+
+So the race is: test_load_project_context_includes_file_listing (non-serial) runs at the same time as test_project_context_includes_conventions (serial, changes cwd). When the cwd is changed to a temp dir, git ls-files inside `load_project_context()` returns files from the temp dir, not the project dir. The temp dir might have a Cargo.toml but git ls-files might return different results.
+
+Actually wait — #[serial] tests wait for non-serial tests? Let me check. Actually no: `serial_test::serial ensures that all tests annotated with #[serial]` (without a specific name) run one at a time AND don't overlap with each other. Non-serial tests run in parallel with each other AND potentially with serial tests.
+
+So the fix is to add #[serial] to `test_load_project_context_includes_file_listing since it depends on the current working directory being the project root (via git ls-files`).
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:270..275 ✓ (1ms)
+  ▶ read src/context.rs:255..315 ✓ (1ms)
+  2 tools completed in 8.9s (2 ✓)
+
+I see multiple tests that depend on the current directory being the project root: test_list_project_context_files_returns_vec, test_get_project_file_listing_no_panic, test_load_project_context_includes_file_listing, and `test_get_recently_changed_files_in_git_repo. They all need #[serial]` since other tests change the working directory.
+
+Let me check which tests in context.rs already have #[serial] and which don't:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]\|#\[serial\]"… ✓ (3ms)
+
+Now let me check: which non-serial tests depend on the working directory being the project root? Let me look at each:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^    #\[test\]/{found=1; n… ✓ (5ms)
+
+The tests that call git-related functions (which depend on working directory) and are NOT serial include:
+• test_list_project_context_files_returns_vec (line 280) - calls `list_project_context_files()`, which reads files in current dir
+• test_get_project_file_listing_no_panic (line 291) - calls get_project_file_listing() which runs git ls-files
+• test_load_project_context_includes_file_listing (line 313) - the failing one
+• test_get_recently_changed_files_in_git_repo (line 331) - calls get_recently_changed_files which runs git
+• `test_get_recently_changed_files_respects_limit` (line 349)
+• test_get_recently_changed_files_no_duplicates (line 362)
+• test_load_project_context_includes_recently_changed (line 371) - calls load_project_context()
+• test_get_git_status_context_in_repo (line 406)
+• test_get_git_status_context_contains_branch (line 417)
+• `test_git_status_context_format` (line 428)
+• test_load_project_context_includes_git_status (line 437) - calls load_project_context()
+
+But the user's error message only shows test_load_project_context_includes_file_listing failing. Let me focus on just fixing that one, since that's what was reported. The issue is clear: the test depends on git working in the project root dir, but other `#[serial]` tests that change cwd can race with it.
+
+Let me check if serial_test::serial is already imported in the context.rs test module:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use serial_test" src/co… ✓ (3ms)
+
+Good, already imported. Now let me add #[serial] to the failing test and the other tests that depend on being in the project root directory:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (17 → 18 lines)
+        #[test]
+  +     #[serial]
+        fn test_load_project_context_includes_file_listing() {
+            // load_project_context should include project file listing when in a git repo.
+  -         // Check listing availability *before* calling load_project_context so both
+  -         // observe the same git state — the previous ordering (listing check after
+  -         // load) was racy under parallel tests.
+  -         let has_listing = get_project_file_listing().is_some();
+  +         // Needs #[serial] because it depends on the cwd being the project root,
+  +         // and other serial tests (e.g., test_project_context_includes_conventions)
+  +         // change the working directory.
+            let result = load_project_context();
+            if let Some(context) = &result {
+  -             if has_listing {
+  +             // If we're in a git repo, context should include the file listing section
+  +             if get_project_file_listing().is_some() {
+                    assert!(
+                        context.contains("## Project Files"),
+                        "Context should contain Project Files section"
+ ✓ (1m 10s)
+        #[test]
+  +     #[serial]
+        fn test_load_project_context_includes_file_listing() {
+            // load_project_context should include project file listing when in a git repo.
+  -         // Check listing availability *before* calling load_project_context so both
+  -         // observe the same git state — the previous ordering (listing check after
+  -         // load) was racy under parallel tests.
+  -         let has_listing = get_project_file_listing().is_some();
+  ... (11 more lines)
+
+Now let me also add `#[serial]` to the other tests that depend on working directory. Let me look at them:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:279..289 ✓ (1ms)
+  ▶ read src/context.rs:290..315 ✓ (1ms)
+  ▶ read src/context.rs:330..390 ✓ (1ms)
+  3 tools completed in 9.0s (3 ✓)
+

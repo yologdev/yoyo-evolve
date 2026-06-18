@@ -1,0 +1,112 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the env var race condition in dispatch_sub.rs tests. Let me start by examining the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_resolve_api_key" s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial_test" src/dispat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "edition" Cargo.toml | h… ✓ (3ms)
+ ✓ (7ms)
+ ✓ (4ms)
+  3 tools completed in 2.2s (3 ✓)
+
+Good — edition 2021, so set_var/remove_var don't need unsafe. No serial_test import yet. Let me see the test module context:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:1130..1180 ✓ (1ms)
+
+Now let me find the test module declaration to add the `use serial_test::serial;` import:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (3ms)
+  ▶ read src/dispatch_sub.rs:536..546 ✓ (0ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now let me check how serial_test is used elsewhere in the codebase to confirm the pattern:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use serial_test" src/*.… ✓ (7ms)
+
+Good, the pattern is well established. Now let me make the fix:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (4 → 5 lines)
+        use super::*;
+  +     use serial_test::serial;
+    
+        #[test]
+        fn test_flag_value_finds_value_for_single_flag() {
+ ✓ (15.6s)
+        use super::*;
+  +     use serial_test::serial;
+    
+        #[test]
+        fn test_flag_value_finds_value_for_single_flag() {
+
+Expected — I need to also add the #[serial] annotations to the tests. Let me do that:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_from_env() {
+ ✓ (1m 9s)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_from_env() {
+  ▶ edit src/dispatch_sub.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_flag_overrides_env() {
+ ✓ (1m 10s)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_flag_overrides_env() {
+  2 tools completed in 2m 26s (2 ✓)
+
+Now let me verify the changes look right:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:536..581 ✓ (1ms)
+  ▶ read src/dispatch_sub.rs:1147..1182 ✓ (1ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Good. Both tests have #[serial]. Now run the full verification:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- test_resolve_api_k… ✓ (166ms)
+  2 tools completed in 23.8s (2 ✓)
+
+Both tests pass. Now full test suite:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (33.3s)
+
+All 3846 tests pass. Now let me remove the stale project memory entry:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo/memory.json | python3 … ✓ (37ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (12 lines) ✓ (25ms)
+  4 tools completed in 28.3s (4 ✓)
+
+Good, removed the stale memory entry. Let me verify the memory file looks clean:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .yoyo/memory.json ✓ (3ms)
+
+Clean. Now let me verify everything one more time:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (50.4s)
+
+All checks pass — fmt, clippy, build, and test. Let me commit:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git diff --cached … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --cached src/dispatch_s… ✓ (5ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Exactly the right changes — 3 lines added: the import and two #[serial] annotations. Let me commit:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (9 lines) ✓ (13ms)
+
+Done! Clean fix:
+
+1. Added `use serial_test::serial;` to the test module in dispatch_sub.rs
+2. Added `#[serial]` annotation to both test_resolve_api_key_from_env and test_resolve_api_key_flag_overrides_env — these tests mutate the global ANTHROPIC_API_KEY env var and need serialization to prevent races
+3. **Removed the stale project memory entry** about the test_resolve_api_key_from_env panic since it's now fixed
+4. No `unsafe` blocks needed — project is on Rust edition 2021 where set_var/remove_var are safe
+5. All checks pass: fmt ✓, clippy ✓, build ✓, 3846 tests pass ✓
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
