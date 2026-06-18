@@ -1,0 +1,355 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll consolidate raw git calls in the specified files. Let me start by examining the current code.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Find and show all raw `Command::new("git")` calls in these f…' ✓ (58.6s)
+
+Good. Now let me look at the specific code sections I need to modify, starting with the most complex ones.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:510..610  ▶ read src/commands_skill.rs:880..920  ▶ read src/commands_rename.rs:165..195  ▶ read src/commands_move.rs:608..633  ▶ read src/commands_map.rs:163..188 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+ ✓ (2ms)
+ ✓ (3ms)
+  5 tools completed in 2.7s (5 ✓)
+
+Now let me check the imports in each file to understand what's already imported:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::git' (src/commands_file.rs)  ▶ search 'use crate::git' (src/commands_skill.rs)  ▶ search 'use crate::git' (src/commands_rename.rs)  ▶ search 'use crate::git' (src/commands_move.rs)  ▶ search 'use crate::git' (src/commands_map.rs) ✓ (18ms)
+ ✓ (17ms)
+ ✓ (18ms)
+ ✓ (22ms)
+ ✓ (22ms)
+  5 tools completed in 2.4s (5 ✓)
+
+None of them import from crate::git yet. Let me check what they do import:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_file.rs:1..11  ▶ read src/commands_skill.rs:1..11  ▶ read src/commands_rename.rs:1..11  ▶ read src/commands_move.rs:1..11  ▶ read src/commands_map.rs:1..11 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  5 tools completed in 2.9s (5 ✓)
+
+Now let me also verify the exact signatures of `run_git and run_git_output`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:1..51 ✓ (1ms)
+  ▶ read src/git.rs:50..100 ✓ (1ms)
+  ▶ read src/git.rs:99..129 ✓ (1ms)
+  ▶ read src/git.rs:128..138 ✓ (1ms)
+  4 tools completed in 12.2s (4 ✓)
+
+Good. Now I have a clear picture. Let me also check the `commands_skill.rs` call more closely to understand how it handles stderr/stdout:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:860..920 ✓ (2ms)
+  ▶ read src/commands_skill.rs:919..939 ✓ (1ms)
+  ▶ read src/commands_skill.rs:938..953 ✓ (0ms)
+  3 tools completed in 12.4s (3 ✓)
+
+Now I have the full picture. The commands_skill.rs clone call uses Stdio::piped() explicitly, but `run_git_output` already pipes stdout and stderr (it calls .output() which captures both). The args are `String not &str` though — I'll need to handle that. Let me also check if run_git_output is already set up to handle the NotFound error kind:
+
+The run_git_output returns Err(format!("git not found: {e}")) for all Err cases, so it doesn't distinguish NotFound from other errors. The commands_skill.rs code checks e.kind() == std::io::ErrorKind::NotFound specifically. I can use run_git_output and adjust the error matching. Let me now make all the changes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Replace 3 raw git calls in commands_file.rs::apply…' ✓ (0ms)
+  ▶ todo add 'Replace 1 raw git call in commands_skill.rs::skill…' ✓ (0ms)
+  ▶ todo add 'Replace 1 raw git call in each of commands_rename.…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  ▶ todo add 'Commit changes' ✓ (0ms)
+  5 tools completed in 22.0s (5 ✓)
+
+Let me start with the three simple files first:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+**commands_rename.rs** — replace raw `Command::new("git") with run_git`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_rename.rs (2 → 3 lines)
+    use crate::commands_search::is_binary_extension;
+    use crate::format::*;
+  + use crate::git::run_git;
+ ✓ (15.2s)
+    use crate::commands_search::is_binary_extension;
+    use crate::format::*;
+  + use crate::git::run_git;
+
+Expected — I need to use it now:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_rename.rs (19 → 12 lines)
+    /// List files tracked by git (via `git ls-files`).
+    /// Falls back to walking the current directory if not in a git repo.
+    fn list_git_files() -> Vec<String> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["ls-files"])
+  -         .output();
+  - 
+  -     match output {
+  -         Ok(out) if out.status.success() => {
+  -             let stdout = String::from_utf8_lossy(&out.stdout);
+  -             stdout
+  -                 .lines()
+  -                 .filter(|l| !l.is_empty())
+  -                 .map(|l| l.to_string())
+  -                 .collect()
+  -         }
+  -         _ => Vec::new(),
+  +     match run_git(&["ls-files"]) {
+  +         Ok(stdout) => stdout
+  +             .lines()
+  ... (6 more lines)
+ ✓ (1m 16s)
+    /// List files tracked by git (via `git ls-files`).
+    /// Falls back to walking the current directory if not in a git repo.
+    fn list_git_files() -> Vec<String> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["ls-files"])
+  -         .output();
+  - 
+  -     match output {
+  ... (13 more lines)
+
+**commands_move.rs** — replace raw Command::new("git") with run_git:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_move.rs (1 → 2 lines)
+    use crate::format::*;
+  + use crate::git::run_git;
+ ✓ (14.9s)
+    use crate::format::*;
+  + use crate::git::run_git;
+  ▶ edit src/commands_move.rs (20 → 15 lines)
+        let pattern = format!("impl {type_name}");
+    
+        // Check git-tracked files first
+  -     let output = std::process::Command::new("git")
+  -         .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+  -         .output()
+  -         .ok()?;
+  - 
+  -     let file_list = String::from_utf8_lossy(&output.stdout);
+  +     let file_list = run_git(&["ls-files", "--cached", "--others", "--exclude-standard"]).ok()?;
+        for file in file_list.lines() {
+            if !file.ends_with(".rs") {
+                continue;
+ ✓ (1m 17s)
+        let pattern = format!("impl {type_name}");
+    
+        // Check git-tracked files first
+  -     let output = std::process::Command::new("git")
+  -         .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+  -         .output()
+  -         .ok()?;
+  - 
+  ... (5 more lines)
+  2 tools completed in 1m 44s (2 ✓)
+
+**commands_map.rs** — replace raw Command::new("git") with run_git:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_map.rs (4 → 5 lines)
+    use crate::commands_ast_grep::is_ast_grep_available;
+    use crate::commands_search::{is_binary_extension, list_project_files};
+    use crate::format::*;
+  + use crate::git::run_git;
+    pub use crate::symbols::*;
+ ✓ (15.0s)
+    use crate::commands_ast_grep::is_ast_grep_available;
+    use crate::commands_search::{is_binary_extension, list_project_files};
+    use crate::format::*;
+  + use crate::git::run_git;
+    pub use crate::symbols::*;
+
+Now replace the actual call:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:168..193 ✓ (1ms)
+  ▶ edit src/commands_map.rs (20 → 16 lines)
+    pub fn recently_modified_files(n: usize) -> Vec<String> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["log", "--name-only", "--format=", "-n"])
+  -         .arg(n.to_string())
+  -         .output();
+  -     let output = match output {
+  -         Ok(o) if o.status.success() => o,
+  -         _ => return Vec::new(),
+  +     let n_str = n.to_string();
+  +     let stdout = match run_git(&["log", "--name-only", "--format=", "-n", &n_str]) {
+  +         Ok(s) => s,
+  +         Err(_) => return Vec::new(),
+        };
+  -     let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for line in stdout.lines() {
+ ✓ (1m 17s)
+    pub fn recently_modified_files(n: usize) -> Vec<String> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["log", "--name-only", "--format=", "-n"])
+  -         .arg(n.to_string())
+  -         .output();
+  -     let output = match output {
+  -         Ok(o) if o.status.success() => o,
+  -         _ => return Vec::new(),
+  ... (9 more lines)
+  ▶ todo done #3 ✓ (0ms)
+  3 tools completed in 1m 31s (3 ✓)
+
+Now let me tackle the more complex files. Starting with commands_file.rs:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_file.rs (2 → 3 lines)
+    use crate::commands_map::detect_language;
+    use crate::format::*;
+  + use crate::git::run_git_output;
+ ✓ (15.0s)
+    use crate::commands_map::detect_language;
+    use crate::format::*;
+  + use crate::git::run_git_output;
+  2 tools completed in 18.7s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unused import: `crate::git::run_git_output`[0m
+ [1m[94m--> [0msrc/commands_file.rs:5:5
+  [1m[94m|[0m
+[1m[94m5[0m [1m[94m|[0m use crate::git::run_git_output;
+  [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `-D unused-imports` implied by `-D warnings`
+  [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_imports)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+The issue is clear — I added the run_git_output import but hadn't yet replaced the actual Command::new("git") calls in commands_file.rs. Let me complete the replacement now.
+  ▶ read src/commands_file.rs:516..606 ✓ (1ms)
+
+Now replace the entire apply_patch function body to use run_git_output:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_file.rs (87 → 81 lines)
+    /// Apply a patch file using `git apply`. Returns `(success, output_message)`.
+    pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
+  -     use std::process::Command;
+  - 
+        // Verify file exists
+        if !std::path::Path::new(path).exists() {
+            return (false, format!("Patch file not found: {path}"));
+        }
+    
+        // First get stat output to show a summary
+  -     let stat_result = Command::new("git").args(["apply", "--stat", path]).output();
+  - 
+  -     let stat_text = match &stat_result {
+  +     let stat_text = match run_git_output(&["apply", "--stat", path]) {
+            Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+            Err(_) => String::new(),
+        };
+  ···
+            }
+            args.push(path);
+  ... (17 more lines)
+ ✓ (1m 16s)
+    /// Apply a patch file using `git apply`. Returns `(success, output_message)`.
+    pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
+  -     use std::process::Command;
+  - 
+        // Verify file exists
+        if !std::path::Path::new(path).exists() {
+            return (false, format!("Patch file not found: {path}"));
+        }
+  ... (13 more lines)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 1m 21s (2 ✓)
+
+Now commands_skill.rs — the `git clone call needs run_git_output` since it inspects both stderr and exit status:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ read src/commands_skill.rs:870..875 ✓ (1ms)
+  2 tools completed in 10.3s (2 ✓)
+
+The args in this function are String (not &str), but run_git_output takes &[&str]. I need to convert. Let me look at the full args construction:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_skill.rs:873..958 ✓ (1ms)
+
+The tricky part: run_git_output returns Result<Output, String>, so the Err variant is a String, not an `io::Error. The original code checks e.kind() == NotFound`. I need to adapt the error matching to work with the string error from run_git_output. The string will be "git not found: ..." when git isn't found. Let me convert the args to &str references and adapt the error handling:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_skill.rs (36 → 28 lines)
+        // Build git clone command
+  -     let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
+  +     let clone_path_str = clone_path.display().to_string();
+  +     let mut args: Vec<&str> = vec!["clone", "--depth", "1"];
+        if let Some(ref branch) = gh.branch {
+  -         args.push("--branch".to_string());
+  -         args.push(branch.clone());
+  +         args.push("--branch");
+  +         args.push(branch);
+        }
+  -     args.push(url.clone());
+  -     args.push(clone_path.display().to_string());
+  +     args.push(&url);
+  +     args.push(&clone_path_str);
+    
+        eprintln!(
+            "{DIM}  cloning {}/{}{}…{RESET}",
+  ···
+                .unwrap_or_default()
+        );
+  ... (17 more lines)
+ ✓ (1m 17s)
+        // Build git clone command
+  -     let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
+  +     let clone_path_str = clone_path.display().to_string();
+  +     let mut args: Vec<&str> = vec!["clone", "--depth", "1"];
+        if let Some(ref branch) = gh.branch {
+  -         args.push("--branch".to_string());
+  -         args.push(branch.clone());
+  +         args.push("--branch");
+  ... (13 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  2 tools completed in 1m 23s (2 ✓)
+
+Now let me verify everything builds:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo wip #4 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (792ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (145ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (45.3s)
+  5 tools completed in 1m 18s (5 ✓)
+
+All 3846 tests pass, clippy clean, build clean. Let me also verify there are no remaining raw Command::new("git") calls in production code of the 5 files I touched:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/commands_file.rs sr… ✓ (9ms)
+
+All remaining Command::new("git") calls are in test code (high line numbers), which we deliberately leave untouched per the task instructions. The three simple files are fully clean.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #4 ✓ (0ms)
+
+Now commit:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #5 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (8ms)
+  2 tools completed in 15.0s (2 ✓)
+
+Some of these changes are from prior tasks (commands_dev.rs, commands_info.rs, git.rs, .yoyo/memory.json). Let me just stage my 5 files:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (10 lines) ✓ (17ms)
+  ▶ todo done #5 ✓ (0ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Done. Replaced 7 raw Command::new("git") production calls across 5 files with centralized `run_git() and run_git_output()` helpers:
+
+• commands_file.rs (3 calls): apply_patch() now uses run_git_output for all three git-apply invocations (stat, strategy loop, error fallback)
+• commands_skill.rs (1 call): `skill_install_from_github() clone now uses run_git_output with &str` args instead of String args
+• commands_rename.rs (1 call): list_git_files() simplified from 19 lines to 12 using run_git
+• commands_move.rs (1 call): find_file_with_impl() simplified from 6 lines to 1 using run_git
+• commands_map.rs (1 call): recently_modified_files() simplified from 20 lines to 16 using run_git
+
+Net: -26 lines. All 3846 tests pass, clippy clean.
+
+  ✓ Watch passed after fix (attempt 1)
+
