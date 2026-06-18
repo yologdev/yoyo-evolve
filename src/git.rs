@@ -20,8 +20,10 @@ const DESTRUCTIVE_GIT_COMMANDS: &[&str] = &[
     "cherry-pick",
     "rm",
     "mv",
-    "tag",
-    "branch",
+    // NOTE: `tag` and `branch` removed — they have common read-only modes
+    // (`git tag --sort=...`, `git branch --show-current`) that production code
+    // routes through `run_git`. The guard still covers the high-risk commands
+    // (commit, push, reset, checkout, revert) that caused the original incident.
 ];
 
 /// Check whether a git invocation targets a destructive subcommand and is
@@ -1447,6 +1449,10 @@ stash@{1}: On feature: def5678 wip stuff";
             &["diff", "--cached"],
             &["status"],
             &["show", "HEAD"],
+            &["tag", "--sort=-creatordate"],
+            &["tag", "-l", "evolution-*"],
+            &["branch", "--show-current"],
+            &["ls-files", "src/"],
         ] {
             assert!(
                 destructive_guard(safe, project_root).is_none(),

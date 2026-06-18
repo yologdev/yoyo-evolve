@@ -5,6 +5,7 @@ use crate::commands_project::{detect_project_type, ProjectType};
 use crate::commands_run::get_last_failed_run;
 use crate::commands_session::auto_compact_if_needed;
 use crate::format::*;
+use crate::git::{git_branch, run_git};
 use crate::prompt::run_prompt;
 
 use yoagent::agent::Agent;
@@ -42,12 +43,9 @@ pub fn run_doctor_checks(provider: &str, model: &str) -> Vec<DoctorCheck> {
     });
 
     // 2. Git installed
-    match std::process::Command::new("git").arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            let ver = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .replace("git version ", "")
-                .to_string();
+    match run_git(&["--version"]) {
+        Ok(ver_output) => {
+            let ver = ver_output.replace("git version ", "");
             checks.push(DoctorCheck {
                 name: "Git".to_string(),
                 status: DoctorStatus::Pass,
@@ -64,28 +62,9 @@ pub fn run_doctor_checks(provider: &str, model: &str) -> Vec<DoctorCheck> {
     }
 
     // 3. Git repo
-    match std::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            let branch = std::process::Command::new("git")
-                .args(["branch", "--show-current"])
-                .output()
-                .ok()
-                .and_then(|o| {
-                    if o.status.success() {
-                        let b = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                        if b.is_empty() {
-                            None
-                        } else {
-                            Some(b)
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| "detached".to_string());
+    match run_git(&["rev-parse", "--is-inside-work-tree"]) {
+        Ok(_) => {
+            let branch = git_branch().unwrap_or_else(|| "detached".to_string());
             checks.push(DoctorCheck {
                 name: "Git repo".to_string(),
                 status: DoctorStatus::Pass,

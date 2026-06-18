@@ -39,31 +39,18 @@ pub fn compute_self_written_pct() -> Option<(usize, usize, f64)> {
 /// then runs `git blame --line-porcelain` and counts author lines.
 fn compute_self_written_pct_inner() -> Option<(usize, usize, f64)> {
     // Find all tracked .rs files under src/
-    let ls_output = std::process::Command::new("git")
-        .args(["ls-files", "src/"])
-        .output()
-        .ok()?;
-    if !ls_output.status.success() {
-        return None;
-    }
-    let file_list = String::from_utf8_lossy(&ls_output.stdout);
+    let file_list = run_git(&["ls-files", "src/"]).ok()?;
     let rs_files: Vec<&str> = file_list.lines().filter(|f| f.ends_with(".rs")).collect();
     if rs_files.is_empty() {
         return None;
     }
 
     // Run git blame --line-porcelain on all files at once
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("blame").arg("--line-porcelain");
+    let mut args: Vec<&str> = vec!["blame", "--line-porcelain"];
     for f in &rs_files {
-        cmd.arg(f);
+        args.push(f);
     }
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_git(&args).ok()?;
     let mut total = 0usize;
     let mut self_written = 0usize;
     for line in stdout.lines() {
@@ -1024,13 +1011,8 @@ pub fn handle_changelog(input: &str) {
     let count = parse_changelog_count(input);
 
     let count_arg = format!("-{count}");
-    let output = std::process::Command::new("git")
-        .args(["log", "--oneline", "--format=%h %s (%ar)", &count_arg])
-        .output();
-
-    match output {
-        Ok(result) if result.status.success() => {
-            let text = String::from_utf8_lossy(&result.stdout);
+    match run_git(&["log", "--oneline", "--format=%h %s (%ar)", &count_arg]) {
+        Ok(text) => {
             let text = text.trim();
             if text.is_empty() {
                 println!("{DIM}  (no commits found){RESET}\n");
@@ -1042,11 +1024,11 @@ pub fn handle_changelog(input: &str) {
                 println!("{RESET}");
             }
         }
-        Ok(_) => {
-            println!("{DIM}  (not in a git repository){RESET}\n");
+        Err(e) if e.contains("git not found") => {
+            println!("{DIM}  (git not available){RESET}\n");
         }
         Err(_) => {
-            println!("{DIM}  (git not available){RESET}\n");
+            println!("{DIM}  (not in a git repository){RESET}\n");
         }
     }
 }
@@ -1351,20 +1333,14 @@ pub fn handle_evolution(input: &str) {
         .unwrap_or(0);
 
     // Fetch git tags
-    let tag_output = std::process::Command::new("git")
-        .args(["tag", "--sort=-creatordate"])
-        .output();
-
-    let tags_text = match tag_output {
-        Ok(result) if result.status.success() => {
-            String::from_utf8_lossy(&result.stdout).to_string()
-        }
-        Ok(_) => {
-            println!("{DIM}  (not in a git repository){RESET}\n");
+    let tags_text = match run_git(&["tag", "--sort=-creatordate"]) {
+        Ok(text) => text,
+        Err(e) if e.contains("git not found") => {
+            println!("{DIM}  (git not available){RESET}\n");
             return;
         }
         Err(_) => {
-            println!("{DIM}  (git not available){RESET}\n");
+            println!("{DIM}  (not in a git repository){RESET}\n");
             return;
         }
     };
