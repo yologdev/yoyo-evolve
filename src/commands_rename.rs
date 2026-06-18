@@ -2,6 +2,7 @@
 
 use crate::commands_search::is_binary_extension;
 use crate::format::*;
+use crate::git::run_git;
 
 /// Check if a character is a word boundary character (not alphanumeric or underscore).
 fn is_word_boundary_char(c: char) -> bool {
@@ -174,20 +175,13 @@ pub fn find_word_boundary_matches(text: &str, pattern: &str) -> Vec<usize> {
 /// List files tracked by git (via `git ls-files`).
 /// Falls back to walking the current directory if not in a git repo.
 fn list_git_files() -> Vec<String> {
-    let output = std::process::Command::new("git")
-        .args(["ls-files"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect()
-        }
-        _ => Vec::new(),
+    match run_git(&["ls-files"]) {
+        Ok(stdout) => stdout
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect(),
+        Err(_) => Vec::new(),
     }
 }
 

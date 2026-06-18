@@ -873,13 +873,14 @@ fn skill_install_from_github(source: &str) {
     let clone_path = tmp_base.join(&gh.repo);
 
     // Build git clone command
-    let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
+    let clone_path_str = clone_path.display().to_string();
+    let mut args: Vec<&str> = vec!["clone", "--depth", "1"];
     if let Some(ref branch) = gh.branch {
-        args.push("--branch".to_string());
-        args.push(branch.clone());
+        args.push("--branch");
+        args.push(branch);
     }
-    args.push(url.clone());
-    args.push(clone_path.display().to_string());
+    args.push(&url);
+    args.push(&clone_path_str);
 
     eprintln!(
         "{DIM}  cloning {}/{}{}…{RESET}",
@@ -891,18 +892,9 @@ fn skill_install_from_github(source: &str) {
             .unwrap_or_default()
     );
 
-    let output = std::process::Command::new("git")
-        .args(&args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
+    let output = crate::git::run_git_output(&args);
 
     match output {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("{RED}  error: git is not installed or not in PATH{RESET}");
-            eprintln!("{DIM}  install git to use remote skill installation{RESET}\n");
-            return;
-        }
         Err(e) => {
             eprintln!("{RED}  error running git clone: {e}{RESET}\n");
             return;

@@ -2,6 +2,7 @@
 
 use crate::commands_map::detect_language;
 use crate::format::*;
+use crate::git::run_git_output;
 
 use std::io::IsTerminal;
 
@@ -515,17 +516,13 @@ pub fn parse_apply_args(input: &str) -> ApplyArgs {
 
 /// Apply a patch file using `git apply`. Returns `(success, output_message)`.
 pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
-    use std::process::Command;
-
     // Verify file exists
     if !std::path::Path::new(path).exists() {
         return (false, format!("Patch file not found: {path}"));
     }
 
     // First get stat output to show a summary
-    let stat_result = Command::new("git").args(["apply", "--stat", path]).output();
-
-    let stat_text = match &stat_result {
+    let stat_text = match run_git_output(&["apply", "--stat", path]) {
         Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
         Err(_) => String::new(),
     };
@@ -548,7 +545,7 @@ pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
         }
         args.push(path);
 
-        match Command::new("git").args(&args).output() {
+        match run_git_output(&args) {
             Ok(output) if output.status.success() => {
                 let mut msg = String::new();
                 if check_only {
@@ -582,9 +579,7 @@ pub fn apply_patch(path: &str, check_only: bool) -> (bool, String) {
         fail_args.push("--check");
     }
     fail_args.push(path);
-    let stderr = Command::new("git")
-        .args(&fail_args)
-        .output()
+    let stderr = run_git_output(&fail_args)
         .map(|o| String::from_utf8_lossy(&o.stderr).to_string())
         .unwrap_or_default();
 

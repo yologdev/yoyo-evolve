@@ -1,6 +1,7 @@
 //! Move methods between impl blocks — cross-file method relocation
 
 use crate::format::*;
+use crate::git::run_git;
 
 /// Parsed `/move` command arguments.
 pub struct MoveArgs {
@@ -615,12 +616,7 @@ fn find_file_with_impl(type_name: &str) -> Option<String> {
     let pattern = format!("impl {type_name}");
 
     // Check git-tracked files first
-    let output = std::process::Command::new("git")
-        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
-        .output()
-        .ok()?;
-
-    let file_list = String::from_utf8_lossy(&output.stdout);
+    let file_list = run_git(&["ls-files", "--cached", "--others", "--exclude-standard"]).ok()?;
     for file in file_list.lines() {
         if !file.ends_with(".rs") {
             continue;

@@ -3,6 +3,7 @@
 use crate::commands_ast_grep::is_ast_grep_available;
 use crate::commands_search::{is_binary_extension, list_project_files};
 use crate::format::*;
+use crate::git::run_git;
 pub use crate::symbols::*;
 
 /// Build a repo map by scanning project files and extracting symbols.
@@ -170,15 +171,11 @@ pub fn format_repo_map(entries: &[FileSymbols]) -> String {
 /// Returns up to `n` unique file paths from the last `n` commits' changed files.
 /// Returns an empty vec if not in a git repository or git fails.
 pub fn recently_modified_files(n: usize) -> Vec<String> {
-    let output = std::process::Command::new("git")
-        .args(["log", "--name-only", "--format=", "-n"])
-        .arg(n.to_string())
-        .output();
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
+    let n_str = n.to_string();
+    let stdout = match run_git(&["log", "--name-only", "--format=", "-n", &n_str]) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
     };
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
     for line in stdout.lines() {
