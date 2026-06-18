@@ -13,6 +13,28 @@ use std::io::{self, Write};
 use yoagent::agent::Agent;
 use yoagent::*;
 
+/// Run a `gh` CLI command and return its stdout on success, or print a
+/// user-friendly error on failure. Returns `None` if the command failed
+/// or `gh` is not installed.
+fn run_gh(args: &[&str]) -> Option<String> {
+    match std::process::Command::new("gh").args(args).output() {
+        Ok(output) if output.status.success() => {
+            Some(String::from_utf8_lossy(&output.stdout).to_string())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+            None
+        }
+        Err(_) => {
+            eprintln!(
+                "{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n"
+            );
+            None
+        }
+    }
+}
+
 // ── /diff ────────────────────────────────────────────────────────────────
 
 /// A parsed line from `git diff --stat` output.
@@ -1182,10 +1204,16 @@ fn handle_undo_all(history: &mut TurnHistory) -> Option<String> {
     }
 
     if has_diff {
-        let _ = run_git(&["checkout", "--", "."]);
+        if let Err(e) = run_git(&["checkout", "--", "."]) {
+            eprintln!("{RED}  ✗ failed to revert tracked changes: {e}{RESET}\n");
+            return None;
+        }
     }
     if has_untracked {
-        let _ = run_git(&["clean", "-fd"]);
+        if let Err(e) = run_git(&["clean", "-fd"]) {
+            eprintln!("{RED}  ✗ failed to clean untracked files: {e}{RESET}\n");
+            // Tracked changes were already reverted, so continue
+        }
     }
     println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
 
@@ -1789,129 +1817,53 @@ pub async fn handle_pr(input: &str, agent: &mut Agent, session_total: &mut Usage
     let arg = input.strip_prefix("/pr").unwrap_or("").trim();
     match parse_pr_args(arg) {
         PrSubcommand::List => {
-            match std::process::Command::new("gh")
-                .args(["pr", "list", "--limit", "10"])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    if text.trim().is_empty() {
-                        println!("{DIM}  (no open pull requests){RESET}\n");
-                    } else {
-                        println!("{DIM}  Open pull requests:");
-                        for line in text.lines() {
-                            println!("    {line}");
-                        }
-                        println!("{RESET}");
+            if let Some(text) = run_gh(&["pr", "list", "--limit", "10"]) {
+                if text.trim().is_empty() {
+                    println!("{DIM}  (no open pull requests){RESET}\n");
+                } else {
+                    println!("{DIM}  Open pull requests:");
+                    for line in text.lines() {
+                        println!("    {line}");
                     }
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                }
-                Err(_) => {
-                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
+                    println!("{RESET}");
                 }
             }
         }
         PrSubcommand::View(number) => {
             let num_str = number.to_string();
-            match std::process::Command::new("gh")
-                .args(["pr", "view", &num_str])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    println!("{DIM}{text}{RESET}");
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                }
-                Err(_) => {
-                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
-                }
+            if let Some(text) = run_gh(&["pr", "view", &num_str]) {
+                println!("{DIM}{text}{RESET}");
             }
         }
         PrSubcommand::Diff(number) => {
             let num_str = number.to_string();
-            match std::process::Command::new("gh")
-                .args(["pr", "diff", &num_str])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    if text.trim().is_empty() {
-                        println!("{DIM}  (no diff for PR #{number}){RESET}\n");
-                    } else {
-                        println!("{DIM}{text}{RESET}");
-                    }
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                }
-                Err(_) => {
-                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
+            if let Some(text) = run_gh(&["pr", "diff", &num_str]) {
+                if text.trim().is_empty() {
+                    println!("{DIM}  (no diff for PR #{number}){RESET}\n");
+                } else {
+                    println!("{DIM}{text}{RESET}");
                 }
             }
         }
         PrSubcommand::Comment(number, text) => {
             let num_str = number.to_string();
-            match std::process::Command::new("gh")
-                .args(["pr", "comment", &num_str, "--body", &text])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    println!("{GREEN}  ✓ comment added to PR #{number}{RESET}\n");
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                }
-                Err(_) => {
-                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
-                }
+            if run_gh(&["pr", "comment", &num_str, "--body", &text]).is_some() {
+                println!("{GREEN}  ✓ comment added to PR #{number}{RESET}\n");
             }
         }
         PrSubcommand::Checkout(number) => {
             let num_str = number.to_string();
-            match std::process::Command::new("gh")
-                .args(["pr", "checkout", &num_str])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    println!("{GREEN}  ✓ checked out PR #{number}{RESET}\n");
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                }
-                Err(_) => {
-                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
-                }
+            if run_gh(&["pr", "checkout", &num_str]).is_some() {
+                println!("{GREEN}  ✓ checked out PR #{number}{RESET}\n");
             }
         }
         PrSubcommand::Review(number, post) => {
             let num_str = number.to_string();
 
             // Fetch PR diff
-            let diff = match std::process::Command::new("gh")
-                .args(["pr", "diff", &num_str])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    String::from_utf8_lossy(&output.stdout).to_string()
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                    return;
-                }
-                Err(_) => {
-                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
-                    return;
-                }
+            let diff = match run_gh(&["pr", "diff", &num_str]) {
+                Some(d) => d,
+                None => return,
             };
 
             if diff.trim().is_empty() {
@@ -1920,21 +1872,16 @@ pub async fn handle_pr(input: &str, agent: &mut Agent, session_total: &mut Usage
             }
 
             // Optionally fetch PR title/body for context
-            let pr_info = std::process::Command::new("gh")
-                .args([
-                    "pr",
-                    "view",
-                    &num_str,
-                    "--json",
-                    "title,body",
-                    "--jq",
-                    r#".title + "\n\n" + .body"#,
-                ])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_default();
+            let pr_info = run_gh(&[
+                "pr",
+                "view",
+                &num_str,
+                "--json",
+                "title,body",
+                "--jq",
+                r#".title + "\n\n" + .body"#,
+            ])
+            .unwrap_or_default();
 
             // Truncate diff if very large (50KB limit)
             const PR_REVIEW_MAX_BYTES: usize = 50_000;
