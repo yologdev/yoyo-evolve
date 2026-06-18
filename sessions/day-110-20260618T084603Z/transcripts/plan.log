@@ -1,0 +1,298 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues file and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 2.6s (2 ✓)
+
+No community issues. All 3 slots are self-driven. Let me check the current state of auto-checkpointing and multi-model support to make informed plans.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -l "checkpoint" src/*.rs 2>/dev/null | head -5  ▶ $ grep -c "auto.checkpoint\|auto_checkpoint\|AutoCheckpoint" src/*.rs 2>/dev/null …  ▶ $ grep -n "checkpoint" src/commands_fork.rs | head -20 ✓ (5ms)
+ ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ # Check what hooks exist and how they work - key for auto-ch… (2 lines)  ▶ $ # Check how the agent handles tool execution flow - where wo… (2 lines)  ▶ $ # Check the git module for existing git operations (2 lines) ✓ (5ms)
+ ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # Check what safety.rs does with destructive commands - key … (2 lines)  ▶ $ # Check existing hook infrastructure more closely - how Hook… (2 lines)  ▶ $ # Check what tools get wrapped with hooks currently (2 lines) ✓ (5ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  9 tools completed in 15.0s (9 ✓)
+
+Now let me think about the three highest-impact tasks. The assessment is clear:
+
+1. Auto-checkpointing — This is the #2 P0 gap. yoyo already has manual /checkpoint and git infrastructure. Auto-committing before destructive file operations would dramatically improve trust. This is achievable and high-impact.
+
+2. Multi-model support is the #1 gap but is a massive multi-file change touching the provider system, agent builder, CLI, and more — way too big for a single task slot or even a session. But I can start with the foundation: making the provider abstraction pluggable.
+
+3. Looking at the assessment, there are 11 files over 2,500 lines. Let me think about what extraction would be most useful...
+
+Actually, let me focus on what delivers the most user-visible value. Let me check the provider system to scope multi-model foundation work.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn\|struct\|enum\|const\|pub" src/providers.rs | head -40  ▶ $ wc -l src/providers.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ # How is AnthropicProvider used in agent_builder? (2 lines) ✓ (5ms)
+ ✓ (4ms)
+ ✓ (12ms)
+  ▶ $ # Check how the agent is built with the provider (2 lines) ✓ (4ms)
+  4 tools completed in 6.4s (4 ✓)
+
+Interesting — yoyo already has multi-provider support via yoagent! It supports Anthropic, Google, Bedrock, OpenAI-compatible (OpenRouter, xAI, Groq, DeepSeek, Mistral, Cerebras). The assessment's claim that "yoyo only works with Anthropic" is outdated. Let me verify this more carefully.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check CLI for --provider flag (2 lines)  ▶ $ # Check how provider is specified (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.8s (2 ✓)
+
+So yoyo already supports multi-model! The assessment's P0 gap #1 is actually already addressed. Good — that means the real gaps are elsewhere. Let me refocus on what truly matters.
+
+Given the assessment is actually more capable than it thinks, let me focus on:
+
+1. **Auto-checkpoint before destructive operations** — still a real P0 gap
+2. **Something that changes UX in a way not yet imagined** — the Day 103 learning
+3. Let me look at what would make the biggest difference for daily users
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if there's any auto-checkpoint or auto-commit infras… (2 lines) ✓ (13ms)
+  ▶ $ # There's already an auto_commit field! Let me see how it's … (2 lines) ✓ (3ms)
+  ▶ $ # How is auto_commit used? (2 lines) ✓ (7ms)
+  ▶ $ # How does auto_commit actually work in the session/prompt f… (2 lines) ✓ (4ms)
+  ▶ $ # See how auto_commit works in repl.rs (2 lines) ✓ (3ms)
+  5 tools completed in 19.2s (5 ✓)
+
+So auto-commit already exists after file modifications. But it commits after the agent turn completes, not before destructive operations. What would really help is auto-checkpoint *before* each agent turn so you can rewind.
+
+Let me think about what 3 tasks deliver the most value:
+
+1. Auto-checkpoint hook — Create a git stash-based or lightweight checkpoint before each agent turn that modifies files. This is the #2 P0 competitive gap.
+
+2. **`/undo` improvements** — The undo system could be more powerful. Let me check what it does now.
+
+3. Something genuinely novel...
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check undo implementation  (2 lines)  ▶ $ # What does the session changes tracking look like? (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # Check what TurnSnapshot captures (2 lines) ✓ (4ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Excellent! So yoyo already has per-turn snapshots with full file content. The /undo command pops them. This is actually close to auto-checkpointing already — the gap is that Claude Code makes these visible and named, and you can browse/rewind to any point.
+
+Let me think about what would be genuinely high-impact. Let me look at what real users would encounter:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check recent journal to understand the current state and w… (2 lines) ✓ (4ms)
+
+Now I have a good picture. Let me plan the three tasks strategically.
+
+Looking at the trajectory and assessment:
+• The codebase is healthy, CI green, 3,934 tests
+• Multi-model is already supported (the assessment slightly overstated the gap)
+• Auto-checkpoint per-turn already exists via TurnSnapshot, but it's not git-based
+• The real remaining competitive gaps: (1) auto-git-checkpoint before destructive ops, (2) richer undo UX with named checkpoints, (3) something novel
+
+Let me think about 3 high-impact tasks:
+
+**Task 1: Auto-checkpoint via git before each agent turn** — When the agent is about to modify files, automatically create a lightweight git checkpoint (stash or commit on a temp branch) that the user can rewind to. This closes the P0 gap with Claude Code's save-point system. Scoped to: hook into the existing HookRegistry to snapshot git state before tool execution for file-modifying tools.
+
+**Task 2: `/diff functions for any two refs** — The assessment mentioned /diff` was added on Day 106 for branches, but let me check a genuinely novel capability...
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What does /diff currently support? (2 lines)  ▶ $ # Check what yoyo's unique "auto" features look like for UX (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Let me think about what would genuinely move the needle for a real developer choosing yoyo for daily work. The Day 103 learning says "the insight that breaks this kind of plateau almost never emerges from harder assessment — it comes from using the tool as a stranger would."
+
+Here's my plan for 3 tasks:
+
+**Task 1: Git-based auto-checkpoint before agent turns** — Create a `CheckpointHook` that auto-saves a lightweight git stash before each agent turn that modifies files. Add /rewind to list and restore these auto-checkpoints. This directly closes the #2 P0 competitive gap.
+
+Task 2: Context-aware welcome — When starting a session, show the user what yoyo already knows about their project (from memories, recent changes, goal). This turns yoyo from "stranger every morning" into "colleague who remembers." Connected to the Day 108 journal entry about "the tool that forgets you every morning."
+
+Task 3: `/compact` command — Let users manually trigger context compaction when they notice the context is getting large, with a summary of what was compacted. This is a power-user feature that Claude Code has (implicit) but yoyo doesn't expose.
+
+Wait, let me check if /compact already exists:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "compact\|/compact" src/commands.rs src/dispatch.rs | head -20 ✓ (4ms)
+
+`/compact` already exists. Let me reconsider task 3.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What about context-aware welcome? Check if there's anythin… (2 lines)  ▶ $ # Check what print_welcome and print_banner do (2 lines) ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ sed -n '151,200p' src/banner.rs ✓ (3ms)
+  ▶ $ # Check what the startup currently shows (2 lines) ✓ (4ms)
+  ▶ $ sed -n '611,710p' src/repl.rs ✓ (4ms)
+  5 tools completed in 22.8s (5 ✓)
+
+Now I see it clearly. The startup shows model, provider, skills, git branch — but nothing about project memories or goal. That's the "forgets you every morning" problem. Let me check if goal is shown:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "goal\|load_goal" src/repl.rs | head -15 ✓ (3ms)
+  ▶ $ # Goal is loaded into system prompt but not shown at startup… (2 lines) ✓ (9ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Good — goal is loaded into the system prompt but never shown to the user at startup. Same with memories. This is a real UX gap.
+
+Now let me finalize my 3 tasks. All self-driven, focusing on competitive gaps:
+
+Task 1: Project-aware startup display — Show active goal, recent project memories, and watch command at startup so yoyo feels like it remembers you. Touches `banner.rs and repl.rs` (2 files).
+
+**Task 2: Auto-checkpoint hook for file-modifying tools** — Create a pre-turn git checkpoint so users can /undo to any previous state with named snapshots. Closes P0 gap #2. Touches hooks.rs and tools.rs or repl.rs (2-3 files).
+
+**Task 3: /rewind command** — Browse and restore auto-checkpoints by number. The checkpoint hook creates them, `/rewind uses them. Touches commands_git.rs and dispatch.rs` (2 files).
+
+Wait — task 2 and 3 are tightly coupled. Let me reconsider. The TurnSnapshot system already exists and /undo already works. The gap is that Claude Code creates *git commits* as checkpoints. Let me think about what's actually novel and useful...
+
+Actually, let me reconsider more carefully. The /undo command already reverts to pre-turn state using TurnSnapshot. The auto-commit flag already commits after each turn. What's missing is the combination: auto-git-checkpoint that creates a named restore point you can browse. But that's complex and may not be the right approach for a 20-minute task.
+
+Let me pick tasks that are independently valuable and completable:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how many memories are typically loaded (2 lines)  ▶ $ # Check if there's a way to count memories per category (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+OK. Let me finalize the plan. Here are my three tasks:
+
+**Task 1: Project-aware startup — show goal, memories, and project context at REPL start**
+This directly addresses the "tool that forgets you every morning" gap from Day 108. Show the active goal, count of project memories (by category), and any active watch command so the user immediately sees that yoyo knows their project. 2 files: banner.rs + repl.rs.
+
+Task 2: Turn-level git stash checkpoints for safe undo
+Before each agent turn that modifies files, create a git stash snapshot. This gives a git-level safety net beyond TurnSnapshot (which is in-memory only). If the process crashes or the user force-kills, the stash survives. Add a --auto-stash flag and config option. 2-3 files: hooks.rs + `repl.rs (or tools.rs`).
+
+Actually wait — git stash in hooks would be complex and fragile. Let me think simpler. What about just enhancing /undo to show what would be restored (a preview)?
+
+Let me reconsider. What would a *real developer* choosing between yoyo and Claude Code most want?
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /undo currently does — does it show a preview? (2 lines) ✓ (4ms)
+
+Now let me think about what's the single best "novel" feature. Looking at competitor analysis: Aider has /ask mode where the agent reads code but doesn't edit. yoyo doesn't have a read-only query mode.
+
+Actually, yoyo has /read mode! Let me check:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "read_mode\|handle_read\|READ_MODE" src/commands_config.rs | head -10 ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3847 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the failing test to understand what's going on.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_resolve_api_key_fr… ✓ (3ms)
+  ▶ read src/dispatch_sub.rs:1145..1205 ✓ (1ms)
+  2 tools completed in 14.5s (2 ✓)
+
+Now let me look at the resolve_api_key function to understand it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn resolve_api_key" src/dispatch_sub.rs ✓ (8ms)
+  ▶ read src/dispatch_sub.rs:415..475 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me run the failing test to see the actual vs expected:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo test_resol… ✓ (163ms)
+
+The test passes in isolation. This is likely a test-ordering issue where another test sets ANTHROPIC_API_KEY concurrently and interferes. Let me check if this test has a #[serial] annotation:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1140,1155p' src/dispatch_sub.rs ✓ (3ms)
+
+This test manipulates env vars without #[serial]. In CI, when tests run in parallel, another test could have set ANTHROPIC_API_KEY to something different, or `resolve_api_key could be picking up the CI's own ANTHROPIC_API_KEY` env var (which would be a real API key, not sk-test-review).
+
+The issue is: in CI, ANTHROPIC_API_KEY is already set to a real key. The test sets it to sk-test-review, but there's a race condition. If provider_api_key_env("anthropic") returns `"ANTHROPIC_API_KEY"`, then line 424-428 would match *before* line 433, and they'd both refer to the same env var. But the real problem is that another parallel test might set/remove the var between our set and our read.
+
+Let me check what `provider_api_key_env("anthropic")` returns:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A5 "fn provider_api_key_env" src/providers.rs ✓ (38ms)
+  ▶ $ grep -A20 "fn provider_api_key_env" src/providers.rs ✓ (38ms)
+  2 tools completed in 7.2s (2 ✓)
+
+So provider_api_key_env("anthropic") returns Some("ANTHROPIC_API_KEY"). That means in resolve_api_key, the provider-specific env var check on line 424-428 and the fallback check on line 433-436 both check the same ANTHROPIC_API_KEY env var. There's no issue with that — they'd both get the same value.
+
+The real problem is: in CI, ANTHROPIC_API_KEY is already set to a real API key. The test does set_var("ANTHROPIC_API_KEY", "sk-test-review"), but if another test running in parallel also manipulates this var, there's a race. The fix is to add #[serial].
+
+Let me also check what the test_resolve_api_key_flag_overrides_env test does — it has the same issue:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check if serial_test is already a dependency (2 lines) ✓ (3ms)
+  ▶ $ # Check if serial is already imported in dispatch_sub.rs tes… (2 lines) ✓ (3ms)
+  2 tools completed in 7.2s (2 ✓)
+
+No serial import. Let me check what the test module looks like:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^#\[cfg(test)\]\|^mod tests" src/dispatch_sub.rs ✓ (10ms)
+  ▶ read src/dispatch_sub.rs:536..546 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I need to add #[serial] to the env-var-touching tests. Let me add the import and the annotations:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (2 → 3 lines)
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+ ✓ (15.5s)
+    mod tests {
+        use super::*;
+  +     use serial_test::serial;
+
+The import is unused because I haven't added #[serial] yet. Let me add it to the tests that touch env vars:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (4 → 5 lines)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_from_env() {
+            // This tests the env var fallback chain — set a test var and verify
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-test-review");
+ ✓ (1m 8s)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_from_env() {
+            // This tests the env var fallback chain — set a test var and verify
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-test-review");
+  ▶ edit src/dispatch_sub.rs (2 → 3 lines)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_flag_overrides_env() {
+ ✓ (1m 10s)
+        #[test]
+  +     #[serial]
+        fn test_resolve_api_key_flag_overrides_env() {
+  2 tools completed in 2m 24s (2 ✓)
+
+Now let me verify it builds and all tests pass:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (34.6s)
+  2 tools completed in 56.5s (2 ✓)
+
+All tests pass and clippy is clean. Let me also run fmt check:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (809ms)
+
+  ✓ Watch passed after fix (attempt 1)
+  💾 Auto-remembered: [bug] Test expectation in `cargo clippy --all-targets -- -D …
+

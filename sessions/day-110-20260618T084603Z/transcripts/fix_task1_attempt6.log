@@ -1,0 +1,248 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll read the source code, identify an impactful improvement, implement it, and verify it passes all checks.
+  ▶ todo add 'Read source code to identify the most impactful im…' ✓ (0ms)
+  ▶ todo add 'Implement the improvement' ✓ (0ms)
+  ▶ todo add 'Run fmt, clippy, build, test and commit' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  4 tools completed in 14.4s (4 ✓)
+
+Let me scan the codebase for areas that could benefit from improvement. I'll look for patterns like missing error context, unwrap() calls, duplicate code, and performance issues.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.unwrap()' src/ | gre… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.unwrap()' src/ --inc… ✓ (7ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Let me focus on non-test unwraps - those in production code paths:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (18 lines) ✓ (70ms)
+
+The regex unwrap()s in LazyLock are fine (they're compile-time constant patterns). Let me look for more impactful improvements:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the yoyo codebase at /home/runner/work/yoyo-evolve/y…' ✓ (2m 25s)
+
+Good analysis. Let me focus on an impactful improvement. The `String::from_utf8_lossy(...).to_string()` anti-pattern is a great candidate - it's a concrete performance improvement across many files, clearly beneficial, and low-risk. But let me also look at consolidating raw `Command::new("git")` calls which is higher impact.
+
+Let me pick a focused, high-impact improvement: consolidating the repeated String::from_utf8_lossy(&output.stdout).to_string() pattern and improving the run_git infrastructure to handle more use cases.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/git.rs ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'String::from_utf8_loss… ✓ (7ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now let me think about the best improvement. I see a clear high-impact opportunity: the run_git() function and many raw Command::new("git") calls could benefit from a richer git helper infrastructure. But let me think about what's truly most impactful and safe.
+
+Let me look at an area where there's a concrete functional improvement — the run_git_in_dir() pattern which several files need:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'Command::new("git")' s… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'Command::new("git")' sr… ✓ (5ms)
+  2 tools completed in 8.3s (2 ✓)
+
+That's 83 raw Command::new("git") calls across 12 files. Many of them bypass the test safety guard and duplicate the same stdout-parsing boilerplate. This is the most impactful improvement:
+
+**Add run_git_in_dir() and `run_git_output() helpers to git.rs`** to:
+1. Extend the centralized git infrastructure for the two most common patterns that force call sites to use raw Command::new("git")
+2. Bring the test safety guard to more code paths
+3. Eliminate repeated String::from_utf8_lossy boilerplate
+
+Let me examine which patterns are most common:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A5 'Command::new("git"… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A8 'Command::new("git"… ✓ (4ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now I have a clear picture. Let me look at context.rs - it has 13 raw calls:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A8 'Command::new("git"… ✓ (4ms)
+
+OK, most of those in context.rs are test code. Let me focus on the most impactful improvement that's also safe. Let me look more carefully at the production code patterns:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (17 lines) ✓ (64ms)
+
+Now let me think about what improvement will be most impactful. I see two strong options:
+
+1. **Add run_git_in_dir() to git.rs** - enables callers that need to run git in a specific directory to use the centralized path
+2. Consolidate `commands_info.rs` production code to use `run_git()` 
+
+Actually, let me look at a different angle — what about improving the commands_file.rs which has production-path raw git calls:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'run_git_in\b' src/ -r ✓ (7ms)
+
+So commands_spawn.rs already has a local run_git_in() function. Let me look at it:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn run_git_in' src/comm… ✓ (3ms)
+  ▶ read src/commands_spawn.rs:948..968 ✓ (1ms)
+  2 tools completed in 6.5s (2 ✓)
+
+This is duplicated from run_git() in git.rs. Let me check if there are other local duplicates:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'fn run_git' src/ ✓ (7ms)
+
+Now I have a clear and impactful improvement plan:
+
+**Add run_git_in_dir() as a centralized helper in git.rs** that runs git in a specific directory, with the same test safety guard. Then migrate commands_spawn.rs's local run_git_in() to use it, eliminating the duplication. This also enables future migration of other raw `Command::new("git") calls that use -C or current_dir()`.
+
+Additionally, I'll add run_git_output() that returns Option<std::process::Output> for callers that need both stdout and stderr or status inspection (like commands_info.rs callers). This covers the other major reason callers bypass run_git().
+
+Let me also look for more patterns to consolidate:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'run_git(' src/*.rs | gr… ✓ (6ms)
+
+Good - run_git() is well used. Now let me plan the concrete changes:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 10.0s (2 ✓)
+
+The plan:
+1. Add run_git_in_dir() to git.rs — same signature as run_git() but takes a &Path for directory context, with test safety guard
+2. Add run_git_output() to git.rs — returns Result<std::process::Output, String> for callers needing raw output 
+3. Migrate commands_spawn.rs::run_git_in() to use the new centralized `run_git_in_dir()`
+4. Migrate production code in commands_info.rs that uses raw Command::new("git") to use run_git() or run_git_output()
+5. Add tests for the new functions
+
+Let me start:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:1..81 ✓ (1ms)
+  ▶ read src/git.rs:80..140 ✓ (1ms)
+  2 tools completed in 8.5s (2 ✓)
+
+Now let me look at the test section to understand the testing pattern:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/git… ✓ (3ms)
+  ▶ read src/git.rs:1455..1505 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me implement the improvement. I'll add `run_git_in_dir() and run_git_output() to git.rs`, then migrate callers:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (4 → 57 lines)
+  + /// Run a git command in a specific directory.
+  + /// Returns `Ok(stdout_trimmed)` on success, `Err(stderr_trimmed)` on failure.
+  + ///
+  + /// Uses `git -C <dir>` so the process working directory is unchanged.
+  + /// The test safety guard checks `dir` (not `cwd`) against the project root.
+  + pub fn run_git_in_dir(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+  +     #[cfg(test)]
+  +     if let Some(cmd) = args.first() {
+  +         if destructive_guard(args, dir).is_some() {
+  +             panic!(
+  +                 "SAFETY: run_git_in_dir() called with destructive command '{}' targeting project \
+  +                  root during tests. Use a temp directory or mock instead.",
+  +                 cmd
+  +             );
+  +         }
+  +     }
+  +     match std::process::Command::new("git")
+  +         .arg("-C")
+  +         .arg(dir)
+  +         .args(args)
+  ... (36 more lines)
+ ✓ (15.8s)
+  + /// Run a git command in a specific directory.
+  + /// Returns `Ok(stdout_trimmed)` on success, `Err(stderr_trimmed)` on failure.
+  + ///
+  + /// Uses `git -C <dir>` so the process working directory is unchanged.
+  + /// The test safety guard checks `dir` (not `cwd`) against the project root.
+  + pub fn run_git_in_dir(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+  +     #[cfg(test)]
+  +     if let Some(cmd) = args.first() {
+  ... (13 more lines)
+
+Expected - need to actually use them. Let me now migrate callers. First, `commands_spawn.rs`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:946..966 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (20 → 10 lines)
+    }
+    
+    /// Run a git command in a specific directory.
+  - /// Returns stdout on success, stderr message on failure.
+  + /// Delegates to the centralized `git::run_git_in_dir` for consistent error
+  + /// handling and test safety.
+    fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+  -     match std::process::Command::new("git")
+  -         .arg("-C")
+  -         .arg(repo)
+  -         .args(args)
+  -         .output()
+  -     {
+  -         Ok(output) if output.status.success() => {
+  -             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+  -         }
+  -         Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+  -         Err(e) => Err(format!("git not found: {e}")),
+  -     }
+  +     crate::git::run_git_in_dir(repo, args)
+  ... (3 more lines)
+ ✓ (15.3s)
+    }
+    
+    /// Run a git command in a specific directory.
+  - /// Returns stdout on success, stderr message on failure.
+  + /// Delegates to the centralized `git::run_git_in_dir` for consistent error
+  + /// handling and test safety.
+    fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
+  -     match std::process::Command::new("git")
+  ... (13 more lines)
+  2 tools completed in 24.6s (2 ✓)
+
+Good, run_git_in_dir is now used. Let me migrate some run_git_output callers. Let me look at commands_info.rs:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:38..73 ✓ (1ms)
+
+This one uses Command::new("git") because it builds args dynamically (adding files). Let me find simpler cases:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:125..150 ✓ (1ms)
+  ▶ read src/commands_info.rs:149..169 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `run_git_output` is never used[0m
+   [1m[94m--> [0msrc/git.rs:114:8
+    [1m[94m|[0m
+[1m[94m114[0m [1m[94m|[0m pub fn run_git_output(args: &[&str]) -> Result<std::process::Output, String> {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+The fix is simple — run_git_output was added but never used. I need to either use it or remove it. Since the task is to make an impactful improvement and the function isn't being consumed yet, let me migrate a caller to use it, which completes the improvement.
+  ▶ read src/commands_info.rs:131..166 ✓ (2ms)
+  ▶ edit src/commands_info.rs (9 → 6 lines)
+    fn count_session_file_changes() -> Option<(usize, usize)> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["status", "--porcelain"])
+  -         .output()
+  -         .ok()?;
+  +     let output = crate::git::run_git_output(&["status", "--porcelain"]).ok()?;
+        if !output.status.success() {
+            return None;
+        }
+ ✓ (1m 8s)
+    fn count_session_file_changes() -> Option<(usize, usize)> {
+  -     let output = std::process::Command::new("git")
+  -         .args(["status", "--porcelain"])
+  -         .output()
+  -         .ok()?;
+  +     let output = crate::git::run_git_output(&["status", "--porcelain"]).ok()?;
+        if !output.status.success() {
+            return None;
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (49.4s)
+  3 tools completed in 2m 10s (3 ✓)
+
+All clean — clippy passes with zero warnings, all 88 tests pass. The fix was migrating count_session_file_changes() in commands_info.rs to use the new centralized run_git_output() helper, which both eliminates the lint error and completes the improvement by giving the function an actual consumer.
+
+  ✓ Watch passed after fix (attempt 1)
+

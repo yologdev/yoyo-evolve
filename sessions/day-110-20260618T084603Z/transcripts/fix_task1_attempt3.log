@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement I can make.
+  ▶ todo add 'Read source code to identify most impactful improv…' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Let me look at the codebase for areas with known issues, potential panics, or missing robustness.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "unwrap()" src/ | grep … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "unwrap()" src/ | grep … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.unwrap()" src/ --inc… ✓ (9ms)
+  3 tools completed in 18.5s (3 ✓)
+
+Let me look more broadly at areas that could use improvement - particularly focusing on robustness, error handling, and potential issues.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.unwrap()" src/*.rs |… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "s\[\.\..*\]\|\.truncat… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "s\[\.\.end\]" src/symbo… ✓ (3ms)
+  ▶ read src/symbols.rs:1610..1630 ✓ (1ms)
+  4 tools completed in 12.9s (4 ✓)
+
+This s[..end] is safe because find() returns a byte offset at a char boundary. Let me focus on finding something higher impact.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the yoyo codebase at /home/runner/work/yoyo-evolve/y…' ✓ (51.3s)
+
+Let me do this analysis directly.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unwrap()" src/prompt.rs… ✓ (4ms)
+
+Those are all in tests. Let me look at the production code more carefully.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unwrap()" src/prompt.rs… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^#\[cfg\(test\)\]/,0' src/… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/pro… ✓ (3ms)
+  3 tools completed in 10.4s (3 ✓)
+
+Good, so all those unwraps are in tests. Let me look at what areas of the code deal with real production issues.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|HACK\|BUG… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "// TODO\|// FIXME\|// … ✓ (11ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Let me look for areas with the most potential for real impact. Let me look at the error handling in the streaming bash tool since that's the most commonly used tool:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1..101 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "unwrap()" src/tools.rs … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/too… ✓ (3ms)
+  3 tools completed in 9.7s (3 ✓)
+
+All the unwraps in tools.rs are in tests (after line 1092). Let me look at areas with real production impact. Let me check for a concrete, high-impact improvement:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/**/*.rs | sor… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_incomplete" src/r… ✓ (4ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Let me look at the actual looks_incomplete function to see if there's a meaningful improvement:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1087..1287 ✓ (2ms)
+
+Now let me look for a more impactful area. Let me look at the prompt retry logic and the watch fix loop, as these directly affect agent reliability:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:1..81 ✓ (1ms)
+  ▶ read src/prompt_retry.rs:80..160 ✓ (1ms)
+  2 tools completed in 11.0s (2 ✓)
+
+Now let me look at a concrete area that would be highly impactful. Let me check the tool_wrappers for something interesting:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RecoveryHintTool\|ToolF… ✓ (4ms)
+  ▶ read src/tool_wrappers.rs:646..726 ✓ (2ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Let me now look for something specific that would be a clear improvement. Let me check the error handling in the watch module's error parsing:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_typescript_errors… ✓ (4ms)
+  ▶ read src/watch.rs:399..479 ✓ (1ms)
+  2 tools completed in 9.3s (2 ✓)
+
+Let me look at a different area - the dispatch system. One thing I notice from the structure is that there's significant complexity in how commands get dispatched. Let me check what specific improvements would be most valuable:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "panic!" src/ --include… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/con… ✓ (3ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Those panics in conversations.rs are in tests (after line 481). Let me look at areas where we might have meaningful UX/reliability improvements. Let me check the auto-compact logic:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_compact\|AUTO_COM… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_compact_if_needed"… ✓ (3ms)
+  ▶ read src/commands_session.rs:132..192 ✓ (1ms)
+  3 tools completed in 10.1s (3 ✓)
+
+Let me look at an important area: how the agent handles provider/model switching and fallback. This is a high-impact area:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "try_switch_to_fallback\… ✓ (4ms)
+  ▶ read src/agent_builder.rs:739..839 ✓ (1ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me look at a very concrete improvement area. Let me check the error classification in prompt_retry - this is important for the agent's ability to self-correct:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_retry.rs:170..270 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
