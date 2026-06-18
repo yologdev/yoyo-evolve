@@ -536,6 +536,7 @@ fn run_review_subcommand(args: &[String], review_arg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_flag_value_finds_value_for_single_flag() {
@@ -1142,6 +1143,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_from_env() {
         // This tests the env var fallback chain — set a test var and verify
         std::env::set_var("ANTHROPIC_API_KEY", "sk-test-review");
@@ -1152,6 +1154,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_resolve_api_key_flag_overrides_env() {
         std::env::set_var("ANTHROPIC_API_KEY", "sk-from-env");
         let args: Vec<String> = vec![
