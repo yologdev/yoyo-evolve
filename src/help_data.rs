@@ -1227,6 +1227,21 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Use for code understanding, architecture exploration, and Q&A.\n\
              Session-only — resets when you exit.",
         ),
+        "risk" => Some(
+            "/risk — Per-file risk scoring for source files\n\n\
+             Analyzes source files and ranks them by predicted regression risk.\n\
+             Uses five weighted signals from git history:\n\
+             \x20 • Change frequency (30-day churn)\n\
+             \x20 • Recent acceleration (7-day vs 30-day)\n\
+             \x20 • File size (lines of code)\n\
+             \x20 • Revert involvement history\n\
+             \x20 • Test density (low coverage = higher risk)\n\n\
+             Usage:\n\
+             \x20 /risk          Show top 15 riskiest files\n\
+             \x20 /risk --all    Show all scored files\n\n\
+             Part of yoyo's predictive self-awareness — the first step toward\n\
+             knowing which files will break before they do.",
+        ),
         "tips" => Some(
             "/tips — Context-sensitive feature suggestions\n\n\
              Shows helpful tips based on your current session and project:\n\
@@ -1323,6 +1338,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "retry" => Some("Re-send the last input (--with \"...\" to refine)"),
         "review" => Some("AI code review (--quick, --thorough)"),
         "revisit" => Some("Review closed/shelved issues that may now be feasible"),
+        "risk" => Some("Per-file risk scoring based on git history signals"),
         "run" => Some("Run a shell command"),
         "save" => Some("Save session to file"),
         "search" => Some("Search conversation history"),

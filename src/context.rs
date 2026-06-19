@@ -370,36 +370,28 @@ mod tests {
 
     #[test]
     fn test_load_project_context_includes_recently_changed() {
-        // In a git repo with commits, context should include recently changed files.
-        // We call load_project_context() once and check the result — avoid a separate
-        // get_recently_changed_files() guard to prevent TOCTOU races where git state
-        // changes between the two calls (seen as flaky failure in CI).
+        // Check that load_project_context() includes the "Recently Changed Files"
+        // section if and only if get_recently_changed_files() actually finds modified
+        // files. Previous versions guarded on commit count (`git rev-list --count`),
+        // but having >1 commit doesn't guarantee modified files — CI shallow clones
+        // with only-add commits pass the count check yet produce no --diff-filter=M
+        // output, causing intermittent assertion failures (3 CI flickers in the
+        // Day 108-111 window).
+        //
+        // The fix: check the same function the production code uses to decide whether
+        // to emit the section. No TOCTOU gap because both calls happen in the same
+        // test process with no intervening git mutations.
+        let has_modified_files = get_recently_changed_files(1).is_some();
         let result = load_project_context();
         if let Some(context) = &result {
-            // If the git command failed internally (rare in CI), the section is simply absent
-            // and we skip the assertion rather than flaking.
-            if context.contains("## Git Status") {
-                // CI often uses shallow clones (fetch-depth: 1) which have only one commit
-                // and no parent to diff against. In that case `git log --diff-filter=M`
-                // correctly returns nothing, so "Recently Changed Files" is absent.
-                // Only assert its presence when there's enough history.
-                let has_history = std::process::Command::new("git")
-                    .args(["rev-list", "--count", "HEAD"])
-                    .output()
-                    .ok()
-                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                    .and_then(|s| s.trim().parse::<u32>().ok())
-                    .map(|n| n > 1)
-                    .unwrap_or(false);
-
-                if has_history {
-                    assert!(
-                        context.contains("## Recently Changed Files"),
-                        "Context should contain Recently Changed Files section when git history is available"
-                    );
-                }
-                // In shallow clones (1 commit), it's expected that recently-changed-files is absent
+            if context.contains("## Git Status") && has_modified_files {
+                assert!(
+                    context.contains("## Recently Changed Files"),
+                    "Context should contain Recently Changed Files section when modified files exist"
+                );
             }
+            // When no modified files exist (shallow clone, all-adds history),
+            // the section is correctly absent — don't assert.
         }
     }
 

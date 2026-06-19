@@ -119,6 +119,7 @@ pub(crate) enum CommandRoute {
     Side,
     Quick,
     Tips,
+    Risk,
     Effort,
     /// Input starts with `/` but doesn't match any known command.
     UnknownSlash,
@@ -163,6 +164,7 @@ pub(crate) fn route_command(input: &str) -> CommandRoute {
         "/grep" => CommandRoute::Grep,
         "/search" => CommandRoute::Search,
         "/tips" => CommandRoute::Tips,
+        "/risk" => CommandRoute::Risk,
         _ => route_command_prefix(input),
     }
 }
@@ -373,6 +375,10 @@ async fn dispatch_info_command(
         }
         CommandRoute::Tips => {
             commands::handle_tips();
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Risk => {
+            commands::handle_risk(ctx.input);
             Some(CommandResult::Continue)
         }
         _ => None,
@@ -1183,7 +1189,8 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::Profile
         | CommandRoute::Changelog
         | CommandRoute::Evolution
-        | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+        | CommandRoute::Tips
+        | CommandRoute::Risk => unreachable!("handled by dispatch_info_command"),
 
         // Git commands are handled by dispatch_git_command above.
         CommandRoute::Diff

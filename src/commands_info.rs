@@ -1552,7 +1552,6 @@ pub fn handle_tips() {
 // ── Per-file risk scoring ──────────────────────────────────────────────
 
 /// A single file's risk assessment with score and signal labels.
-#[allow(dead_code)] // Wired to /risk command in task 2
 pub(crate) struct FileRisk {
     pub path: String,
     pub score: f64,
@@ -1561,7 +1560,6 @@ pub(crate) struct FileRisk {
 
 /// Min-max normalize a slice of values to the 0.0–1.0 range.
 /// All-equal or empty inputs return all zeros.
-#[allow(dead_code)] // Wired to /risk command in task 2
 fn normalize_scores(values: &[f64]) -> Vec<f64> {
     if values.is_empty() {
         return Vec::new();
@@ -1576,7 +1574,6 @@ fn normalize_scores(values: &[f64]) -> Vec<f64> {
 }
 
 /// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
-#[allow(dead_code)] // Wired to /risk command in task 2
 pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     // 1. Change frequency (30 days) — weight 0.30
     let counts_30 = crate::git::file_change_counts(30);
@@ -1769,7 +1766,6 @@ fn revert_involved_files() -> std::collections::HashMap<String, u32> {
 }
 
 /// Format risk scores into a human-readable report.
-#[allow(dead_code)] // Wired to /risk command in task 2
 pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
     if risks.is_empty() {
         return "  No risk data — not enough git history or source files found.\n".to_string();
@@ -1810,7 +1806,6 @@ pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
 }
 
 /// Handle the `/risk` command — display per-file risk scores.
-#[allow(dead_code)] // Wired to /risk command in task 2
 pub(crate) fn handle_risk(input: &str) {
     let show_all = input.contains("--all");
     let risks = compute_file_risk_scores();

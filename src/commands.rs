@@ -17,6 +17,7 @@ pub use crate::commands_bg::{handle_bg, BackgroundJobTracker};
 
 // Explicit re-exports keep the public API of `commands` unchanged so REPL
 // dispatch sites in main.rs / repl.rs don't need to know about the split.
+pub(crate) use crate::commands_info::handle_risk;
 pub use crate::commands_info::{
     handle_changelog, handle_cost, handle_evolution, handle_model_info, handle_model_list,
     handle_model_show, handle_profile, handle_provider_show, handle_status, handle_think_show,
@@ -108,6 +109,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/update",
     "/review",
     "/revisit",
+    "/risk",
     "/mark",
     "/jump",
     "/marks",

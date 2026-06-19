@@ -405,6 +405,10 @@ pub fn cli_help_text() -> String {
         s,
         "    /tips              Context-sensitive feature suggestions"
     );
+    let _ = writeln!(
+        s,
+        "    /risk              Per-file risk scoring based on git history"
+    );
     let _ = writeln!(s);
     let _ = writeln!(s, "  Git:");
     let _ = writeln!(
@@ -715,6 +719,9 @@ pub fn help_text() -> String {
         "  /todo [subcmd]     Track tasks: add, done, wip, remove, clear (in-session checklist)\n",
     );
     out.push_str("  /tips              Context-sensitive feature suggestions for your session\n");
+    out.push_str(
+        "  /risk              Per-file risk scores — ranks source files by regression risk\n",
+    );
     out.push('\n');
 
     // ── Git ──
