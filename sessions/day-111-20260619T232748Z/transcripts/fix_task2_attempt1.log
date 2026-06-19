@@ -1,0 +1,195 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement all the required changes to wire up the /risk command. Let me start by examining the current state of the three files.
+  ▶ search 'KNOWN_COMMANDS' in src/commands.rs  ▶ search '#\[allow\(dead_code\)\].*risk' in src/commands_info.rs  ▶ search 'CommandRoute' in src/dispatch.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ search '#\[allow\(dead_code\)\]' in src/commands_info.rs  ▶ read src/commands.rs:52..132 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read src/commands.rs:131..141 ✓ (0ms)
+  ▶ read src/commands.rs:140..150 ✓ (1ms)
+  7 tools completed in 13.4s (7 ✓)
+
+Now let me look at the dispatch.rs file more closely - the enum and the dispatch_command function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:30..140 ✓ (1ms)
+
+Now let me find where Tips is dispatched to see the pattern:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'Tips' in src/dispatch.rs ✓ (3ms)
+
+Let me see the dispatch_command handler around the Tips line and the test areas:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:370..390 ✓ (1ms)
+
+Good. Now let me also see the handle_risk function and the handle_tips reference in commands_info.rs to understand the pattern:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn handle_risk' in src/commands_info.rs  ▶ search 'pub fn handle_tips' in src/commands_info.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ search 'fn handle_risk' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn compute_file_risk|fn format_risk|struct FileRisk' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'risk' in src/commands_info.rs ✓ (3ms)
+  5 tools completed in 13.5s (5 ✓)
+
+Now I have all the information. Let me also check the test section for route_command:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1820..1850 ✓ (1ms)
+
+Now let me check for another test that also maps routes:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1920..1950 ✓ (2ms)
+
+Now let me see how handle_tips is dispatched — it goes through dispatch_info_command. Let me check that:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:310..350 ✓ (1ms)
+
+Now I see the pattern. Let me also look at how the dispatch_info_command unreachable list handles it:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1180..1195 ✓ (1ms)
+
+Now let me look at the FileRisk struct and its dead_code annotations:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1550..1580 ✓ (1ms)
+
+Now I have everything. Let me make all the changes:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (2 → 3 lines)
+        "/review",
+        "/revisit",
+  +     "/risk",
+ ✓ (1m 16s)
+        "/review",
+        "/revisit",
+  +     "/risk",
+
+Now add Risk to the CommandRoute enum:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (2 → 3 lines)
+        Tips,
+  +     Risk,
+        Effort,
+ ✓ (9.3s)
+        Tips,
+  +     Risk,
+        Effort,
+
+Good, expected. Now add the route mapping and dispatch handling. First, add the route_command match:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (1 → 2 lines)
+            "/tips" => CommandRoute::Tips,
+  +         "/risk" => CommandRoute::Risk,
+ ✓ (9.3s)
+            "/tips" => CommandRoute::Tips,
+  +         "/risk" => CommandRoute::Risk,
+
+Now add the dispatch handler. Let me add Risk to the dispatch_info_command function (alongside Tips):
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (4 → 8 lines)
+            CommandRoute::Tips => {
+                commands::handle_tips();
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Risk => {
+  +             commands::handle_risk(ctx.input);
+                Some(CommandResult::Continue)
+            }
+ ✓ (9.2s)
+            CommandRoute::Tips => {
+                commands::handle_tips();
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Risk => {
+  +             commands::handle_risk(ctx.input);
+                Some(CommandResult::Continue)
+            }
+
+Two issues: handle_risk isn't re-exported through the commands module and it needs to be in the exhaustive match. Let me check how commands re-exports things:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_tips' in src/commands.rs ✓ (3ms)
+  ▶ read src/commands.rs:1..31 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+I need to add handle_risk to the re-exports:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (5 → 5 lines)
+    pub use crate::commands_info::{
+        handle_changelog, handle_cost, handle_evolution, handle_model_info, handle_model_list,
+  -     handle_model_show, handle_profile, handle_provider_show, handle_status, handle_think_show,
+  -     handle_tips, handle_tokens, handle_version,
+  +     handle_model_show, handle_profile, handle_provider_show, handle_risk, handle_status,
+  +     handle_think_show, handle_tips, handle_tokens, handle_version,
+    };
+ ✓ (9.3s)
+    pub use crate::commands_info::{
+        handle_changelog, handle_cost, handle_evolution, handle_model_info, handle_model_list,
+  -     handle_model_show, handle_profile, handle_provider_show, handle_status, handle_think_show,
+  -     handle_tips, handle_tokens, handle_version,
+  +     handle_model_show, handle_profile, handle_provider_show, handle_risk, handle_status,
+  +     handle_think_show, handle_tips, handle_tokens, handle_version,
+    };
+
+`handle_risk is pub(crate), not pub. Let me use pub(crate) use` instead:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (5 → 6 lines)
+    pub use crate::commands_info::{
+        handle_changelog, handle_cost, handle_evolution, handle_model_info, handle_model_list,
+  -     handle_model_show, handle_profile, handle_provider_show, handle_risk, handle_status,
+  -     handle_think_show, handle_tips, handle_tokens, handle_version,
+  +     handle_model_show, handle_profile, handle_provider_show, handle_status, handle_think_show,
+  +     handle_tips, handle_tokens, handle_version,
+    };
+  + pub(crate) use crate::commands_info::handle_risk;
+ ✓ (9.3s)
+    pub use crate::commands_info::{
+        handle_changelog, handle_cost, handle_evolution, handle_model_info, handle_model_list,
+  -     handle_model_show, handle_profile, handle_provider_show, handle_risk, handle_status,
+  -     handle_think_show, handle_tips, handle_tokens, handle_version,
+  +     handle_model_show, handle_profile, handle_provider_show, handle_status, handle_think_show,
+  +     handle_tips, handle_tokens, handle_version,
+    };
+  + pub(crate) use crate::commands_info::handle_risk;
+
+Now I need to add Risk to the unreachable arm in dispatch_command. Let me find the right spot:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (2 → 3 lines)
+            | CommandRoute::Evolution
+  -         | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+  +         | CommandRoute::Tips
+  +         | CommandRoute::Risk => unreachable!("handled by dispatch_info_command"),
+ ✓ (1m 17s)
+            | CommandRoute::Evolution
+  -         | CommandRoute::Tips => unreachable!("handled by dispatch_info_command"),
+  +         | CommandRoute::Tips
+  +         | CommandRoute::Risk => unreachable!("handled by dispatch_info_command"),
+
+Now remove the #[allow(dead_code)] annotations from commands_info.rs:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (2 → 2 lines)
+  - #[allow(dead_code)] // Wired to /risk command in task 2
+  + /// A single file's risk assessment with score and signal labels.
+    pub(crate) struct FileRisk {
+ ✓ (1m 18s)
+  - #[allow(dead_code)] // Wired to /risk command in task 2
+  + /// A single file's risk assessment with score and signal labels.
+    pub(crate) struct FileRisk {
+  ▶ edit src/commands_info.rs (2 → 1 lines)
+  - #[allow(dead_code)] // Wired to /risk command in task 2
+    fn normalize_scores(values: &[f64]) -> Vec<f64> {
+ ✓ (1m 17s)
+  - #[allow(dead_code)] // Wired to /risk command in task 2
+    fn normalize_scores(values: &[f64]) -> Vec<f64> {
+  ▶ edit src/commands_info.rs (3 → 2 lines)
+    /// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+  - #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
+ ✓ (1m 16s)
+    /// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+  - #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
+  ▶ edit src/commands_info.rs (3 → 2 lines)
+    /// Format risk scores into a human-readable report.
+  - #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {

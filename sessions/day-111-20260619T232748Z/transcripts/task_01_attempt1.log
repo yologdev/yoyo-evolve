@@ -1,0 +1,162 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the help entries for the /risk command. Let me start by understanding the current state of the relevant files.
+  ▶ search 'command_help' in src/help_data.rs  ▶ search 'command_short_description' in src/help_data.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ search '"tips"' in src/help_data.rs ✓ (2ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Let me look at the areas around "tips" in both functions to see the formatting:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1220..1270 ✓ (1ms)
+  ▶ read src/help_data.rs:1320..1350 ✓ (1ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Now let me check the help.rs file for where to add entries:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search '/tips' in src/help.rs ✓ (2ms)
+  ▶ read src/help.rs:400..415 ✓ (1ms)
+  ▶ read src/help.rs:710..725 ✓ (1ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Now let me check cli.rs for the help text:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search '/tips' in src/cli.rs ✓ (4ms)
+  ▶ search 'tips' in src/cli.rs ✓ (3ms)
+  ▶ search 'help_text' in src/cli.rs ✓ (3ms)
+  3 tools completed in 8.4s (3 ✓)
+
+The CLI help_text() in cli.rs delegates to help::cli_help_text(). Let me check that function in help.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'cli_help_text' in src/help.rs ✓ (3ms)
+
+Let me check the cli_help_text for REPL commands section:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:45..105 ✓ (1ms)
+
+Let me search for where REPL commands are listed in cli_help_text:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'REPL commands' in src/help.rs ✓ (3ms)
+  ▶ search 'REPL Commands|REPL commands|repl commands' in src/help.rs ✓ (3ms)
+  ▶ search 'evolution' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:380..410 ✓ (1ms)
+  4 tools completed in 13.1s (4 ✓)
+
+Good. Now let me check the test that iterates KNOWN_COMMANDS to understand the test structure:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1360..1410 ✓ (1ms)
+
+Good — the tests iterate KNOWN_COMMANDS and check that each has command_help and command_short_description entries. Since `/risk` won't be in KNOWN_COMMANDS yet (that's Task 2), adding the entries now won't trigger test failures and they'll be ready when needed.
+
+Now let me also check where the `help_text_documents_all_repl_commands` test is:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1608..1638 ✓ (1ms)
+  ▶ read src/help.rs:1637..1652 ✓ (1ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Also check the cli.rs test for REPL commands documentation:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1141..1191 ✓ (1ms)
+
+This is the critical test — help_text_documents_all_repl_commands iterates KNOWN_COMMANDS and checks that each appears in the --help output. So I need the entries in both help_text() (for /help REPL output) and `cli_help_text() (for --help CLI output), AND in the help_data.rs functions. Since /risk` won't be in KNOWN_COMMANDS yet, these tests won't fail, but the entries need to be ready.
+
+Now let me make the three edits:
+
+### 1. Add entries to help_data.rs
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (8 → 23 lines)
+  +         "risk" => Some(
+  +             "/risk — Per-file risk scoring for source files\n\n\
+  +              Analyzes source files and ranks them by predicted regression risk.\n\
+  +              Uses five weighted signals from git history:\n\
+  +              \x20 • Change frequency (30-day churn)\n\
+  +              \x20 • Recent acceleration (7-day vs 30-day)\n\
+  +              \x20 • File size (lines of code)\n\
+  +              \x20 • Revert involvement history\n\
+  +              \x20 • Test density (low coverage = higher risk)\n\n\
+  +              Usage:\n\
+  +              \x20 /risk          Show top 15 riskiest files\n\
+  +              \x20 /risk --all    Show all scored files\n\n\
+  +              Part of yoyo's predictive self-awareness — the first step toward\n\
+  +              knowing which files will break before they do.",
+  +         ),
+            "tips" => Some(
+                "/tips — Context-sensitive feature suggestions\n\n\
+                 Shows helpful tips based on your current session and project:\n\
+ ✓ (1m 17s)
+  +         "risk" => Some(
+  +             "/risk — Per-file risk scoring for source files\n\n\
+  +              Analyzes source files and ranks them by predicted regression risk.\n\
+  +              Uses five weighted signals from git history:\n\
+  +              \x20 • Change frequency (30-day churn)\n\
+  +              \x20 • Recent acceleration (7-day vs 30-day)\n\
+  +              \x20 • File size (lines of code)\n\
+  +              \x20 • Revert involvement history\n\
+  ... (10 more lines)
+
+Now add the short description — placing it alphabetically between "review" and "revisit" ... actually, let me check where it should go alphabetically. "risk" comes after "review" and "revisit" but before "run":
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:1324..1334 ✓ (1ms)
+  ▶ read src/help_data.rs:1333..1348 ✓ (1ms)
+  ▶ edit src/help_data.rs (2 → 3 lines)
+            "revisit" => Some("Review closed/shelved issues that may now be feasible"),
+  +         "risk" => Some("Per-file risk scoring based on git history signals"),
+            "run" => Some("Run a shell command"),
+ ✓ (1m 18s)
+            "revisit" => Some("Review closed/shelved issues that may now be feasible"),
+  +         "risk" => Some("Per-file risk scoring based on git history signals"),
+            "run" => Some("Run a shell command"),
+  3 tools completed in 1m 29s (3 ✓)
+
+### 2. Add /risk to help_text() in help.rs (both places)
+
+First, the short listing section (cli_help_text):
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (4 → 8 lines)
+        let _ = writeln!(
+            s,
+            "    /tips              Context-sensitive feature suggestions"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /risk              Per-file risk scoring based on git history"
+        );
+ ✓ (1m 20s)
+        let _ = writeln!(
+            s,
+            "    /tips              Context-sensitive feature suggestions"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /risk              Per-file risk scoring based on git history"
+        );
+
+Second, the detailed section (help_text):
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (1 → 2 lines)
+        out.push_str("  /tips              Context-sensitive feature suggestions for your session\n");
+  +     out.push_str("  /risk              Per-file risk scores — ranks source files by regression risk\n");
+ ✓ (1m 16s)
+        out.push_str("  /tips              Context-sensitive feature suggestions for your session\n");
+  +     out.push_str("  /risk              Per-file risk scores — ranks source files by regression risk\n");
+
+### 3. cli.rs — delegates to help::cli_help_text(), so no separate change needed
+
+The cli.rs help_text() function simply delegates to help::cli_help_text(), which I already updated. Let me verify:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:119..129 ✓ (1ms)
+
+Good — the delegation means my edit to `cli_help_text() in help.rs already covers cli.rs`. No separate change needed there.
+
+Now let me run the checks:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (792ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (14.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (7.3s)
+  3 tools completed in 30.5s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
