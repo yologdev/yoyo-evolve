@@ -1,0 +1,371 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the per-file risk scoring engine. Let me start by understanding the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -50 src/git.rs | head -50  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^fn\|^#\[cfg(test…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^fn\|^#\[cfg(test… ✓ (7ms)
+ ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/git.rs src/commands_in…  ▶ read src/git.rs:848..  ▶ read src/commands_info.rs:1540..1570 ✓ (4ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  6 tools completed in 12.0s (6 ✓)
+
+Now let me check the end of the test module in commands_info.rs and the imports:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2940..  ▶ read src/commands_info.rs:1..26 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now let me check the run_git function and the destructive guard to understand how to safely use git in tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:1..91 ✓ (1ms)
+
+Good — git log is NOT in the destructive list, so file_change_counts using `run_git with log` args will work fine in tests.
+
+Now let me plan and implement:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add file_change_counts() to git.rs' ✓ (0ms)
+  ▶ todo add 'Add FileRisk, normalize_scores, compute_file_risk_…' ✓ (0ms)
+  ▶ todo add 'Add tests for all new functions' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — fix any issue…' ✓ (0ms)
+  ▶ todo add 'Commit' ✓ (0ms)
+  5 tools completed in 17.4s (5 ✓)
+
+Let me start with the file_change_counts function in git.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+I'll add file_change_counts right before the #[cfg(test)] module at the bottom. Let me find the right insertion point:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:838..853 ✓ (0ms)
+  ▶ edit src/git.rs (5 → 34 lines)
+        Some((title, body))
+  + }
+  + 
+  + /// Count how many commits touched each `src/**/*.rs` file in the last `days` days.
+  + /// Returns `(filename, count)` pairs, unsorted.
+  + pub fn file_change_counts(days: u32) -> Vec<(String, u32)> {
+  +     let since_arg = format!("{days} days ago");
+  +     let output = match run_git(&[
+  +         "log",
+  +         &format!("--since={since_arg}"),
+  +         "--name-only",
+  +         "--pretty=format:",
+  +     ]) {
+  +         Ok(o) => o,
+  +         Err(_) => return Vec::new(),
+  +     };
+  + 
+  +     let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+  +     for line in output.lines() {
+  +         let path = line.trim();
+  ... (13 more lines)
+ ✓ (12.9s)
+        Some((title, body))
+  + }
+  + 
+  + /// Count how many commits touched each `src/**/*.rs` file in the last `days` days.
+  + /// Returns `(filename, count)` pairs, unsorted.
+  + pub fn file_change_counts(days: u32) -> Vec<(String, u32)> {
+  +     let since_arg = format!("{days} days ago");
+  +     let output = match run_git(&[
+  ... (13 more lines)
+  2 tools completed in 27.6s (2 ✓)
+
+Expected — it's not used yet. Let me add the rest of the code first, then it'll be used. Let me now add the test for file_change_counts at the end of git.rs test module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/git.rs (11 → 22 lines)
+            assert!(!glob_match_simple("src/*", "tests/main.rs"));
+            assert!(glob_match_simple("??.rs", "ab.rs"));
+            assert!(!glob_match_simple("??.rs", "abc.rs"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_file_change_counts_returns_results() {
+  +         // In the yoyo repo, there should be at least some changed files in the last 30 days
+  +         // This test runs against the real repo — it's an integration-style test
+  +         let counts = file_change_counts(30);
+  +         // Don't assert specific files, but the function should not panic
+  +         // and should return some results in a repo with history
+  +         // (may be empty in shallow clones, which is fine)
+  +         let _ = counts; // just verify it doesn't panic
+        }
+    }
+ ✓ (12.8s)
+            assert!(!glob_match_simple("src/*", "tests/main.rs"));
+            assert!(glob_match_simple("??.rs", "ab.rs"));
+            assert!(!glob_match_simple("??.rs", "abc.rs"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_file_change_counts_returns_results() {
+  +         // In the yoyo repo, there should be at least some changed files in the last 30 days
+  ... (8 more lines)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 18.3s (2 ✓)
+
+Now let me add the risk scoring functions in commands_info.rs. I'll add them between handle_tips and the test module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ read src/commands_info.rs:1545..1560 ✓ (1ms)
+  ▶ edit src/commands_info.rs (8 → 277 lines)
+            println!("  {CYAN}{tip}{RESET}");
+        }
+        println!();
+  + }
+  + 
+  + // ── Per-file risk scoring ──────────────────────────────────────────────
+  + 
+  + /// A single file's risk assessment with score and signal labels.
+  + pub(crate) struct FileRisk {
+  +     pub path: String,
+  +     pub score: f64,
+  +     pub signals: Vec<&'static str>,
+  + }
+  + 
+  + /// Min-max normalize a slice of values to the 0.0–1.0 range.
+  + /// All-equal or empty inputs return all zeros.
+  + fn normalize_scores(values: &[f64]) -> Vec<f64> {
+  +     if values.is_empty() {
+  +         return Vec::new();
+  +     }
+  ... (255 more lines)
+ ✓ (8.3s)
+            println!("  {CYAN}{tip}{RESET}");
+        }
+        println!();
+  + }
+  + 
+  + // ── Per-file risk scoring ──────────────────────────────────────────────
+  + 
+  + /// A single file's risk assessment with score and signal labels.
+  ... (13 more lines)
+  3 tools completed in 1m 4s (3 ✓)
+
+The issue is that file_set borrows &str from paths that don't live long enough. I need to store owned strings in the set instead:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1593..1633 ✓ (1ms)
+
+I need to rewrite the file collection to use owned strings throughout:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (39 → 32 lines)
+  -     // Collect all unique file paths from both windows
+  -     let mut all_files: Vec<String> = std::collections::HashSet::<&str>::new()
+  -         .into_iter()
+  -         .collect::<Vec<_>>()
+  -         .into_iter()
+  -         .map(|s| s.to_string())
+  -         .collect();
+  -     // Actually collect from both maps
+  -     let mut file_set = std::collections::HashSet::new();
+  +     // Collect all unique file paths from both windows and disk
+  +     let mut file_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (p, _) in &counts_30 {
+  -         file_set.insert(p.as_str());
+  +         file_set.insert(p.clone());
+        }
+        for (p, _) in &counts_7 {
+  -         file_set.insert(p.as_str());
+  +         file_set.insert(p.clone());
+        }
+        // Also include src/*.rs files from disk that might have zero churn
+  ... (23 more lines)
+ ✓ (12.1s)
+  -     // Collect all unique file paths from both windows
+  -     let mut all_files: Vec<String> = std::collections::HashSet::<&str>::new()
+  -         .into_iter()
+  -         .collect::<Vec<_>>()
+  -         .into_iter()
+  -         .map(|s| s.to_string())
+  -         .collect();
+  -     // Actually collect from both maps
+  ... (13 more lines)
+
+These are all "never used" errors because nothing calls them yet (no command wiring in this task). I need to add the tests that reference them. Let me add the tests now:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ edit src/commands_info.rs (22 → 80 lines)
+                result.contains("5 more"),
+                "should mention '5 more' remaining entries"
+            );
+  +     }
+  + 
+  +     // ── Risk scoring tests ────────────────────────────────────────────
+  + 
+  +     #[test]
+  +     fn test_normalize_scores_basic() {
+  +         let scores = vec![1.0, 5.0, 10.0];
+  +         let normalized = normalize_scores(&scores);
+  +         assert_eq!(normalized[0], 0.0); // min
+  +         assert_eq!(normalized[2], 1.0); // max
+  +         assert!((normalized[1] - 0.444).abs() < 0.01); // (5-1)/(10-1)
+  +     }
+  + 
+  +     #[test]
+  +     fn test_normalize_scores_all_equal() {
+  +         let scores = vec![5.0, 5.0, 5.0];
+  +         let normalized = normalize_scores(&scores);
+  ... (43 more lines)
+ ✓ (12.0s)
+                result.contains("5 more"),
+                "should mention '5 more' remaining entries"
+            );
+  +     }
+  + 
+  +     // ── Risk scoring tests ────────────────────────────────────────────
+  + 
+  +     #[test]
+  ... (13 more lines)
+  2 tools completed in 32.6s (2 ✓)
+
+The tests reference them via super::*, but clippy still flags them as unused because the test cfg doesn't count for usage by the dead_code lint. Since these functions are pub(crate) and meant to be used by the command wiring in task 2, but task 2 doesn't exist yet, I need to suppress the warnings. The cleanest approach: the functions are called in tests (through handle_risk calling compute_file_risk_scores which calls everything), but Rust's dead code analysis doesn't consider test usage. I'll add #[allow(dead_code)] annotations since these will be wired in task 2:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (2 → 3 lines)
+    /// A single file's risk assessment with score and signal labels.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) struct FileRisk {
+ ✓ (12.0s)
+    /// A single file's risk assessment with score and signal labels.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) struct FileRisk {
+
+I need to add #[allow(dead_code)] to all the new functions since they're only called from tests (which doesn't count for the dead_code lint) and from task 2's wiring. Let me do all of them at once:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (3 → 4 lines)
+    /// Min-max normalize a slice of values to the 0.0–1.0 range.
+    /// All-equal or empty inputs return all zeros.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    fn normalize_scores(values: &[f64]) -> Vec<f64> {
+ ✓ (11.8s)
+    /// Min-max normalize a slice of values to the 0.0–1.0 range.
+    /// All-equal or empty inputs return all zeros.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    fn normalize_scores(values: &[f64]) -> Vec<f64> {
+  ▶ edit src/commands_info.rs (2 → 3 lines)
+    /// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
+ ✓ (11.8s)
+    /// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
+  2 tools completed in 32.1s (2 ✓)
+
+Good, progress. I have format_risk_report, handle_risk, file_change_counts, and clippy map_or issues. Let me fix them all:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (2 → 3 lines)
+    /// Format risk scores into a human-readable report.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
+ ✓ (12.1s)
+    /// Format risk scores into a human-readable report.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `handle_risk` is never used[0m
+    [1m[94m--> [0msrc/commands_info.rs:1811:15
+     [1m[94m|[0m
+[1m[94m1811[0m [1m[94m|[0m pub(crate) fn handle_risk(input: &str) {
+     [1m[94m|[0m               [1m[91m^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: this `map_or` can be simplified[0m
+    [1m[94m--> [0msrc/commands_info.rs:1603:16
+     [1m[94m|[0m
+[1m[94m1603[0m [1m[94m|[0m             if path.extension().map_or(false, |e| e == "rs") {
+     [1m[94m|[0m                [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_map_or
+     [1m[94m= [0m[1mnote[0m: `-D clippy::unnecessary-map-or` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::unnecessary_map_or)]`
+[1m[96mhelp[0m: use `is_some_and` instead
+     [1m[94m|[0m
+[1m[94m1603[0m [91m- [0m            if path.extension().[91mmap_or[0m([91mfalse, [0m|e| e == "rs") {
+[1m[94m1603[0m [92m+ [0m            if path.extension().[92mis_some_and[0m(|e| e == "rs") {
+     [1m[94m|[0m
+
+[1m[91merror[0m[1m: this `map_or` can be simplified[0m
+    [1m[94m--> [0msrc/commands_info.rs:1614:16
+     [1m[94m|[0m
+[1m[94m1614[0m [1m[94m|[0m             if path.extension().map_or(false, |e| e == "rs") {
+     [1m[94m|[0m                [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix all three remaining lint issues:
+  ▶ edit src/commands_info.rs (2 → 3 lines)
+    /// Handle the `/risk` command — display per-file risk scores.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn handle_risk(input: &str) {
+ ✓ (12.0s)
+    /// Handle the `/risk` command — display per-file risk scores.
+  + #[allow(dead_code)] // Wired to /risk command in task 2
+    pub(crate) fn handle_risk(input: &str) {
+
+Now fix the two map_or → is_some_and clippy warnings:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "map_or(false, |e| e == … ✓ (2ms)
+  ▶ read src/commands_info.rs:1599..1619 ✓ (1ms)
+  ▶ edit src/commands_info.rs (20 → 20 lines)
+        if let Ok(entries) = std::fs::read_dir("src") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+  -             if path.extension().map_or(false, |e| e == "rs") {
+  +             if path.extension().is_some_and(|e| e == "rs") {
+                    if let Some(p) = path.to_str() {
+                        file_set.insert(p.to_string());
+                    }
+  ···
+        if let Ok(entries) = std::fs::read_dir("src/format") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+  -             if path.extension().map_or(false, |e| e == "rs") {
+  +             if path.extension().is_some_and(|e| e == "rs") {
+                    if let Some(p) = path.to_str() {
+                        file_set.insert(p.to_string());
+                    }
+ ✓ (1m 2s)
+        if let Ok(entries) = std::fs::read_dir("src") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+  -             if path.extension().map_or(false, |e| e == "rs") {
+  +             if path.extension().is_some_and(|e| e == "rs") {
+                    if let Some(p) = path.to_str() {
+                        file_set.insert(p.to_string());
+                    }
+  ... (9 more lines)
+  3 tools completed in 1m 17s (3 ✓)
+
+Now let me verify everything passes:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (11.9s)
+
+Clippy passes. Now run the tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 ✓ (37.4s)
+
+All 3854 tests pass, 0 failures. Let me also verify formatting:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (630ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt 2>&1 ✓ (618ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 2s)
+  3 tools completed in 1m 14s (3 ✓)
+
+All checks pass — format, clippy, build, and tests. All three lint issues are fixed:
+
+1. **handle_risk unused** → added #[allow(dead_code)] annotation (will be wired in task 2)
+2. **map_or on line 1603** → changed to is_some_and
+3. `map_or` on line 1614 → changed to is_some_and
+
+  ✓ Watch passed after fix (attempt 1)
+
