@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll quickly evaluate this change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib safety 2>&1 | t…  ▶ search 'CRITICAL_SYSTEM_DIRS' in src/safety.rs ✓ (3ms)
+ ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20  ▶ read src/safety.rs:198..218 ✓ (1ms)
+ ✓ (34.5s)
+  4 tools completed in 42.0s (4 ✓)
+
+Now let me check the old code vs new code logic to verify correctness:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:1100..1140 ✓ (1ms)
+
+The change is clear and correct:
+
+1. Previously, `check_standalone_destruction had a hardcoded list of system paths (/dev/, /etc/, /var/, /usr/, /boot/) that didn't fully match the CRITICAL_SYSTEM_DIRS` constant (missing /bin, /sbin, /lib, /lib64, /opt, /srv).
+
+2. Now, it reuses the `CRITICAL_SYSTEM_DIRS` constant, closing a real coverage gap. It also handles bare directory names (e.g., shred /bin) in addition to paths with trailing content.
+
+3. Tests pass (88 passed), and new test cases cover the previously uncovered directories.
+
+All 88 tests pass. The change is a legitimate safety improvement — unifying duplicated system path lists to close coverage gaps.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (1m 2s)
+
+**Verdict: PASS** — The change correctly unifies a duplicated system-path list with the existing `CRITICAL_SYSTEM_DIRS` constant, closing real safety coverage gaps. Tests verify the fix and all 88 tests pass.
+
