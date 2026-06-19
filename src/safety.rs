@@ -1109,13 +1109,14 @@ fn check_standalone_destruction(cmd: &str) -> Option<String> {
                         if token.starts_with('-') {
                             continue;
                         }
-                        // Flag /dev/ paths (devices), /etc/ paths (system config),
-                        // and root-level paths that aren't /tmp/
-                        if token.starts_with("/dev/")
-                            || token.starts_with("/etc/")
-                            || token.starts_with("/var/")
-                            || token.starts_with("/usr/")
-                            || token.starts_with("/boot/")
+                        // Flag system paths (reuse CRITICAL_SYSTEM_DIRS), /dev/,
+                        // /sys/, and root-level paths that aren't /tmp/
+                        let is_system_path = CRITICAL_SYSTEM_DIRS.iter().any(|dir| {
+                            let prefix = format!("{dir}/");
+                            token.starts_with(&prefix) || *token == *dir
+                        });
+                        if is_system_path
+                            || token.starts_with("/dev/")
                             || token.starts_with("/sys/")
                             || (*token == "/" || *token == "/*")
                         {
@@ -1606,6 +1607,16 @@ mod tests {
         assert!(analyze_bash_command("truncate -s 0 test.log").is_none());
         // Safe: shred on local files
         assert!(analyze_bash_command("shred temp_secret.txt").is_none());
+        // Previously uncovered CRITICAL_SYSTEM_DIRS — these must be caught
+        assert!(analyze_bash_command("shred /bin/bash").is_some());
+        assert!(analyze_bash_command("shred /sbin/init").is_some());
+        assert!(analyze_bash_command("truncate -s 0 /lib/libc.so.6").is_some());
+        assert!(analyze_bash_command("truncate -s 0 /lib64/ld-linux.so.2").is_some());
+        assert!(analyze_bash_command("shred /opt/myapp/config").is_some());
+        assert!(analyze_bash_command("wipefs -a /srv/data/disk.img").is_some());
+        // Bare directory names (without trailing slash) must also match
+        assert!(analyze_bash_command("shred /bin").is_some());
+        assert!(analyze_bash_command("shred /sbin").is_some());
     }
 
     #[test]
