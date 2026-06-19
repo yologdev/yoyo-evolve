@@ -845,6 +845,35 @@ pub fn parse_pr_description(response: &str) -> Option<(String, String)> {
     Some((title, body))
 }
 
+/// Count how many commits touched each `src/**/*.rs` file in the last `days` days.
+/// Returns `(filename, count)` pairs, unsorted.
+pub fn file_change_counts(days: u32) -> Vec<(String, u32)> {
+    let since_arg = format!("{days} days ago");
+    let output = match run_git(&[
+        "log",
+        &format!("--since={since_arg}"),
+        "--name-only",
+        "--pretty=format:",
+    ]) {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for line in output.lines() {
+        let path = line.trim();
+        if path.is_empty() {
+            continue;
+        }
+        // Filter to only src/**/*.rs files
+        if path.starts_with("src/") && path.ends_with(".rs") {
+            *counts.entry(path.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    counts.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1666,5 +1695,16 @@ stash@{1}: On feature: def5678 wip stuff";
         assert!(!glob_match_simple("src/*", "tests/main.rs"));
         assert!(glob_match_simple("??.rs", "ab.rs"));
         assert!(!glob_match_simple("??.rs", "abc.rs"));
+    }
+
+    #[test]
+    fn test_file_change_counts_returns_results() {
+        // In the yoyo repo, there should be at least some changed files in the last 30 days
+        // This test runs against the real repo — it's an integration-style test
+        let counts = file_change_counts(30);
+        // Don't assert specific files, but the function should not panic
+        // and should return some results in a repo with history
+        // (may be empty in shallow clones, which is fine)
+        let _ = counts; // just verify it doesn't panic
     }
 }

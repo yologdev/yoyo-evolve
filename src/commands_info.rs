@@ -1549,6 +1549,275 @@ pub fn handle_tips() {
     println!();
 }
 
+// ── Per-file risk scoring ──────────────────────────────────────────────
+
+/// A single file's risk assessment with score and signal labels.
+#[allow(dead_code)] // Wired to /risk command in task 2
+pub(crate) struct FileRisk {
+    pub path: String,
+    pub score: f64,
+    pub signals: Vec<&'static str>,
+}
+
+/// Min-max normalize a slice of values to the 0.0–1.0 range.
+/// All-equal or empty inputs return all zeros.
+#[allow(dead_code)] // Wired to /risk command in task 2
+fn normalize_scores(values: &[f64]) -> Vec<f64> {
+    if values.is_empty() {
+        return Vec::new();
+    }
+    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let range = max - min;
+    if range == 0.0 {
+        return vec![0.0; values.len()];
+    }
+    values.iter().map(|v| (v - min) / range).collect()
+}
+
+/// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+#[allow(dead_code)] // Wired to /risk command in task 2
+pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
+    // 1. Change frequency (30 days) — weight 0.30
+    let counts_30 = crate::git::file_change_counts(30);
+    let counts_30_map: std::collections::HashMap<&str, u32> =
+        counts_30.iter().map(|(p, c)| (p.as_str(), *c)).collect();
+
+    // 2. Recent acceleration (7-day count) — weight 0.25
+    let counts_7 = crate::git::file_change_counts(7);
+    let counts_7_map: std::collections::HashMap<&str, u32> =
+        counts_7.iter().map(|(p, c)| (p.as_str(), *c)).collect();
+
+    // Collect all unique file paths from both windows and disk
+    let mut file_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (p, _) in &counts_30 {
+        file_set.insert(p.clone());
+    }
+    for (p, _) in &counts_7 {
+        file_set.insert(p.clone());
+    }
+    // Also include src/*.rs files from disk that might have zero churn
+    if let Ok(entries) = std::fs::read_dir("src") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                if let Some(p) = path.to_str() {
+                    file_set.insert(p.to_string());
+                }
+            }
+        }
+    }
+    // Also check src/format/*.rs
+    if let Ok(entries) = std::fs::read_dir("src/format") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                if let Some(p) = path.to_str() {
+                    file_set.insert(p.to_string());
+                }
+            }
+        }
+    }
+    let mut all_files: Vec<String> = file_set.into_iter().collect();
+    all_files.sort();
+
+    if all_files.is_empty() {
+        return Vec::new();
+    }
+
+    // Gather raw signal values for each file
+    let mut raw_churn: Vec<f64> = Vec::with_capacity(all_files.len());
+    let mut raw_accel: Vec<f64> = Vec::with_capacity(all_files.len());
+    let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+    let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+    let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+
+    // 4. Revert involvement — weight 0.20
+    let revert_files = revert_involved_files();
+
+    for path in &all_files {
+        // Churn (30-day count)
+        let c30 = *counts_30_map.get(path.as_str()).unwrap_or(&0) as f64;
+        raw_churn.push(c30);
+
+        // Recent acceleration: ratio of 7-day to 30-day, clamped
+        let c7 = *counts_7_map.get(path.as_str()).unwrap_or(&0) as f64;
+        let accel = if c30 > 0.0 {
+            // If all 30-day changes happened in the last 7 days, ratio = 1.0
+            // Normalize by expected proportion: 7/30 ≈ 0.233
+            // So accel = (c7/c30) / (7/30) — values > 1.0 mean accelerating
+            (c7 / c30) / (7.0 / 30.0)
+        } else if c7 > 0.0 {
+            // File only appeared in the last 7 days — maximally accelerating
+            3.0
+        } else {
+            0.0
+        };
+        raw_accel.push(accel);
+
+        // File size (line count)
+        let line_count = std::fs::read_to_string(path)
+            .map(|content| content.lines().count() as f64)
+            .unwrap_or(0.0);
+        raw_size.push(line_count);
+
+        // Revert involvement
+        let rev_count = *revert_files.get(path.as_str()).unwrap_or(&0) as f64;
+        raw_revert.push(rev_count);
+
+        // Test density: #[test] + #[cfg(test)] markers / total lines
+        // Lower test density = higher risk, so we invert: risk = 1 - density
+        let test_density = std::fs::read_to_string(path)
+            .map(|content| {
+                let total = content.lines().count() as f64;
+                if total == 0.0 {
+                    return 0.0;
+                }
+                let test_markers = content
+                    .lines()
+                    .filter(|l| {
+                        let trimmed = l.trim();
+                        trimmed.contains("#[test]") || trimmed.contains("#[cfg(test)]")
+                    })
+                    .count() as f64;
+                test_markers / total
+            })
+            .unwrap_or(0.0);
+        // Invert: low density → high risk signal
+        raw_test_density.push(1.0 - test_density);
+    }
+
+    // Normalize each signal to 0.0–1.0
+    let norm_churn = normalize_scores(&raw_churn);
+    let norm_accel = normalize_scores(&raw_accel);
+    let norm_size = normalize_scores(&raw_size);
+    let norm_revert = normalize_scores(&raw_revert);
+    let norm_test = normalize_scores(&raw_test_density);
+
+    // Weighted sum → final score
+    let weights = [0.30, 0.25, 0.15, 0.20, 0.10];
+    let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
+
+    for (i, path) in all_files.into_iter().enumerate() {
+        let score = norm_churn[i] * weights[0]
+            + norm_accel[i] * weights[1]
+            + norm_size[i] * weights[2]
+            + norm_revert[i] * weights[3]
+            + norm_test[i] * weights[4];
+
+        let mut signals = Vec::new();
+        if norm_churn[i] > 0.5 {
+            signals.push("▲churn");
+        }
+        if norm_accel[i] > 0.5 {
+            signals.push("▲recent");
+        }
+        if norm_size[i] > 0.5 {
+            signals.push("▲size");
+        }
+        if norm_revert[i] > 0.5 {
+            signals.push("▲reverts");
+        }
+        if norm_test[i] > 0.5 {
+            signals.push("▲low-test");
+        }
+
+        risks.push(FileRisk {
+            path,
+            score,
+            signals,
+        });
+    }
+
+    // Sort descending by score
+    risks.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Return top 15
+    risks.truncate(15);
+    risks
+}
+
+/// Find files that appear in revert commits.
+fn revert_involved_files() -> std::collections::HashMap<String, u32> {
+    let output = match crate::git::run_git(&[
+        "log",
+        "--all",
+        "--oneline",
+        "--grep=Revert",
+        "--name-only",
+        "--pretty=format:",
+    ]) {
+        Ok(o) => o,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+
+    let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for line in output.lines() {
+        let path = line.trim();
+        if path.is_empty() {
+            continue;
+        }
+        if path.starts_with("src/") && path.ends_with(".rs") {
+            *counts.entry(path.to_string()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// Format risk scores into a human-readable report.
+#[allow(dead_code)] // Wired to /risk command in task 2
+pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
+    if risks.is_empty() {
+        return "  No risk data — not enough git history or source files found.\n".to_string();
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("\n  📊 {BOLD}File Risk Scores (src/){RESET}\n\n"));
+    out.push_str(&format!(
+        "  {DIM}Risk   File{:width$}Signals{RESET}\n",
+        "",
+        width = 30
+    ));
+    out.push_str(&format!("  {DIM}{}{RESET}\n", "─".repeat(70)));
+
+    let limit = if show_all { risks.len() } else { 15 };
+    for risk in risks.iter().take(limit) {
+        let signals_str = risk.signals.join(" ");
+        let path_display = &risk.path;
+        // Pad path to 34 chars for alignment
+        let padded_path = if path_display.len() < 34 {
+            format!("{path_display:<34}")
+        } else {
+            path_display.to_string()
+        };
+        out.push_str(&format!(
+            "  {YELLOW}{:.2}{RESET}   {padded_path}{CYAN}{signals_str}{RESET}\n",
+            risk.score
+        ));
+    }
+
+    if !show_all && risks.len() > 15 {
+        out.push_str(&format!(
+            "\n  {DIM}Top 15 files shown. Use /risk --all for complete list.{RESET}\n"
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+/// Handle the `/risk` command — display per-file risk scores.
+#[allow(dead_code)] // Wired to /risk command in task 2
+pub(crate) fn handle_risk(input: &str) {
+    let show_all = input.contains("--all");
+    let risks = compute_file_risk_scores();
+    let report = format_risk_report(&risks, show_all);
+    print!("{report}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2970,5 +3239,63 @@ More text.
             result.contains("5 more"),
             "should mention '5 more' remaining entries"
         );
+    }
+
+    // ── Risk scoring tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_normalize_scores_basic() {
+        let scores = vec![1.0, 5.0, 10.0];
+        let normalized = normalize_scores(&scores);
+        assert_eq!(normalized[0], 0.0); // min
+        assert_eq!(normalized[2], 1.0); // max
+        assert!((normalized[1] - 0.444).abs() < 0.01); // (5-1)/(10-1)
+    }
+
+    #[test]
+    fn test_normalize_scores_all_equal() {
+        let scores = vec![5.0, 5.0, 5.0];
+        let normalized = normalize_scores(&scores);
+        assert!(normalized.iter().all(|&v| v == 0.0)); // all equal → all 0
+    }
+
+    #[test]
+    fn test_normalize_scores_empty() {
+        let scores: Vec<f64> = vec![];
+        let normalized = normalize_scores(&scores);
+        assert!(normalized.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_scores_single() {
+        let scores = vec![42.0];
+        let normalized = normalize_scores(&scores);
+        assert_eq!(normalized[0], 0.0); // single element → 0
+    }
+
+    #[test]
+    fn test_format_risk_report_empty() {
+        let result = format_risk_report(&[], false);
+        assert!(result.contains("No risk data"));
+    }
+
+    #[test]
+    fn test_format_risk_report_shows_signals() {
+        let risks = vec![FileRisk {
+            path: "src/foo.rs".to_string(),
+            score: 0.75,
+            signals: vec!["▲churn", "▲size"],
+        }];
+        let result = format_risk_report(&risks, false);
+        assert!(result.contains("0.75"));
+        assert!(result.contains("src/foo.rs"));
+        assert!(result.contains("▲churn"));
+    }
+
+    #[test]
+    fn test_handle_risk_does_not_panic() {
+        // Smoke test — just verify it doesn't crash
+        handle_risk("/risk");
+        handle_risk("/risk --all");
     }
 }
