@@ -1029,6 +1029,11 @@ pub async fn run_repl(
         if crate::commands::is_plan_apply_active() {
             crate::commands::set_plan_apply_active(false);
         }
+
+        // ── Auto-checkpoint: silently save a conversation snapshot every 5 turns ──
+        if commands::auto_checkpoint(agent, turn_count) {
+            eprintln!("{DIM}  (auto-checkpoint saved){RESET}");
+        }
     }
 
     // Save readline history

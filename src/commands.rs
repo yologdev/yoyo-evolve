@@ -558,7 +558,7 @@ pub use crate::commands_session::{
 };
 
 // Stash subsystem
-pub use crate::commands_stash::handle_stash;
+pub use crate::commands_stash::{auto_checkpoint, handle_stash};
 
 // Fork and checkpoint handlers
 pub use crate::commands_fork::{
