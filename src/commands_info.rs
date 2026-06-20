@@ -1733,8 +1733,6 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Return top 15
-    risks.truncate(15);
     risks
 }
 
@@ -3292,5 +3290,19 @@ More text.
         // Smoke test — just verify it doesn't crash
         handle_risk("/risk");
         handle_risk("/risk --all");
+    }
+
+    #[test]
+    fn test_compute_file_risk_scores_returns_all_files() {
+        // This project has 71+ source files in src/.
+        // compute_file_risk_scores must return ALL of them, not truncate to 15.
+        // The display limit belongs in format_risk_report, not in the scorer.
+        let risks = compute_file_risk_scores();
+        assert!(
+            risks.len() > 15,
+            "Expected more than 15 risk entries (got {}). \
+             The scorer should return all files; truncation belongs in the display layer.",
+            risks.len()
+        );
     }
 }
