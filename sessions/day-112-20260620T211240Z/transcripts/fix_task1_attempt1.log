@@ -1,0 +1,90 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then extract the risk subsystem.
+  ▶ todo add 'Identify risk-related code in commands_info.rs (st…' ✓ (0ms)
+  ▶ todo add 'Create src/commands_risk.rs with extracted code' ✓ (0ms)
+  ▶ todo add 'Update commands_info.rs to remove extracted code' ✓ (0ms)
+  ▶ todo add 'Add mod commands_risk to main.rs' ✓ (0ms)
+  ▶ todo add 'Update dispatch.rs to use commands_risk' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture docs' ✓ (0ms)
+  ▶ todo add 'Build, test, lint, format' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  8 tools completed in 25.7s (8 ✓)
+
+Let me first find all the risk-related code in commands_info.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct FileRisk' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'struct CommitEntry' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'struct ValidationResult' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn (normalize_scores|compute_file_risk|revert_involved|forma…' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn normalize_scores' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn compute_file_risk' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn revert_involved' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn format_risk_report' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn handle_risk' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn build_risk_snapshot' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn write_risk_snapshot' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn parse_git_log_name' in src/commands_info.rs ✓ (2ms)
+  ▶ search 'fn classify_broke' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn compute_validation' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn format_validation_report' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'RISK_SNAPSHOT_PATH' in src/commands_info.rs ✓ (3ms)
+  16 tools completed in 52.9s (16 ✓)
+
+Now let me read the full risk section to understand its boundaries:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1555..2215 ✓ (5ms)
+
+Good. Now let me see what comes after line 2207 (the tests section) to find risk-related tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn test_normalize_scores|fn test_format_risk|fn test_handle_…' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'test_normalize|test_risk|test_format_risk|test_compute_file|…' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'normalize_scores' in src/commands_info.rs ✓ (3ms)
+  3 tools completed in 9.8s (3 ✓)
+
+The tests are in the tests module at the bottom. Let me find all risk-related tests there:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3630.. ✓ (3ms)
+
+Now let me look at what's between the end of the risk production code (line 2207) and the start of the risk tests (line 3630) to understand what other tests exist. Let me also check the start of the tests module:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2207..2217 ✓ (2ms)
+
+Now let me look at where the non-risk tests end and risk tests begin:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3620..3635 ✓ (1ms)
+
+I see there's a blank line 3631 (looks like it might have content stripped). Let me check:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '3630,3632p' src/commands_info.rs | cat -A ✓ (6ms)
+
+OK, that's a Unicode comment line. Now let me check the imports needed. Let me see the full risk code section from 1555 to 2206:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..31 ✓ (1ms)
+
+Now let me check dispatch.rs for how risk is routed:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Risk|risk|handle_risk' in src/dispatch.rs ✓ (3ms)
+  ▶ search 'risk' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:375..385 ✓ (0ms)
+  3 tools completed in 10.8s (3 ✓)
+
+Now let me check which module commands refers to here:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ search '^use crate::' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:15..40 ✓ (1ms)
+  2 tools completed in 8.8s (2 ✓)
+
+Now let me check where commands::handle_risk is currently re-exported from. The dispatch calls commands::handle_risk but handle_risk is defined in commands_info.rs. Let me see how these modules are wired:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_risk' in src/commands.rs ✓ (2ms)
+
+Good. commands.rs re-exports handle_risk from commands_info. Now let me check for any other references to these functions from other files:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ search 'compute_file_risk_scores|format_risk_report|FileRisk' (*.rs) ✓ (22ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

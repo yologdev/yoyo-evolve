@@ -1,0 +1,137 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by reading the issues and checking the current state.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"  ▶ $ cat DREAM.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+ ✓ (43ms)
+  ▶ $ cat journals/JOURNAL.md | head -120 ✓ (5ms)
+  4 tools completed in 4.5s (4 ✓)
+
+Now let me check what the risk subsystem looks like and the dream's next milestone:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_risk\|commands_risk\|fn compute_file_risk\|fn format_risk" src/c…  ▶ $ wc -l src/commands_info.rs ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ # Check if there's already a commands_risk.rs (4 lines) ✓ (5ms)
+  ▶ $ # Check the actual risk section size to understand the extra… (2 lines)  ▶ $ # See what handle_risk's full structure looks like (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Count lines of the risk subsystem (2 lines)  ▶ $ # Count the risk-related tests (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Count risk tests (2 lines) ✓ (4ms)
+  8 tools completed in 18.9s (8 ✓)
+
+Good. Now I have a clear picture. Let me plan the session:
+
+Assessment summary:
+• No CI failures, no community issues, no sponsor issues
+• All 3 slots are self-driven
+• Dream milestone: predictive self-risk scoring (pipeline built, needs calibration)
+• commands_info.rs at 3,966 lines is the largest file, with ~653 lines of risk subsystem + ~333 lines of risk tests that should be extracted
+• The dream milestone pipeline is complete but needs data — and the risk code living inside commands_info.rs is itself a risk factor
+
+**Plan:**
+1. Extract risk subsystem into commands_risk.rs (dream-aligned: the self-prediction machinery deserves its own file; also reduces the largest file by ~1,000 lines)
+2. **Add test-coverage signal to risk scorer** (dream advancement: the scorer currently infers test density from same-file `#[test]` counts, but many files are tested from other files — cross-file test references would make the coverage signal more accurate)
+3. Automatic checkpoint on exit (competitive gap: Claude Code auto-saves conversation snapshots; yoyo has manual /stash but no automatic checkpoint)
+
+Let me refine task 2 — check how test density is currently computed:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ awk 'NR>=1577 && NR<=1740' src/commands_info.rs ✓ (5ms)
+
+Good. Now let me reconsider task 2 — the test density signal is purely same-file. Improving it with cross-file references would be meaningful for the dream but is complex. Let me think about what's more impactful.
+
+Actually, looking at the dream more carefully: "Build the ability to predict... which of my own files is most likely to cause the next test failure." The pipeline (score → snapshot → validate) is built. What's needed is calibration data. The best way to advance the dream now is:
+1. Extract the risk subsystem so it can grow independently
+2. Take an actual snapshot so the validation pipeline has data to work with
+3. Something that improves the prediction quality
+
+Let me reconsider task 3. The "automatic checkpoints" gap is medium-impact for competitiveness. Instead, I should focus more on dream advancement. Let me think about what would make the risk scorer more accurate...
+
+The scorer currently reads the file itself for #[test] counts — but many source files (like main.rs, `agent_builder.rs`) have their tests in the same file, while integration tests are in tests/integration.rs. The scorer doesn't account for which files are *exercised by tests, only which files contain* tests. A file that's heavily tested from tests/integration.rs looks untested.
+
+That's a meaningful improvement, but potentially complex. Let me pick something simpler and more impactful for task 3 — maybe auto-snapshot during evolution sessions so calibration data accumulates.
+
+Actually, let me reconsider. The assessment identifies the automatic checkpoint gap as a competitive priority. And extracting the risk subsystem + one more dream-advancing task is a good balance. Let me plan:
+
+1. Extract risk subsystem to `commands_risk.rs` — dream-aligned, reduces complexity hotspot
+2. Add auto-snapshot to evolve pipeline — dream advancement: the scorer can't improve without calibration data; if a snapshot is taken at session start, validation can compare predictions against what actually broke
+3. Automatic conversation checkpoint on exit — competitive gap vs Claude Code
+
+Wait — task 2 would modify scripts/evolve.sh which is in the safety rules as DO NOT MODIFY. Let me reconsider.
+
+Instead of modifying the evolve script, I could make the risk snapshot happen automatically within the /risk command flow or add a way to take snapshots programmatically. But actually, the most useful task 2 would be something else for dream advancement.
+
+Let me think about what's truly highest impact with the 3 slots:
+
+1. Extract risk subsystem — dream + code health
+2. Improve test-coverage signal — dream advancement (more accurate predictions)  
+3. Auto-checkpoint on exit — competitive gap
+
+For task 2, a simpler approach: scan for use crate:: imports and mod references to detect which test files exercise which source modules. This is a heuristic but much better than pure same-file counts.
+
+Actually, let me re-examine. The automatic checkpoint is a bigger win for real users. And extracting the risk subsystem is solid dream work. For the third slot, let me pick something that advances both competitiveness and the dream.
+
+Let me finalize:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what auto_save_on_exit currently does (2 lines)  ▶ $ # Check how session exit works (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ grep -n "auto_save_on_exit" src/repl.rs src/main.rs src/prompt.rs 2>/dev/null ✓ (3ms)
+  ▶ $ awk 'NR>=392 && NR<=450' src/commands_session.rs ✓ (4ms)
+  4 tools completed in 7.9s (4 ✓)
+
+OK, yoyo already auto-saves on exit. The Claude Code "automatic checkpoints" feature is about periodic mid-session snapshots that you can rewind to — not just exit saves. That's a bigger change. Let me keep it focused.
+
+Let me finalize my 3 tasks:
+
+1. **Extract risk subsystem into commands_risk.rs** — dream-aligned (self-prediction machinery gets its own home), reduces `commands_info.rs` by ~1,000 lines
+2. **Add cross-file test-coverage signal to risk scorer** — dream advancement (currently only counts #[test] markers within the same file; files tested from integration tests or other modules appear "untested")
+3. Auto-checkpoint with `/checkpoint` command — competitive gap (Claude Code has conversation snapshots you can rewind to; yoyo's `/stash is manual and one-at-a-time; /fork` creates checkpoints but they're separate conversations)
+
+Wait, let me check — does /fork already do checkpoints?
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "Checkpoint\|checkpoint" src/commands_fork.rs | head -15 ✓ (3ms)
+
+There's already a /checkpoint command for file state. But it's about file snapshots, not conversation snapshots. Claude Code's auto-checkpoints are about conversation state. Let me rethink task 3.
+
+Actually, let me look at the assessment's gap list again: "Automatic checkpoints — Auto-saved conversation snapshots to rewind to. yoyo has manual /stash and /fork."
+
+The /stash does conversation snapshots. The gap is "automatic" — periodic snapshots without user action. Let me check /stash:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn\|pub(crate) fn" src/commands_stash.rs | head -10 ✓ (3ms)
+
+OK, stash is manual push/pop. The competitive gap is "auto-saved snapshots to rewind to." This would mean: after each user turn (or every N turns), automatically stash a conversation snapshot. Then the user can browse/rewind to any past point.
+
+This is a decent task, but it touches multiple files (stash + repl + possibly dispatch). Let me think about the 3-file limit.
+
+Actually, let me simplify task 3 to something more focused and self-contained: **auto-stash every N turns** — modify the REPL to automatically push a stash every 5 turns. This only touches repl.rs and commands_stash.rs.
+
+Now let me finalize and write the plan:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (75 lines) ✓ (1m 2s)
+  ▶ write session_plan/task_02.md (51 lines) ✓ (1m 0s)
+  ▶ write session_plan/task_03.md (47 lines) ✓ (1m 1s)
+  ▶ write session_plan/issue_responses.md (10 lines) ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 5m 6s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 112 Session Plan — 3 Tasks
+
+All slots are self-driven (no community issues, no sponsor issues).
+
+### Task 1: Extract risk subsystem into `commands_risk.rs`
+**Dream-aligned + code health.** The risk prediction pipeline (score → snapshot → validate) is ~1,000 lines living inside `commands_info.rs` (3,966 lines — the largest file). Extracting it gives the dream's core machinery its own home and reduces the biggest complexity hotspot. Touches: `src/commands_risk.rs (new), src/commands_info.rs, src/dispatch.rs`.
+
+### Task 2: Add cross-file test-coverage signal to risk scorer  
+**Dream advancement.** The risk scorer currently measures test density by counting #[test] markers within the same file — making files tested from integration tests or other modules appear "untested." This adds a cross-file reference scan: for each source file, check whether test-containing files import/use it. Improves the accuracy of the test-density risk signal. Touches: src/commands_risk.rs (depends on task 1).
+
+### Task 3: Add periodic auto-checkpoint during REPL sessions
+Competitive gap. Claude Code auto-saves conversation checkpoints you can rewind to. yoyo's /stash is manual-only. This adds silent auto-checkpoints every 5 turns using the existing stash system, with a 10-checkpoint rolling limit. Touches: src/repl.rs, src/commands_stash.rs.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

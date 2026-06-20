@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by finding where compute_file_risk_scores lives and understanding the current implementation.
+  ▶ $ grep -rn "compute_file_risk_scores" src/📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (43ms)
+
+It's in commands_info.rs. Let me read the current implementation.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "struct FileRisk" src/commands_info.rs ✓ (8ms)
+  ▶ read src/commands_info.rs:1555..1805 ✓ (3ms)
+  2 tools completed in 8.8s (2 ✓)
+
+Good, I have a clear picture. Now let me also check the existing tests for the risk scorer:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "test.*risk\|risk.*test\|test_reference_map\|cross_file" src/commands_in… ✓ (4ms)
+  ▶ read src/commands_info.rs:3784..3814 ✓ (1ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now let me check what test files reference which modules, to understand the pattern:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -40 tests/integration.rs ✓ (39ms)
+
+Good. Now let me understand the approach better. I need to:
+
+1. Build a `build_test_reference_map() function that scans .rs files for #[test]` markers and module references
+2. Use it in compute_file_risk_scores() to improve the test density signal
+3. Write tests first
+
+Let me look at a few source files to understand the use crate:: patterns:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -h "use crate::" src/*.rs | head -30 ✓ (4ms)
+  ▶ $ grep -h "crate::format::" src/*.rs | head -10 ✓ (5ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Good. Now I have a clear picture. Let me implement this. I'll write the tests first, then the function, then integrate it.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write build_test_reference_map() function' ✓ (0ms)
+  ▶ todo add 'Integrate cross-file coverage into compute_file_ri…' ✓ (0ms)
+  ▶ todo add 'Write tests for the new functionality' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test' ✓ (0ms)
+  ▶ todo add 'Commit the changes' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  6 tools completed in 19.8s (6 ✓)
+
+Now let me implement the `build_test_reference_map() function. I'll add it right before compute_file_risk_scores`:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (2 → 159 lines)
+  + /// Build a map of source file paths → count of test-containing files that reference them.
+  + ///
+  + /// For each `.rs` file in `src/` and `tests/` that contains `#[test]`, we parse
+  + /// `use crate::module` and `crate::module::` patterns to find which source modules
+  + /// it exercises. This produces cross-file test coverage signals that complement
+  + /// the same-file `#[test]` density metric.
+  + fn build_test_reference_map() -> std::collections::HashMap<String, u32> {
+  +     use std::collections::{HashMap, HashSet};
+  + 
+  +     let mut ref_map: HashMap<String, u32> = HashMap::new();
+  + 
+  +     // Collect all .rs files from src/ (including src/format/) and tests/
+  +     let mut all_rs_files: Vec<String> = Vec::new();
+  +     for dir in &["src", "src/format", "tests"] {
+  +         if let Ok(entries) = std::fs::read_dir(dir) {
+  +             for entry in entries.flatten() {
+  +                 let path = entry.path();
+  +                 if path.extension().is_some_and(|e| e == "rs") {
+  +                     if let Some(p) = path.to_str() {
+  +                         all_rs_files.push(p.to_string());
+  ... (139 more lines)
+ ✓ (15.4s)
+  + /// Build a map of source file paths → count of test-containing files that reference them.
+  + ///
+  + /// For each `.rs` file in `src/` and `tests/` that contains `#[test]`, we parse
+  + /// `use crate::module` and `crate::module::` patterns to find which source modules
+  + /// it exercises. This produces cross-file test coverage signals that complement
+  + /// the same-file `#[test]` density metric.
+  + fn build_test_reference_map() -> std::collections::HashMap<String, u32> {
+  +     use std::collections::{HashMap, HashSet};
+  ... (13 more lines)
+
+Good — the functions are written but not yet used. Let me integrate them into `compute_file_risk_scores` now.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now I need to integrate build_test_reference_map() into `compute_file_risk_scores()`. The key insight: I need to add the cross-file reference map as a modifier to the test density signal. Let me find the exact spot where test_density is computed and the cross-file map should be built:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1733..1773 ✓ (1ms)
+  ▶ read src/commands_info.rs:1773..1873 ✓ (2ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Now I need to modify `compute_file_risk_scores` to use the cross-file reference map. I'll add it as a step right after the revert_files and before the per-file loop, then modify the test density calculation to incorporate cross-file coverage:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (54 → 87 lines)
+        // 4. Revert involvement — weight 0.20
+        let revert_files = revert_involved_files();
+  + 
+  +     // 5b. Cross-file test coverage — how many test-containing files reference each module
+  +     let cross_file_refs = build_test_reference_map();
+  +     // Count total test-containing files for normalization
+  +     let total_test_files = {
+  +         let mut test_files = std::collections::HashSet::new();
+  +         for dir in &["src", "src/format", "tests"] {
+  +             if let Ok(entries) = std::fs::read_dir(dir) {
+  +                 for entry in entries.flatten() {
+  +                     let path = entry.path();
+  +                     if path.extension().is_some_and(|e| e == "rs") {
+  +                         if let Ok(content) = std::fs::read_to_string(&path) {
+  +                             if content.contains("#[test]") {
+  +                                 if let Some(p) = path.to_str() {
+  +                                     test_files.insert(p.to_string());
+  +                                 }
+  +                             }
+  +                         }
+  ... (40 more lines)
+ ✓ (1m 22s)
+        // 4. Revert involvement — weight 0.20
+        let revert_files = revert_involved_files();
+  + 
+  +     // 5b. Cross-file test coverage — how many test-containing files reference each module
+  +     let cross_file_refs = build_test_reference_map();
+  +     // Count total test-containing files for normalization
+  +     let total_test_files = {
+  +         let mut test_files = std::collections::HashSet::new();
+  ... (13 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  2 tools completed in 1m 27s (2 ✓)
+
+Now let me verify it compiles:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -20 ✓ (120ms)
+
+It compiles. Now let me write the tests.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+Let me find the test module in commands_info.rs:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "#\[cfg(test)\]" src/commands_info.rs ✓ (8ms)
+  ▶ read src/commands_info.rs:2398..2408 ✓ (1ms)
+  2 tools completed in 7.9s (2 ✓)
+
+Let me find the end of the test module to add my tests before it:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_risk" src/commands_info.rs ✓ (9ms)
+  ▶ read src/commands_info.rs:3970..4000 ✓ (1ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Good, I'll add tests right after the test_compute_file_risk_scores_returns_all_files test. Let me add them:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (13 → 129 lines)
+                "Expected more than 15 risk entries (got {}). \
+                 The scorer should return all files; truncation belongs in the display layer.",
+                risks.len()
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_test_reference_map_finds_self() {
+  +         // commands_info.rs has #[test] markers and `use crate::` imports.
+  +         // The reference map should find files that commands_info tests exercise.
+  +         let ref_map = build_test_reference_map();
+  +         // commands_info.rs imports crate::git, so src/git.rs should be referenced
+  +         // by at least this file's tests (plus any others that use crate::git).
+  +         assert!(
+  +             ref_map.contains_key("src/git.rs"),
+  +             "Expected src/git.rs to appear in test reference map (it's imported \
+  +              by test-containing files via `use crate::git`). Keys: {:?}",
+  +             ref_map.keys().take(10).collect::<Vec<_>>()
+  +         );
+  +         // The count should be > 0
+  ... (101 more lines)
+ ✓ (1m 20s)
+                "Expected more than 15 risk entries (got {}). \
+                 The scorer should return all files; truncation belongs in the display layer.",
+                risks.len()
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_test_reference_map_finds_self() {
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
