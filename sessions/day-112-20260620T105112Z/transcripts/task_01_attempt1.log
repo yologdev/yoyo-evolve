@@ -1,0 +1,119 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the compute_file_risk_scores truncation bug. Let me start by understanding the current code.
+  ▶ search 'compute_file_risk_scores' in src/commands_info.rs  ▶ search 'format_risk_report' in src/commands_info.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/commands_info.rs:1577..1777 ✓ (2ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Now let me see the rest of format_risk_report to confirm it handles the limit:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1776..1816 ✓ (1ms)
+
+Now let me check the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3272..3332 ✓ (1ms)
+
+Good. Now I have the full picture:
+
+1. Bug: compute_file_risk_scores() truncates to 15 at line 1737, making the --all flag in format_risk_report() useless
+2. Fix: Remove line 1737 (risks.truncate(15);) and update the comment on line 1736
+3. `format_risk_report` already handles the display limit correctly at line 1783
+
+Let me also find where the FileRisk struct and tests module are:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct FileRisk' in src/commands_info.rs  ▶ search 'mod tests' in src/commands_info.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/commands_info.rs:1555..1565 ✓ (1ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Now let me write the test first, then fix the bug.
+
+Step 1: Write the test
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3290..3295 ✓ (0ms)
+  ▶ edit src/commands_info.rs (7 → 21 lines)
+            // Smoke test — just verify it doesn't crash
+            handle_risk("/risk");
+            handle_risk("/risk --all");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_compute_file_risk_scores_returns_all_files() {
+  +         // This project has 71+ source files in src/.
+  +         // compute_file_risk_scores must return ALL of them, not truncate to 15.
+  +         // The display limit belongs in format_risk_report, not in the scorer.
+  +         let risks = compute_file_risk_scores();
+  +         assert!(
+  +             risks.len() > 15,
+  +             "Expected more than 15 risk entries (got {}). \
+  +              The scorer should return all files; truncation belongs in the display layer.",
+  +             risks.len()
+  +         );
+        }
+    }
+ ✓ (59.6s)
+            // Smoke test — just verify it doesn't crash
+            handle_risk("/risk");
+            handle_risk("/risk --all");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_compute_file_risk_scores_returns_all_files() {
+  +         // This project has 71+ source files in src/.
+  ... (11 more lines)
+  2 tools completed in 1m 8s (2 ✓)
+
+Let me verify the test fails first (confirming the bug exists):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_compute_file_ris… ✓ (209ms)
+
+Test confirms the bug — only 15 files returned. Now fix it:
+
+Step 2: Remove the truncation
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (3 → 1 lines)
+  -     // Return top 15
+  -     risks.truncate(15);
+        risks
+ ✓ (1m 2s)
+  -     // Return top 15
+  -     risks.truncate(15);
+        risks
+
+**Step 3: Run all checks**
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (36.2s)
+  2 tools completed in 57.4s (2 ✓)
+
+All 88 integration tests pass. Let me also verify the specific new test passes:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_compute_file_ris… ✓ (208ms)
+
+Let me also confirm the full test suite passes (unit + integration):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (25.5s)
+
+3,855 unit tests + 88 integration tests — all green. Now commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (5ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Clean, surgical change. Commit time:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Done! Clean fix:
+
+• Removed `risks.truncate(15) from compute_file_risk_scores()` — the function now returns all scored files, sorted by score descending
+• Display limit was already handled correctly in `format_risk_report() (let limit = if show_all { risks.len() } else { 15 }`)
+• Added test `test_compute_file_risk_scores_returns_all_files` that verifies the scorer returns >15 files (this project has 71+ source files), proving the truncation was removed
+• All 3,943 tests pass, clippy clean, formatted
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

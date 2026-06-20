@@ -1,0 +1,322 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement /risk validate to compare risk predictions against actual breakage. Let me start by understanding the existing code.
+  ▶ search 'risk_snapshot|handle_risk|risk snapshot' in src/commands_info.rs ✓ (2ms)
+  ▶ search 'handle_risk|fn.*risk|snapshot' in src/commands_info.rs ✓ (2ms)
+  ▶ search 'FileRisk|risk"' in src/commands_info.rs ✓ (2ms)
+  ▶ search 'risk' in src/commands_info.rs ✓ (2ms)
+  ▶ read src/commands_info.rs:1806..1926 ✓ (1ms)
+  5 tools completed in 21.9s (5 ✓)
+
+Good. Now let me see the existing tests at the end of the file and the FileRisk struct:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1554..1579 ✓ (1ms)
+
+Now let me look at the existing risk-related tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'test.*risk|risk.*test|fn test_.*risk|fn test_.*snapshot|fn t…' in src/commands_info.rs ✓ (2ms)
+  ▶ search 'risk' in src/commands_info.rs (*.rs) ✓ (3ms)
+  ▶ read src/commands_info.rs:3370.. ✓ (1ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Now let me check how the /risk dispatch works:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'risk' in src/dispatch.rs ✓ (2ms)
+  ▶ read src/dispatch.rs:375..390 ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Good. Now let me check what's in commands.rs to see how `handle_risk` is re-exported:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'handle_risk' in src/commands.rs ✓ (2ms)
+
+Now let me check the help data for /risk:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'risk' in src/help_data.rs ✓ (2ms)
+  ▶ read src/help_data.rs:1230..1255 ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now I have all the context I need. Let me plan and build:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests for commit classification, precision c…' ✓ (0ms)
+  ▶ todo add 'Implement classify_commits and compute_validation …' ✓ (0ms)
+  ▶ todo add 'Implement handle_risk_validate and wire into handl…' ✓ (0ms)
+  ▶ todo add 'Update help text and docs' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — fix any issue…' ✓ (0ms)
+  ▶ todo add 'Commit' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  7 tools completed in 23.4s (7 ✓)
+
+Let me first understand the full structure needed. I need:
+
+1. A function to parse git log output and classify commits as "revert" or "fix"
+2. A function to compute precision/recall given predictions and actual breakage
+3. A function to format the validation report
+4. The handle_risk_validate function
+5. Tests for all of these
+
+Let me write the tests first, then the implementation. I'll add everything right before the existing #[cfg(test)] block:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1806..1812 ✓ (1ms)
+
+First, let me write the implementation. I'll add it between the handle_risk_snapshot function and the tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1915..1920 ✓ (1ms)
+
+Now let me also look at how to check what format Color uses to make sure I use the right constants:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search '^use ' in src/commands_info.rs ✓ (2ms)
+
+Good, use crate::format::* gives me access to BOLD, RESET, DIM, GREEN, RED, `YELLOW, CYAN`, etc.
+
+Now I'll implement the full feature. Let me first add the routing for "validate" in handle_risk, then add the implementation:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (4 → 9 lines)
+        if sub == "snapshot" {
+            handle_risk_snapshot();
+  +         return;
+  +     }
+  + 
+  +     if sub == "validate" {
+  +         handle_risk_validate();
+            return;
+        }
+ ✓ (7.8s)
+        if sub == "snapshot" {
+            handle_risk_snapshot();
+  +         return;
+  +     }
+  + 
+  +     if sub == "validate" {
+  +         handle_risk_validate();
+            return;
+        }
+
+Expected — I need to add the implementation. Now let me add all the validate functions right before the tests block:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (8 → 328 lines)
+  +     }
+  + }
+  + 
+  + /// Parsed git-log entry: one commit message + the files it touched.
+  + struct CommitEntry {
+  +     message: String,
+  +     files: Vec<String>,
+  + }
+  + 
+  + /// Parse `git log --name-only --oneline` output into structured entries.
+  + ///
+  + /// Each commit is one message line followed by zero or more blank-separated
+  + /// file paths, then a blank line.  Example:
+  + /// ```text
+  + /// abc1234 Fix clippy warnings
+  + /// src/foo.rs
+  + /// src/bar.rs
+  + ///
+  + /// def5678 Revert "add feature"
+  + /// src/baz.rs
+  ... (304 more lines)
+ ✓ (1m 3s)
+  +     }
+  + }
+  + 
+  + /// Parsed git-log entry: one commit message + the files it touched.
+  + struct CommitEntry {
+  +     message: String,
+  +     files: Vec<String>,
+  + }
+  ... (13 more lines)
+
+Now let me add the tests at the end of the test module, before the final }:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3790.. ✓ (1ms)
+  ▶ edit src/commands_info.rs (14 → 195 lines)
+                "Expected more than 15 risk entries (got {}). \
+                 The scorer should return all files; truncation belongs in the display layer.",
+                risks.len()
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_log_name_only_basic() {
+  +         let log = "\
+  + abc1234 Fix clippy warnings
+  + src/foo.rs
+  + src/bar.rs
+  + 
+  + def5678 Add new feature
+  + src/baz.rs
+  + ";
+  +         let entries = parse_git_log_name_only(log);
+  +         assert_eq!(entries.len(), 2);
+  +         assert!(entries[0].message.contains("Fix clippy"));
+  +         assert_eq!(entries[0].files, vec!["src/foo.rs", "src/bar.rs"]);
+  ... (167 more lines)
+ ✓ (1m 0s)
+                "Expected more than 15 risk entries (got {}). \
+                 The scorer should return all files; truncation belongs in the display layer.",
+                risks.len()
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_log_name_only_basic() {
+  ... (13 more lines)
+  2 tools completed in 1m 30s (2 ✓)
+
+Looks like it ran into something — let me check the full output:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (12.3s)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3871 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the failing test to understand the assertion error:
+  ▶ read src/commands_info.rs:3970..4000 ✓ (1ms)
+
+The issue is the order of items in the report. Let me look at format_validation_report to understand how it iterates:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn format_validation_report' in src/commands_info.rs ✓ (2ms)
+  ▶ read src/commands_info.rs:2062..2142 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+I see the issue. The `format_validation_report uses ANSI color codes like {BOLD}, {YELLOW}, etc. The test is checking for plain text like "Recall@10: 1/2"` but the actual output has ANSI escape codes embedded. Let me run the specific test to see the actual panic message:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_format_validatio… ✓ (104ms)
+
+The test asserts "Recall@10: 1/2" but the actual output has extra spaces for alignment (`"Recall@10:    1/2"`). Let me check — there are 4 spaces after the colon in the implementation:
+
+```
+"  Recall@10:    {}/{} broken files were predicted\n",
+```
+
+vs the test expects:
+```
+"Recall@10: 1/2"
+```
+
+The test needs to match the 4 spaces used for alignment. Let me fix the test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (1 → 1 lines)
+  -         assert!(report.contains("Recall@10: 1/2"));
+  +         assert!(report.contains("Recall@10:    1/2"));
+ ✓ (1m 3s)
+  -         assert!(report.contains("Recall@10: 1/2"));
+  +         assert!(report.contains("Recall@10:    1/2"));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_format_validatio… ✓ (105ms)
+  2 tools completed in 1m 9s (2 ✓)
+
+Both tests pass. Now let me run the full suite:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (51.8s)
+  2 tools completed in 1m 11s (2 ✓)
+
+All tests pass. Now let me update the help text to include the new validate subcommand:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (15 → 20 lines)
+                 \x20 • Revert involvement history\n\
+                 \x20 • Test density (low coverage = higher risk)\n\n\
+                 Usage:\n\
+  -              \x20 /risk          Show top 15 riskiest files\n\
+  -              \x20 /risk --all    Show all scored files\n\n\
+  +              \x20 /risk            Show top 15 riskiest files\n\
+  +              \x20 /risk --all      Show all scored files\n\
+  +              \x20 /risk snapshot   Save current predictions for later validation\n\
+  +              \x20 /risk validate   Compare past predictions against actual breakage\n\n\
+  +              The snapshot → validate loop measures prediction accuracy:\n\
+  +              run /risk snapshot, keep coding, then /risk validate to see\n\
+  +              which predictions were right (Precision@10) and what surprised you.\n\n\
+                 Part of yoyo's predictive self-awareness — the first step toward\n\
+                 knowing which files will break before they do.",
+            ),
+ ✓ (1m 2s)
+                 \x20 • Revert involvement history\n\
+                 \x20 • Test density (low coverage = higher risk)\n\n\
+                 Usage:\n\
+  -              \x20 /risk          Show top 15 riskiest files\n\
+  -              \x20 /risk --all    Show all scored files\n\n\
+  +              \x20 /risk            Show top 15 riskiest files\n\
+  +              \x20 /risk --all      Show all scored files\n\
+  +              \x20 /risk snapshot   Save current predictions for later validation\n\
+  ... (7 more lines)
+
+Now let me run the full check suite again to make sure everything is clean:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (12.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (36.4s)
+  2 tools completed in 54.9s (2 ✓)
+
+All clean. Let me commit:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo done #3 ✓ (0ms)
+  ▶ todo done #4 ✓ (0ms)
+  ▶ todo done #5 ✓ (0ms)
+  ▶ todo done #6 ✓ (0ms)
+  7 tools completed in 20.9s (7 ✓)
+
+Done. Here's what I built:
+
+`/risk validate` — the second half of the prediction validation loop. It:
+
+1. **Loads the most recent snapshot** from `.yoyo/risk_snapshots.jsonl (saved by /risk snapshot`)
+2. **Parses git history** since the snapshot using `git log <hash>..HEAD --name-only --oneline`
+3. Classifies commits as "revert" or "fix" by scanning commit messages, collecting all files touched in those commits as "broke" files
+4. Computes Precision@10 (how many of our top-10 predictions actually had issues) and Recall@10 (what fraction of all broken files we caught)
+5. Reports surprises — files that broke but weren't in the prediction, with their current risk rank for context
+
+New functions:
+• parse_git_log_name_only() — parses git log output into structured commit entries
+• classify_broke_files() — identifies files that appeared in revert/fix commits
+• `compute_validation()` — compares predictions against actual breakage
+• format_validation_report() — formats the human-readable report
+
+**Tests added** (11 new tests):
+• Git log parsing (basic, no trailing blank)
+• Commit classification (revert, fix, empty)
+• Validation computation (perfect prediction, partial, no breakage)
+• Report formatting (key sections present, no-surprises case)
+• Routing test for the new subcommand
+
+Help text updated to document `snapshot and validate` subcommands.
+
+  ✓ Watch passed after fix (attempt 1)
+
