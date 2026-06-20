@@ -1237,8 +1237,13 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 • Revert involvement history\n\
              \x20 • Test density (low coverage = higher risk)\n\n\
              Usage:\n\
-             \x20 /risk          Show top 15 riskiest files\n\
-             \x20 /risk --all    Show all scored files\n\n\
+             \x20 /risk            Show top 15 riskiest files\n\
+             \x20 /risk --all      Show all scored files\n\
+             \x20 /risk snapshot   Save current predictions for later validation\n\
+             \x20 /risk validate   Compare past predictions against actual breakage\n\n\
+             The snapshot → validate loop measures prediction accuracy:\n\
+             run /risk snapshot, keep coding, then /risk validate to see\n\
+             which predictions were right (Precision@10) and what surprised you.\n\n\
              Part of yoyo's predictive self-awareness — the first step toward\n\
              knowing which files will break before they do.",
         ),

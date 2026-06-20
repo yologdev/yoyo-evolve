@@ -1805,9 +1805,403 @@ pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
 
 /// Handle the `/risk` command — display per-file risk scores.
 pub(crate) fn handle_risk(input: &str) {
+    let sub = input.strip_prefix("/risk").unwrap_or(input).trim();
+
+    if sub == "snapshot" {
+        handle_risk_snapshot();
+        return;
+    }
+
+    if sub == "validate" {
+        handle_risk_validate();
+        return;
+    }
+
     let show_all = input.contains("--all");
     let risks = compute_file_risk_scores();
     let report = format_risk_report(&risks, show_all);
+    print!("{report}");
+}
+
+/// Default path for risk snapshot JSONL file.
+const RISK_SNAPSHOT_PATH: &str = ".yoyo/risk_snapshots.jsonl";
+
+/// Build the JSON string for a risk snapshot entry.
+///
+/// Takes already-sorted risk scores, day number, and git hash.
+/// Returns a single JSON line (no trailing newline).
+fn build_risk_snapshot_json(risks: &[FileRisk], day: u32, git_hash: &str) -> String {
+    let ts = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let top_10: Vec<serde_json::Value> = risks
+        .iter()
+        .take(10)
+        .map(|r| {
+            serde_json::json!({
+                "path": r.path,
+                "score": (r.score * 100.0).round() / 100.0,
+                "signals": r.signals,
+            })
+        })
+        .collect();
+
+    let snapshot = serde_json::json!({
+        "ts": ts,
+        "day": day,
+        "git_hash": git_hash,
+        "top_10": top_10,
+    });
+
+    serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Append a risk snapshot JSON line to the given path.
+fn write_risk_snapshot_to(path: &std::path::Path, json_line: &str) -> Result<(), std::io::Error> {
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{json_line}")?;
+    Ok(())
+}
+
+/// Handle `/risk snapshot` — save current risk predictions to JSONL.
+fn handle_risk_snapshot() {
+    let risks = compute_file_risk_scores();
+
+    // Get current git hash
+    let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string();
+
+    // Read DAY_COUNT
+    let day: u32 = std::fs::read_to_string("DAY_COUNT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    let json = build_risk_snapshot_json(&risks, day, &git_hash);
+    let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
+
+    match write_risk_snapshot_to(path, &json) {
+        Ok(()) => {
+            let count = risks.len().min(10);
+            println!("  📸 Snapshot saved — {count} files scored, git HEAD {git_hash}");
+        }
+        Err(e) => {
+            eprintln!("  {RED}Error saving risk snapshot: {e}{RESET}");
+        }
+    }
+}
+
+/// Parsed git-log entry: one commit message + the files it touched.
+struct CommitEntry {
+    message: String,
+    files: Vec<String>,
+}
+
+/// Parse `git log --name-only --oneline` output into structured entries.
+///
+/// Each commit is one message line followed by zero or more blank-separated
+/// file paths, then a blank line.  Example:
+/// ```text
+/// abc1234 Fix clippy warnings
+/// src/foo.rs
+/// src/bar.rs
+///
+/// def5678 Revert "add feature"
+/// src/baz.rs
+/// ```
+fn parse_git_log_name_only(output: &str) -> Vec<CommitEntry> {
+    let mut entries = Vec::new();
+    let mut current_msg: Option<String> = None;
+    let mut current_files: Vec<String> = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            // Blank line separates commits
+            if let Some(msg) = current_msg.take() {
+                entries.push(CommitEntry {
+                    message: msg,
+                    files: std::mem::take(&mut current_files),
+                });
+            }
+            continue;
+        }
+
+        if current_msg.is_none() {
+            // First non-blank line of a commit: "hash message..."
+            current_msg = Some(trimmed.to_string());
+        } else {
+            // Subsequent non-blank line: file path
+            current_files.push(trimmed.to_string());
+        }
+    }
+
+    // Flush last entry if file didn't end with blank line
+    if let Some(msg) = current_msg.take() {
+        entries.push(CommitEntry {
+            message: msg,
+            files: current_files,
+        });
+    }
+
+    entries
+}
+
+/// Classify commits and return the set of files that "broke" —
+/// i.e., appeared in revert or fix commits.
+fn classify_broke_files(entries: &[CommitEntry]) -> std::collections::HashSet<String> {
+    let mut broke = std::collections::HashSet::new();
+    for entry in entries {
+        let msg_lower = entry.message.to_lowercase();
+        let is_revert = msg_lower.contains("revert");
+        let is_fix = msg_lower.contains("fix");
+        if is_revert || is_fix {
+            for f in &entry.files {
+                broke.insert(f.clone());
+            }
+        }
+    }
+    broke
+}
+
+/// Result of comparing predictions against actual breakage.
+struct ValidationResult {
+    /// Files from the top-10 predictions that actually broke.
+    hits: Vec<String>,
+    /// Files from the top-10 predictions that had no issues.
+    clean: Vec<String>,
+    /// Files that broke but were NOT in the top-10 predictions (surprises).
+    surprises: Vec<(String, Option<usize>)>,
+    /// Total number of commits since snapshot.
+    commit_count: usize,
+}
+
+/// Compute validation by comparing predicted top-10 files against
+/// the set of files that actually broke.
+///
+/// `predicted` is the list of file paths from the snapshot's top_10.
+/// `all_ranked` can optionally provide rank info for surprise files
+/// (pass `None` if unavailable).
+fn compute_validation(
+    predicted: &[String],
+    broke_files: &std::collections::HashSet<String>,
+    all_ranked: Option<&[String]>,
+    commit_count: usize,
+) -> ValidationResult {
+    let mut hits = Vec::new();
+    let mut clean = Vec::new();
+
+    for p in predicted {
+        if broke_files.contains(p) {
+            hits.push(p.clone());
+        } else {
+            clean.push(p.clone());
+        }
+    }
+
+    let predicted_set: std::collections::HashSet<&String> = predicted.iter().collect();
+
+    let mut surprises: Vec<(String, Option<usize>)> = broke_files
+        .iter()
+        .filter(|f| !predicted_set.contains(f))
+        .map(|f| {
+            let rank = all_ranked.and_then(|ranked| {
+                ranked.iter().position(|r| r == f).map(|i| i + 1) // 1-based
+            });
+            (f.clone(), rank)
+        })
+        .collect();
+
+    // Sort surprises by rank (known rank first, then alphabetically)
+    surprises.sort_by(|a, b| match (&a.1, &b.1) {
+        (Some(ra), Some(rb)) => ra.cmp(rb),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.0.cmp(&b.0),
+    });
+
+    ValidationResult {
+        hits,
+        clean,
+        surprises,
+        commit_count,
+    }
+}
+
+/// Format a validation result as a human-readable report.
+fn format_validation_report(result: &ValidationResult, day: u64, git_hash: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "\n  📊 {BOLD}Risk Prediction Validation{RESET}\n\n"
+    ));
+    out.push_str(&format!("  Snapshot: Day {day}, {git_hash}\n"));
+    out.push_str(&format!("  Commits since: {}\n\n", result.commit_count));
+
+    out.push_str(&format!(
+        "  {DIM}Predicted (top 10)            Actual Result{RESET}\n"
+    ));
+    out.push_str(&format!(
+        "  {DIM}─────────────────────────────────────────────{RESET}\n"
+    ));
+
+    let all_predicted: Vec<&String> = result.hits.iter().chain(result.clean.iter()).collect();
+
+    // We want to show them in original order, so combine hits+clean and mark
+    // Actually, let's iterate predicted order. Build a lookup set.
+    let hit_set: std::collections::HashSet<&String> = result.hits.iter().collect();
+
+    for p in &all_predicted {
+        let status = if hit_set.contains(p) {
+            format!("{GREEN}✅ had fixes{RESET}")
+        } else {
+            format!("{DIM}─  no issues{RESET}")
+        };
+        out.push_str(&format!("  {:<30}{}\n", p, status));
+    }
+
+    out.push('\n');
+
+    let total_broke = result.hits.len() + result.surprises.len();
+
+    // Precision@10: what fraction of our predictions were right
+    out.push_str(&format!(
+        "  Precision@10: {}/{} predicted files had issues\n",
+        result.hits.len(),
+        result.hits.len() + result.clean.len(),
+    ));
+
+    // Recall@10: what fraction of actual breakage did we catch
+    if total_broke > 0 {
+        out.push_str(&format!(
+            "  Recall@10:    {}/{} broken files were predicted\n",
+            result.hits.len(),
+            total_broke,
+        ));
+    }
+
+    if !result.surprises.is_empty() {
+        out.push_str(&format!(
+            "\n  {YELLOW}Surprises (broke but not predicted):{RESET}\n"
+        ));
+        for (f, rank) in &result.surprises {
+            let rank_info = match rank {
+                Some(r) => format!(" (rank #{r})"),
+                None => String::new(),
+            };
+            out.push_str(&format!("    {f}{rank_info}\n"));
+        }
+    }
+
+    out
+}
+
+/// Handle `/risk validate` — compare past predictions against actual breakage.
+fn handle_risk_validate() {
+    // 1. Load the most recent snapshot
+    let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) if !c.trim().is_empty() => c,
+        Ok(_) => {
+            println!("  No snapshots found. Run {BOLD}/risk snapshot{RESET} first.");
+            return;
+        }
+        Err(_) => {
+            println!("  No snapshots found. Run {BOLD}/risk snapshot{RESET} first.");
+            return;
+        }
+    };
+
+    // Take the last non-empty line (most recent snapshot)
+    let last_line = match contents.lines().rev().find(|l| !l.trim().is_empty()) {
+        Some(l) => l,
+        None => {
+            println!("  No snapshots found. Run {BOLD}/risk snapshot{RESET} first.");
+            return;
+        }
+    };
+
+    let snapshot: serde_json::Value = match serde_json::from_str(last_line) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("  {RED}Error parsing snapshot: {e}{RESET}");
+            return;
+        }
+    };
+
+    let git_hash = snapshot["git_hash"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+    let day = snapshot["day"].as_u64().unwrap_or(0);
+
+    // Extract predicted top-10 file paths
+    let top_10: Vec<String> = snapshot["top_10"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v["path"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if top_10.is_empty() {
+        eprintln!("  {RED}Snapshot has no top_10 predictions.{RESET}");
+        return;
+    }
+
+    // 2. Check if there are commits since the snapshot
+    let log_output = match crate::git::run_git(&[
+        "log",
+        &format!("{git_hash}..HEAD"),
+        "--name-only",
+        "--oneline",
+    ]) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("  {RED}Error running git log: {e}{RESET}");
+            return;
+        }
+    };
+
+    if log_output.trim().is_empty() {
+        println!("  No commits since last snapshot ({git_hash}) — nothing to validate yet.");
+        return;
+    }
+
+    // 3. Parse commits and classify breakage
+    let entries = parse_git_log_name_only(&log_output);
+    let commit_count = entries.len();
+    let broke_files = classify_broke_files(&entries);
+
+    // 4. Get current full risk ranking for rank info on surprises
+    let all_risks = compute_file_risk_scores();
+    let all_ranked: Vec<String> = all_risks.iter().map(|r| r.path.clone()).collect();
+
+    // 5. Compute and display validation
+    let result = compute_validation(&top_10, &broke_files, Some(&all_ranked), commit_count);
+    let report = format_validation_report(&result, day, &git_hash);
     print!("{report}");
 }
 
@@ -3293,6 +3687,100 @@ More text.
     }
 
     #[test]
+    fn test_risk_snapshot_serialization() {
+        // Verify snapshot JSON is valid JSONL
+        let risks = vec![
+            FileRisk {
+                path: "src/foo.rs".to_string(),
+                score: 0.82,
+                signals: vec!["▲churn", "▲size"],
+            },
+            FileRisk {
+                path: "src/bar.rs".to_string(),
+                score: 0.71,
+                signals: vec!["▲churn"],
+            },
+        ];
+
+        let json = build_risk_snapshot_json(&risks, 112, "abc123f");
+        // Must be valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(parsed["day"], 112);
+        assert_eq!(parsed["git_hash"], "abc123f");
+        let top = parsed["top_10"].as_array().expect("top_10 is array");
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0]["path"], "src/foo.rs");
+        assert!((top[0]["score"].as_f64().unwrap() - 0.82).abs() < 0.001);
+        let sigs = top[0]["signals"].as_array().expect("signals is array");
+        assert_eq!(sigs.len(), 2);
+        assert_eq!(sigs[0], "▲churn");
+        assert_eq!(sigs[1], "▲size");
+        // Must have a timestamp
+        assert!(parsed["ts"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_risk_snapshot_writes_jsonl() {
+        // Write to a temp file and verify it's valid JSONL
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("risk_snapshots.jsonl");
+
+        let risks = vec![FileRisk {
+            path: "src/main.rs".to_string(),
+            score: 0.55,
+            signals: vec!["▲size"],
+        }];
+
+        let json = build_risk_snapshot_json(&risks, 42, "deadbee");
+        write_risk_snapshot_to(&path, &json).expect("write ok");
+
+        // Write a second snapshot
+        let json2 = build_risk_snapshot_json(&risks, 43, "cafebab");
+        write_risk_snapshot_to(&path, &json2).expect("write ok");
+
+        // Read back and verify both lines are valid JSON
+        let contents = std::fs::read_to_string(&path).expect("read");
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let p1: serde_json::Value = serde_json::from_str(lines[0]).expect("line 1 valid JSON");
+        let p2: serde_json::Value = serde_json::from_str(lines[1]).expect("line 2 valid JSON");
+        assert_eq!(p1["day"], 42);
+        assert_eq!(p2["day"], 43);
+    }
+
+    #[test]
+    fn test_risk_snapshot_top_10_limit() {
+        // If there are more than 10 risks, only top 10 are saved
+        let risks: Vec<FileRisk> = (0..20)
+            .map(|i| FileRisk {
+                path: format!("src/file_{i}.rs"),
+                score: 1.0 - (i as f64 * 0.05),
+                signals: vec!["▲churn"],
+            })
+            .collect();
+
+        let json = build_risk_snapshot_json(&risks, 1, "1234567");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let top = parsed["top_10"].as_array().expect("top_10 array");
+        assert_eq!(top.len(), 10);
+        // First entry should be highest score
+        assert_eq!(top[0]["path"], "src/file_0.rs");
+    }
+
+    #[test]
+    fn test_risk_subcommand_routing() {
+        // "snapshot" should be recognized
+        let input = "/risk snapshot";
+        let trimmed = input.strip_prefix("/risk").unwrap().trim();
+        assert_eq!(trimmed, "snapshot");
+
+        // "--all" should NOT be routed to snapshot
+        let input2 = "/risk --all";
+        let trimmed2 = input2.strip_prefix("/risk").unwrap().trim();
+        assert_ne!(trimmed2, "snapshot");
+    }
+
+    #[test]
     fn test_compute_file_risk_scores_returns_all_files() {
         // This project has 71+ source files in src/.
         // compute_file_risk_scores must return ALL of them, not truncate to 15.
@@ -3304,5 +3792,175 @@ More text.
              The scorer should return all files; truncation belongs in the display layer.",
             risks.len()
         );
+    }
+
+    #[test]
+    fn test_parse_git_log_name_only_basic() {
+        let log = "\
+abc1234 Fix clippy warnings
+src/foo.rs
+src/bar.rs
+
+def5678 Add new feature
+src/baz.rs
+";
+        let entries = parse_git_log_name_only(log);
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].message.contains("Fix clippy"));
+        assert_eq!(entries[0].files, vec!["src/foo.rs", "src/bar.rs"]);
+        assert!(entries[1].message.contains("Add new feature"));
+        assert_eq!(entries[1].files, vec!["src/baz.rs"]);
+    }
+
+    #[test]
+    fn test_parse_git_log_name_only_no_trailing_blank() {
+        // Some git output doesn't end with a blank line
+        let log = "abc1234 Fix something\nsrc/a.rs";
+        let entries = parse_git_log_name_only(log);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].files, vec!["src/a.rs"]);
+    }
+
+    #[test]
+    fn test_classify_broke_files_revert() {
+        let entries = vec![
+            CommitEntry {
+                message: "abc1234 Revert \"add feature\"".to_string(),
+                files: vec!["src/a.rs".to_string(), "src/b.rs".to_string()],
+            },
+            CommitEntry {
+                message: "def5678 Add something cool".to_string(),
+                files: vec!["src/c.rs".to_string()],
+            },
+        ];
+        let broke = classify_broke_files(&entries);
+        assert!(broke.contains("src/a.rs"));
+        assert!(broke.contains("src/b.rs"));
+        assert!(!broke.contains("src/c.rs"));
+    }
+
+    #[test]
+    fn test_classify_broke_files_fix() {
+        let entries = vec![
+            CommitEntry {
+                message: "abc1234 fix: handle empty input".to_string(),
+                files: vec!["src/parser.rs".to_string()],
+            },
+            CommitEntry {
+                message: "def5678 Fix typo in docs".to_string(),
+                files: vec!["src/docs.rs".to_string()],
+            },
+            CommitEntry {
+                message: "ghi9012 Add tests".to_string(),
+                files: vec!["src/tests.rs".to_string()],
+            },
+        ];
+        let broke = classify_broke_files(&entries);
+        assert!(broke.contains("src/parser.rs"));
+        assert!(broke.contains("src/docs.rs"));
+        assert!(!broke.contains("src/tests.rs"));
+    }
+
+    #[test]
+    fn test_classify_broke_files_empty() {
+        let entries: Vec<CommitEntry> = Vec::new();
+        let broke = classify_broke_files(&entries);
+        assert!(broke.is_empty());
+    }
+
+    #[test]
+    fn test_compute_validation_perfect_prediction() {
+        let predicted = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+        let mut broke = std::collections::HashSet::new();
+        broke.insert("src/a.rs".to_string());
+        broke.insert("src/b.rs".to_string());
+
+        let result = compute_validation(&predicted, &broke, None, 10);
+        assert_eq!(result.hits.len(), 2);
+        assert_eq!(result.clean.len(), 0);
+        assert_eq!(result.surprises.len(), 0);
+        assert_eq!(result.commit_count, 10);
+    }
+
+    #[test]
+    fn test_compute_validation_partial_prediction() {
+        let predicted = vec![
+            "src/a.rs".to_string(),
+            "src/b.rs".to_string(),
+            "src/c.rs".to_string(),
+        ];
+        let mut broke = std::collections::HashSet::new();
+        broke.insert("src/a.rs".to_string());
+        broke.insert("src/d.rs".to_string()); // surprise
+
+        let all_ranked = vec![
+            "src/a.rs".to_string(),
+            "src/b.rs".to_string(),
+            "src/c.rs".to_string(),
+            "src/d.rs".to_string(),
+        ];
+
+        let result = compute_validation(&predicted, &broke, Some(&all_ranked), 5);
+        assert_eq!(result.hits.len(), 1); // only src/a.rs
+        assert_eq!(result.clean.len(), 2); // src/b.rs, src/c.rs
+        assert_eq!(result.surprises.len(), 1); // src/d.rs
+        assert_eq!(result.surprises[0].0, "src/d.rs");
+        assert_eq!(result.surprises[0].1, Some(4)); // rank 4 (1-based)
+    }
+
+    #[test]
+    fn test_compute_validation_no_breakage() {
+        let predicted = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+        let broke = std::collections::HashSet::new();
+
+        let result = compute_validation(&predicted, &broke, None, 20);
+        assert_eq!(result.hits.len(), 0);
+        assert_eq!(result.clean.len(), 2);
+        assert_eq!(result.surprises.len(), 0);
+    }
+
+    #[test]
+    fn test_format_validation_report_has_key_sections() {
+        let result = ValidationResult {
+            hits: vec!["src/a.rs".to_string()],
+            clean: vec!["src/b.rs".to_string(), "src/c.rs".to_string()],
+            surprises: vec![("src/d.rs".to_string(), Some(15))],
+            commit_count: 47,
+        };
+
+        let report = format_validation_report(&result, 110, "abc123f");
+        assert!(report.contains("Risk Prediction Validation"));
+        assert!(report.contains("Day 110"));
+        assert!(report.contains("abc123f"));
+        assert!(report.contains("Commits since: 47"));
+        assert!(report.contains("src/a.rs"));
+        assert!(report.contains("had fixes"));
+        assert!(report.contains("no issues"));
+        assert!(report.contains("Precision@10: 1/3"));
+        assert!(report.contains("Recall@10:    1/2"));
+        assert!(report.contains("Surprises"));
+        assert!(report.contains("src/d.rs"));
+        assert!(report.contains("rank #15"));
+    }
+
+    #[test]
+    fn test_format_validation_report_no_surprises() {
+        let result = ValidationResult {
+            hits: vec!["src/a.rs".to_string()],
+            clean: vec!["src/b.rs".to_string()],
+            surprises: vec![],
+            commit_count: 5,
+        };
+
+        let report = format_validation_report(&result, 100, "fff0000");
+        assert!(report.contains("Precision@10: 1/2"));
+        assert!(!report.contains("Surprises"));
+    }
+
+    #[test]
+    fn test_risk_validate_routing() {
+        let input = "/risk validate";
+        let trimmed = input.strip_prefix("/risk").unwrap().trim();
+        assert_eq!(trimmed, "validate");
     }
 }
