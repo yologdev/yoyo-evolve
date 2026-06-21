@@ -665,7 +665,6 @@ fn extract_inner_text(html: &str) -> String {
 ///   <a class="result__snippet" href="...">Snippet text</a>
 /// </div>
 /// ```
-#[allow(dead_code)]
 pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
     let max_results = max_results.min(20);
     let mut results = Vec::new();
@@ -1095,19 +1094,76 @@ pub(crate) fn exa_search(query: &str, max_results: usize) -> Result<Vec<WebSearc
     parse_exa_response(&response)
 }
 
-/// Perform a web search via Exa API and return structured results.
+/// Perform a DuckDuckGo search by fetching the HTML lite page and parsing results.
 ///
-/// Requires `EXA_API_KEY` environment variable. Returns a clear error if unset.
+/// This is a fallback for when `EXA_API_KEY` is not set. DuckDuckGo may return
+/// empty results (captcha/rate-limiting), but that's better than a hard error.
+pub(crate) fn ddg_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+    let encoded_query = query
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
+                c.to_string()
+            } else if c == ' ' {
+                "+".to_string()
+            } else {
+                format!("%{:02X}", c as u32)
+            }
+        })
+        .collect::<String>();
+
+    let url = format!("https://html.duckduckgo.com/html/?q={encoded_query}");
+    let html = fetch_url(&url)?;
+    let results = parse_ddg_results(&html, max_results);
+    Ok(results)
+}
+
+/// Perform a web search — tries Exa API first, falls back to DuckDuckGo.
+///
+/// If `EXA_API_KEY` is set, uses the Exa API (richer results with page content).
+/// If unset, falls back to DuckDuckGo HTML scraping (may return empty on captcha).
 pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
-    exa_search(query, max_results)
+    if std::env::var("EXA_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .is_some()
+    {
+        exa_search(query, max_results)
+    } else {
+        ddg_search(query, max_results)
+    }
 }
 
 /// Convenience: run a web search and return formatted text with content.
 ///
-/// Uses Exa API which returns search results with page text in one call.
+/// Tries Exa API first (if `EXA_API_KEY` is set), falls back to DuckDuckGo.
+/// On Exa network/rate-limit failures, also retries with DuckDuckGo.
 /// Returns a human-/agent-readable string on both success and failure.
 pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
-    match exa_search(query, max_results) {
+    let has_exa_key = std::env::var("EXA_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .is_some();
+
+    if has_exa_key {
+        match exa_search(query, max_results) {
+            Ok(results) => return format_search_results(&results),
+            Err(e) => {
+                // Exa failed for a non-key reason (network, rate limit, etc.)
+                // Try DDG as a second attempt
+                eprintln!("Exa search failed ({e}), falling back to DuckDuckGo...");
+                match ddg_search(query, max_results) {
+                    Ok(results) => return format_search_results(&results),
+                    Err(ddg_err) => {
+                        return format!("Web search failed: Exa: {e} | DuckDuckGo: {ddg_err}");
+                    }
+                }
+            }
+        }
+    }
+
+    // No Exa key — use DDG directly
+    match ddg_search(query, max_results) {
         Ok(results) => format_search_results(&results),
         Err(e) => format!("Web search failed: {e}"),
     }
@@ -1865,5 +1921,71 @@ mod tests {
         let empty = r#"{"tags": []}"#;
         let arr = extract_json_string_array(empty, "tags");
         assert!(arr.is_empty());
+    }
+
+    #[test]
+    fn test_web_search_uses_ddg_when_exa_key_unset() {
+        // When EXA_API_KEY is not set, web_search should not return an error
+        // about missing API key — it should fall back to DDG (which may fail
+        // for network reasons in tests, but shouldn't give an EXA_API_KEY error).
+        std::env::remove_var("EXA_API_KEY");
+        let result = web_search("rust programming", 5);
+        // It should either succeed (DDG worked) or fail with a non-EXA error
+        match result {
+            Ok(_results) => {} // DDG worked, great
+            Err(e) => {
+                assert!(
+                    !e.contains("EXA_API_KEY"),
+                    "Should not get EXA_API_KEY error when key is unset, got: {e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_web_search_fallback_path_selection() {
+        // With EXA_API_KEY unset, the fallback should use DDG path
+        std::env::remove_var("EXA_API_KEY");
+
+        // Verify that web_search doesn't panic and doesn't mention EXA
+        let result = web_search("test", 3);
+        if let Err(e) = &result {
+            // DDG network error is acceptable, EXA key error is not
+            assert!(
+                !e.contains("EXA_API_KEY"),
+                "Fallback should use DDG, not require EXA_API_KEY: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ddg_search_returns_results_from_html() {
+        // Unit test that ddg_search parsing works (using parse_ddg_results internally)
+        // We test the parse logic directly since we can't easily mock curl
+        let html = r#"
+        <div class="result">
+          <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F">Example</a>
+          <a class="result__snippet" href="...">A snippet</a>
+        </div>
+        "#;
+        let results = parse_ddg_results(html, 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Example");
+        assert_eq!(results[0].url, "https://example.com/");
+        assert_eq!(results[0].snippet, "A snippet");
+    }
+
+    #[test]
+    fn test_web_search_and_read_no_exa_key_no_panic() {
+        // web_search_and_read should not panic when EXA_API_KEY is unset
+        std::env::remove_var("EXA_API_KEY");
+        let result = web_search_and_read("rust programming language", 3);
+        // Should return some string (either results or an error message), never panic
+        assert!(!result.is_empty());
+        // Should not mention needing EXA_API_KEY
+        assert!(
+            !result.contains("EXA_API_KEY"),
+            "Should not require EXA_API_KEY, got: {result}"
+        );
     }
 }

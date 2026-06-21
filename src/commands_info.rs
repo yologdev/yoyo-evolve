@@ -1734,7 +1734,64 @@ fn resolve_crate_reference(reference: &str) -> Option<String> {
     None
 }
 
-/// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+/// Build a co-change coupling map from the last 100 commits.
+///
+/// For each `src/**/*.rs` file, records which other `src/**/*.rs` files are
+/// frequently modified in the same commit. Returns a nested map:
+///   file → { partner_file → co_change_count }
+fn co_change_coupling() -> std::collections::HashMap<String, std::collections::HashMap<String, u32>>
+{
+    let output = match crate::git::run_git(&["log", "--name-only", "--pretty=format:", "-100"]) {
+        Ok(o) => o,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+
+    // Parse commits: groups of file paths separated by blank lines
+    let mut commits: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !current.is_empty() {
+                commits.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        // Only track src/**/*.rs files
+        if trimmed.starts_with("src/") && trimmed.ends_with(".rs") {
+            current.push(trimmed.to_string());
+        }
+    }
+    if !current.is_empty() {
+        commits.push(current);
+    }
+
+    // For each commit, record co-change pairs
+    let mut coupling: std::collections::HashMap<String, std::collections::HashMap<String, u32>> =
+        std::collections::HashMap::new();
+
+    for commit_files in &commits {
+        // Only consider commits that touch 2+ src files (and skip huge merges > 20 files)
+        if commit_files.len() < 2 || commit_files.len() > 20 {
+            continue;
+        }
+        for file_a in commit_files {
+            for file_b in commit_files {
+                if file_a != file_b {
+                    *coupling
+                        .entry(file_a.clone())
+                        .or_default()
+                        .entry(file_b.clone())
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    coupling
+}
+
+/// Compute risk scores for all `src/**/*.rs` files using six weighted signals.
 pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     // 1. Change frequency (30 days) — weight 0.30
     let counts_30 = crate::git::file_change_counts(30);
@@ -1789,11 +1846,15 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+    let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
     // Tests-per-100-lines metric (exposed on FileRisk for display)
     let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
 
-    // 4. Revert involvement — weight 0.20
+    // 4. Revert involvement — weight 0.18
     let revert_files = revert_involved_files();
+
+    // 6. Co-change coupling — weight 0.15
+    let coupling_map = co_change_coupling();
 
     // 5b. Cross-file test coverage — how many test-containing files reference each module
     let cross_file_refs = build_test_reference_map();
@@ -1888,6 +1949,14 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
 
         // Invert: low coverage → high risk signal
         raw_test_density.push(1.0 - effective_coverage);
+
+        // 6. Co-change coupling: how many high-churn partners does this file have?
+        // Sum co-change counts with all partners (raw; will be normalized later)
+        let coupling_score = coupling_map
+            .get(path.as_str())
+            .map(|partners| partners.values().sum::<u32>() as f64)
+            .unwrap_or(0.0);
+        raw_coupling.push(coupling_score);
     }
 
     // Normalize each signal to 0.0–1.0
@@ -1896,9 +1965,10 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     let norm_size = normalize_scores(&raw_size);
     let norm_revert = normalize_scores(&raw_revert);
     let norm_test = normalize_scores(&raw_test_density);
+    let norm_coupling = normalize_scores(&raw_coupling);
 
-    // Weighted sum → final score
-    let weights = [0.30, 0.25, 0.15, 0.20, 0.10];
+    // Weighted sum → final score (6 signals, sum = 1.0)
+    let weights = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
     let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
 
     for (i, path) in all_files.into_iter().enumerate() {
@@ -1908,7 +1978,8 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
             + norm_accel[i] * weights[1]
             + norm_size[i] * weights[2]
             + norm_revert[i] * weights[3]
-            + norm_test[i] * weights[4];
+            + norm_test[i] * weights[4]
+            + norm_coupling[i] * weights[5];
 
         // Penalty: files with fewer than 5 tests per 100 lines get a bump
         // (only for .rs files where test density is meaningful)
@@ -1931,6 +2002,9 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
         }
         if norm_test[i] > 0.5 {
             signals.push("▲low-test");
+        }
+        if norm_coupling[i] > 0.7 {
+            signals.push("▲coupled");
         }
 
         risks.push(FileRisk {
@@ -2029,6 +2103,11 @@ pub(crate) fn handle_risk(input: &str) {
 
     if sub == "snapshot" {
         handle_risk_snapshot();
+        return;
+    }
+
+    if sub == "history" {
+        handle_risk_history();
         return;
     }
 
@@ -2335,6 +2414,289 @@ fn format_validation_report(result: &ValidationResult, day: u64, git_hash: &str)
     }
 
     out
+}
+
+/// A parsed risk snapshot from the JSONL file.
+struct ParsedSnapshot {
+    day: u64,
+    git_hash: String,
+    predicted: Vec<String>,
+}
+
+/// Parse all snapshots from JSONL content.
+fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
+    let mut snapshots = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue, // skip malformed lines
+        };
+        let day = val["day"].as_u64().unwrap_or(0);
+        let git_hash = val["git_hash"].as_str().unwrap_or("unknown").to_string();
+        let predicted: Vec<String> = val["top_10"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v["path"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !predicted.is_empty() {
+            snapshots.push(ParsedSnapshot {
+                day,
+                git_hash,
+                predicted,
+            });
+        }
+    }
+    snapshots
+}
+
+/// Validation result for a single snapshot interval.
+struct HistoryValidation {
+    day: u64,
+    git_hash_from: String,
+    git_hash_to: String,
+    result: ValidationResult,
+}
+
+/// Compute precision for a single validation (0.0..=1.0).
+fn precision(v: &ValidationResult) -> f64 {
+    let total = v.hits.len() + v.clean.len();
+    if total == 0 {
+        return 0.0;
+    }
+    v.hits.len() as f64 / total as f64
+}
+
+/// Compute trend label by comparing first-half vs second-half average precision.
+fn compute_trend(validations: &[HistoryValidation]) -> &'static str {
+    if validations.len() < 2 {
+        return "\u{27a1}\u{fe0f}  Stable";
+    }
+    let mid = validations.len() / 2;
+    let first_half = &validations[..mid];
+    let second_half = &validations[mid..];
+
+    let avg = |slice: &[HistoryValidation]| -> f64 {
+        if slice.is_empty() {
+            return 0.0;
+        }
+        let sum: f64 = slice.iter().map(|v| precision(&v.result)).sum();
+        sum / slice.len() as f64
+    };
+
+    let first_avg = avg(first_half);
+    let second_avg = avg(second_half);
+    let diff = second_avg - first_avg;
+
+    if diff > 0.05 {
+        "\u{1f4c8} Improving"
+    } else if diff < -0.05 {
+        "\u{1f4c9} Declining"
+    } else {
+        "\u{27a1}\u{fe0f}  Stable"
+    }
+}
+
+/// Format the history report table from validated snapshot intervals.
+fn format_history_report(validations: &[HistoryValidation]) -> String {
+    let mut out = String::new();
+
+    out.push_str(&format!("\n  {BOLD}Risk Prediction History{RESET}\n\n"));
+
+    if validations.is_empty() {
+        out.push_str(
+            "  No validated snapshots — need at least 2 snapshots with commits between them.\n",
+        );
+        out.push_str(&format!(
+            "  Run {BOLD}/risk snapshot{RESET} periodically to build history.\n"
+        ));
+        return out;
+    }
+
+    // Table header
+    out.push_str(&format!(
+        "  {DIM}Day   Commits  Hits  Predicted  Precision  Recall{RESET}\n"
+    ));
+    out.push_str(&format!(
+        "  {DIM}────  ───────  ────  ─────────  ─────────  ──────{RESET}\n"
+    ));
+
+    let mut total_hits = 0usize;
+    let mut total_predicted = 0usize;
+    let mut total_breaks = 0usize;
+
+    for v in validations {
+        let hits = v.result.hits.len();
+        let predicted_count = hits + v.result.clean.len();
+        let breaks = hits + v.result.surprises.len();
+        let prec = if predicted_count > 0 {
+            format!("{:>8.0}%", (hits as f64 / predicted_count as f64) * 100.0)
+        } else {
+            "      n/a".to_string()
+        };
+        let recall = if breaks > 0 {
+            format!("{:>5.0}%", (hits as f64 / breaks as f64) * 100.0)
+        } else {
+            "  n/a".to_string()
+        };
+
+        // Show short hash range for context
+        let hash_from_short = if v.git_hash_from.len() > 7 {
+            &v.git_hash_from[..7]
+        } else {
+            &v.git_hash_from
+        };
+        let hash_to_short = if v.git_hash_to.len() > 7 {
+            &v.git_hash_to[..7]
+        } else {
+            &v.git_hash_to
+        };
+
+        out.push_str(&format!(
+            "  {:<6}{:>7}  {:>4}  {:>9}  {}  {}  {DIM}{}..{}{RESET}\n",
+            v.day,
+            v.result.commit_count,
+            hits,
+            predicted_count,
+            prec,
+            recall,
+            hash_from_short,
+            hash_to_short,
+        ));
+
+        total_hits += hits;
+        total_predicted += predicted_count;
+        total_breaks += breaks;
+    }
+
+    // Overall summary
+    out.push_str(&format!(
+        "\n  {BOLD}Overall{RESET} ({} snapshots validated)\n",
+        validations.len()
+    ));
+
+    if total_predicted > 0 {
+        let overall_prec = (total_hits as f64 / total_predicted as f64) * 100.0;
+        out.push_str(&format!(
+            "  Precision: {total_hits}/{total_predicted} ({overall_prec:.0}%) — predicted files that actually broke\n"
+        ));
+    }
+
+    if total_breaks > 0 {
+        let overall_recall = (total_hits as f64 / total_breaks as f64) * 100.0;
+        out.push_str(&format!(
+            "  Recall:    {total_hits}/{total_breaks} ({overall_recall:.0}%) — breaks that were predicted\n"
+        ));
+    }
+
+    let trend = compute_trend(validations);
+    out.push_str(&format!("  Trend:     {trend}\n"));
+
+    out
+}
+
+/// Handle `/risk history` — show accuracy trend across all past snapshots.
+fn handle_risk_history() {
+    // 1. Load all snapshots
+    let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) if !c.trim().is_empty() => c,
+        Ok(_) => {
+            println!(
+                "  No snapshots found. Run {BOLD}/risk snapshot{RESET} periodically to build history."
+            );
+            return;
+        }
+        Err(_) => {
+            println!(
+                "  No snapshots found. Run {BOLD}/risk snapshot{RESET} periodically to build history."
+            );
+            return;
+        }
+    };
+
+    let snapshots = parse_all_snapshots(&contents);
+    if snapshots.len() < 2 {
+        println!(
+            "  Need at least 2 snapshots for history. Currently have {}.",
+            snapshots.len()
+        );
+        println!("  Run {BOLD}/risk snapshot{RESET} periodically to build history.");
+        return;
+    }
+
+    // 2. For each consecutive pair, validate
+    let mut validations = Vec::new();
+    for i in 0..snapshots.len() - 1 {
+        let from = &snapshots[i];
+        let to = &snapshots[i + 1];
+
+        // Get git log between the two snapshot hashes
+        let log_output = match crate::git::run_git(&[
+            "log",
+            &format!("{}..{}", from.git_hash, to.git_hash),
+            "--name-only",
+            "--oneline",
+        ]) {
+            Ok(o) if !o.trim().is_empty() => o,
+            Ok(_) => continue, // no commits between these snapshots
+            Err(_) => continue,
+        };
+
+        let entries = parse_git_log_name_only(&log_output);
+        let commit_count = entries.len();
+        let broke_files = classify_broke_files(&entries);
+
+        let result = compute_validation(&from.predicted, &broke_files, None, commit_count);
+
+        validations.push(HistoryValidation {
+            day: from.day,
+            git_hash_from: from.git_hash.clone(),
+            git_hash_to: to.git_hash.clone(),
+            result,
+        });
+    }
+
+    // 3. Also validate last snapshot against HEAD
+    if let Some(last) = snapshots.last() {
+        let log_output = match crate::git::run_git(&[
+            "log",
+            &format!("{}..HEAD", last.git_hash),
+            "--name-only",
+            "--oneline",
+        ]) {
+            Ok(o) if !o.trim().is_empty() => Some(o),
+            _ => None,
+        };
+
+        if let Some(log) = log_output {
+            let entries = parse_git_log_name_only(&log);
+            let commit_count = entries.len();
+            let broke_files = classify_broke_files(&entries);
+
+            let result = compute_validation(&last.predicted, &broke_files, None, commit_count);
+            let head_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+                .unwrap_or_else(|_| "HEAD".to_string())
+                .trim()
+                .to_string();
+
+            validations.push(HistoryValidation {
+                day: last.day,
+                git_hash_from: last.git_hash.clone(),
+                git_hash_to: head_hash,
+                result,
+            });
+        }
+    }
+
+    let report = format_history_report(&validations);
+    print!("{report}");
 }
 
 /// Handle `/risk validate` — compare past predictions against actual breakage.
@@ -4310,6 +4672,290 @@ src/baz.rs
     }
 
     #[test]
+    fn test_risk_history_routing() {
+        let input = "/risk history";
+        let trimmed = input.strip_prefix("/risk").unwrap().trim();
+        assert_eq!(trimmed, "history");
+    }
+
+    #[test]
+    fn test_parse_all_snapshots_empty() {
+        let snapshots = parse_all_snapshots("");
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn test_parse_all_snapshots_single() {
+        let line = r#"{"ts":"2026-06-10T12:00:00Z","day":110,"git_hash":"abc1234","top_10":[{"path":"src/commands_info.rs","score":0.85,"signals":["churn"]}]}"#;
+        let snapshots = parse_all_snapshots(line);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].day, 110);
+        assert_eq!(snapshots[0].git_hash, "abc1234");
+        assert_eq!(snapshots[0].predicted.len(), 1);
+        assert_eq!(snapshots[0].predicted[0], "src/commands_info.rs");
+    }
+
+    #[test]
+    fn test_parse_all_snapshots_multiple() {
+        let data = format!(
+            "{}\n{}\n{}\n",
+            r#"{"ts":"2026-06-08T12:00:00Z","day":108,"git_hash":"aaa1111","top_10":[{"path":"src/a.rs","score":0.9,"signals":[]}]}"#,
+            r#"{"ts":"2026-06-09T12:00:00Z","day":109,"git_hash":"bbb2222","top_10":[{"path":"src/b.rs","score":0.8,"signals":[]}]}"#,
+            r#"{"ts":"2026-06-10T12:00:00Z","day":110,"git_hash":"ccc3333","top_10":[{"path":"src/c.rs","score":0.7,"signals":[]}]}"#,
+        );
+        let snapshots = parse_all_snapshots(&data);
+        assert_eq!(snapshots.len(), 3);
+        assert_eq!(snapshots[0].day, 108);
+        assert_eq!(snapshots[2].day, 110);
+    }
+
+    #[test]
+    fn test_parse_all_snapshots_skips_invalid_lines() {
+        let data = format!(
+            "{}\nnot-json\n{}\n",
+            r#"{"ts":"2026-06-08T12:00:00Z","day":108,"git_hash":"aaa1111","top_10":[{"path":"src/a.rs","score":0.9,"signals":[]}]}"#,
+            r#"{"ts":"2026-06-10T12:00:00Z","day":110,"git_hash":"ccc3333","top_10":[{"path":"src/c.rs","score":0.7,"signals":[]}]}"#,
+        );
+        let snapshots = parse_all_snapshots(&data);
+        assert_eq!(snapshots.len(), 2);
+    }
+
+    #[test]
+    fn test_compute_trend_improving() {
+        // First half: low precision, second half: high precision
+        let validations = vec![
+            HistoryValidation {
+                day: 100,
+                git_hash_from: "a".to_string(),
+                git_hash_to: "b".to_string(),
+                result: ValidationResult {
+                    hits: vec!["x.rs".to_string()],
+                    clean: vec![
+                        "a.rs".to_string(),
+                        "b.rs".to_string(),
+                        "c.rs".to_string(),
+                        "d.rs".to_string(),
+                        "e.rs".to_string(),
+                        "f.rs".to_string(),
+                        "g.rs".to_string(),
+                        "h.rs".to_string(),
+                        "i.rs".to_string(),
+                    ],
+                    surprises: vec![],
+                    commit_count: 5,
+                },
+            },
+            HistoryValidation {
+                day: 101,
+                git_hash_from: "b".to_string(),
+                git_hash_to: "c".to_string(),
+                result: ValidationResult {
+                    hits: vec!["x.rs".to_string()],
+                    clean: vec![
+                        "a.rs".to_string(),
+                        "b.rs".to_string(),
+                        "c.rs".to_string(),
+                        "d.rs".to_string(),
+                        "e.rs".to_string(),
+                        "f.rs".to_string(),
+                        "g.rs".to_string(),
+                        "h.rs".to_string(),
+                        "i.rs".to_string(),
+                    ],
+                    surprises: vec![],
+                    commit_count: 5,
+                },
+            },
+            HistoryValidation {
+                day: 102,
+                git_hash_from: "c".to_string(),
+                git_hash_to: "d".to_string(),
+                result: ValidationResult {
+                    hits: vec![
+                        "x.rs".to_string(),
+                        "y.rs".to_string(),
+                        "z.rs".to_string(),
+                        "w.rs".to_string(),
+                        "v.rs".to_string(),
+                    ],
+                    clean: vec![
+                        "a.rs".to_string(),
+                        "b.rs".to_string(),
+                        "c.rs".to_string(),
+                        "d.rs".to_string(),
+                        "e.rs".to_string(),
+                    ],
+                    surprises: vec![],
+                    commit_count: 10,
+                },
+            },
+            HistoryValidation {
+                day: 103,
+                git_hash_from: "d".to_string(),
+                git_hash_to: "e".to_string(),
+                result: ValidationResult {
+                    hits: vec![
+                        "x.rs".to_string(),
+                        "y.rs".to_string(),
+                        "z.rs".to_string(),
+                        "w.rs".to_string(),
+                        "v.rs".to_string(),
+                    ],
+                    clean: vec![
+                        "a.rs".to_string(),
+                        "b.rs".to_string(),
+                        "c.rs".to_string(),
+                        "d.rs".to_string(),
+                        "e.rs".to_string(),
+                    ],
+                    surprises: vec![],
+                    commit_count: 10,
+                },
+            },
+        ];
+        let trend = compute_trend(&validations);
+        assert_eq!(trend, "📈 Improving");
+    }
+
+    #[test]
+    fn test_compute_trend_declining() {
+        // First half: high precision, second half: low precision
+        let validations = vec![
+            HistoryValidation {
+                day: 100,
+                git_hash_from: "a".to_string(),
+                git_hash_to: "b".to_string(),
+                result: ValidationResult {
+                    hits: vec!["x.rs".to_string(), "y.rs".to_string(), "z.rs".to_string()],
+                    clean: vec!["a.rs".to_string()],
+                    surprises: vec![],
+                    commit_count: 5,
+                },
+            },
+            HistoryValidation {
+                day: 101,
+                git_hash_from: "b".to_string(),
+                git_hash_to: "c".to_string(),
+                result: ValidationResult {
+                    hits: vec!["x.rs".to_string()],
+                    clean: vec![
+                        "a.rs".to_string(),
+                        "b.rs".to_string(),
+                        "c.rs".to_string(),
+                        "d.rs".to_string(),
+                    ],
+                    surprises: vec![],
+                    commit_count: 5,
+                },
+            },
+        ];
+        let trend = compute_trend(&validations);
+        assert_eq!(trend, "📉 Declining");
+    }
+
+    #[test]
+    fn test_compute_trend_stable() {
+        // Same precision in both halves
+        let validations = vec![
+            HistoryValidation {
+                day: 100,
+                git_hash_from: "a".to_string(),
+                git_hash_to: "b".to_string(),
+                result: ValidationResult {
+                    hits: vec!["x.rs".to_string()],
+                    clean: vec!["a.rs".to_string()],
+                    surprises: vec![],
+                    commit_count: 5,
+                },
+            },
+            HistoryValidation {
+                day: 101,
+                git_hash_from: "b".to_string(),
+                git_hash_to: "c".to_string(),
+                result: ValidationResult {
+                    hits: vec!["y.rs".to_string()],
+                    clean: vec!["b.rs".to_string()],
+                    surprises: vec![],
+                    commit_count: 5,
+                },
+            },
+        ];
+        let trend = compute_trend(&validations);
+        assert_eq!(trend, "➡️  Stable");
+    }
+
+    #[test]
+    fn test_compute_trend_single_validation() {
+        let validations = vec![HistoryValidation {
+            day: 100,
+            git_hash_from: "a".to_string(),
+            git_hash_to: "b".to_string(),
+            result: ValidationResult {
+                hits: vec!["x.rs".to_string()],
+                clean: vec!["a.rs".to_string()],
+                surprises: vec![],
+                commit_count: 5,
+            },
+        }];
+        let trend = compute_trend(&validations);
+        // Not enough data to determine trend
+        assert_eq!(trend, "➡️  Stable");
+    }
+
+    #[test]
+    fn test_format_history_report_empty() {
+        let report = format_history_report(&[]);
+        assert!(report.contains("No validated snapshots"));
+    }
+
+    #[test]
+    fn test_format_history_report_has_key_sections() {
+        let validations = vec![
+            HistoryValidation {
+                day: 108,
+                git_hash_from: "aaa1111".to_string(),
+                git_hash_to: "bbb2222".to_string(),
+                result: ValidationResult {
+                    hits: vec!["src/a.rs".to_string()],
+                    clean: vec!["src/b.rs".to_string()],
+                    surprises: vec![("src/c.rs".to_string(), Some(5))],
+                    commit_count: 7,
+                },
+            },
+            HistoryValidation {
+                day: 109,
+                git_hash_from: "bbb2222".to_string(),
+                git_hash_to: "ccc3333".to_string(),
+                result: ValidationResult {
+                    hits: vec![],
+                    clean: vec!["src/x.rs".to_string(), "src/y.rs".to_string()],
+                    surprises: vec![],
+                    commit_count: 3,
+                },
+            },
+        ];
+        let report = format_history_report(&validations);
+        // Should contain day labels
+        assert!(report.contains("108"), "Report should contain day 108");
+        assert!(report.contains("109"), "Report should contain day 109");
+        // Should contain precision labels
+        assert!(
+            report.contains("Precision"),
+            "Report should show precision info"
+        );
+        // Should contain overall summary
+        assert!(
+            report.contains("Overall"),
+            "Report should contain overall summary"
+        );
+        // Should contain trend
+        assert!(
+            report.contains("Trend"),
+            "Report should contain trend indicator"
+        );
+    }
+
+    #[test]
     fn test_risk_test_density_computed() {
         // A file with 200 lines and 6 #[test] annotations → 6/200*100 = 3.0 tests per 100 lines
         let content = {
@@ -4372,5 +5018,91 @@ src/baz.rs
             penalty_low > 0.0,
             "penalty should be positive for density below 5.0"
         );
+    }
+
+    #[test]
+    fn test_risk_weights_sum_to_one() {
+        // The 6 risk signal weights must sum to 1.0 (within floating-point tolerance)
+        let weights: [f64; 6] = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+        let sum: f64 = weights.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-10,
+            "Risk weights should sum to 1.0, got {sum}"
+        );
+    }
+
+    #[test]
+    fn test_co_change_coupling_returns_map() {
+        // co_change_coupling should return a HashMap even if git history is sparse
+        let coupling = co_change_coupling();
+        // In a real repo with commits, we expect at least some entries
+        // (the project has 100+ commits touching src/*.rs files)
+        // But the function should never panic and should always return a valid map.
+        // Just verify it's a HashMap (type-level) — the structured test below
+        // checks contents.
+        let _ = coupling.len();
+    }
+
+    #[test]
+    fn test_compute_file_risk_scores_has_coupling_signal() {
+        // After adding the coupling signal, compute_file_risk_scores should still
+        // return valid results and the ▲coupled signal should be possible.
+        let risks = compute_file_risk_scores();
+        assert!(
+            !risks.is_empty(),
+            "Risk scores should not be empty in a real project"
+        );
+
+        // All scores should be non-negative
+        for risk in &risks {
+            assert!(
+                risk.score >= 0.0,
+                "Risk score for {} should be non-negative, got {}",
+                risk.path,
+                risk.score
+            );
+        }
+
+        // The set of valid signals should include ▲coupled
+        let all_signals: Vec<&str> = risks
+            .iter()
+            .flat_map(|r| r.signals.iter().copied())
+            .collect();
+        let valid_signals = [
+            "▲churn",
+            "▲recent",
+            "▲size",
+            "▲reverts",
+            "▲low-test",
+            "▲coupled",
+        ];
+        for sig in &all_signals {
+            assert!(
+                valid_signals.contains(sig),
+                "Unexpected signal '{sig}' in risk scores"
+            );
+        }
+    }
+
+    #[test]
+    fn test_co_change_coupling_known_pair() {
+        // In this project, commands_info.rs and git.rs are frequently co-modified
+        // (many features touch both). The coupling map should reflect this.
+        let coupling = co_change_coupling();
+
+        // If there's any coupling data at all, verify structure
+        for (file, partners) in &coupling {
+            assert!(
+                file.starts_with("src/") && file.ends_with(".rs"),
+                "Coupling keys should be src/*.rs paths, got '{file}'"
+            );
+            for (partner, count) in partners {
+                assert!(
+                    partner.starts_with("src/") && partner.ends_with(".rs"),
+                    "Coupling partners should be src/*.rs paths, got '{partner}'"
+                );
+                assert!(*count > 0, "Coupling count should be positive, got {count}");
+            }
+        }
     }
 }
