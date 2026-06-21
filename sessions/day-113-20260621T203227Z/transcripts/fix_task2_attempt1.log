@@ -1,0 +1,394 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure for the risk scorer, then implement all the required changes.
+  ▶ search 'struct FileRisk' in src/commands_info.rs  ▶ search 'fn compute_file_risk_scores' in src/commands_info.rs  ▶ search 'fn format_risk_report' in src/commands_info.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/commands_info.rs:1555..1585 ✓ (1ms)
+  ▶ read src/commands_info.rs:1575..1775 ✓ (2ms)
+  ▶ read src/commands_info.rs:1774..1974 ✓ (2ms)
+  ▶ read src/commands_info.rs:1973..2053 ✓ (2ms)
+  7 tools completed in 15.7s (7 ✓)
+
+Now I have a good understanding of the current code. Let me check the existing tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_info.rs ✓ (3ms)
+  ▶ search '#\[test\]' in src/commands_info.rs ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I understand the current state. The code already has test density computation internally (lines 1847-1876), but the task requires:
+
+1. **test_density field on FileRisk** struct — it's missing
+2. **Display test density in `format_risk_report()`** — no column for it
+3. Two specific tests — `test_risk_test_density_computed and test_risk_low_test_density_increases_score`
+
+The existing code computes test density internally but doesn't expose it on the struct. Let me also check the task's specific formula request — it says to add a test_density field representing tests-per-100-lines, computed by counting #[test] annotations divided by line count × 100. The current code uses a different approach (markers / total, then blended with cross-file). I need to add the test_density field that stores the per-100-lines metric.
+
+Let me look at the end of the test module to find a good place to add tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '#\[test\]' src/commands_info.rs | tail -20 ✓ (5ms)
+  ▶ read src/commands_info.rs:4271.. ✓ (2ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Good. Now let me implement all the changes:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add `test_density` field to FileRisk struct' ✓ (0ms)
+  ▶ todo add 'Compute test_density (tests-per-100-lines) in comp…' ✓ (0ms)
+  ▶ todo add 'Display test density column in format_risk_report(…' ✓ (0ms)
+  ▶ todo add 'Add test_risk_test_density_computed and test_risk_…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  5 tools completed in 14.5s (5 ✓)
+
+Step 1: Add test_density field to FileRisk struct.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (5 → 8 lines)
+        pub path: String,
+        pub score: f64,
+        pub signals: Vec<&'static str>,
+  +     /// Tests per 100 lines of code (`#[test]` count / line_count × 100).
+  +     /// 0.0 for non-Rust files or files that can't be read.
+  +     pub test_density: f64,
+    }
+ ✓ (9.4s)
+        pub path: String,
+        pub score: f64,
+        pub signals: Vec<&'static str>,
+  +     /// Tests per 100 lines of code (`#[test]` count / line_count × 100).
+  +     /// 0.0 for non-Rust files or files that can't be read.
+  +     pub test_density: f64,
+    }
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 16.8s (2 ✓)
+
+Now I need to fix all the FileRisk constructors. Let me find them all:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'FileRisk \{' in src/commands_info.rs ✗ (2ms)
+    │ Search error: grep: Unmatched \{
+  ▶ $ grep -n 'FileRisk {' src/commands_info.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ $ grep -n 'FileRisk {' src/commands_info.rs | cat ✓ (4ms)
+  3 tools completed in 7.0s (2 ✓, 1 ✗)
+
+Let me handle the main `compute_file_risk_scores` constructor first (line 1916), where I need to compute and store the test_density value. I also need to add the test_density (tests-per-100-lines) computation alongside the existing internal computation.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1847..1922 ✓ (1ms)
+
+I need to:
+1. Compute the tests-per-100-lines metric alongside the existing computation (store it for later use as `test_density` field)
+2. Add the penalty term to the score
+3. Store it on the struct
+
+I'll add a `raw_tests_per_100` vec to store the per-100-lines metric, and then populate test_density on the struct:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (6 → 8 lines)
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     // Tests-per-100-lines metric (exposed on FileRisk for display)
+  +     let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
+ ✓ (9.3s)
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     // Tests-per-100-lines metric (exposed on FileRisk for display)
+  +     let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
+
+Now I need to compute tests_per_100 in the loop where we read the file content. Let me update the same-file density section to also track tests_per_100:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (18 → 28 lines)
+            // 5. Test density: combine same-file markers with cross-file coverage
+            // Same-file: #[test] + #[cfg(test)] markers / total lines
+  -         let same_file_density = std::fs::read_to_string(path)
+  +         let (same_file_density, file_tests_per_100) = std::fs::read_to_string(path)
+                .map(|content| {
+                    let total = content.lines().count() as f64;
+                    if total == 0.0 {
+  -                     return 0.0;
+  +                     return (0.0, 0.0);
+                    }
+                    let test_markers = content
+                        .lines()
+  ···
+                            trimmed.contains("#[test]") || trimmed.contains("#[cfg(test)]")
+                        })
+                        .count() as f64;
+  -                 test_markers / total
+  +                 // Count only #[test] annotations for the per-100-lines metric
+  +                 let test_fn_count = content
+  +                     .lines()
+  ... (11 more lines)
+ ✓ (9.4s)
+            // 5. Test density: combine same-file markers with cross-file coverage
+            // Same-file: #[test] + #[cfg(test)] markers / total lines
+  -         let same_file_density = std::fs::read_to_string(path)
+  +         let (same_file_density, file_tests_per_100) = std::fs::read_to_string(path)
+                .map(|content| {
+                    let total = content.lines().count() as f64;
+                    if total == 0.0 {
+  -                     return 0.0;
+  ... (13 more lines)
+
+Now update the score computation and the FileRisk constructor to incorporate the penalty term and the test_density field:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1897..1937 ✓ (2ms)
+  ▶ edit src/commands_info.rs (30 → 39 lines)
+        for (i, path) in all_files.into_iter().enumerate() {
+  -         let score = norm_churn[i] * weights[0]
+  +         let td = tests_per_100[i];
+  +         // Base weighted score from normalized signals
+  +         let mut score = norm_churn[i] * weights[0]
+                + norm_accel[i] * weights[1]
+                + norm_size[i] * weights[2]
+                + norm_revert[i] * weights[3]
+                + norm_test[i] * weights[4];
+  + 
+  +         // Penalty: files with fewer than 5 tests per 100 lines get a bump
+  +         // (only for .rs files where test density is meaningful)
+  +         if path.ends_with(".rs") {
+  +             score += f64::max(0.0, (5.0 - td) * 2.0) / 100.0;
+  +         }
+    
+            let mut signals = Vec::new();
+            if norm_churn[i] > 0.5 {
+  ···
+                path,
+  ... (5 more lines)
+ ✓ (9.4s)
+        for (i, path) in all_files.into_iter().enumerate() {
+  -         let score = norm_churn[i] * weights[0]
+  +         let td = tests_per_100[i];
+  +         // Base weighted score from normalized signals
+  +         let mut score = norm_churn[i] * weights[0]
+                + norm_accel[i] * weights[1]
+                + norm_size[i] * weights[2]
+                + norm_revert[i] * weights[3]
+  ... (13 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  3 tools completed in 23.7s (3 ✓)
+
+Good progress. Now I need to fix the existing test constructors and update the format function. Let me fix all the existing FileRisk constructors in tests first:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'FileRisk {' src/commands_info.rs ✓ (9ms)
+  ▶ $ grep -n -A5 'FileRisk {' src/commands_info.rs | grep -v 'struct FileRisk' ✓ (4ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Now let me fix all existing test FileRisk constructors:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3883..3898 ✓ (1ms)
+  ▶ edit src/commands_info.rs (5 → 6 lines)
+                path: "src/foo.rs".to_string(),
+                score: 0.75,
+                signals: vec!["▲churn", "▲size"],
+  +             test_density: 1.5,
+            }];
+ ✓ (9.5s)
+                path: "src/foo.rs".to_string(),
+                score: 0.75,
+                signals: vec!["▲churn", "▲size"],
+  +             test_density: 1.5,
+            }];
+  ▶ read src/commands_info.rs:3905..3925 ✓ (1ms)
+  ▶ edit src/commands_info.rs (10 → 12 lines)
+                    path: "src/foo.rs".to_string(),
+                    score: 0.82,
+                    signals: vec!["▲churn", "▲size"],
+  +                 test_density: 2.0,
+                },
+                FileRisk {
+                    path: "src/bar.rs".to_string(),
+                    score: 0.71,
+                    signals: vec!["▲churn"],
+  +                 test_density: 0.5,
+                },
+ ✓ (9.4s)
+                    path: "src/foo.rs".to_string(),
+                    score: 0.82,
+                    signals: vec!["▲churn", "▲size"],
+  +                 test_density: 2.0,
+                },
+                FileRisk {
+                    path: "src/bar.rs".to_string(),
+                    score: 0.71,
+  ... (3 more lines)
+  4 tools completed in 33.0s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: field `test_density` is never read[0m
+    [1m[94m--> [0msrc/commands_info.rs:1561:9
+     [1m[94m|[0m
+[1m[94m1555[0m [1m[94m|[0m pub(crate) struct FileRisk {
+     [1m[94m|[0m                   [1m[94m--------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m1561[0m [1m[94m|[0m     pub test_density: f64,
+     [1m[94m|[0m         [1m[91m^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[E0063][0m[1m: missing field `test_density` in initializer of `commands_info::FileRisk`[0m
+    [1m[94m--> [0msrc/commands_info.rs:3946:26
+     [1m[94m|[0m
+[1m[94m3946[0m [1m[94m|[0m         let risks = vec![FileRisk {
+     [1m[94m|[0m                          [1m[91m^^^^^^^^[0m [1m[91mmissing `test_density`[0m
+
+[1m[91merror[E0063][0m[1m: missing field `test_density` in initializer of `commands_info::FileRisk`[0m
+    [1m[94m--> [0msrc/commands_info.rs:3973:22
+     [1m[94m|[0m
+[1m[94m3973[0m [1m[94m|[0m             .map(|i| FileRisk {
+     [1m[94m|[0m                      [1m[91m^^^^^^^^[0m [1m[91mmissing `test_density`[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1mFor more information about this error, try `rustc --explain E0063`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix the remaining issues: two more FileRisk constructors missing test_density, and the test_density field needs to be read somewhere (the format_risk_report display).
+  ▶ $ grep -n 'FileRisk {' src/commands_info.rs ✓ (9ms)
+  ▶ $ grep -n -A6 'FileRisk {' src/commands_info.rs | grep -v '^--$' ✓ (4ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Two remaining constructors at lines 3946 and 3973 need test_density. Let me also fix the format_risk_report to read test_density (resolving the dead-code lint).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (5 → 6 lines)
+                path: "src/main.rs".to_string(),
+                score: 0.55,
+                signals: vec!["▲size"],
+  +             test_density: 0.0,
+            }];
+ ✓ (9.4s)
+                path: "src/main.rs".to_string(),
+                score: 0.55,
+                signals: vec!["▲size"],
+  +             test_density: 0.0,
+            }];
+  ▶ edit src/commands_info.rs (5 → 6 lines)
+                    path: format!("src/file_{i}.rs"),
+                    score: 1.0 - (i as f64 * 0.05),
+                    signals: vec!["▲churn"],
+  +                 test_density: 0.0,
+                })
+ ✓ (15.0s)
+                    path: format!("src/file_{i}.rs"),
+                    score: 1.0 - (i as f64 * 0.05),
+                    signals: vec!["▲churn"],
+  +                 test_density: 0.0,
+                })
+  2 tools completed in 29.9s (2 ✓)
+
+Good — only one error left: test_density is never read. I need to use it in `format_risk_report()` to display the test density column. Let me update that function:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1969..2009 ✓ (1ms)
+
+Now I'll update format_risk_report to add a test density column:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (23 → 28 lines)
+        let mut out = String::new();
+        out.push_str(&format!("\n  📊 {BOLD}File Risk Scores (src/){RESET}\n\n"));
+        out.push_str(&format!(
+  -         "  {DIM}Risk   File{:width$}Signals{RESET}\n",
+  +         "  {DIM}Risk   T/100  File{:width$}Signals{RESET}\n",
+            "",
+  -         width = 30
+  +         width = 26
+        ));
+  -     out.push_str(&format!("  {DIM}{}{RESET}\n", "─".repeat(70)));
+  +     out.push_str(&format!("  {DIM}{}{RESET}\n", "─".repeat(78)));
+    
+        let limit = if show_all { risks.len() } else { 15 };
+        for risk in risks.iter().take(limit) {
+  ···
+                format!("{path_display:<34}")
+            } else {
+                path_display.to_string()
+  +         };
+  +         let td_display = if risk.test_density > 0.0 {
+  ... (9 more lines)
+ ✓ (1m 17s)
+        let mut out = String::new();
+        out.push_str(&format!("\n  📊 {BOLD}File Risk Scores (src/){RESET}\n\n"));
+        out.push_str(&format!(
+  -         "  {DIM}Risk   File{:width$}Signals{RESET}\n",
+  +         "  {DIM}Risk   T/100  File{:width$}Signals{RESET}\n",
+            "",
+  -         width = 30
+  +         width = 26
+  ... (13 more lines)
+
+Now add the two required tests. Let me find the end of the test module:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4303..4313 ✓ (1ms)
+  ▶ edit src/commands_info.rs (7 → 72 lines)
+            let input = "/risk validate";
+            let trimmed = input.strip_prefix("/risk").unwrap().trim();
+            assert_eq!(trimmed, "validate");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_test_density_computed() {
+  +         // A file with 200 lines and 6 #[test] annotations → 6/200*100 = 3.0 tests per 100 lines
+  +         let content = {
+  +             let mut s = String::new();
+  +             for i in 0..200 {
+  +                 if i < 6 {
+  +                     s.push_str("    #[test]\n");
+  +                 } else {
+  +                     s.push_str("    fn placeholder() {}\n");
+  +                 }
+  +             }
+  +             s
+  +         };
+  +         let total = content.lines().count() as f64;
+  ... (50 more lines)
+ ✓ (1m 18s)
+            let input = "/risk validate";
+            let trimmed = input.strip_prefix("/risk").unwrap().trim();
+            assert_eq!(trimmed, "validate");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_test_density_computed() {
+  +         // A file with 200 lines and 6 #[test] annotations → 6/200*100 = 3.0 tests per 100 lines
+  ... (13 more lines)
+  2 tools completed in 1m 35s (2 ✓)
+
+Now run the full check:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 1s)
+
+All passing. Let me verify the specific new tests ran:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_risk_test_densit… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_risk_test_densit… ✓ (129ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_risk_low_test_de… ✓ (129ms)
+  3 tools completed in 9.0s (3 ✓)
+
+Both new tests pass. Let me also verify the existing risk-related tests still pass:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_risk 2>&1 | tail… ✓ (132ms)
+
+All 7 risk tests pass. Here's a summary of all changes made to src/commands_info.rs:
+
+1. Added `test_density` field to `FileRisk` — f64, representing tests-per-100-lines of code.
+
+2. Computed test density in `compute_file_risk_scores()`:
+   • Added tests_per_100 vec alongside existing signal vectors
+   • In the per-file loop, counts `#[test]` annotations and divides by line count × 100
+   • For non-`.rs` files, defaults to 0.0
+
+3. Incorporated test density into the risk score via penalty term: `score += max(0, (5.0 - td) * 2.0) / 100.0` — files with fewer than 5 tests per 100 lines get a risk bump.
+
+4. **Display test density in format_risk_report()** — added a `T/100` column in the header and each row showing the tests-per-100-lines value (or - for 0.0).
+
+5. Added two tests:
+   • test_risk_test_density_computed — verifies a mock file with 6 #[test] lines out of 200 produces density ≈ 3.0
+   • `test_risk_low_test_density_increases_score` — verifies the penalty formula makes low-density files score higher risk than high-density files
+
+  ✓ Watch passed after fix (attempt 1)
+

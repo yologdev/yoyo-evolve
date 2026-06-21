@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: wiring skills into sub-agents via SubAgentTool::with_skills. Let me start by understanding the current code.
+  ▶ search 'build_sub_agent_tool' in src/tools.rs  ▶ search 'with_skills' in src/agent_builder.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/tools.rs:1043..1093 ✓ (1ms)
+  3 tools completed in 6.0s (3 ✓)
+
+Now let me check that SubAgentTool has a with_skills method:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "with_skills" ~/.cargo/registry/src/*/yoagent-0.8.*/src/ 2>/dev/null | … ✓ (7ms)
+
+`SubAgentTool::with_skills exists. Now let me check the AgentConfig struct to confirm skills` field:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub skills' in src/agent_builder.rs ✓ (3ms)
+
+Everything is in place. Let me make the one-line change first, then add the test.
+
+**Step 1: Wire .with_skills() into the builder chain.**
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (2 → 3 lines)
+            .with_max_turns(25)
+  -         .with_shared_state(shared_state.clone());
+  +         .with_shared_state(shared_state.clone())
+  +         .with_skills(config.skills.clone());
+ ✓ (1m 18s)
+            .with_max_turns(25)
+  -         .with_shared_state(shared_state.clone());
+  +         .with_shared_state(shared_state.clone())
+  +         .with_skills(config.skills.clone());
+
+**Step 2: Add the test.** Let me find the existing test section:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1092..1212 ✓ (2ms)
+
+Now I'll add the test right after the existing test_build_sub_agent_tool_no_restrictions_still_works:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (2 → 20 lines)
+  +     #[test]
+  +     fn test_build_sub_agent_tool_inherits_skills() {
+  +         // Sub-agents should inherit the SkillSet from parent config.
+  +         // We can't inspect SubAgentTool's internal skills field, but we verify
+  +         // the builder chain compiles and runs without panic with skills wired in.
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         // Baseline: empty skills should work fine
+  +         assert!(config.skills.is_empty());
+  +         let (tool, _state) = build_sub_agent_tool(&config);
+  +         assert_eq!(tool.name(), "sub_agent");
+  + 
+  +         // Also verify with a SkillSet loaded from a non-existent dir (still empty, no panic)
+  +         let mut config2 = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         config2.skills = yoagent::skills::SkillSet::empty();
+  +         let (tool2, _state2) = build_sub_agent_tool(&config2);
+  +         assert_eq!(tool2.name(), "sub_agent");
+  +     }
+  + 
+        #[test]
+        fn test_build_tools_count_unchanged_with_sub_agent() {
+ ✓ (1m 20s)
+  +     #[test]
+  +     fn test_build_sub_agent_tool_inherits_skills() {
+  +         // Sub-agents should inherit the SkillSet from parent config.
+  +         // We can't inspect SubAgentTool's internal skills field, but we verify
+  +         // the builder chain compiles and runs without panic with skills wired in.
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         // Baseline: empty skills should work fine
+  +         assert!(config.skills.is_empty());
+  ... (12 more lines)
+
+Now let me run the full verification:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (45.8s)
+  2 tools completed in 1m 6s (2 ✓)
+
+All 88 tests pass, clippy is clean, fmt is clean. Let me also run the specific new test to confirm it's there:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_build_sub_agent_… ✓ (131ms)
+
+Everything passes. Let me also do a quick build check:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (121ms)
+
+All checks pass. Now let me commit:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (14 lines) ✓ (14ms)
+
+Now close issue #518:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 518 --repo yologd… ✓ (1.0s)
+
+Done. Here's what I did:
+
+1. Added `.with_skills(config.skills.clone())` to the `SubAgentTool builder chain in build_sub_agent_tool()` (src/tools.rs line 1088) — right after `.with_shared_state(shared_state.clone()). This ensures sub-agents dispatched via the sub_agent` tool inherit all skills from the parent agent.
+
+2. Added `test_build_sub_agent_tool_inherits_skills` test that verifies the builder chain compiles and runs without panic with skills wired in, testing both with the default empty SkillSet and an explicitly empty one.
+
+3. All checks pass: cargo fmt, cargo clippy --all-targets -- -D warnings, `cargo build, cargo test` (88 tests, 0 failures).
+
+4. Closed issue #518.
+
+The fix is tiny but meaningful — without it, skills like research ("use the web_search tool; never answer from memory") never reached sub-agents, so they'd answer from training data instead of following skill instructions. Now the full SkillSet flows down to every sub-agent dispatch.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

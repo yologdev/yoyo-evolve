@@ -1,0 +1,213 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the code, then implement the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status  ▶ search 'EXA_API_KEY' in src/ ✓ (8ms)
+ ✓ (10ms)
+  ▶ search 'EXA_API_KEY' in src/commands_web.rs  ▶ search 'EXA_API_KEY' in src/tools.rs ✓ (3ms)
+ ✓ (2ms)
+  4 tools completed in 6.2s (4 ✓)
+
+Good — the EXA_API_KEY checks are in commands_web.rs, not tools.rs. Let me look at the current error messages and the banner code.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1025..1075  ▶ search 'fn .*banner\|fn .*welcome\|pub fn\|fn .*startup' in src/banner.rs ✓ (2ms)
+ ✓ (3ms)
+  ▶ read src/banner.rs:1..51 ✓ (0ms)
+  3 tools completed in 5.4s (3 ✓)
+
+Now I can see the banner structure. The EXA_API_KEY warning should go after the skills line and before the final println!(). Let me also check how the banner is called to understand the interactive-mode guard:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'print_banner\|banner' in src/main.rs ✓ (2ms)
+  ▶ search 'print_banner' in src/ ✓ (9ms)
+  2 tools completed in 5.5s (2 ✓)
+
+`print_banner() is called from repl.rs` — that's the interactive REPL mode. Perfect, it's already only shown in interactive mode. Now let me look at the existing error messages more carefully and the test:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1780..1820 ✓ (1ms)
+
+Now let me also check the WebSearchTool implementation in tools.rs to see if it also needs improvement:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'WebSearchTool' in src/tools.rs ✓ (3ms)
+  ▶ read src/tools.rs:693..773 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me check what web_search and web_search_and_read look like in terms of error handling:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub.*fn web_search\b' in src/commands_web.rs ✓ (3ms)
+  ▶ read src/commands_web.rs:1093..1123 ✓ (1ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Good. The error message in exa_search is already clear: `"web_search requires EXA_API_KEY environment variable"`. I should improve it to include the URL for getting a key. Now let me plan and implement:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Improve exa_search error message with actionable U…' ✓ (0ms)
+  ▶ todo add 'Add EXA_API_KEY missing warning in banner.rs print…' ✓ (0ms)
+  ▶ todo add 'Add tests for both changes' ✓ (0ms)
+  ▶ todo add 'Run full CI checks and commit' ✓ (0ms)
+  4 tools completed in 11.7s (4 ✓)
+
+Let me start implementing.
+
+### 1. Improve the error message in `exa_search`
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_web.rs (6 → 11 lines)
+  -     let api_key = std::env::var("EXA_API_KEY")
+  -         .map_err(|_| "web_search requires EXA_API_KEY environment variable".to_string())?;
+  +     let api_key = std::env::var("EXA_API_KEY").map_err(|_| {
+  +         "Web search requires EXA_API_KEY. Get one at https://exa.ai and set it in your environment."
+  +             .to_string()
+  +     })?;
+    
+        if api_key.is_empty() {
+  -         return Err("web_search requires EXA_API_KEY environment variable".to_string());
+  +         return Err(
+  +             "Web search requires EXA_API_KEY. Get one at https://exa.ai and set it in your environment."
+  +                 .to_string(),
+  +         );
+        }
+ ✓ (1m 17s)
+  -     let api_key = std::env::var("EXA_API_KEY")
+  -         .map_err(|_| "web_search requires EXA_API_KEY environment variable".to_string())?;
+  +     let api_key = std::env::var("EXA_API_KEY").map_err(|_| {
+  +         "Web search requires EXA_API_KEY. Get one at https://exa.ai and set it in your environment."
+  +             .to_string()
+  +     })?;
+    
+        if api_key.is_empty() {
+  ... (6 more lines)
+  2 tools completed in 1m 25s (2 ✓)
+
+Now update the test to match the new error message:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1782..1797 ✓ (1ms)
+
+The test already checks err.contains("EXA_API_KEY") — the new message still contains "EXA_API_KEY" so it passes. Let me also add a check that the URL is mentioned:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (10 → 14 lines)
+            assert!(
+                err.contains("EXA_API_KEY"),
+                "Error should mention EXA_API_KEY, got: {err}"
+  +         );
+  +         assert!(
+  +             err.contains("https://exa.ai"),
+  +             "Error should include signup URL, got: {err}"
+ ✓ (1m 17s)
+            assert!(
+                err.contains("EXA_API_KEY"),
+                "Error should mention EXA_API_KEY, got: {err}"
+  +         );
+  +         assert!(
+  +             err.contains("https://exa.ai"),
+  +             "Error should include signup URL, got: {err}"
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 1m 22s (2 ✓)
+
+### 2. Add the startup warning in `banner.rs`
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+I need to add a helper function to check for EXA_API_KEY and add the warning to `print_banner()`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/banner.rs (7 → 14 lines)
+        let auto_count = crate::cli::auto_discovered_skill_count();
+        if auto_count > 0 {
+            println!("{DIM}  \u{1F9E0} {auto_count} skill(s) auto-loaded from .yoyo/skills/{RESET}");
+  +     }
+  + 
+  +     // Warn if EXA_API_KEY is missing — web search won't work without it
+  +     if !exa_api_key_set() {
+  +         println!(
+  +             "{DIM}  {YELLOW}⚠{RESET}{DIM} Web search requires EXA_API_KEY — get one at https://exa.ai{RESET}"
+  +         );
+        }
+    
+        println!();
+ ✓ (9.4s)
+        let auto_count = crate::cli::auto_discovered_skill_count();
+        if auto_count > 0 {
+            println!("{DIM}  \u{1F9E0} {auto_count} skill(s) auto-loaded from .yoyo/skills/{RESET}");
+  +     }
+  + 
+  +     // Warn if EXA_API_KEY is missing — web search won't work without it
+  +     if !exa_api_key_set() {
+  +         println!(
+  ... (5 more lines)
+
+I need to add the helper function:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/banner.rs:1..11 ✓ (0ms)
+  ▶ edit src/banner.rs (3 → 10 lines)
+    use crate::cli_config::VERSION;
+    use crate::format::YELLOW;
+    use crate::format::{BOLD, CYAN, DIM, RESET};
+  + 
+  + /// Check whether `EXA_API_KEY` is set to a non-empty value.
+  + pub(crate) fn exa_api_key_set() -> bool {
+  +     std::env::var("EXA_API_KEY")
+  +         .map(|v| !v.is_empty())
+  +         .unwrap_or(false)
+  + }
+ ✓ (1m 18s)
+    use crate::cli_config::VERSION;
+    use crate::format::YELLOW;
+    use crate::format::{BOLD, CYAN, DIM, RESET};
+  + 
+  + /// Check whether `EXA_API_KEY` is set to a non-empty value.
+  + pub(crate) fn exa_api_key_set() -> bool {
+  +     std::env::var("EXA_API_KEY")
+  +         .map(|v| !v.is_empty())
+  +         .unwrap_or(false)
+  + }
+  ▶ todo done #2 ✓ (0ms)
+  3 tools completed in 1m 27s (3 ✓)
+
+### 3. Add tests
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+Let me check the existing tests in banner.rs:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/banner.rs:240..300 ✓ (1ms)
+
+Now let me find the end of the test module to add my tests:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/banner.rs ✓ (3ms)
+  ▶ read src/banner.rs:440..480 ✓ (1ms)
+  ▶ edit src/banner.rs (5 → 23 lines)
+            // Cleanup
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_dir(&dir);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_exa_api_key_set_when_present() {
+  +         std::env::set_var("EXA_API_KEY", "test-key-123");
+  +         assert!(exa_api_key_set());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_exa_api_key_set_when_empty() {
+  +         std::env::set_var("EXA_API_KEY", "");
+  +         assert!(!exa_api_key_set());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_exa_api_key_set_when_missing() {
+  +         std::env::remove_var("EXA_API_KEY");
+  ... (3 more lines)
+ ✓ (1m 17s)
+            // Cleanup
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_dir(&dir);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_exa_api_key_set_when_present() {
+  +         std::env::set_var("EXA_API_KEY", "test-key-123");
+  ... (13 more lines)
+  3 tools completed in 1m 25s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

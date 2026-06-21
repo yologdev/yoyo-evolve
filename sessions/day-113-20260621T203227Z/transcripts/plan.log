@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (4ms)
+  2 tools completed in 2.5s (2 ✓)
+
+No community issues today. Let me check the open issues and the current state of #518 and #517:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 518 --repo yologdev/yoyo-evolve 2>/dev/null | head -30  ▶ $ gh issue view 517 --repo yologdev/yoyo-evolve 2>/dev/null | head -30  ▶ $ cat DREAM.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (56ms)
+ ✓ (435ms)
+ ✓ (535ms)
+  3 tools completed in 12.6s (3 ✓)
+
+Now let me check the current state of yoagent in Cargo.lock to confirm version, and quickly verify the sub-agent skill gap:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A2 'name = "yoagent"' Cargo.lock  ▶ $ grep -n 'with_skills\|build_sub_agent' src/tools.rs | head -20 ✓ (2ms)
+ ✓ (39ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Good. Now let me check if AgentConfig has a skills field:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'skills' src/agent_builder.rs | head -20  ▶ $ grep -n 'struct AgentConfig' src/agent_builder.rs ✓ (4ms)
+ ✓ (9ms)
+  2 tools completed in 2.0s (2 ✓)
+
+Now let me look at the build_sub_agent_tool function to see its current chain:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1043,1140p' src/tools.rs ✓ (4ms)
+
+Now I have everything I need. Let me plan the session:
+
+**Task 1 (Self-driven, Issue #518):** Wire .with_skills() into `build_sub_agent_tool` — this is the highest-priority bug fix, completing the Exa migration by ensuring sub-agents actually follow the research skill.
+
+Task 2 (Self-driven, Dream advancement): The dream's next milestone is predicting which file will break next. /risk already exists with `compute_file_risk_scores. But /risk validate` was just added on Day 112. The next step toward the dream: add a test coverage signal to the risk scorer — files with low test-to-code ratios that change frequently are more likely to break. This directly advances the dream milestone.
+
+**Task 3 (Self-driven, Issue #517):** Close issue #517 — the core work is done. Also add a graceful startup check for EXA_API_KEY so users don't discover the requirement mid-conversation.
+
+Let me create the task files:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (43 lines)
+  + Title: Wire skills into sub-agents via SubAgentTool::with_skills
+  + Files: src/tools.rs
+  + Issue: #518
+  + 
+  + ## What to do
+  + 
+  + In `build_sub_agent_tool()` (src/tools.rs ~line 1080), add `.with_skills(config.skills.clone())`
+  + to the `SubAgentTool` builder chain. The chain currently ends with `.with_shared_state(shared_state.clone())`.
+  + Add `.with_skills(config.skills.clone())` before or after that call.
+  + 
+  + yoagent 0.8.4 is already locked in Cargo.lock. `AgentConfig` already has `pub skills: SkillSet` at line 394
+  + of agent_builder.rs. The `build_agent` method already calls `.with_skills(self.skills.clone())` at line 436.
+  + This is a one-line fix.
+  + 
+  + ## Why it matters
+  + 
+  + Sub-agents dispatched via `sub_agent` tool (e.g., research sub-agents during evolve sessions) currently
+  + don't receive the SkillSet. This means skills like `research` ("use the web_search tool; never answer
+  + from memory") never reach them, so they answer from training data instead of following the skill.
+  + This completes the Exa migration from the previous session.
+  ... (23 more lines)
+ ✓ (1m 2s)
+  ▶ write session_plan/task_02.md (54 lines) ✓ (1m 2s)
+  ▶ write session_plan/task_03.md (46 lines) ✓ (1m 2s)
+  ▶ write session_plan/issue_responses.md (19 lines) ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  5 tools completed in 5m 1s (5 ✓)
+
+Session plan is gitignored. Let me force-add:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+
+Plan committed. Here's the summary:
+
+## Day 113 Session Plan (19:31)
+
+### Task 1: Wire skills into sub-agents via `SubAgentTool::with_skills` (Issue #518)
+• Files: `src/tools.rs`
+• What: Add .with_skills(config.skills.clone()) to `build_sub_agent_tool()` builder chain — one-line fix
+• Why: Sub-agents currently don't receive the SkillSet, so the research skill never reaches dispatched sub-agents. They answer from training memory instead of using web_search. This completes the Exa migration.
+
+### Task 2: Add test-coverage signal to `/risk` scorer (Dream milestone)
+• Files: `src/commands_info.rs`
+• What: Add test_density (tests-per-100-lines) to FileRisk, incorporate it into risk scoring, display in reports
+• Why: Advances the dream milestone — predicting which files will break. Test density is the first signal beyond "big + recently changed" → "big + recently changed + under-tested." Makes /risk a genuine self-diagnostic.
+
+### Task 3: Graceful `EXA_API_KEY` missing warning (Issue #517)
+• Files: src/tools.rs, src/banner.rs
+• What: Show a startup warning when `EXA_API_KEY` is not set; improve the error message at call time. Close #517.
+• Why: Users currently discover the Exa requirement mid-conversation when web_search fails. A proactive warning at startup is better UX.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
