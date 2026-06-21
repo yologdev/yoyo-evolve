@@ -517,6 +517,7 @@ pub fn handle_copy(input: &str, messages: &[yoagent::AgentMessage]) {
 // ---------------------------------------------------------------------------
 
 /// A single web search result.
+#[derive(Debug)]
 pub(crate) struct WebSearchResult {
     pub title: String,
     pub url: String,
@@ -525,6 +526,7 @@ pub(crate) struct WebSearchResult {
 
 /// Simple percent-encoding for URL query parameters.
 /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+#[allow(dead_code)]
 fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
     for b in s.bytes() {
@@ -543,6 +545,7 @@ fn url_encode(s: &str) -> String {
 }
 
 /// Decode a percent-encoded string (e.g. from a URL query parameter).
+#[allow(dead_code)]
 fn url_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -573,6 +576,7 @@ fn url_decode(s: &str) -> String {
 ///
 /// We extract the `uddg=` value and percent-decode it. If the href doesn't
 /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
+#[allow(dead_code)]
 pub(crate) fn extract_ddg_url(href: &str) -> String {
     // Look for uddg= parameter
     if let Some(pos) = href.find("uddg=") {
@@ -596,6 +600,7 @@ pub(crate) fn extract_ddg_url(href: &str) -> String {
 ///
 /// Given `<a class="result__a" href="/l/?uddg=...">`, calling
 /// `extract_attr(tag, "href")` returns the value inside the quotes.
+#[allow(dead_code)]
 fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
     // Search for attr_name= (case-insensitive for the attr name)
     let needle = format!("{attr_name}=");
@@ -619,6 +624,7 @@ fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
 
 /// Extract text content between an opening tag at position 0 and its closing tag.
 /// Returns the inner text with HTML tags stripped.
+#[allow(dead_code)]
 fn extract_inner_text(html: &str) -> String {
     // Strip all tags from the fragment
     let mut out = String::with_capacity(html.len());
@@ -659,6 +665,7 @@ fn extract_inner_text(html: &str) -> String {
 ///   <a class="result__snippet" href="...">Snippet text</a>
 /// </div>
 /// ```
+#[allow(dead_code)]
 pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
     let max_results = max_results.min(20);
     let mut results = Vec::new();
@@ -778,31 +785,285 @@ pub(crate) fn format_search_results(results: &[WebSearchResult]) -> String {
     out
 }
 
-/// Perform a web search via DuckDuckGo and return formatted results.
+/// Parse an Exa API JSON response into `WebSearchResult` items.
 ///
-/// Uses `curl` to hit the DuckDuckGo HTML endpoint, parses results, and
-/// returns them as a formatted string. On failure returns an error message
-/// (never `Result` — designed for tool consumption).
-/// Perform a web search via DuckDuckGo and return structured results.
+/// Expects the response body from `POST https://api.exa.ai/search` with
+/// `contents.text` and `contents.highlights` enabled.
+pub(crate) fn parse_exa_response(json: &str) -> Result<Vec<WebSearchResult>, String> {
+    // Minimal JSON parsing without serde — walk the results array.
+    // We look for: .results[].{title, url, text, highlights[]}
+    // Format: {"results": [ {title, url, text, highlights: [...]}, ... ]}
+    let mut results = Vec::new();
+
+    // Find the "results" array
+    let results_key = "\"results\"";
+    let results_start = json
+        .find(results_key)
+        .ok_or_else(|| "Exa response missing 'results' field".to_string())?;
+    let after_key = &json[results_start + results_key.len()..];
+    // Skip optional whitespace and colon
+    let after_colon = after_key
+        .find(':')
+        .map(|i| &after_key[i + 1..])
+        .unwrap_or(after_key);
+    let arr_start = after_colon
+        .find('[')
+        .ok_or_else(|| "Exa response: results is not an array".to_string())?;
+    let arr_content = &after_colon[arr_start..];
+
+    // Parse each object in the array using brace-depth tracking
+    let mut depth = 0;
+    let mut obj_start: Option<usize> = None;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, ch) in arr_content.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        match ch {
+            '{' => {
+                if depth == 1 && obj_start.is_none() {
+                    obj_start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 1 {
+                    if let Some(start) = obj_start.take() {
+                        let obj_str = &arr_content[start..=i];
+                        if let Some(r) = parse_exa_result_object(obj_str) {
+                            results.push(r);
+                        }
+                    }
+                }
+            }
+            '[' => {
+                if depth == 0 {
+                    depth = 1;
+                } else {
+                    depth += 1;
+                }
+            }
+            ']' => {
+                if depth == 1 {
+                    break; // end of results array
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(results)
+}
+
+/// Parse a single Exa result JSON object into a `WebSearchResult`.
+fn parse_exa_result_object(obj: &str) -> Option<WebSearchResult> {
+    let title = extract_json_string_field(obj, "title").unwrap_or_default();
+    let url = extract_json_string_field(obj, "url").unwrap_or_default();
+    let text = extract_json_string_field(obj, "text").unwrap_or_default();
+
+    // Extract highlights array strings and join them
+    let highlights = extract_json_string_array(obj, "highlights");
+    let snippet = if !highlights.is_empty() {
+        highlights.join(" … ")
+    } else if !text.is_empty() {
+        // Use first ~300 chars of text as snippet
+        let mut end = 300.min(text.len());
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text[..end].to_string()
+    } else {
+        String::new()
+    };
+
+    if url.is_empty() {
+        return None;
+    }
+
+    Some(WebSearchResult {
+        title,
+        url,
+        snippet,
+    })
+}
+
+/// Extract a JSON string field value by key from a JSON object string.
+/// Handles basic escape sequences. Returns None if key not found.
+fn extract_json_string_field(obj: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{}\"", key);
+    let key_pos = obj.find(&pattern)?;
+    let after_key = &obj[key_pos + pattern.len()..];
+    // Skip whitespace and colon
+    let colon_pos = after_key.find(':')?;
+    let after_colon = &after_key[colon_pos + 1..];
+    let trimmed = after_colon.trim_start();
+    if !trimmed.starts_with('"') {
+        return None;
+    }
+    // Parse the string value
+    parse_json_string(trimmed)
+}
+
+/// Parse a JSON string starting at the opening quote.
+fn parse_json_string(s: &str) -> Option<String> {
+    if !s.starts_with('"') {
+        return None;
+    }
+    let mut result = String::new();
+    let mut chars = s[1..].chars();
+    loop {
+        match chars.next()? {
+            '"' => return Some(result),
+            '\\' => match chars.next()? {
+                '"' => result.push('"'),
+                '\\' => result.push('\\'),
+                '/' => result.push('/'),
+                'n' => result.push('\n'),
+                'r' => result.push('\r'),
+                't' => result.push('\t'),
+                'u' => {
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                        if let Some(c) = char::from_u32(code) {
+                            result.push(c);
+                        }
+                    }
+                }
+                other => {
+                    result.push('\\');
+                    result.push(other);
+                }
+            },
+            c => result.push(c),
+        }
+    }
+}
+
+/// Extract a JSON string array field (e.g., "highlights": ["a", "b"]).
+fn extract_json_string_array(obj: &str, key: &str) -> Vec<String> {
+    let pattern = format!("\"{}\"", key);
+    let key_pos = match obj.find(&pattern) {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let after_key = &obj[key_pos + pattern.len()..];
+    let colon_pos = match after_key.find(':') {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let after_colon = &after_key[colon_pos + 1..];
+    let trimmed = after_colon.trim_start();
+    if !trimmed.starts_with('[') {
+        return Vec::new();
+    }
+
+    let mut items = Vec::new();
+    let mut rest = &trimmed[1..]; // skip '['
+    loop {
+        rest = rest.trim_start();
+        if rest.starts_with(']') {
+            break;
+        }
+        if rest.starts_with('"') {
+            if let Some(s) = parse_json_string(rest) {
+                // Advance past the parsed string
+                let consumed = json_string_byte_len(rest);
+                rest = &rest[consumed..];
+                items.push(s);
+            } else {
+                break;
+            }
+        } else {
+            // Skip non-string element or comma
+            if let Some(next) = rest.find(['"', ']']) {
+                rest = &rest[next..];
+            } else {
+                break;
+            }
+        }
+        // Skip comma
+        rest = rest.trim_start();
+        if rest.starts_with(',') {
+            rest = &rest[1..];
+        }
+    }
+    items
+}
+
+/// Compute the byte length of a JSON string literal (including quotes).
+fn json_string_byte_len(s: &str) -> usize {
+    if !s.starts_with('"') {
+        return 0;
+    }
+    let mut i = 1; // past opening quote
+    let bytes = s.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2; // skip escape sequence
+        } else if bytes[i] == b'"' {
+            return i + 1; // include closing quote
+        } else {
+            i += 1;
+        }
+    }
+    s.len() // malformed — return all
+}
+
+/// Perform a web search via Exa API and return structured results.
 ///
-/// Uses `curl` to hit the DuckDuckGo HTML endpoint and parses the response.
-pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+/// Requires `EXA_API_KEY` environment variable. Returns a clear error if unset.
+pub(crate) fn exa_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+    let api_key = std::env::var("EXA_API_KEY")
+        .map_err(|_| "web_search requires EXA_API_KEY environment variable".to_string())?;
+
+    if api_key.is_empty() {
+        return Err("web_search requires EXA_API_KEY environment variable".to_string());
+    }
+
     let max_results = if max_results == 0 {
         8
     } else {
         max_results.min(20)
     };
-    let encoded_query = url_encode(query);
-    let url = format!("https://html.duckduckgo.com/html/?q={encoded_query}");
+
+    let body = format!(
+        r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000}},"highlights":true}}}}"#,
+        query.replace('\\', "\\\\").replace('"', "\\\""),
+        max_results
+    );
 
     let output = std::process::Command::new("curl")
         .args([
             "-sL",
             "--max-time",
-            "15",
-            "-A",
-            "Mozilla/5.0 (compatible; yoyo-agent/0.1)",
-            &url,
+            "20",
+            "-X",
+            "POST",
+            "-H",
+            &format!("x-api-key: {}", api_key),
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "accept: application/json",
+            "-d",
+            &body,
+            "https://api.exa.ai/search",
         ])
         .output()
         .map_err(|e| format!("failed to run curl: {e}"))?;
@@ -810,32 +1071,38 @@ pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearc
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "search request failed (exit {}): {}",
+            "Exa API request failed (exit {}): {}",
             output.status.code().unwrap_or(-1),
             stderr.trim()
         ));
     }
 
-    let html = String::from_utf8_lossy(&output.stdout).to_string();
-    if html.is_empty() {
-        return Err("empty response from search".to_string());
+    let response = String::from_utf8_lossy(&output.stdout).to_string();
+    if response.is_empty() {
+        return Err("empty response from Exa API".to_string());
     }
 
-    let results = parse_ddg_results(&html, max_results);
-    if results.is_empty() {
-        return Err(
-            "no search results found (DuckDuckGo returned no parseable results)".to_string(),
-        );
+    // Check for API error responses (e.g., {"error": "..."})
+    if let Some(err) = extract_json_string_field(&response, "error") {
+        return Err(format!("Exa API error: {}", err));
     }
 
-    Ok(results)
+    parse_exa_response(&response)
 }
 
-/// Convenience: run a web search and return formatted text.
+/// Perform a web search via Exa API and return structured results.
 ///
+/// Requires `EXA_API_KEY` environment variable. Returns a clear error if unset.
+pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+    exa_search(query, max_results)
+}
+
+/// Convenience: run a web search and return formatted text with content.
+///
+/// Uses Exa API which returns search results with page text in one call.
 /// Returns a human-/agent-readable string on both success and failure.
 pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
-    match web_search(query, max_results) {
+    match exa_search(query, max_results) {
         Ok(results) => format_search_results(&results),
         Err(e) => format!("Web search failed: {e}"),
     }
@@ -1444,5 +1711,150 @@ mod tests {
             results[0].snippet,
             "This is a test snippet with bold words."
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Exa API search tests (pure, no network)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_exa_response() {
+        let json = r#"{
+            "requestId": "abc123",
+            "results": [
+                {
+                    "title": "Rust Programming Language",
+                    "url": "https://www.rust-lang.org/",
+                    "publishedDate": "2024-01-01",
+                    "author": null,
+                    "score": 0.95,
+                    "id": "id1",
+                    "text": "Rust is a multi-paradigm, general-purpose programming language.",
+                    "highlights": ["Rust is a multi-paradigm language", "designed for performance and safety"],
+                    "highlightScores": [0.9, 0.8]
+                },
+                {
+                    "title": "Crates.io: Rust Package Registry",
+                    "url": "https://crates.io/",
+                    "text": "The Rust community's crate registry.",
+                    "highlights": [],
+                    "highlightScores": []
+                }
+            ],
+            "autopromptString": "Here is a search for Rust"
+        }"#;
+
+        let results = parse_exa_response(json).unwrap();
+        assert_eq!(results.len(), 2);
+
+        assert_eq!(results[0].title, "Rust Programming Language");
+        assert_eq!(results[0].url, "https://www.rust-lang.org/");
+        // First result has highlights, so snippet should be joined highlights
+        assert!(results[0]
+            .snippet
+            .contains("Rust is a multi-paradigm language"));
+        assert!(results[0]
+            .snippet
+            .contains("designed for performance and safety"));
+
+        assert_eq!(results[1].title, "Crates.io: Rust Package Registry");
+        assert_eq!(results[1].url, "https://crates.io/");
+        // Second result has empty highlights, should fall back to text
+        assert!(results[1]
+            .snippet
+            .contains("The Rust community's crate registry"));
+    }
+
+    #[test]
+    fn test_parse_exa_response_empty_results() {
+        let json = r#"{"results": [], "autopromptString": ""}"#;
+        let results = parse_exa_response(json).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_exa_response_missing_results() {
+        let json = r#"{"error": "invalid request"}"#;
+        let result = parse_exa_response(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_exa_missing_key() {
+        // Ensure EXA_API_KEY is not set for this test
+        std::env::remove_var("EXA_API_KEY");
+        let result = exa_search("test query", 5);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("EXA_API_KEY"),
+            "Error should mention EXA_API_KEY, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_exa_api_error() {
+        // Test that an Exa error response is properly extracted
+        let json = r#"{"error": "Invalid API key"}"#;
+        let err = extract_json_string_field(json, "error");
+        assert_eq!(err, Some("Invalid API key".to_string()));
+    }
+
+    #[test]
+    fn test_parse_exa_response_with_escapes() {
+        let json = r#"{
+            "results": [
+                {
+                    "title": "Test \"quoted\" title",
+                    "url": "https://example.com/path?a=1&b=2",
+                    "text": "Line one\nLine two",
+                    "highlights": ["highlight with \"quotes\""]
+                }
+            ]
+        }"#;
+        let results = parse_exa_response(json).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Test \"quoted\" title");
+        assert_eq!(results[0].url, "https://example.com/path?a=1&b=2");
+        assert!(results[0].snippet.contains("highlight with \"quotes\""));
+    }
+
+    #[test]
+    fn test_parse_exa_response_no_text_no_highlights() {
+        let json = r#"{
+            "results": [
+                {
+                    "title": "Minimal",
+                    "url": "https://example.com/"
+                }
+            ]
+        }"#;
+        let results = parse_exa_response(json).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Minimal");
+        assert_eq!(results[0].url, "https://example.com/");
+        assert!(results[0].snippet.is_empty());
+    }
+
+    #[test]
+    fn test_extract_json_string_field() {
+        let obj = r#"{"name": "hello", "value": 42}"#;
+        assert_eq!(
+            extract_json_string_field(obj, "name"),
+            Some("hello".to_string())
+        );
+        assert_eq!(extract_json_string_field(obj, "value"), None); // not a string
+        assert_eq!(extract_json_string_field(obj, "missing"), None);
+    }
+
+    #[test]
+    fn test_extract_json_string_array() {
+        let obj = r#"{"tags": ["rust", "programming", "systems"]}"#;
+        let arr = extract_json_string_array(obj, "tags");
+        assert_eq!(arr, vec!["rust", "programming", "systems"]);
+
+        let empty = r#"{"tags": []}"#;
+        let arr = extract_json_string_array(empty, "tags");
+        assert!(arr.is_empty());
     }
 }
