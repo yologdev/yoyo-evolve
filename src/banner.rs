@@ -4,6 +4,13 @@ use crate::cli_config::VERSION;
 use crate::format::YELLOW;
 use crate::format::{BOLD, CYAN, DIM, RESET};
 
+/// Check whether `EXA_API_KEY` is set to a non-empty value.
+pub(crate) fn exa_api_key_set() -> bool {
+    std::env::var("EXA_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
 /// Print the startup banner with version, project context, and git status.
 pub fn print_banner() {
     let day_str = option_env!("DAY_COUNT").unwrap_or("");
@@ -34,6 +41,13 @@ pub fn print_banner() {
     let auto_count = crate::cli::auto_discovered_skill_count();
     if auto_count > 0 {
         println!("{DIM}  \u{1F9E0} {auto_count} skill(s) auto-loaded from .yoyo/skills/{RESET}");
+    }
+
+    // Warn if EXA_API_KEY is missing — web search won't work without it
+    if !exa_api_key_set() {
+        println!(
+            "{DIM}  {YELLOW}⚠{RESET}{DIM} Web search requires EXA_API_KEY — get one at https://exa.ai{RESET}"
+        );
     }
 
     println!();
@@ -457,5 +471,23 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_exa_api_key_set_when_present() {
+        std::env::set_var("EXA_API_KEY", "test-key-123");
+        assert!(exa_api_key_set());
+    }
+
+    #[test]
+    fn test_exa_api_key_set_when_empty() {
+        std::env::set_var("EXA_API_KEY", "");
+        assert!(!exa_api_key_set());
+    }
+
+    #[test]
+    fn test_exa_api_key_set_when_missing() {
+        std::env::remove_var("EXA_API_KEY");
+        assert!(!exa_api_key_set());
     }
 }

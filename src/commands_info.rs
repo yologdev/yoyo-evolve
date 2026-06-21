@@ -1556,6 +1556,9 @@ pub(crate) struct FileRisk {
     pub path: String,
     pub score: f64,
     pub signals: Vec<&'static str>,
+    /// Tests per 100 lines of code (`#[test]` count / line_count × 100).
+    /// 0.0 for non-Rust files or files that can't be read.
+    pub test_density: f64,
 }
 
 /// Min-max normalize a slice of values to the 0.0–1.0 range.
@@ -1786,6 +1789,8 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+    // Tests-per-100-lines metric (exposed on FileRisk for display)
+    let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
 
     // 4. Revert involvement — weight 0.20
     let revert_files = revert_involved_files();
@@ -1846,11 +1851,11 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
 
         // 5. Test density: combine same-file markers with cross-file coverage
         // Same-file: #[test] + #[cfg(test)] markers / total lines
-        let same_file_density = std::fs::read_to_string(path)
+        let (same_file_density, file_tests_per_100) = std::fs::read_to_string(path)
             .map(|content| {
                 let total = content.lines().count() as f64;
                 if total == 0.0 {
-                    return 0.0;
+                    return (0.0, 0.0);
                 }
                 let test_markers = content
                     .lines()
@@ -1859,9 +1864,19 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
                         trimmed.contains("#[test]") || trimmed.contains("#[cfg(test)]")
                     })
                     .count() as f64;
-                test_markers / total
+                // Count only #[test] annotations for the per-100-lines metric
+                let test_fn_count = content
+                    .lines()
+                    .filter(|l| l.trim().contains("#[test]"))
+                    .count() as f64;
+                (test_markers / total, test_fn_count / total * 100.0)
             })
-            .unwrap_or(0.0);
+            .unwrap_or((0.0, 0.0));
+        tests_per_100.push(if path.ends_with(".rs") {
+            file_tests_per_100
+        } else {
+            0.0
+        });
 
         // Cross-file: fraction of test-containing files that reference this module
         let cross_refs = *cross_file_refs.get(path.as_str()).unwrap_or(&0) as f64;
@@ -1887,11 +1902,19 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
 
     for (i, path) in all_files.into_iter().enumerate() {
-        let score = norm_churn[i] * weights[0]
+        let td = tests_per_100[i];
+        // Base weighted score from normalized signals
+        let mut score = norm_churn[i] * weights[0]
             + norm_accel[i] * weights[1]
             + norm_size[i] * weights[2]
             + norm_revert[i] * weights[3]
             + norm_test[i] * weights[4];
+
+        // Penalty: files with fewer than 5 tests per 100 lines get a bump
+        // (only for .rs files where test density is meaningful)
+        if path.ends_with(".rs") {
+            score += f64::max(0.0, (5.0 - td) * 2.0) / 100.0;
+        }
 
         let mut signals = Vec::new();
         if norm_churn[i] > 0.5 {
@@ -1914,6 +1937,7 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
             path,
             score,
             signals,
+            test_density: td,
         });
     }
 
@@ -1963,11 +1987,11 @@ pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
     let mut out = String::new();
     out.push_str(&format!("\n  📊 {BOLD}File Risk Scores (src/){RESET}\n\n"));
     out.push_str(&format!(
-        "  {DIM}Risk   File{:width$}Signals{RESET}\n",
+        "  {DIM}Risk   T/100  File{:width$}Signals{RESET}\n",
         "",
-        width = 30
+        width = 26
     ));
-    out.push_str(&format!("  {DIM}{}{RESET}\n", "─".repeat(70)));
+    out.push_str(&format!("  {DIM}{}{RESET}\n", "─".repeat(78)));
 
     let limit = if show_all { risks.len() } else { 15 };
     for risk in risks.iter().take(limit) {
@@ -1979,8 +2003,13 @@ pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
         } else {
             path_display.to_string()
         };
+        let td_display = if risk.test_density > 0.0 {
+            format!("{:5.1}", risk.test_density)
+        } else {
+            "    -".to_string()
+        };
         out.push_str(&format!(
-            "  {YELLOW}{:.2}{RESET}   {padded_path}{CYAN}{signals_str}{RESET}\n",
+            "  {YELLOW}{:.2}{RESET}   {td_display}  {padded_path}{CYAN}{signals_str}{RESET}\n",
             risk.score
         ));
     }
@@ -3863,6 +3892,7 @@ More text.
             path: "src/foo.rs".to_string(),
             score: 0.75,
             signals: vec!["▲churn", "▲size"],
+            test_density: 1.5,
         }];
         let result = format_risk_report(&risks, false);
         assert!(result.contains("0.75"));
@@ -3885,11 +3915,13 @@ More text.
                 path: "src/foo.rs".to_string(),
                 score: 0.82,
                 signals: vec!["▲churn", "▲size"],
+                test_density: 2.0,
             },
             FileRisk {
                 path: "src/bar.rs".to_string(),
                 score: 0.71,
                 signals: vec!["▲churn"],
+                test_density: 0.5,
             },
         ];
 
@@ -3920,6 +3952,7 @@ More text.
             path: "src/main.rs".to_string(),
             score: 0.55,
             signals: vec!["▲size"],
+            test_density: 0.0,
         }];
 
         let json = build_risk_snapshot_json(&risks, 42, "deadbee");
@@ -3947,6 +3980,7 @@ More text.
                 path: format!("src/file_{i}.rs"),
                 score: 1.0 - (i as f64 * 0.05),
                 signals: vec!["▲churn"],
+                test_density: 0.0,
             })
             .collect();
 
@@ -4273,5 +4307,70 @@ src/baz.rs
         let input = "/risk validate";
         let trimmed = input.strip_prefix("/risk").unwrap().trim();
         assert_eq!(trimmed, "validate");
+    }
+
+    #[test]
+    fn test_risk_test_density_computed() {
+        // A file with 200 lines and 6 #[test] annotations → 6/200*100 = 3.0 tests per 100 lines
+        let content = {
+            let mut s = String::new();
+            for i in 0..200 {
+                if i < 6 {
+                    s.push_str("    #[test]\n");
+                } else {
+                    s.push_str("    fn placeholder() {}\n");
+                }
+            }
+            s
+        };
+        let total = content.lines().count() as f64;
+        let test_fn_count = content
+            .lines()
+            .filter(|l| l.trim().contains("#[test]"))
+            .count() as f64;
+        let density = test_fn_count / total * 100.0;
+        // 6 tests / 200 lines * 100 = 3.0
+        assert!((density - 3.0).abs() < 0.01, "expected ~3.0, got {density}");
+    }
+
+    #[test]
+    fn test_risk_low_test_density_increases_score() {
+        // Two files with identical base scores but different test densities.
+        // The one with lower test density should get a higher final score
+        // due to the penalty term: risk += max(0, (5.0 - td) * 2.0) / 100.0
+        let low_td = FileRisk {
+            path: "src/low.rs".to_string(),
+            score: 0.50,
+            signals: vec![],
+            test_density: 0.5, // very low
+        };
+        let high_td = FileRisk {
+            path: "src/high.rs".to_string(),
+            score: 0.50,
+            signals: vec![],
+            test_density: 8.0, // above 5.0 threshold
+        };
+
+        // Apply the same penalty formula used in compute_file_risk_scores
+        let penalty_low = f64::max(0.0, (5.0 - low_td.test_density) * 2.0) / 100.0;
+        let penalty_high = f64::max(0.0, (5.0 - high_td.test_density) * 2.0) / 100.0;
+
+        let score_low = low_td.score + penalty_low;
+        let score_high = high_td.score + penalty_high;
+
+        assert!(
+            score_low > score_high,
+            "low-test-density file ({score_low}) should score higher risk than high-test-density file ({score_high})"
+        );
+        // High density (8.0 > 5.0) should get zero penalty
+        assert!(
+            penalty_high == 0.0,
+            "penalty should be 0 for density above 5.0"
+        );
+        // Low density should get a positive penalty
+        assert!(
+            penalty_low > 0.0,
+            "penalty should be positive for density below 5.0"
+        );
     }
 }

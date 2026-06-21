@@ -1029,11 +1029,16 @@ fn json_string_byte_len(s: &str) -> usize {
 ///
 /// Requires `EXA_API_KEY` environment variable. Returns a clear error if unset.
 pub(crate) fn exa_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
-    let api_key = std::env::var("EXA_API_KEY")
-        .map_err(|_| "web_search requires EXA_API_KEY environment variable".to_string())?;
+    let api_key = std::env::var("EXA_API_KEY").map_err(|_| {
+        "Web search requires EXA_API_KEY. Get one at https://exa.ai and set it in your environment."
+            .to_string()
+    })?;
 
     if api_key.is_empty() {
-        return Err("web_search requires EXA_API_KEY environment variable".to_string());
+        return Err(
+            "Web search requires EXA_API_KEY. Get one at https://exa.ai and set it in your environment."
+                .to_string(),
+        );
     }
 
     let max_results = if max_results == 0 {
@@ -1789,6 +1794,10 @@ mod tests {
         assert!(
             err.contains("EXA_API_KEY"),
             "Error should mention EXA_API_KEY, got: {err}"
+        );
+        assert!(
+            err.contains("https://exa.ai"),
+            "Error should include signup URL, got: {err}"
         );
     }
 
