@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Looking at the task, I need to extract risk-related code from src/commands_info.rs into a new src/commands_risk.rs file. Let me start by understanding the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_info.rs ✓ (2ms)
+  ▶ todo add 'Identify all risk-related code in commands_info.rs…' ✓ (0ms)
+  ▶ todo add 'Create src/commands_risk.rs with moved code' ✓ (0ms)
+  ▶ todo add 'Update commands_info.rs to remove moved code' ✓ (0ms)
+  ▶ todo add 'Add mod commands_risk to main.rs' ✓ (0ms)
+  ▶ todo add 'Update dispatch.rs to use commands_risk instead of…' ✓ (0ms)
+  ▶ todo add 'Verify: cargo fmt && cargo clippy && cargo build &…' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  9 tools completed in 28.5s (9 ✓)
+
+Let me find all risk-related code in commands_info.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct FileRisk\|fn nor… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn validate_predictions… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (3ms)
+  3 tools completed in 8.2s (3 ✓)
+
+Now let me understand the structure. Let me read the risk-related code and the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1550,1560p' src/commands… ✓ (3ms)
+  ▶ read src/commands_info.rs:1553..2473 ✓ (6ms)
+  ▶ read src/commands_info.rs:2472..2492 ✓ (1ms)
+  3 tools completed in 8.9s (3 ✓)
+
+Now let me find the end of the tests module and identify which tests are risk-related:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2488,$p' src/commands_in… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[test\]" src/commands… ✓ (4ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Let me identify risk-related test functions:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test.*risk\|fn test.… ✓ (4ms)
+
+Good. Now let me also find the helper functions used by the risk code that I need to move:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn module_to_source_pat… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct CommitEntry" src… ✓ (3ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Now I have a clear picture. The risk code spans from line 1553 to line 2486 (end of handle_risk_validate). Let me also identify the exact boundaries:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1548,1555p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2484,2492p' src/commands… ✓ (3ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Good. The risk code is lines 1553-2486. Now let me check what's above line 1553 to make sure I know the exact cut point:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1545..1555 ✓ (1ms)
+
+Now let me check what the code between 1551 and 1553 is (seems like there might be blank lines):
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1550,1560p' src/commands… ✓ (3ms)
+
+There's a section header comment. Let me read the exact line 1552:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1552p' src/commands_info… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (19ms)
+  3 tools completed in 11.7s (3 ✓)
+
+Seems like line 1552 is being skipped in display (likely a Unicode/emoji line). Let me check:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (9 lines) ✓ (19ms)
+
+Hmm, `read_file` shows line 1552 as the comment with Unicode. Let me check differently:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1550 && NR<=1555' src/c… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1551 && NR<=1553' src/c… ✓ (5ms)
+  2 tools completed in 5.3s (2 ✓)
+
+OK so line 1552 is `// ── Per-file risk scoring ──────...`. Now I know the exact boundaries. Let me extract the full risk code section:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 11.2s (2 ✓)
+
+Now let me also identify the risk-related tests precisely. I need to find the exact line ranges:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_normalize_score… ✓ (4ms)
+
+The risk tests start at line 3913 (the #[test] before test_normalize_scores_basic). Let me check where the last risk test ends:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3910,3915p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4365,4371p' src/commands… ✓ (3ms)
+  2 tools completed in 5.3s (2 ✓)
+
+So the last risk test is the final test in the file (ends at line 4371 with }). Let me check what's just before the risk tests to find the boundary:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3900,3916p' src/commands… ✓ (3ms)
+
+The risk tests go from line 3912 to line 4371. Let me now check what the non-risk test ending before 3912 looks like:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3908,3912p' src/commands… ✓ (3ms)
+
+OK so the test at line ~3889-3910 is the last non-risk test (`test_risk_snapshot_top_10_limit` is AT 4036... wait, that IS a risk test. Let me re-examine). Let me check what test is right before line 3912:
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3880,3912p' src/commands… ✓ (3ms)
+
+Good, so test_per_turn_breakdown_top_10_limit ends at line 3910, and the risk tests start at line 3912 (with #[test] on that line). 
+
+Now I need to check what uses are needed in the risk code. Let me check for imports used only by risk code:
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_info.rs ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the code and then perform the extraction.
+  ▶ todo add 'Identify all risk-related code in commands_info.rs' ✓ (0ms)
+  ▶ todo add 'Create src/commands_risk.rs with extracted code' ✓ (0ms)
+  ▶ todo add 'Update commands_info.rs to remove moved code' ✓ (0ms)
+  ▶ todo add 'Add mod commands_risk to main.rs' ✓ (0ms)
+  ▶ todo add 'Update dispatch.rs to route /risk to commands_risk' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  7 tools completed in 21.0s (7 ✓)
+
+Let me find all risk-related code in commands_info.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'FileRisk|compute_file_risk|format_risk|handle_risk|risk_snap…' in src/commands_info.rs ✓ (2ms)
+
+Hmm, let me search more broadly:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'risk' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'fn.*risk|struct.*Risk|struct.*Validation|mod tests' in src/commands_info.rs ✓ (3ms)
+  ▶ search '^(pub|fn |struct |const |#\[cfg\(test)").*[Rr]isk|^mod tests…' in src/commands_info.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search '^pub.*struct|^struct|^pub.*fn |^fn |^const |#\[cfg.test|^mod…' in src/commands_info.rs ✓ (2ms)
+  4 tools completed in 14.1s (3 ✓, 1 ✗)
+
+Lines probably have leading whitespace. Let me check the indentation:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'struct FileRisk\|fn compute_file_risk\|fn format_risk\|fn handle_risk\|…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (13ms)
+  ▶ $ grep -n 'struct FileRisk\|fn compute_file_risk\|fn format_risk\|fn handle_risk\|… ✓ (10ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Let me see the full list properly:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'struct FileRisk\|fn compute_file_risk\|fn format_risk\|fn handle_risk\|… ✓ (4ms)
+
+Now let me see the file length and understand where the risk code starts/ends, and where the tests are:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_info.rs ✓ (7ms)
+
+Let me see what's before the risk code (around line 1550) and what comes after the risk code:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1545..1570 ✓ (1ms)
+
+Now let me check what's between the risk functions and the test module. I need to see lines around 2401 (handle_risk_validate) through 2489 (mod tests):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2400..2500 ✓ (2ms)
+
+Now I need to understand the test module structure - which tests are risk-related:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn test_\|fn .*test' src/commands_info.rs | tail -50 ✓ (4ms)
+
+Now I need to understand the full span of risk-related code. Let me also look for helper functions used only by the risk code between lines 2270 and 2486:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn \|struct \|const \|enum ' src/commands_info.rs | awk -F: '$2 >= 1550… ✓ (4ms)
+  ▶ $ grep -n '^\(pub\)\? *\(fn \|struct \|const \|enum \)' src/commands_info.rs | awk… ✓ (4ms)
+  ▶ $ grep -n '^\(pub.crate.\)\? *\(fn \|struct \|const \|enum \)' src/commands_info.r… ✓ (4ms)
+  3 tools completed in 9.2s (3 ✓)
+
+Good. The risk code is lines 1552-2486. Let me see what's on line 1552:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1550..1555 ✓ (1ms)
+
+Line 1552 seems empty or has non-visible content. Let me check:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1551,1554p' src/commands_info.rs | cat -A ✓ (3ms)
+
+Good - so there's a section header comment on line 1552. Now let me look at the imports at the top of commands_info.rs:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..21 ✓ (1ms)
+
+Now let me understand what format constants/imports the risk code uses:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1552,2486p' src/commands_info.rs | grep -o 'crate::[a-z_]*::[a-z_A-Z]*\|… ✓ (4ms)
+  ▶ $ sed -n '1552,2486p' src/commands_info.rs | grep -o 'crate::[a-z_]*::[a-z_A-Z:]*'… ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Let me see what specific crate references are used:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1552,2486p' src/commands_info.rs | grep 'crate::' | head -30 ✓ (4ms)
+
+OK, the crate:: references are mainly within the code logic (like crate::git::file_change_counts). Now let me also check the tests to see which are risk-related:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn test_' src/commands_info.rs | awk -F: '$1+0 >= 3914' ✓ (4ms)
+
+So risk-related tests start at line 3914. Let me check test before 3914:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3905..3920 ✓ (1ms)
+
+Line 3911 probably has a section divider. Let me check the end:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4360..4375 ✓ (1ms)
+
+So the last test (risk_validate_routing, lines 4365-4370) is the very last test in the file, and line 4371 closes the mod tests block. 
+
+Now let me check the dispatch for /risk:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'risk' src/dispatch.rs ✓ (8ms)
+  ▶ read src/dispatch.rs:375..385 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me check the commands module re-exports:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'risk\|handle_risk\|commands_info' src/commands.rs ✓ (8ms)
+  ▶ read src/commands.rs:13..48 ✓ (1ms)
+  2 tools completed in 7.2s (2 ✓)
+
+Now let me also check if anything else references commands_info::handle_risk, commands_info::FileRisk, or commands_info::compute_file_risk_scores:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'commands_info::.*risk\|commands_info::.*Risk\|commands_info::.*file_ri… ✓ (40ms)
+
+Good. Now let me check main.rs for mod declarations:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'mod commands' src/main.rs ✓ (8ms)
+  ▶ $ grep -n 'mod commands' src/main.rs | tail -10 ✓ (3ms)
+  2 tools completed in 2.9s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

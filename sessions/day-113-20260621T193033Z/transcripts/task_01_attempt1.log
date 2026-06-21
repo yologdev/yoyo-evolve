@@ -1,0 +1,308 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/commands_web.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn web_search\|pub … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct WebSearchRes… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct WebSearchResult"… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:520..570 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:789..889 ✓ (1ms)
+  6 tools completed in 24.5s (6 ✓)
+
+Now let me see the rest of the tests and the format_search_results function:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:763..813 ✓ (1ms)
+
+Now let me look at the end of the tests module:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:888..1088 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:1087..1487 ✓ (3ms)
+  2 tools completed in 9.5s (2 ✓)
+
+Now let me look at how WebSearchTool uses this in src/tools.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WebSearchTool\|web_sear… ✓ (4ms)
+
+Good. Now I have a clear picture. Let me implement the Exa search function. I'll:
+1. Add the exa_search function
+2. Rewrite web_search to call it
+3. Rewrite web_search_and_read to use the richer Exa response
+4. Add tests
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:844..854 ✓ (1ms)
+
+Now let me implement the changes. First, I'll add the exa_search function and rewrite web_search and `web_search_and_read`:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (62 → 322 lines)
+  - /// Perform a web search via DuckDuckGo and return formatted results.
+  + /// Parse an Exa API JSON response into `WebSearchResult` items.
+    ///
+  - /// Uses `curl` to hit the DuckDuckGo HTML endpoint, parses results, and
+  - /// returns them as a formatted string. On failure returns an error message
+  - /// (never `Result` — designed for tool consumption).
+  - /// Perform a web search via DuckDuckGo and return structured results.
+  + /// Expects the response body from `POST https://api.exa.ai/search` with
+  + /// `contents.text` and `contents.highlights` enabled.
+  + pub(crate) fn parse_exa_response(json: &str) -> Result<Vec<WebSearchResult>, String> {
+  +     // Minimal JSON parsing without serde — walk the results array.
+  +     // We look for: .results[].{title, url, text, highlights[]}
+  +     // Format: {"results": [ {title, url, text, highlights: [...]}, ... ]}
+  +     let mut results = Vec::new();
+  + 
+  +     // Find the "results" array
+  +     let results_key = "\"results\"";
+  +     let results_start = json
+  +         .find(results_key)
+  +         .ok_or_else(|| "Exa response missing 'results' field".to_string())?;
+  ... (326 more lines)
+ ✓ (15.2s)
+  - /// Perform a web search via DuckDuckGo and return formatted results.
+  + /// Parse an Exa API JSON response into `WebSearchResult` items.
+    ///
+  - /// Uses `curl` to hit the DuckDuckGo HTML endpoint, parses results, and
+  - /// returns them as a formatted string. On failure returns an error message
+  - /// (never `Result` — designed for tool consumption).
+  - /// Perform a web search via DuckDuckGo and return structured results.
+  + /// Expects the response body from `POST https://api.exa.ai/search` with
+  ... (13 more lines)
+
+The old DDG functions are now unused. I need to keep them but suppress the dead-code warnings, or the tests that use them need them. Let me check which tests reference DDG functions:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_ddg_results\|extr… ✓ (4ms)
+
+The DDG functions are used by tests. The task says to keep DuckDuckGo functions. I'll add #[allow(dead_code)] annotations to them:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:526..536 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (3 → 4 lines)
+    /// Simple percent-encoding for URL query parameters.
+    /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  + #[allow(dead_code)]
+    fn url_encode(s: &str) -> String {
+ ✓ (15.2s)
+    /// Simple percent-encoding for URL query parameters.
+    /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  + #[allow(dead_code)]
+    fn url_encode(s: &str) -> String {
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:545..550 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:575..580 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:597..602 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:621..626 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:660..665 ✓ (1ms)
+  7 tools completed in 46.0s (7 ✓)
+
+Now I'll add #[allow(dead_code)] to all the DDG-related functions at once:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (2 → 3 lines)
+    /// Decode a percent-encoded string (e.g. from a URL query parameter).
+  + #[allow(dead_code)]
+    fn url_decode(s: &str) -> String {
+ ✓ (15.2s)
+    /// Decode a percent-encoded string (e.g. from a URL query parameter).
+  + #[allow(dead_code)]
+    fn url_decode(s: &str) -> String {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// Extract the actual… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:571..581 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (8 → 9 lines)
+    ///
+    /// We extract the `uddg=` value and percent-decode it. If the href doesn't
+    /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
+  + #[allow(dead_code)]
+    pub(crate) fn extract_ddg_url(href: &str) -> String {
+ ✓ (15.3s)
+    ///
+    /// We extract the `uddg=` value and percent-decode it. If the href doesn't
+    /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
+  + #[allow(dead_code)]
+    pub(crate) fn extract_ddg_url(href: &str) -> String {
+  4 tools completed in 53.8s (4 ✓)
+
+Let me fix all remaining dead_code warnings and the clippy issue at once:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:598..603 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (5 → 6 lines)
+    ///
+    /// Given `<a class="result__a" href="/l/?uddg=...">`, calling
+    /// `extract_attr(tag, "href")` returns the value inside the quotes.
+  + #[allow(dead_code)]
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+ ✓ (15.1s)
+    ///
+    /// Given `<a class="result__a" href="/l/?uddg=...">`, calling
+    /// `extract_attr(tag, "href")` returns the value inside the quotes.
+  + #[allow(dead_code)]
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+  2 tools completed in 20.4s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `extract_inner_text` is never used[0m
+   [1m[94m--> [0msrc/commands_web.rs:626:4
+    [1m[94m|[0m
+[1m[94m626[0m [1m[94m|[0m fn extract_inner_text(html: &str) -> String {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `parse_ddg_results` is never used[0m
+   [1m[94m--> [0msrc/commands_web.rs:666:15
+    [1m[94m|[0m
+[1m[94m666[0m [1m[94m|[0m pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+    [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: this manual char comparison can be written more succinctly[0m
+   [1m[94m--> [0msrc/commands_web.rs:991:43
+    [1m[94m|[0m
+[1m[94m991[0m [1m[94m|[0m             if let Some(next) = rest.find(|c: char| c == '"' || c == ']') {
+    [1m[94m|[0m                                           [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: consider using an array of `char`: `['"', ']']`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_pattern_char_comparison
+    [1m[94m= [0m[1mnote[0m: `-D clippy::manual-pattern-char-comparison` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::manual_pattern_char_comparison)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 3 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '624,626p' src/commands_w… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (3 → 4 lines)
+    /// Extract text content between an opening tag at position 0 and its closing tag.
+    /// Returns the inner text with HTML tags stripped.
+  + #[allow(dead_code)]
+    fn extract_inner_text(html: &str) -> String {
+ ✓ (15.2s)
+    /// Extract text content between an opening tag at position 0 and its closing tag.
+    /// Returns the inner text with HTML tags stripped.
+  + #[allow(dead_code)]
+    fn extract_inner_text(html: &str) -> String {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '665,667p' src/commands_w… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (3 → 4 lines)
+    /// </div>
+    /// ```
+  + #[allow(dead_code)]
+    pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+ ✓ (15.2s)
+    /// </div>
+    /// ```
+  + #[allow(dead_code)]
+    pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (1 → 1 lines)
+  -             if let Some(next) = rest.find(|c: char| c == '"' || c == ']') {
+  +             if let Some(next) = rest.find(['"', ']']) {
+ ✓ (1m 19s)
+  -             if let Some(next) = rest.find(|c: char| c == '"' || c == ']') {
+  +             if let Some(next) = rest.find(['"', ']']) {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.2s)
+  6 tools completed in 2m 29s (6 ✓)
+
+Clippy passes. Now let me run tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (46.4s)
+
+All checks pass. Now let me add the Exa-specific tests as specified in the task:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/commands_web.rs… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs:1710..1715 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (5 → 150 lines)
+                results[0].snippet,
+                "This is a test snippet with bold words."
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // Exa API search tests (pure, no network)
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_parse_exa_response() {
+  +         let json = r#"{
+  +             "requestId": "abc123",
+  +             "results": [
+  +                 {
+  +                     "title": "Rust Programming Language",
+  +                     "url": "https://www.rust-lang.org/",
+  +                     "publishedDate": "2024-01-01",
+  +                     "author": null,
+  +                     "score": 0.95,
+  ... (130 more lines)
+ ✓ (9.4s)
+                results[0].snippet,
+                "This is a test snippet with bold words."
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // Exa API search tests (pure, no network)
+  +     // -----------------------------------------------------------------------
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '519,522p' src/commands_w… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_web.rs (2 → 3 lines)
+    /// A single web search result.
+  + #[derive(Debug)]
+    pub(crate) struct WebSearchResult {
+ ✓ (1m 19s)
+    /// A single web search result.
+  + #[derive(Debug)]
+    pub(crate) struct WebSearchResult {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (46.4s)
+  7 tools completed in 3m 16s (7 ✓)
+
+Wait — 88 tests, same as before. The new Exa tests should add more. Let me check if they're being compiled:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "exa\|… ✓ (33.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (161ms)
+  2 tools completed in 38.5s (2 ✓)
+
+The Exa tests are there! The total was 88 before and... let me count:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (33.5s)
+  2 tools completed in 39.5s (2 ✓)
+
+3894 unit tests all pass (the 88 is integration tests). Now let me do the full verification:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 3s)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+Let me look at the failing test to understand what's going on:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_context_budget_w… ✓ (124ms)
+
+The test passes when run in isolation. This is a test ordering / shared global state issue — it's flaky due to concurrent test execution, not caused by my changes. Let me verify my changes didn't introduce this:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/format/mod.… ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+I haven't touched src/format/mod.rs at all. The failing test is a known flaky test involving global state (context_budget_warning uses AtomicBool). Let me confirm by running the full suite multiple times:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (33.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (33.8s)
+  2 tools completed in 1m 11s (2 ✓)
+
+All 3894 tests pass across multiple runs. The test test_context_budget_warning_reset_rearms is a known flaky test (it uses global AtomicBool state that can race with other tests). My changes don't touch src/format/mod.rs at all — the diff confirms zero changes to that file. Let me also run the full lint + build + test pipeline one more time to confirm everything is clean:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 2s)
+
+Everything passes: format check ✓, clippy ✓, build ✓, all tests ✓. 
+
+The flaky test test_context_budget_warning_reset_rearms in src/format/mod.rs is a pre-existing race condition in global AtomicBool state — my changes don't touch that file at all (`git diff HEAD -- src/format/mod.rs` shows zero changes). No fix needed from my side.
+
+Now let me commit:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (16ms)
+
+Committed. The changes:
+
+1. Added `exa_search()` function in `src/commands_web.rs — calls POST https://api.exa.ai/search` with the Exa API, returning search results with page text and highlights in one call
+2. Rewrote `web_search()` — now delegates to exa_search() instead of DuckDuckGo scraping. Returns clear "EXA_API_KEY not set" error instead of silently failing with "no results"
+3. **Rewrote web_search_and_read()** — calls exa_search() which already returns content (no separate fetch step needed)
+4. Kept DuckDuckGo functions (`extract_ddg_url, parse_ddg_results, etc.) with #[allow(dead_code)]` for future cleanup
+5. Added pure Exa tests (no network): test_parse_exa_response, test_exa_missing_key, test_exa_api_error, plus tests for JSON parsing helpers and edge cases (escapes, empty results, no highlights)
+6. Added `#[derive(Debug)]` to `WebSearchResult` (needed by test assertions)
+
+  ✓ Watch passed after fix (attempt 2)
+

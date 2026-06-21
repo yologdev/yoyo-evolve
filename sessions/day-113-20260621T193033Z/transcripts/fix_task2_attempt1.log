@@ -1,0 +1,329 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by examining the current FileRisk struct and related functions in src/commands_info.rs.
+  ▶ search 'struct FileRisk' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:1555..1570 ✓ (1ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Now let me see the compute_file_risk_scores function:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn compute_file_risk_scores' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:1561..1861 ✓ (2ms)
+  ▶ read src/commands_info.rs:1860..1980 ✓ (2ms)
+  ▶ read src/commands_info.rs:1979..2039 ✓ (1ms)
+  4 tools completed in 17.2s (4 ✓)
+
+Now let me see the existing tests related to FileRisk:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'FileRisk|file_risk|risk_report|risk_scores' in src/commands_info.rs ✓ (2ms)
+  ▶ search 'FileRisk|file_risk|risk_report|risk_score' in src/commands_info.rs ✓ (2ms)
+  ▶ $ grep -n "FileRisk\|file_risk\|risk_report\|risk_score\|format_risk\|compute_file…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+  ▶ $ grep -n "FileRisk\|file_risk\|risk_report\|risk_score\|format_risk\|compute_file… ✓ (9ms)
+  4 tools completed in 14.9s (4 ✓)
+
+Let me see the tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test.*risk\|fn test.*format_risk\|fn test.*file_risk\|fn test.*norma… ✓ (9ms)
+  ▶ $ grep -n "fn test.*risk\|fn test.*normalize\|fn test.*coupling\|fn test.*signal\|… ✓ (4ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Let me read the key tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3855..4045 ✓ (2ms)
+  ▶ read src/commands_info.rs:4044..4094 ✓ (1ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Now let me also check the build_risk_snapshot_json function to understand what needs updating there too:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2024..2074 ✓ (2ms)
+
+Now I have a full picture. Let me plan the implementation:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add `signal_scores: Vec<(&'static str, f64)>` fiel…' ✓ (0ms)
+  ▶ todo add 'Add co-change coupling signal (6th signal) in comp…' ✓ (0ms)
+  ▶ todo add 'Update format_risk_report to show per-signal break…' ✓ (0ms)
+  ▶ todo add 'Update all tests and FileRisk construction sites t…' ✓ (0ms)
+  ▶ todo add 'Build, test, clippy, fmt' ✓ (0ms)
+  5 tools completed in 16.2s (5 ✓)
+
+Let me start. First, update the FileRisk struct:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_info.rs (5 → 6 lines)
+        pub path: String,
+        pub score: f64,
+        pub signals: Vec<&'static str>,
+  +     pub signal_scores: Vec<(&'static str, f64)>,
+    }
+ ✓ (9.1s)
+        pub path: String,
+        pub score: f64,
+        pub signals: Vec<&'static str>,
+  +     pub signal_scores: Vec<(&'static str, f64)>,
+    }
+  2 tools completed in 16.3s (2 ✓)
+
+Good, expected errors. Now let me do the core implementation — add the co-change coupling function and update `compute_file_risk_scores` with both the coupling signal and signal_scores population:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now add the co-change coupling function. I'll place it right after revert_involved_files:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1953..1963 ✓ (1ms)
+  ▶ edit src/commands_info.rs (4 → 54 lines)
+        counts
+  + }
+  + 
+  + /// Count co-change coupling partners for each `src/*.rs` file.
+  + ///
+  + /// Uses `git log --name-only` to find files that appear in the same commit.
+  + /// For each `src/**/*.rs` file, counts how many distinct `src/**/*.rs` files
+  + /// it co-changes with. Files with many co-change partners are coupling hubs.
+  + fn co_change_coupling() -> std::collections::HashMap<String, u32> {
+  +     let output = match crate::git::run_git(&[
+  +         "log",
+  +         "--format=---",
+  +         "--name-only",
+  +         "-n",
+  +         "200",
+  +     ]) {
+  +         Ok(o) => o,
+  +         Err(_) => return std::collections::HashMap::new(),
+  +     };
+  + 
+  ... (34 more lines)
+ ✓ (9.1s)
+        counts
+  + }
+  + 
+  + /// Count co-change coupling partners for each `src/*.rs` file.
+  + ///
+  + /// Uses `git log --name-only` to find files that appear in the same commit.
+  + /// For each `src/**/*.rs` file, counts how many distinct `src/**/*.rs` files
+  + /// it co-changes with. Files with many co-change partners are coupling hubs.
+  ... (13 more lines)
+  2 tools completed in 22.4s (2 ✓)
+
+Good. Now let me update the compute_file_risk_scores function to include the coupling signal and populate signal_scores. Let me re-read the relevant section:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1785..1845 ✓ (1ms)
+  ▶ read src/commands_info.rs:1844..1934 ✓ (2ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Now I need to replace the section from the raw vectors through the end of the function to add coupling and signal_scores:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (145 → 180 lines)
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
+    
+        // 4. Revert involvement — weight 0.20
+        let revert_files = revert_involved_files();
+  ···
+            }
+            test_files.len().max(1) as f64
+        };
+  + 
+  +     // 6. Co-change coupling — weight 0.10
+  +     let coupling_partners = co_change_coupling();
+    
+        for path in &all_files {
+            // Churn (30-day count)
+  ···
+    
+            // Invert: low coverage → high risk signal
+  ... (72 more lines)
+ ✓ (9.1s)
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
+    
+        // 4. Revert involvement — weight 0.20
+        let revert_files = revert_involved_files();
+  ···
+  ... (13 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  2 tools completed in 17.2s (2 ✓)
+
+Now update the format_risk_report to show per-signal breakdown, and update all test sites. Let me do format_risk_report first:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: field `signal_scores` is never read[0m
+    [1m[94m--> [0msrc/commands_info.rs:1559:9
+     [1m[94m|[0m
+[1m[94m1555[0m [1m[94m|[0m pub(crate) struct FileRisk {
+     [1m[94m|[0m                   [1m[94m--------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m1559[0m [1m[94m|[0m     pub signal_scores: Vec<(&'static str, f64)>,
+     [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[E0063][0m[1m: missing field `signal_scores` in initializer of `commands_info::FileRisk`[0m
+    [1m[94m--> [0msrc/commands_info.rs:3948:26
+     [1m[94m|[0m
+[1m[94m3948[0m [1m[94m|[0m         let risks = vec![FileRisk {
+     [1m[94m|[0m                          [1m[91m^^^^^^^^[0m [1m[91mmissing `signal_scores`[0m
+
+[1m[91merror[E0063][0m[1m: missing field `signal_scores` in initializer of `commands_info::FileRisk`[0m
+    [1m[94m--> [0msrc/commands_info.rs:3970:13
+     [1m[94m|[0m
+[1m[94m3970[0m [1m[94m|[0m             FileRisk {
+     [1m[94m|[0m             [1m[91m^^^^^^^^[0m [1m[91mmissing `signal_scores`[0m
+
+[1m[91merror[E0063][0m[1m: missing field `signal_scores` in initializer of `commands_info::FileRisk`[0m
+    [1m[94m--> [0msrc/commands_info.rs:3975:13
+     [1m[94m|[0m
+[1m[94m3975[0m [1m[94m|[0m             FileRisk {
+     [1m[94m|[0m             [1m[91m^^^^^^^^[0m [1m[91mmissing `signal_scores`[0m
+
+[1m[91merror[E0063][0m[1m: missing field `signal_scores` in initializer of `commands_info::FileRisk`[0m
+    [1m[94m--> [0msrc/commands_info.rs:4005:26
+     [1m[94m|[0m
+[1m[94m4005[0m [1m[94m|[0m         let risks = vec![FileRisk {
+     ...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix all the issues: the signal_scores field needs to be used in `format_risk_report` (fixing the dead-code warning) and added to all test FileRisk constructors.
+  ▶ $ grep -n "signal_scores\|FileRisk {" src/commands_info.rs | head -30 ✓ (4ms)
+
+First, let me update format_risk_report to use signal_scores:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2043..2093 ✓ (1ms)
+
+Now update format_risk_report to show per-signal breakdown for the top 10 files:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (15 → 27 lines)
+        let limit = if show_all { risks.len() } else { 15 };
+  -     for risk in risks.iter().take(limit) {
+  +     for (rank, risk) in risks.iter().take(limit).enumerate() {
+            let signals_str = risk.signals.join(" ");
+            let path_display = &risk.path;
+            // Pad path to 34 chars for alignment
+  ···
+                "  {YELLOW}{:.2}{RESET}   {padded_path}{CYAN}{signals_str}{RESET}\n",
+                risk.score
+            ));
+  +         // Show per-signal breakdown for the top 10 files
+  +         if rank < 10 && !risk.signal_scores.is_empty() {
+  +             let breakdown: Vec<String> = risk
+  +                 .signal_scores
+  +                 .iter()
+  +                 .map(|(name, val)| format!("{name}: {val:.2}"))
+  +                 .collect();
+  +             out.push_str(&format!(
+  +                 "  {DIM}       {}{RESET}\n",
+  +                 breakdown.join("  ")
+  ... (3 more lines)
+ ✓ (9.3s)
+        let limit = if show_all { risks.len() } else { 15 };
+  -     for risk in risks.iter().take(limit) {
+  +     for (rank, risk) in risks.iter().take(limit).enumerate() {
+            let signals_str = risk.signals.join(" ");
+            let path_display = &risk.path;
+            // Pad path to 34 chars for alignment
+  ···
+                "  {YELLOW}{:.2}{RESET}   {padded_path}{CYAN}{signals_str}{RESET}\n",
+  ... (13 more lines)
+
+Now fix all test FileRisk constructors. Let me see each one:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:3956..3971 ✓ (1ms)
+  ▶ edit src/commands_info.rs (5 → 6 lines)
+                path: "src/foo.rs".to_string(),
+                score: 0.75,
+                signals: vec!["▲churn", "▲size"],
+  +             signal_scores: vec![("churn", 0.95), ("size", 1.00)],
+            }];
+ ✓ (9.1s)
+                path: "src/foo.rs".to_string(),
+                score: 0.75,
+                signals: vec!["▲churn", "▲size"],
+  +             signal_scores: vec![("churn", 0.95), ("size", 1.00)],
+            }];
+  ▶ read src/commands_info.rs:3978..3998 ✓ (1ms)
+  ▶ edit src/commands_info.rs (12 → 14 lines)
+                    path: "src/foo.rs".to_string(),
+                    score: 0.82,
+                    signals: vec!["▲churn", "▲size"],
+  +                 signal_scores: vec![("churn", 0.95), ("size", 1.00)],
+                },
+                FileRisk {
+                    path: "src/bar.rs".to_string(),
+                    score: 0.71,
+                    signals: vec!["▲churn"],
+  +                 signal_scores: vec![("churn", 0.80)],
+                },
+            ];
+ ✓ (9.3s)
+                    path: "src/foo.rs".to_string(),
+                    score: 0.82,
+                    signals: vec!["▲churn", "▲size"],
+  +                 signal_scores: vec![("churn", 0.95), ("size", 1.00)],
+                },
+                FileRisk {
+                    path: "src/bar.rs".to_string(),
+                    score: 0.71,
+  ... (4 more lines)
+  ▶ read src/commands_info.rs:4017..4027 ✓ (1ms)
+  ▶ edit src/commands_info.rs (5 → 6 lines)
+                path: "src/main.rs".to_string(),
+                score: 0.55,
+                signals: vec!["▲size"],
+  +             signal_scores: vec![("size", 0.80)],
+            }];
+ ✓ (9.1s)
+                path: "src/main.rs".to_string(),
+                score: 0.55,
+                signals: vec!["▲size"],
+  +             signal_scores: vec![("size", 0.80)],
+            }];
+  ▶ read src/commands_info.rs:4044..4056 ✓ (1ms)
+  ▶ edit src/commands_info.rs (5 → 6 lines)
+                    path: format!("src/file_{i}.rs"),
+                    score: 1.0 - (i as f64 * 0.05),
+                    signals: vec!["▲churn"],
+  +                 signal_scores: vec![("churn", 1.0 - (i as f64 * 0.05))],
+                })
+ ✓ (1m 19s)
+                    path: format!("src/file_{i}.rs"),
+                    score: 1.0 - (i as f64 * 0.05),
+                    signals: vec!["▲churn"],
+  +                 signal_scores: vec![("churn", 1.0 - (i as f64 * 0.05))],
+                })
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.1s)
+  9 tools completed in 2m 46s (9 ✓)
+
+Clippy passes. Now run tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 4s)
+
+All 88 tests pass. Let me do a final combined check:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 2s)
+
+All checks pass. Here's a summary of what was fixed:
+
+1. **`format_risk_report now reads signal_scores`** — For the top 10 files, it renders a per-signal breakdown line (e.g., `churn: 0.95  accel: 0.72  size: 1.00  revert: 0.00  tests: 0.65  coupling: 0.10`). This eliminates the dead-code lint error on signal_scores.
+
+2. **All 5 test `FileRisk constructors updated** — Added the missing signal_scores` field to every test that constructs a FileRisk:
+   • test_format_risk_report_shows_signals
+   • test_risk_snapshot_serialization (2 instances)
+   • `test_risk_snapshot_writes_jsonl`
+   • test_risk_snapshot_top_10_limit
+
