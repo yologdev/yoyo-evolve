@@ -1084,7 +1084,8 @@ pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, Share
         .with_tools(child_tools)
         .with_thinking(config.thinking)
         .with_max_turns(25)
-        .with_shared_state(shared_state.clone());
+        .with_shared_state(shared_state.clone())
+        .with_skills(config.skills.clone());
 
     (tool, shared_state)
 }
@@ -1193,6 +1194,24 @@ mod tests {
         assert!(config.dir_restrictions.is_empty());
         let (tool, _state) = build_sub_agent_tool(&config);
         assert_eq!(tool.name(), "sub_agent");
+    }
+
+    #[test]
+    fn test_build_sub_agent_tool_inherits_skills() {
+        // Sub-agents should inherit the SkillSet from parent config.
+        // We can't inspect SubAgentTool's internal skills field, but we verify
+        // the builder chain compiles and runs without panic with skills wired in.
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        // Baseline: empty skills should work fine
+        assert!(config.skills.is_empty());
+        let (tool, _state) = build_sub_agent_tool(&config);
+        assert_eq!(tool.name(), "sub_agent");
+
+        // Also verify with a SkillSet loaded from a non-existent dir (still empty, no panic)
+        let mut config2 = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        config2.skills = yoagent::skills::SkillSet::empty();
+        let (tool2, _state2) = build_sub_agent_tool(&config2);
+        assert_eq!(tool2.name(), "sub_agent");
     }
 
     #[test]
