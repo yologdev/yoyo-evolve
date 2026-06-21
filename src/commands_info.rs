@@ -3987,6 +3987,10 @@ More text.
 
     #[test]
     fn test_build_test_reference_map_finds_self() {
+        // Guard: this test reads src/*.rs on disk — skip if not in project root
+        if !std::path::Path::new("src/git.rs").exists() {
+            return;
+        }
         // commands_info.rs has #[test] markers and `use crate::` imports.
         // The reference map should find files that commands_info tests exercise.
         let ref_map = build_test_reference_map();
