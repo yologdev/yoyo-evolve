@@ -1630,6 +1630,7 @@ fn build_test_reference_map() -> std::collections::HashMap<String, u32> {
                         .next()
                         .unwrap_or(rest)
                         .trim_end_matches(';')
+                        .trim_end_matches('*')
                         .trim_end_matches("::")
                         .trim();
                     if let Some(src_path) = module_to_source_path(module_path) {

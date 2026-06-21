@@ -52,7 +52,10 @@ fn line_similarity(a: &str, b: &str) -> f64 {
     if a_trimmed.is_empty() && b_trimmed.is_empty() {
         return 1.0;
     }
-    let max_len = a_trimmed.len().max(b_trimmed.len());
+    // Use char count, not byte length — edit_distance operates on chars,
+    // so the denominator must be in the same units to avoid inflated
+    // similarity scores on multibyte UTF-8 content (CJK, emoji, etc.).
+    let max_len = a_trimmed.chars().count().max(b_trimmed.chars().count());
     if max_len == 0 {
         return 1.0;
     }
@@ -77,6 +80,8 @@ struct NearestMatch {
     is_whitespace_only: bool,
     /// Whether this was a fuzzy (non-exact) match.
     is_fuzzy: bool,
+    /// Whether multiple equally-good matches exist (ambiguous — unsafe to auto-fix).
+    is_ambiguous: bool,
     /// Average similarity score (1.0 = exact match, 0.0 = completely different).
     similarity: f64,
     /// Snippet of the file content around the match.
@@ -119,12 +124,18 @@ fn check_whitespace_only(file_lines: &[&str], old_lines: &[&str], match_line_idx
 }
 
 /// Try to find an exact trimmed-line match for `old_text` in `file_lines`.
-/// Returns `(start_line_0indexed, match_count)` for the best match.
-fn find_exact_trimmed_match(file_lines: &[&str], old_lines: &[&str]) -> Option<(usize, usize)> {
+/// Returns `(start_line_0indexed, match_count, is_ambiguous)` for the best match.
+/// `is_ambiguous` is true when multiple positions tie for the best match count,
+/// meaning auto-fix cannot safely choose which block to edit.
+fn find_exact_trimmed_match(
+    file_lines: &[&str],
+    old_lines: &[&str],
+) -> Option<(usize, usize, bool)> {
     let anchor = old_lines.iter().find(|l| !l.trim().is_empty())?;
     let anchor_trimmed = anchor.trim();
 
     let mut best_match: Option<(usize, usize)> = None;
+    let mut best_count_hits: usize = 0; // how many positions share the best match_count
 
     for (i, line) in file_lines.iter().enumerate() {
         if line.trim() == anchor_trimmed {
@@ -147,18 +158,36 @@ fn find_exact_trimmed_match(file_lines: &[&str], old_lines: &[&str]) -> Option<(
                 }
             }
 
-            if best_match.is_none_or(|(_, prev_count)| match_count > prev_count) {
-                let start_line = if anchor_offset > 0 && i >= anchor_offset {
-                    i - anchor_offset
-                } else {
-                    i
-                };
-                best_match = Some((start_line, match_count));
+            match best_match {
+                Some((_, prev_count)) if match_count > prev_count => {
+                    // Strictly better — reset
+                    let start_line = if anchor_offset > 0 && i >= anchor_offset {
+                        i - anchor_offset
+                    } else {
+                        i
+                    };
+                    best_match = Some((start_line, match_count));
+                    best_count_hits = 1;
+                }
+                Some((_, prev_count)) if match_count == prev_count => {
+                    // Tied — mark ambiguous
+                    best_count_hits += 1;
+                }
+                None => {
+                    let start_line = if anchor_offset > 0 && i >= anchor_offset {
+                        i - anchor_offset
+                    } else {
+                        i
+                    };
+                    best_match = Some((start_line, match_count));
+                    best_count_hits = 1;
+                }
+                _ => {} // match_count < prev_count — ignore
             }
         }
     }
 
-    best_match
+    best_match.map(|(line, count)| (line, count, best_count_hits > 1))
 }
 
 /// Compute the average similarity of `old_lines` against `file_lines` starting
@@ -242,7 +271,8 @@ fn find_nearest_match(file_content: &str, old_text: &str) -> Option<NearestMatch
     let file_lines: Vec<&str> = file_content.lines().collect();
 
     // Phase 1: exact trimmed match
-    if let Some((match_line_idx, _match_count)) = find_exact_trimmed_match(&file_lines, &old_lines)
+    if let Some((match_line_idx, _match_count, is_ambiguous)) =
+        find_exact_trimmed_match(&file_lines, &old_lines)
     {
         let is_ws_only = check_whitespace_only(&file_lines, &old_lines, match_line_idx);
         let snippet = build_snippet(&file_lines, match_line_idx);
@@ -250,6 +280,7 @@ fn find_nearest_match(file_content: &str, old_text: &str) -> Option<NearestMatch
             line_num: match_line_idx + 1,
             is_whitespace_only: is_ws_only,
             is_fuzzy: false,
+            is_ambiguous,
             similarity: 1.0,
             snippet,
         });
@@ -262,6 +293,7 @@ fn find_nearest_match(file_content: &str, old_text: &str) -> Option<NearestMatch
             line_num: match_line_idx + 1,
             is_whitespace_only: false,
             is_fuzzy: true,
+            is_ambiguous: false,
             similarity,
             snippet,
         });
@@ -361,6 +393,13 @@ impl SmartEditTool {
             return None; // Not a whitespace-only diff — let caller handle it
         }
 
+        // When multiple equally-good matches exist, auto-fix could silently edit
+        // the wrong block. Refuse and let the augmented error show the location
+        // so the agent can read the file and choose the right one.
+        if m.is_ambiguous {
+            return None;
+        }
+
         // Extract the actual text from the file at the match position
         let old_line_count = old_text.lines().count().max(1);
         let match_line_0indexed = m.line_num - 1;
@@ -430,7 +469,13 @@ impl SmartEditTool {
                         "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
                         m.line_num, m.snippet
                     ));
-                    if m.is_whitespace_only {
+                    if m.is_ambiguous {
+                        augmented.push_str(
+                            "\n\n⚠️ Multiple identical blocks found — auto-fix skipped to avoid \
+                             editing the wrong one. Use read_file to verify which block you want, \
+                             then include more surrounding context in old_text to disambiguate.",
+                        );
+                    } else if m.is_whitespace_only {
                         augmented.push_str(
                             "\n\n⚠️ Hint: the text exists but indentation/whitespace differs. \
                              Use read_file to see the exact whitespace.",
@@ -1512,5 +1557,170 @@ mod tests {
             "One-char typo in one of three lines should be high similarity: {sim}"
         );
         assert!(sim < 1.0, "Should not be perfect: {sim}");
+    }
+
+    // === Ambiguity detection tests ===
+
+    #[test]
+    fn test_find_exact_trimmed_match_ambiguous_duplicate_blocks() {
+        // Two identical blocks at different indentation levels
+        let file_lines = vec![
+            "fn alpha() {",      // 0
+            "  if x > 0 {",      // 1
+            "    do_thing();",   // 2
+            "  }",               // 3
+            "}",                 // 4
+            "",                  // 5
+            "fn beta() {",       // 6
+            "    if x > 0 {",    // 7
+            "      do_thing();", // 8
+            "    }",             // 9
+            "}",                 // 10
+        ];
+        let old_lines = vec!["if x > 0 {", "  do_thing();", "}"];
+
+        let result = find_exact_trimmed_match(&file_lines, &old_lines);
+        assert!(result.is_some(), "Should find a match");
+        let (_line, _count, is_ambiguous) = result.unwrap();
+        assert!(
+            is_ambiguous,
+            "Should detect ambiguity when two blocks match equally well"
+        );
+    }
+
+    #[test]
+    fn test_find_exact_trimmed_match_unambiguous_single_block() {
+        let file_lines = vec![
+            "fn alpha() {",
+            "    let x = 1;",
+            "    let y = 2;",
+            "}",
+            "",
+            "fn beta() {",
+            "    let z = 3;",
+            "}",
+        ];
+        let old_lines = vec!["fn alpha() {", "    let x = 1;", "    let y = 2;", "}"];
+
+        let result = find_exact_trimmed_match(&file_lines, &old_lines);
+        assert!(result.is_some());
+        let (line, _count, is_ambiguous) = result.unwrap();
+        assert_eq!(line, 0, "Should match at line 0");
+        assert!(!is_ambiguous, "Single match should not be ambiguous");
+    }
+
+    #[test]
+    fn test_find_nearest_match_ambiguous_blocks_no_autofix() {
+        // File with two identical if-blocks at different indent levels
+        let file_content = "\
+fn alpha() {
+  if x > 0 {
+    do_thing();
+  }
+}
+
+fn beta() {
+    if x > 0 {
+      do_thing();
+    }
+}";
+        let old_text = "if x > 0 {\n  do_thing();\n}";
+        let result = find_nearest_match(file_content, old_text);
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert!(
+            m.is_whitespace_only,
+            "Trimmed lines match — whitespace-only diff"
+        );
+        assert!(
+            m.is_ambiguous,
+            "Two equally-good matches should be flagged as ambiguous"
+        );
+    }
+
+    #[test]
+    fn test_find_nearest_match_unique_block_not_ambiguous() {
+        let file_content = "\
+fn alpha() {
+    let x = 1;
+    let y = 2;
+}
+
+fn beta() {
+    let z = 3;
+}";
+        let old_text = "fn alpha() {\n  let x = 1;\n  let y = 2;\n}";
+        let result = find_nearest_match(file_content, old_text);
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert!(!m.is_ambiguous, "Unique block should not be ambiguous");
+    }
+
+    #[test]
+    fn test_line_similarity_char_based_not_bytes() {
+        // CJK characters are 3 bytes each. With byte-based length the similarity
+        // would be inflated because max_len (bytes) >> edit_distance (chars).
+        // "你好" vs "再见" — 2 chars each, both completely different → similarity should be 0.0.
+        let sim = line_similarity("你好", "再见");
+        assert!(
+            sim < 0.01,
+            "Completely different CJK strings should have ~0.0 similarity, got {sim}"
+        );
+    }
+
+    #[test]
+    fn test_line_similarity_ascii_unchanged() {
+        // Sanity check: ASCII behavior should be unaffected by the char-based fix
+        let sim = line_similarity("hello world", "hello world");
+        assert!((sim - 1.0).abs() < f64::EPSILON, "Identical strings: {sim}");
+
+        let sim2 = line_similarity("hello", "helo");
+        // 1 deletion out of 5 chars → distance=1, max_len=5, sim=0.8
+        assert!(
+            (sim2 - 0.8).abs() < 0.01,
+            "One-char deletion should be 0.8 similarity: {sim2}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_smart_edit_refuses_autofix_on_ambiguous_match() {
+        // Create a file with two identical blocks at different indentation
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("ambiguous.rs");
+        std::fs::write(
+            &file_path,
+            "fn alpha() {\n  if x > 0 {\n    do_thing();\n  }\n}\n\n\
+             fn beta() {\n    if x > 0 {\n      do_thing();\n    }\n}\n",
+        )
+        .unwrap();
+
+        let tool = SmartEditTool {
+            inner: Box::new(SmartEditMockTool {
+                fail_msg: Some("old_text not found in file".into()),
+                result_text: None,
+            }),
+        };
+
+        // old_text with wrong indent that trimmed-matches both blocks
+        let params = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "old_text": "if x > 0 {\n  do_thing();\n}",
+            "new_text": "if x > 0 {\n  do_other();\n}"
+        });
+
+        let result = tool
+            .try_whitespace_autofix("old_text not found", &params, &test_tool_context())
+            .await;
+        assert!(
+            result.is_none(),
+            "Should refuse auto-fix when match is ambiguous"
+        );
+
+        // The augmented error should mention the ambiguity
+        let augmented = tool.augment_not_found_error("old_text not found", &params);
+        assert!(
+            augmented.contains("Multiple identical blocks"),
+            "Augmented error should warn about ambiguity: {augmented}"
+        );
     }
 }
