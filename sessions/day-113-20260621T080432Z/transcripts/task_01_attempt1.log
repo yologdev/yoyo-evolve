@@ -1,0 +1,379 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement I can make. Let me assess the codebase systematically.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (7ms)
+ ✓ (29.5s)
+  2 tools completed in 31.8s (2 ✓)
+
+There's a failing test already. Let me investigate it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_build_test_refer… ✓ (250ms)
+
+Hmm, it passes in isolation but fails in the full suite. That's a race condition / test ordering issue. Let me run the full suite again to confirm the failure.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (32.7s)
+
+OK, tests pass now — it was a flaky test. Good. Now let me do a proper assessment of the codebase to find the most impactful improvement.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |… ✓ (5ms)
+
+Let me look for concrete issues — duplicated patterns, potential bugs, missing error handling, unsafe patterns.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "unwrap()" src/*.rs src… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.clone()" src/*.rs | … ✓ (7ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Let me look at some more specific areas where I can make impactful improvements. Let me check for patterns that could cause real user-facing issues.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "let _ =" src/*.rs src/… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.3s)
+  2 tools completed in 21.6s (2 ✓)
+
+Good, clippy is clean. Let me look deeper at areas with real impact. Let me examine the largest files for structural issues.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the file src/safety.rs in /home/runner/work/yoyo-evo…'
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the file src/smart_edit.rs in /home/runner/work/yoyo…'
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the file src/prompt.rs in /home/runner/work/yoyo-evo…' ✓ (1m 46s)
+ ✓ (1m 57s)
+ ✓ (3m 27s)
+  3 tools completed in 3m 37s (3 ✓)
+
+Excellent analysis. The smart_edit.rs ambiguous match issue stands out as a P0 silent data corruption bug — when there are multiple equally-good whitespace matches, the auto-fix silently edits the wrong code block. That's the most impactful user-facing fix I can make.
+
+Let me also look at another highly impactful issue — the InputRejected not setting error state in prompt.rs, which causes silent failures. Let me decide between the two.
+
+The smart_edit ambiguous match issue is more impactful because:
+1. It causes silent wrong edits — the worst possible outcome for an edit tool
+2. It affects every user, every session, whenever similar code blocks exist
+3. The fix is well-scoped and testable
+
+Let me implement this.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/smart_edit.rs ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:1..101 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:100..200 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:199..319 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:318..448 ✓ (1ms)
+  5 tools completed in 20.0s (5 ✓)
+
+Now let me see the existing tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:447..1547 ✓ (7ms)
+
+Now I have a thorough understanding of the code. Let me look at the key area — `find_exact_trimmed_match — and the try_whitespace_autofix` flow. The critical bug:
+
+**When find_exact_trimmed_match finds multiple positions with the same match count, it silently picks the first one.** If try_whitespace_autofix then auto-fixes based on this, it can silently edit the wrong code block.
+
+The fix: `find_exact_trimmed_match` should track whether there are multiple equally-good matches. When there are, try_whitespace_autofix should refuse to auto-fix (return None) and let the error augmentation show all candidates.
+
+Let me also fix the `line_similarity` byte-vs-char bug while I'm at it — it's a one-liner and affects correctness for non-ASCII files.
+
+Let me plan the implementation:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests first: ambiguous match refuses auto-fi…' ✓ (0ms)
+  ▶ todo add 'Fix find_exact_trimmed_match to return ambiguity i…' ✓ (0ms)
+  ▶ todo add 'Fix try_whitespace_autofix to refuse when ambiguou…' ✓ (0ms)
+  ▶ todo add 'Fix line_similarity to use chars().count() instead…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && clippy && build && test' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  6 tools completed in 34.8s (6 ✓)
+
+Let me write the tests first. I need to see the full mock tool implementation to write tests that integrate well:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:536..716 ✓ (2ms)
+
+Now I have a thorough understanding. Let me implement the changes:
+
+1. **Change `find_exact_trimmed_match` to detect ambiguity** — track if there are multiple matches with the same best score
+2. **`find_nearest_match` propagates ambiguity info** 
+3. **try_whitespace_autofix refuses to auto-fix when ambiguous**
+4. **Fix line_similarity byte vs char bug**
+
+Let me start with the tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:120..160 ✓ (1ms)
+
+Now let me design the change. I need to change find_exact_trimmed_match to also return whether the match is ambiguous. Let me use a return struct or add a bool.
+
+The cleanest approach: change the return type to include an `ambiguous` flag. I'll create a small struct:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (13 → 15 lines)
+        is_whitespace_only: bool,
+        /// Whether this was a fuzzy (non-exact) match.
+        is_fuzzy: bool,
+  +     /// Whether multiple equally-good matches exist (ambiguous — unsafe to auto-fix).
+  +     is_ambiguous: bool,
+        /// Average similarity score (1.0 = exact match, 0.0 = completely different).
+        similarity: f64,
+        /// Snippet of the file content around the match.
+ ✓ (10.0s)
+        is_whitespace_only: bool,
+        /// Whether this was a fuzzy (non-exact) match.
+        is_fuzzy: bool,
+  +     /// Whether multiple equally-good matches exist (ambiguous — unsafe to auto-fix).
+  +     is_ambiguous: bool,
+        /// Average similarity score (1.0 = exact match, 0.0 = completely different).
+        similarity: f64,
+        /// Snippet of the file content around the match.
+
+Expected — I need to update the construction sites and the function logic. Let me now make all the changes together:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0063][0m[1m: missing field `is_ambiguous` in initializer of `smart_edit::NearestMatch`[0m
+   [1m[94m--> [0msrc/smart_edit.rs:251:21
+    [1m[94m|[0m
+[1m[94m251[0m [1m[94m|[0m         return Some(NearestMatch {
+    [1m[94m|[0m                     [1m[91m^^^^^^^^^^^^[0m [1m[91mmissing `is_ambiguous`[0m
+
+[1m[91merror[E0063][0m[1m: missing field `is_ambiguous` in initializer of `smart_edit::NearestMatch`[0m
+   [1m[94m--> [0msrc/smart_edit.rs:263:21
+    [1m[94m|[0m
+[1m[94m263[0m [1m[94m|[0m         return Some(NearestMatch {
+    [1m[94m|[0m                     [1m[91m^^^^^^^^^^^^[0m [1m[91mmissing `is_ambiguous`[0m
+
+[1mFor more information about this error, try `rustc --explain E0063`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 2 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix the compilation errors by adding the missing is_ambiguous field to both NearestMatch initializers. I also need to update `find_exact_trimmed_match` to actually detect ambiguity, and wire it through to try_whitespace_autofix.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:120..170 ✓ (0ms)
+
+Now let me see the two NearestMatch construction sites:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:240..275 ✓ (1ms)
+
+Now I have the full picture. I need to:
+
+1. Change find_exact_trimmed_match to return ambiguity info (a 3rd element in the tuple: bool)
+2. Add is_ambiguous to both NearestMatch construction sites
+3. Wire it through try_whitespace_autofix to refuse when ambiguous
+4. Fix line_similarity byte-vs-char bug
+5. Add tests
+
+Let me do all the changes:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (42 → 66 lines)
+    /// Try to find an exact trimmed-line match for `old_text` in `file_lines`.
+  - /// Returns `(start_line_0indexed, match_count)` for the best match.
+  - fn find_exact_trimmed_match(file_lines: &[&str], old_lines: &[&str]) -> Option<(usize, usize)> {
+  + /// Returns `(start_line_0indexed, match_count, is_ambiguous)` for the best match.
+  + /// `is_ambiguous` is true when multiple positions tie for the best match count,
+  + /// meaning auto-fix cannot safely choose which block to edit.
+  + fn find_exact_trimmed_match(
+  +     file_lines: &[&str],
+  +     old_lines: &[&str],
+  + ) -> Option<(usize, usize, bool)> {
+        let anchor = old_lines.iter().find(|l| !l.trim().is_empty())?;
+        let anchor_trimmed = anchor.trim();
+    
+        let mut best_match: Option<(usize, usize)> = None;
+  +     let mut best_count_hits: usize = 0; // how many positions share the best match_count
+    
+        for (i, line) in file_lines.iter().enumerate() {
+            if line.trim() == anchor_trimmed {
+  ···
+                    }
+  ... (41 more lines)
+ ✓ (10.0s)
+    /// Try to find an exact trimmed-line match for `old_text` in `file_lines`.
+  - /// Returns `(start_line_0indexed, match_count)` for the best match.
+  - fn find_exact_trimmed_match(file_lines: &[&str], old_lines: &[&str]) -> Option<(usize, usize)> {
+  + /// Returns `(start_line_0indexed, match_count, is_ambiguous)` for the best match.
+  + /// `is_ambiguous` is true when multiple positions tie for the best match count,
+  + /// meaning auto-fix cannot safely choose which block to edit.
+  + fn find_exact_trimmed_match(
+  +     file_lines: &[&str],
+  ... (13 more lines)
+
+Now update find_nearest_match to destructure the new tuple and pass ambiguity through:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (25 → 28 lines)
+        // Phase 1: exact trimmed match
+  -     if let Some((match_line_idx, _match_count)) = find_exact_trimmed_match(&file_lines, &old_lines)
+  +     if let Some((match_line_idx, _match_count, is_ambiguous)) =
+  +         find_exact_trimmed_match(&file_lines, &old_lines)
+        {
+            let is_ws_only = check_whitespace_only(&file_lines, &old_lines, match_line_idx);
+            let snippet = build_snippet(&file_lines, match_line_idx);
+  ···
+                line_num: match_line_idx + 1,
+                is_whitespace_only: is_ws_only,
+                is_fuzzy: false,
+  +             is_ambiguous,
+                similarity: 1.0,
+                snippet,
+            });
+  ···
+                line_num: match_line_idx + 1,
+                is_whitespace_only: false,
+                is_fuzzy: true,
+  +             is_ambiguous: false,
+  ... (3 more lines)
+ ✓ (15.7s)
+        // Phase 1: exact trimmed match
+  -     if let Some((match_line_idx, _match_count)) = find_exact_trimmed_match(&file_lines, &old_lines)
+  +     if let Some((match_line_idx, _match_count, is_ambiguous)) =
+  +         find_exact_trimmed_match(&file_lines, &old_lines)
+        {
+            let is_ws_only = check_whitespace_only(&file_lines, &old_lines, match_line_idx);
+            let snippet = build_snippet(&file_lines, match_line_idx);
+  ···
+  ... (13 more lines)
+
+Good — now I need to actually use is_ambiguous in `try_whitespace_autofix`. Let me update that method to refuse auto-fix when ambiguous:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:356..406 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (3 → 10 lines)
+            if !m.is_whitespace_only {
+                return None; // Not a whitespace-only diff — let caller handle it
+  +         }
+  + 
+  +         // When multiple equally-good matches exist, auto-fix could silently edit
+  +         // the wrong block. Refuse and let the augmented error show the location
+  +         // so the agent can read the file and choose the right one.
+  +         if m.is_ambiguous {
+  +             return None;
+            }
+ ✓ (1m 21s)
+            if !m.is_whitespace_only {
+                return None; // Not a whitespace-only diff — let caller handle it
+  +         }
+  + 
+  +         // When multiple equally-good matches exist, auto-fix could silently edit
+  +         // the wrong block. Refuse and let the augmented error show the location
+  +         // so the agent can read the file and choose the right one.
+  +         if m.is_ambiguous {
+  +             return None;
+            }
+  2 tools completed in 1m 33s (2 ✓)
+
+Now fix the line_similarity byte-vs-char bug:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (15 → 18 lines)
+        if a_trimmed.is_empty() && b_trimmed.is_empty() {
+            return 1.0;
+        }
+  -     let max_len = a_trimmed.len().max(b_trimmed.len());
+  +     // Use char count, not byte length — edit_distance operates on chars,
+  +     // so the denominator must be in the same units to avoid inflated
+  +     // similarity scores on multibyte UTF-8 content (CJK, emoji, etc.).
+  +     let max_len = a_trimmed.chars().count().max(b_trimmed.chars().count());
+        if max_len == 0 {
+            return 1.0;
+        }
+ ✓ (1m 20s)
+        if a_trimmed.is_empty() && b_trimmed.is_empty() {
+            return 1.0;
+        }
+  -     let max_len = a_trimmed.len().max(b_trimmed.len());
+  +     // Use char count, not byte length — edit_distance operates on chars,
+  +     // so the denominator must be in the same units to avoid inflated
+  +     // similarity scores on multibyte UTF-8 content (CJK, emoji, etc.).
+  +     let max_len = a_trimmed.chars().count().max(b_trimmed.chars().count());
+  ... (3 more lines)
+
+Now let me build to check compilation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (154ms)
+
+Compiles. Now let me also update the augment_not_found_error to mention ambiguity when it's detected — this gives the agent a better hint:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:430..480 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (12 → 18 lines)
+                            "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
+                            m.line_num, m.snippet
+                        ));
+  -                     if m.is_whitespace_only {
+  +                     if m.is_ambiguous {
+  +                         augmented.push_str(
+  +                             "\n\n⚠️ Multiple identical blocks found — auto-fix skipped to avoid \
+  +                              editing the wrong one. Use read_file to verify which block you want, \
+  +                              then include more surrounding context in old_text to disambiguate.",
+  +                         );
+  +                     } else if m.is_whitespace_only {
+                            augmented.push_str(
+                                "\n\n⚠️ Hint: the text exists but indentation/whitespace differs. \
+                                 Use read_file to see the exact whitespace.",
+ ✓ (1m 19s)
+                            "\n\n📍 Nearest match at line {}:\n```\n{}\n```",
+                            m.line_num, m.snippet
+                        ));
+  -                     if m.is_whitespace_only {
+  +                     if m.is_ambiguous {
+  +                         augmented.push_str(
+  +                             "\n\n⚠️ Multiple identical blocks found — auto-fix skipped to avoid \
+  +                              editing the wrong one. Use read_file to verify which block you want, \
+  ... (6 more lines)
+  2 tools completed in 1m 27s (2 ✓)
+
+Let me check the full output:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.2s)
+
+Clippy is clean. Now let me add tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^}" src/smart_edit.rs |… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs:1555..1565 ✓ (0ms)
+  2 tools completed in 12.5s (2 ✓)
+
+Now add the tests right before the closing } of the test module:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/smart_edit.rs (3 → 168 lines)
+            assert!(sim < 1.0, "Should not be perfect: {sim}");
+  +     }
+  + 
+  +     // === Ambiguity detection tests ===
+  + 
+  +     #[test]
+  +     fn test_find_exact_trimmed_match_ambiguous_duplicate_blocks() {
+  +         // Two identical blocks at different indentation levels
+  +         let file_lines = vec![
+  +             "fn alpha() {",    // 0
+  +             "  if x > 0 {",    // 1
+  +             "    do_thing();",  // 2
+  +             "  }",             // 3
+  +             "}",               // 4
+  +             "",                // 5
+  +             "fn beta() {",     // 6
+  +             "    if x > 0 {",  // 7
+  +             "      do_thing();", // 8
+  +             "    }",           // 9
+  +             "}",               // 10
+  ... (148 more lines)
+ ✓ (1m 21s)
+            assert!(sim < 1.0, "Should not be perfect: {sim}");
+  +     }
+  + 
+  +     // === Ambiguity detection tests ===
+  + 
+  +     #[test]
+  +     fn test_find_exact_trimmed_match_ambiguous_duplicate_blocks() {
+  +         // Two identical blocks at different indentation levels
+  ... (13 more lines)
+
+Now let me run the full check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test smart_edit 2>&1 ✓ (18.2s)
+  2 tools completed in 43.1s (2 ✓)
+
+All 67 smart_edit tests pass, including all 7 new ones. Let me run the full suite:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (45.1s)
+
+  ✓ Watch passed after fix (attempt 1)
+
