@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll evaluate whether the task was implemented correctly by checking the diff and the actual code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 ✓ (3ms)
+ ✓ (11ms)
+  2 tools completed in 2.0s (2 ✓)
+
+The diff is in the session plan commit. Let me look at the actual code changes for this task (task 3 is about /risk history).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_… ✓ (12ms)
+
+Good, I can see the diff includes substantial changes. Let me look at the full diff more carefully:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_… ✓ (9ms)
+ ✓ (8ms)
+  2 tools completed in 2.0s (2 ✓)
+
+The implementation exists. Let me verify the key components:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "risk\… ✓ (42.2s)
+ ✓ (43.0s)
+  2 tools completed in 44.8s (2 ✓)
+
+Tests pass. Let me check the specific test names for risk history:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "risk_… ✓ (32.9s)
+
+Good, there are tests for the history functionality. Let me verify the full diff for the task more carefully — checking each requirement:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_… ✓ (7ms)
+  ▶ search 'fn handle_risk_history' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:2602..2702 ✓ (2ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now let me check the format_history_report and compute_trend functions:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn format_history_report' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:2416..2516 ✓ (2ms)
+  ▶ read src/commands_info.rs:2515..2615 ✓ (2ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Now let me verify the wiring in handle_risk:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'sub == \"history\"' in src/commands_info.rs ✓ (3ms)
+
+Good. Now let me check the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test.*risk_history\|… ✓ (4ms)
+
+There are comprehensive tests. Let me verify they all pass:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- risk_history 2>&1 … ✓ (161ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- parse_all_snapshot… ✓ (133ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- compute_trend 2>&1… ✓ (129ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- format_history 2>&… ✓ (131ms)
+  4 tools completed in 12.3s (4 ✓)
+
+All tests pass. Let me also run clippy to confirm:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.3s)
+
+Clean. Now let me verify the potential string slicing safety issue I noticed:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2553..2568 ✓ (2ms)
+
+The [..7] slicing on git hashes is safe since git hashes are ASCII hex characters (always single-byte). This is fine per the safety rules.
+
+Let me now verify the task checklist:
+
+1. ✅ handle_risk_history() function exists
+2. ✅ Reads all lines from `.yoyo/risk_snapshots.jsonl via parse_all_snapshots()`
+3. ✅ Parses each line as snapshot (day, git_hash, predicted/top_10)
+4. ✅ For consecutive pairs, computes validation using existing helpers (parse_git_log_name_only, classify_broke_files, compute_validation)
+5. ✅ Validates last snapshot against HEAD
+6. ✅ Displays table with Day, Commits, Hits, Predicted, Precision, Recall
+7. ✅ Shows Overall precision and recall at bottom
+8. ✅ Shows Trend (improving/declining/stable based on first-half vs second-half comparison)
+9. ✅ Wired into handle_risk with `if sub == "history"` guard
+10. ✅ Tests for no snapshots, parsing, trend computation (improving/declining/stable/single), formatting
+11. ✅ cargo build, cargo test, cargo clippy all pass
+
+The implementation is comprehensive and matches every requirement in the task description. One minor note: the task also changed `compute_file_risk_scores` to add a co-change coupling signal (6th signal), which wasn't in the task description but is a bonus enhancement that doesn't break anything.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines)

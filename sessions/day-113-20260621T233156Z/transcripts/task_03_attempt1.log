@@ -1,0 +1,204 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing risk-related code in commands_info.rs to see what's already available.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk\|snapshot\|validat… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2220,2510p' src/commands… ✓ (6ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me see the existing test section and the end of the file to understand the structure better:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/commands_… ✓ (5ms)
+
+Now let me see the struct definitions and understand the snapshot format:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2120,2215p' src/commands… ✓ (4ms)
+
+Now I have a good understanding of the codebase. Let me look at where handle_risk routes subcommands and see the end of the test section:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2100,2120p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/commands_info.rs ✓ (3ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me look at what CommitEntry struct and the validation structures look like:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2208,2230p' src/commands… ✓ (4ms)
+
+Good. Now I have a thorough understanding. Let me plan and implement:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests for handle_risk_history (no snapshots,…' ✓ (0ms)
+  ▶ todo add 'Implement parse_all_snapshots, compute_history_val…' ✓ (0ms)
+  ▶ todo add 'Wire handle_risk_history into handle_risk router' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — fix any issue…' ✓ (0ms)
+  ▶ todo add 'Commit' ✓ (0ms)
+  5 tools completed in 13.6s (5 ✓)
+
+Let me first write the tests, then the implementation. Let me find a good spot to add tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_risk_validate_rout… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4380,4395p' src/commands… ✓ (3ms)
+  ▶ todo wip #1 ✓ (0ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now let me write the tests first. I'll add them right after the existing risk-related tests. Let me find a good insertion point:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_risk_validate_rout… ✓ (4ms)
+
+I'll add the tests right after test_risk_validate_routing. First, let me write the tests — they'll reference functions I'll implement next:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4380..4390 ✓ (1ms)
+  ▶ edit src/commands_info.rs (8 → 292 lines)
+            let input = "/risk validate";
+            let trimmed = input.strip_prefix("/risk").unwrap().trim();
+            assert_eq!(trimmed, "validate");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_history_routing() {
+  +         let input = "/risk history";
+  +         let trimmed = input.strip_prefix("/risk").unwrap().trim();
+  +         assert_eq!(trimmed, "history");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_all_snapshots_empty() {
+  +         let snapshots = parse_all_snapshots("");
+  +         assert!(snapshots.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_all_snapshots_single() {
+  ... (270 more lines)
+ ✓ (10.2s)
+            let input = "/risk validate";
+            let trimmed = input.strip_prefix("/risk").unwrap().trim();
+            assert_eq!(trimmed, "validate");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_history_routing() {
+  +         let input = "/risk history";
+  ... (13 more lines)
+  2 tools completed in 46.3s (2 ✓)
+
+Expected — the tests reference structs/functions I haven't implemented yet. Let me implement them now.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me implement the core functions. I'll add them right before `handle_risk_validate`:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:2410..2420 ✓ (1ms)
+
+I'll insert the new structs and functions right before handle_risk_validate:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (2 → 266 lines)
+  + /// A parsed risk snapshot from the JSONL file.
+  + struct ParsedSnapshot {
+  +     day: u64,
+  +     git_hash: String,
+  +     predicted: Vec<String>,
+  + }
+  + 
+  + /// Parse all snapshots from JSONL content.
+  + fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
+  +     let mut snapshots = Vec::new();
+  +     for line in content.lines() {
+  +         let trimmed = line.trim();
+  +         if trimmed.is_empty() {
+  +             continue;
+  +         }
+  +         let val: serde_json::Value = match serde_json::from_str(trimmed) {
+  +             Ok(v) => v,
+  +             Err(_) => continue, // skip malformed lines
+  +         };
+  +         let day = val["day"].as_u64().unwrap_or(0);
+  ... (246 more lines)
+ ✓ (15.2s)
+  + /// A parsed risk snapshot from the JSONL file.
+  + struct ParsedSnapshot {
+  +     day: u64,
+  +     git_hash: String,
+  +     predicted: Vec<String>,
+  + }
+  + 
+  + /// Parse all snapshots from JSONL content.
+  ... (13 more lines)
+
+That's expected — the dead_code warnings are because I haven't wired `handle_risk_history` into the router yet. Let me do that now:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ edit src/commands_info.rs (6 → 11 lines)
+        if sub == "snapshot" {
+            handle_risk_snapshot();
+  +         return;
+  +     }
+  + 
+  +     if sub == "history" {
+  +         handle_risk_history();
+            return;
+        }
+    
+ ✓ (15.1s)
+        if sub == "snapshot" {
+            handle_risk_snapshot();
+  +         return;
+  +     }
+  + 
+  +     if sub == "history" {
+  +         handle_risk_history();
+            return;
+        }
+    
+  2 tools completed in 24.8s (2 ✓)
+
+The git_hash_from and git_hash_to fields are used in tests but not read in the non-test code. They are constructed but their fields are never read in production code. Let me check — `format_history_report does reference them... wait, no it doesn't currently. The HistoryValidation struct's fields git_hash_from and git_hash_to are set but never actually read in format_history_report`. I should either use them in the report or mark them.
+
+Looking at the format function, I should show the hash range in the report. Let me update the format function to use these fields:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (19 → 32 lines)
+                format!("{:>5.0}%", (hits as f64 / breaks as f64) * 100.0)
+            } else {
+                "  n/a".to_string()
+  +         };
+  + 
+  +         // Show short hash range for context
+  +         let hash_from_short = if v.git_hash_from.len() > 7 {
+  +             &v.git_hash_from[..7]
+  +         } else {
+  +             &v.git_hash_from
+  +         };
+  +         let hash_to_short = if v.git_hash_to.len() > 7 {
+  +             &v.git_hash_to[..7]
+  +         } else {
+  +             &v.git_hash_to
+            };
+    
+            out.push_str(&format!(
+  -             "  {:<6}{:>7}  {:>4}  {:>9}  {}  {}\n",
+  +             "  {:<6}{:>7}  {:>4}  {:>9}  {}  {}  {DIM}{}..{}{RESET}\n",
+  ... (3 more lines)
+ ✓ (1m 19s)
+                format!("{:>5.0}%", (hits as f64 / breaks as f64) * 100.0)
+            } else {
+                "  n/a".to_string()
+  +         };
+  + 
+  +         // Show short hash range for context
+  +         let hash_from_short = if v.git_hash_from.len() > 7 {
+  +             &v.git_hash_from[..7]
+  ... (13 more lines)
+
+Now let's run the checks:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.2s)
+
+Clippy passes. Now let's run the tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (48.4s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

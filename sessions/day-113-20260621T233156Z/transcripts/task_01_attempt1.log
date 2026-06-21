@@ -1,0 +1,88 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ todo add 'Read current web_search and related functions in s…' ✓ (0ms)
+  ▶ todo add 'Implement DDG fallback in web_search function' ✓ (0ms)
+  ▶ todo add 'Add fallback in web_search_and_read for non-key Ex…' ✓ (0ms)
+  ▶ todo add 'Write tests for fallback logic' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test' ✓ (0ms)
+  ▶ todo add 'Commit' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ search 'pub fn web_search' in src/commands_web.rs ✓ (2ms)
+  ▶ search 'fn web_search' in src/commands_web.rs ✓ (3ms)
+  ▶ read src/commands_web.rs:1095..1175 ✓ (1ms)
+  10 tools completed in 13.2s (10 ✓)
+
+Now let me look at the exa_search function to understand its structure:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn exa_search' in src/commands_web.rs ✓ (3ms)
+  ▶ read src/commands_web.rs:1031..1097 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me look at the DDG parsing code:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn parse_ddg_results' in src/commands_web.rs  ▶ search 'fn extract_ddg_url' in src/commands_web.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/commands_web.rs:580..700 ✓ (1ms)
+  ▶ read src/commands_web.rs:699..799 ✓ (1ms)
+  4 tools completed in 8.8s (4 ✓)
+
+Now let me look at how the DDG HTML is fetched. Let me look at the `handle_web` function or where DDG fetching happens:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'html.duckduckgo.com' in src/commands_web.rs ✓ (3ms)
+  ▶ search 'duckduckgo' in src/commands_web.rs ✓ (3ms)
+  ▶ read src/commands_web.rs:516..586 ✓ (1ms)
+  3 tools completed in 10.0s (3 ✓)
+
+Now I need to understand the full picture. The DDG scraper exists (`parse_ddg_results), but it needs to be called with HTML from somewhere. Let me look at the handle_web` function and see if there's already a fetch that goes to DDG:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_web' in src/commands_web.rs ✓ (3ms)
+  ▶ read src/commands_web.rs:259..349 ✓ (1ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Now let me look at the fetch_url function:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn fetch_url' in src/commands_web.rs ✓ (3ms)
+  ▶ read src/commands_web.rs:225..259 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now I have all the context I need. Let me also check the WebSearchTool in src/tools.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'WebSearchTool' in src/tools.rs ✓ (3ms)
+  ▶ read src/tools.rs:693..758 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Good. Now I have the full picture. Let me also check if there's a `find_ascii_ci` function used in DDG parsing:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn find_ascii_ci' in src/commands_web.rs ✓ (3ms)
+
+Now let me also check the #[allow(dead_code)] annotations on DDG-related functions, since they're currently not called:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[allow\(dead_code\)\]' in src/commands_web.rs ✓ (2ms)
+  ▶ search 'allow\(dead_code\)' in src/commands_web.rs ✓ (3ms)
+  ▶ search '"dead_code"' in src/commands_web.rs ✓ (3ms)
+  ▶ search 'dead_code' in src/commands_web.rs ✓ (3ms)
+  4 tools completed in 11.0s (4 ✓)
+
+Good — the DDG-related functions all have #[allow(dead_code)] because they're not currently called anywhere. I'll need to remove those annotations when I wire them up. Now let me check the existing tests for DDG:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1490..1690 ✓ (2ms)
+  ▶ read src/commands_web.rs:1689..1779 ✓ (1ms)
+  ▶ read src/commands_web.rs:1778..1878 ✓ (1ms)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  5 tools completed in 13.5s (5 ✓)
+
+Now I have a complete picture. Here's my plan:
+
+1. Create a `ddg_search` function that fetches from DDG HTML and parses the results
+2. Modify `web_search` to try Exa first (if key set), fall back to DDG
+3. Modify web_search_and_read to fall back to DDG on Exa network errors
+4. Remove `#[allow(dead_code)]` from DDG helpers that are now used
+5. Write tests for the fallback logic
+
+Let me implement this:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:526..531 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

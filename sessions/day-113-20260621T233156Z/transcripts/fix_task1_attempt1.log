@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn web_search" src/comm…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn exa_search\|fn parse… ✓ (6ms)
+ ✓ (3ms)
+  ▶ read src/commands_web.rs:1095..1175 ✓ (1ms)
+  3 tools completed in 6.0s (3 ✓)
+
+Now let me look at the exa_search function to understand how it checks for the API key:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1031..1096 ✓ (2ms)
+
+Now let me look at how parse_ddg_results works and the DuckDuckGo fetching:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:650..750 ✓ (1ms)
+  ▶ read src/commands_web.rs:749..779 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me look at `fetch_url` to understand how to fetch from DuckDuckGo:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn fetch_url\|html.duck… ✓ (4ms)
+  ▶ read src/commands_web.rs:225..285 ✓ (1ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me look at how the /web search handler works to see if there's already a DDG fetch path:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_web_search\|duck… ✓ (4ms)
+
+Now let me look at `handle_web_search` to see the existing DDG path:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:311..381 ✓ (1ms)
+
+Now I have enough context. Let me implement the DuckDuckGo fallback. I need to:
+
+1. Create a `ddg_search` function that fetches from DuckDuckGo and parses results
+2. Modify web_search to try Exa first (if key is set) and fall back to DDG
+3. Modify web_search_and_read to also fall back to DDG on Exa failure
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1116..1121 ✓ (1ms)
+
+Now let me implement the changes:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (17 → 74 lines)
+  - /// Perform a web search via Exa API and return structured results.
+  + /// Perform a DuckDuckGo search by fetching the HTML lite page and parsing results.
+    ///
+  - /// Requires `EXA_API_KEY` environment variable. Returns a clear error if unset.
+  + /// This is a fallback for when `EXA_API_KEY` is not set. DuckDuckGo may return
+  + /// empty results (captcha/rate-limiting), but that's better than a hard error.
+  + pub(crate) fn ddg_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+  +     let encoded_query = query
+  +         .chars()
+  +         .map(|c| {
+  +             if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
+  +                 c.to_string()
+  +             } else if c == ' ' {
+  +                 "+".to_string()
+  +             } else {
+  +                 format!("%{:02X}", c as u32)
+  +             }
+  +         })
+  +         .collect::<String>();
+  + 
+  ... (58 more lines)
+ ✓ (1m 18s)
+  - /// Perform a web search via Exa API and return structured results.
+  + /// Perform a DuckDuckGo search by fetching the HTML lite page and parsing results.
+    ///
+  - /// Requires `EXA_API_KEY` environment variable. Returns a clear error if unset.
+  + /// This is a fallback for when `EXA_API_KEY` is not set. DuckDuckGo may return
+  + /// empty results (captcha/rate-limiting), but that's better than a hard error.
+  + pub(crate) fn ddg_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+  +     let encoded_query = query
+  ... (13 more lines)
+
+Now let me add tests for the fallback behavior. Let me find where the existing tests are:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_" src/commands_… ✓ (4ms)
+
+Let me look at the last test and the end of the file:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1917..1947 ✓ (2ms)
+
+Now let me look at the test_exa_missing_key test to understand its pattern:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1845..1870 ✓ (1ms)
+
+Now let me add tests for the fallback logic. I'll add them before the closing }:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (10 → 76 lines)
+            let empty = r#"{"tags": []}"#;
+            let arr = extract_json_string_array(empty, "tags");
+            assert!(arr.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_web_search_uses_ddg_when_exa_key_unset() {
+  +         // When EXA_API_KEY is not set, web_search should not return an error
+  +         // about missing API key — it should fall back to DDG (which may fail
+  +         // for network reasons in tests, but shouldn't give an EXA_API_KEY error).
+  +         std::env::remove_var("EXA_API_KEY");
+  +         let result = web_search("rust programming", 5);
+  +         // It should either succeed (DDG worked) or fail with a non-EXA error
+  +         match result {
+  +             Ok(_results) => {} // DDG worked, great
+  +             Err(e) => {
+  +                 assert!(
+  +                     !e.contains("EXA_API_KEY"),
+  +                     "Should not get EXA_API_KEY error when key is unset, got: {e}"
+  +                 );
+  ... (51 more lines)
+ ✓ (1m 18s)
+            let empty = r#"{"tags": []}"#;
+            let arr = extract_json_string_array(empty, "tags");
+            assert!(arr.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_web_search_uses_ddg_when_exa_key_unset() {
+  +         // When EXA_API_KEY is not set, web_search should not return an error
+  ... (13 more lines)
+
+Now let me also remove the #[allow(dead_code)] from parse_ddg_results since it's no longer dead code:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (11 → 10 lines)
+    ///   <a class="result__snippet" href="...">Snippet text</a>
+    /// </div>
+    /// ```
+  - #[allow(dead_code)]
+    pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+ ✓ (1m 18s)
+    ///   <a class="result__snippet" href="...">Snippet text</a>
+    /// </div>
+    /// ```
+  - #[allow(dead_code)]
+    pub(crate) fn parse_ddg_results(html: &str, max_results: usize) -> Vec<WebSearchResult> {
+
+Now let's build and test:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (156ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (45.6s)
+  3 tools completed in 1m 10s (3 ✓)
+
+All 88 tests pass. Let me verify the specific new tests run:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test web_search 2>&1 | gre… ✓ (255ms)
+
+Let me also run the DDG-specific tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test ddg 2>&1 ✓ (199ms)
+
+All tests pass. Let me also run the full verification command one more time to be sure:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 1s)
+
+Everything passes. Let me review the final state of the changes:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_web.rs ✓ (6ms)
+  2 tools completed in 5.4s (2 ✓)
+
+The implementation is complete. Here's a summary of the changes made to src/commands_web.rs:
+
+1. **Added `ddg_search(query, max_results)` function** — Performs a DuckDuckGo search by URL-encoding the query, fetching from https://html.duckduckgo.com/html/?q=..., and parsing results with the existing parse_ddg_results function.
+
+2. Modified `web_search(query, max_results)` — Now checks if EXA_API_KEY is set and non-empty. If yes, calls exa_search(). If not, falls back to ddg_search().
+
+3. Modified `web_search_and_read(query, max_results)` — When Exa key is present, tries Exa first. If Exa fails for any reason (network error, rate limit, etc.), falls back to DuckDuckGo as a second attempt. When no Exa key is set, uses DDG directly.
+
+4. Removed `#[allow(dead_code)]` from parse_ddg_results since it's now actively used by ddg_search.
+
+5. **Added 4 tests:**
+   • test_web_search_uses_ddg_when_exa_key_unset — Verifies no EXA_API_KEY error when key is unset
+   • `test_web_search_fallback_path_selection` — Verifies DDG path is selected when Exa key missing
+   • test_ddg_search_returns_results_from_html — Unit test for DDG parsing via the search function
+   • test_web_search_and_read_no_exa_key_no_panic — Verifies `web_search_and_read` doesn't panic or require EXA key
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

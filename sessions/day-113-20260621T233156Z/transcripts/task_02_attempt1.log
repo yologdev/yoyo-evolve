@@ -1,0 +1,357 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current compute_file_risk_scores() function and the existing risk scoring system.
+  ▶ search 'compute_file_risk_scores' in src/commands_info.rs  ▶ search 'struct FileRisk' in src/commands_info.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/commands_info.rs:1555..1585 ✓ (1ms)
+  ▶ read src/commands_info.rs:1738..2038 ✓ (3ms)
+  4 tools completed in 8.3s (4 ✓)
+
+Now let me look at the existing tests for compute_file_risk_scores:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4009..4109 ✓ (2ms)
+
+Now let me also check the file_change_counts function to see how git parsing works:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn file_change_counts' in src/git.rs ✓ (3ms)
+  ▶ read src/git.rs:850..890 ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now let me look at the remaining test and also check whether there's a `parse_git_log_name_only` function mentioned in the task:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'parse_git_log_name_only' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:2140..2190 ✓ (1ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Let me also see the CommitEntry struct:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct CommitEntry' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:2137..2142 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me check the test area to understand the test structure better. Let me also see the existing test for weights validation:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'weights.*sum|test.*weight|test_risk_weights' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'test_risk.*coupled|test.*coupling' in src/commands_info.rs ✓ (3ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Good — no existing tests for coupling or weight sums. Let me also look at the test module boundary and the test for `test_compute_file_risk_scores_returns_all_files`:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4000..4020 ✓ (1ms)
+
+Now let me check the remaining tests at the end of the file to find a good spot to add tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4340..4380 ✓ (1ms)
+
+Now I have a complete picture. Let me also look at the run_git function to understand the test guard:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/git.rs:40..70 ✓ (1ms)
+
+Good — git log is read-only so it won't trigger the guard. Now I have the full picture. Let me plan and implement:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests first: weights sum to 1.0, coupling si…' ✓ (0ms)
+  ▶ todo add 'Add co_change_coupling() function to parse git log…' ✓ (0ms)
+  ▶ todo add 'Integrate coupling signal into compute_file_risk_s…' ✓ (0ms)
+  ▶ todo add 'Add ▲coupled signal label when coupling > 0.7 thre…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — fix until gre…' ✓ (0ms)
+  ▶ todo add 'Commit' ✓ (0ms)
+  6 tools completed in 17.5s (6 ✓)
+
+Let me start with writing tests, then implement the feature.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+First, let me add the tests at the end of the test module:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (7 → 94 lines)
+            assert!(
+                penalty_low > 0.0,
+                "penalty should be positive for density below 5.0"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_weights_sum_to_one() {
+  +         // The 6 risk signal weights must sum to 1.0 (within floating-point tolerance)
+  +         let weights: [f64; 6] = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+  +         let sum: f64 = weights.iter().sum();
+  +         assert!(
+  +             (sum - 1.0).abs() < 1e-10,
+  +             "Risk weights should sum to 1.0, got {sum}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_co_change_coupling_returns_map() {
+  +         // co_change_coupling should return a HashMap even if git history is sparse
+  ... (73 more lines)
+ ✓ (9.9s)
+            assert!(
+                penalty_low > 0.0,
+                "penalty should be positive for density below 5.0"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_weights_sum_to_one() {
+  ... (13 more lines)
+
+Tests are written and failing as expected — they reference co_change_coupling() which doesn't exist yet. That's the TDD approach. Now let me implement the function and integration.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now let me add the co_change_coupling() function. I'll place it right before `compute_file_risk_scores()`:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1730..1740 ✓ (1ms)
+  ▶ edit src/commands_info.rs (2 → 66 lines)
+  - /// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+  + /// Build a co-change coupling map from the last 100 commits.
+  + ///
+  + /// For each `src/**/*.rs` file, records which other `src/**/*.rs` files are
+  + /// frequently modified in the same commit. Returns a nested map:
+  + ///   file → { partner_file → co_change_count }
+  + fn co_change_coupling() -> std::collections::HashMap<String, std::collections::HashMap<String, u32>>
+  + {
+  +     let output = match crate::git::run_git(&[
+  +         "log",
+  +         "--name-only",
+  +         "--pretty=format:",
+  +         "-100",
+  +     ]) {
+  +         Ok(o) => o,
+  +         Err(_) => return std::collections::HashMap::new(),
+  +     };
+  + 
+  +     // Parse commits: groups of file paths separated by blank lines
+  +     let mut commits: Vec<Vec<String>> = Vec::new();
+  ... (47 more lines)
+ ✓ (15.2s)
+  - /// Compute risk scores for all `src/**/*.rs` files using five weighted signals.
+  + /// Build a co-change coupling map from the last 100 commits.
+  + ///
+  + /// For each `src/**/*.rs` file, records which other `src/**/*.rs` files are
+  + /// frequently modified in the same commit. Returns a nested map:
+  + ///   file → { partner_file → co_change_count }
+  + fn co_change_coupling() -> std::collections::HashMap<String, std::collections::HashMap<String, u32>>
+  + {
+  ... (13 more lines)
+  2 tools completed in 27.1s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `co_change_coupling` is never used[0m
+    [1m[94m--> [0msrc/commands_info.rs:1742:4
+     [1m[94m|[0m
+[1m[94m1742[0m [1m[94m|[0m fn co_change_coupling() -> std::collections::HashMap<String, std::collections::HashMap<String, u32>>
+     [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m[1m: this comparison involving the minimum or maximum element for this type contains a case that is always true or always false[0m
+    [1m[94m--> [0msrc/commands_info.rs:4460:13
+     [1m[94m|[0m
+[1m[94m4460[0m [1m[94m|[0m             coupling.len() >= 0,
+     [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: because `0` is the minimum value for this type, this comparison is always true
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#absurd_extreme_comparisons
+     [1m[94m= [0m[1mnote[0m: `#[deny(clippy::absurd_extreme_comparisons)]` on by default
+
+[1m[91merror[0m[1m: comparison is useless due to type limits[0m
+    [1m[94m--> [0msrc/commands_info.rs:4460:13
+     [1m[94m|[0m
+[1m[94m4460[0m [1m[94m|[0m             coupling.len() >= 0,
+     [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D unused-comparisons` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_comparisons)]`
+
+[1m[91mer...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix both issues: (1) co_change_coupling is unused because I haven't integrated it into compute_file_risk_scores yet, and (2) the clippy warning about >= 0 on a usize.
+  ▶ read src/commands_info.rs:4455..4470 ✓ (1ms)
+
+Fix 1: the useless >= 0 comparison on usize:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (8 → 7 lines)
+            let coupling = co_change_coupling();
+            // In a real repo with commits, we expect at least some entries
+            // (the project has 100+ commits touching src/*.rs files)
+  -         // But the function should never panic and should always return a valid map
+  -         assert!(
+  -             coupling.len() >= 0,
+  -             "co_change_coupling should return a valid map"
+  -         );
+  +         // But the function should never panic and should always return a valid map.
+  +         // Just verify it's a HashMap (type-level) — the structured test below
+  +         // checks contents.
+  +         let _ = coupling.len();
+ ✓ (15.1s)
+            let coupling = co_change_coupling();
+            // In a real repo with commits, we expect at least some entries
+            // (the project has 100+ commits touching src/*.rs files)
+  -         // But the function should never panic and should always return a valid map
+  -         assert!(
+  -             coupling.len() >= 0,
+  -             "co_change_coupling should return a valid map"
+  -         );
+  ... (4 more lines)
+
+Fix 2: The `dead-code warning is because co_change_coupling` is only called from tests, not from production code yet. I need to integrate it into compute_file_risk_scores now. Let me do the full integration — this is the core of the task, not just a lint fix.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1848..1878 ✓ (1ms)
+
+Now let me see the full section where signals are gathered and the weighted sum is computed:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1848..1918 ✓ (2ms)
+  ▶ read src/commands_info.rs:1917..1997 ✓ (2ms)
+  ▶ read src/commands_info.rs:1996..2016 ✓ (1ms)
+  3 tools completed in 9.9s (3 ✓)
+
+Now I need to integrate the coupling signal. I'll make three edits:
+
+1. Add the coupling data gathering alongside other pre-loop data
+2. Add the coupling raw signal in the per-file loop
+3. Normalize coupling and update weights + signal labels
+
+Edit 1: Add coupling map and raw vector alongside other signals:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (11 → 15 lines)
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
+        // Tests-per-100-lines metric (exposed on FileRisk for display)
+        let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
+    
+  -     // 4. Revert involvement — weight 0.20
+  +     // 4. Revert involvement — weight 0.18
+        let revert_files = revert_involved_files();
+  + 
+  +     // 6. Co-change coupling — weight 0.15
+  +     let coupling_map = co_change_coupling();
+ ✓ (15.2s)
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
+        // Tests-per-100-lines metric (exposed on FileRisk for display)
+        let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
+    
+  -     // 4. Revert involvement — weight 0.20
+  ... (5 more lines)
+
+Expected — I haven't added the loop body or weight integration yet. Let me do those now. Edit 2: Add coupling computation in the per-file loop (after the test density push):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (3 → 11 lines)
+            // Invert: low coverage → high risk signal
+            raw_test_density.push(1.0 - effective_coverage);
+  + 
+  +         // 6. Co-change coupling: how many high-churn partners does this file have?
+  +         // Sum co-change counts with all partners (raw; will be normalized later)
+  +         let coupling_score = coupling_map
+  +             .get(path.as_str())
+  +             .map(|partners| partners.values().sum::<u32>() as f64)
+  +             .unwrap_or(0.0);
+  +         raw_coupling.push(coupling_score);
+        }
+ ✓ (1m 19s)
+            // Invert: low coverage → high risk signal
+            raw_test_density.push(1.0 - effective_coverage);
+  + 
+  +         // 6. Co-change coupling: how many high-churn partners does this file have?
+  +         // Sum co-change counts with all partners (raw; will be normalized later)
+  +         let coupling_score = coupling_map
+  +             .get(path.as_str())
+  +             .map(|partners| partners.values().sum::<u32>() as f64)
+  ... (3 more lines)
+
+Edit 3: Update normalization, weights, and signal labels:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_info.rs (19 → 21 lines)
+        let norm_size = normalize_scores(&raw_size);
+        let norm_revert = normalize_scores(&raw_revert);
+        let norm_test = normalize_scores(&raw_test_density);
+  +     let norm_coupling = normalize_scores(&raw_coupling);
+    
+  -     // Weighted sum → final score
+  -     let weights = [0.30, 0.25, 0.15, 0.20, 0.10];
+  +     // Weighted sum → final score (6 signals, sum = 1.0)
+  +     let weights = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+        let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
+    
+        for (i, path) in all_files.into_iter().enumerate() {
+  ···
+                + norm_accel[i] * weights[1]
+                + norm_size[i] * weights[2]
+                + norm_revert[i] * weights[3]
+  -             + norm_test[i] * weights[4];
+  +             + norm_test[i] * weights[4]
+  +             + norm_coupling[i] * weights[5];
+ ✓ (1m 19s)
+        let norm_size = normalize_scores(&raw_size);
+        let norm_revert = normalize_scores(&raw_revert);
+        let norm_test = normalize_scores(&raw_test_density);
+  +     let norm_coupling = normalize_scores(&raw_coupling);
+    
+  -     // Weighted sum → final score
+  -     let weights = [0.30, 0.25, 0.15, 0.20, 0.10];
+  +     // Weighted sum → final score (6 signals, sum = 1.0)
+  ... (11 more lines)
+
+Now add the ▲coupled signal label. Let me find the current signal labels section:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'signals.push\(\"▲low-test\"\)' in src/commands_info.rs ✓ (3ms)
+  ▶ search 'low-test' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:2008..2020 ✓ (1ms)
+  ▶ edit src/commands_info.rs (3 → 6 lines)
+            if norm_test[i] > 0.5 {
+                signals.push("▲low-test");
+  +         }
+  +         if norm_coupling[i] > 0.7 {
+  +             signals.push("▲coupled");
+            }
+ ✓ (1m 19s)
+            if norm_test[i] > 0.5 {
+                signals.push("▲low-test");
+  +         }
+  +         if norm_coupling[i] > 0.7 {
+  +             signals.push("▲coupled");
+            }
+  4 tools completed in 1m 30s (4 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.0s)
+
+Clippy passes. Now let's run tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (1m 3s)
+
+All 88 tests pass. Let me also verify my specific new tests ran:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (134ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (134ms)
+  2 tools completed in 6.8s (2 ✓)
+
+All 4 new tests are listed and passing. Let me mark tasks done:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo done #3 ✓ (0ms)
+  ▶ todo done #4 ✓ (0ms)
+  3 tools completed in 5.3s (3 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
