@@ -237,6 +237,15 @@ def render_reverts(reverts: int, total_sessions: int) -> str:
 
 ERROR_LINE_RE = re.compile(r"(error|panicked|FAILED|fatal)", re.IGNORECASE)
 
+# Passing Rust test lines that may contain error-like words in the test name
+# e.g. "test watch::tests::test_watch_result_failed_with_error ... ok"
+PASSING_TEST_RE = re.compile(r"test\s+\S+\s+\.\.\.\s+ok", re.IGNORECASE)
+
+# Test result summary line that passed (may mention "0 failed" which matches ERROR_LINE_RE)
+# e.g. "test result: ok. 3823 passed; 0 failed;"
+# NOTE: "test result: FAILED." IS a real error — only skip "ok." lines
+TEST_RESULT_OK_RE = re.compile(r"test result:\s*ok\.", re.IGNORECASE)
+
 
 def fingerprint_error_line(line: str) -> str:
     """Normalize an error line to a clusterable fingerprint."""
@@ -311,6 +320,13 @@ def collect_failed_ci_fingerprints(repo: str) -> list[tuple[str, list[str]]]:
         seen_in_run = set()
         for ln in tail:
             if ERROR_LINE_RE.search(ln):
+                stripped = strip_ansi(ln)
+                # Skip passing test lines (e.g. test names containing "error")
+                if PASSING_TEST_RE.search(stripped):
+                    continue
+                # Skip passing test result summaries (e.g. "test result: ok. 3823 passed; 0 failed;")
+                if TEST_RESULT_OK_RE.search(stripped):
+                    continue
                 fp = fingerprint_error_line(ln)
                 if fp and fp not in seen_in_run:
                     fingerprints[fp].append(run_id)
@@ -540,6 +556,74 @@ def run_self_tests() -> int:
     fp_n = fingerprint_error_line(line_n)
     fp_o = fingerprint_error_line(line_o)
     assert_eq("subsecond precision clusters", fp_n, fp_o)
+
+    # --- False-positive filtering tests ---
+    print("\n=== false-positive filter self-tests ===\n")
+
+    def would_fingerprint(line: str) -> bool:
+        """Simulate the filtering logic in collect_failed_ci_fingerprints."""
+        if not ERROR_LINE_RE.search(line):
+            return False
+        stripped = strip_ansi(line)
+        if PASSING_TEST_RE.search(stripped):
+            return False
+        if TEST_RESULT_OK_RE.search(stripped):
+            return False
+        return True
+
+    def assert_filtered(label: str, line: str) -> None:
+        """Assert that a line is NOT fingerprinted (filtered out)."""
+        nonlocal failures
+        if would_fingerprint(line):
+            print(f"  FAIL: {label} — expected filtered, but was fingerprinted")
+            failures += 1
+        else:
+            print(f"  ok: {label}")
+
+    def assert_kept(label: str, line: str) -> None:
+        """Assert that a line IS fingerprinted (kept)."""
+        nonlocal failures
+        if not would_fingerprint(line):
+            print(f"  FAIL: {label} — expected fingerprinted, but was filtered")
+            failures += 1
+        else:
+            print(f"  ok: {label}")
+
+    # 9. Passing test with "error" in name is filtered
+    assert_filtered(
+        "passing test with 'error' in name filtered",
+        "test watch::tests::test_watch_result_failed_with_error ... ok",
+    )
+
+    # 10. FAILED test with "error" in name IS still fingerprinted
+    assert_kept(
+        "failed test with 'error' in name kept",
+        "test watch::tests::test_watch_result_failed_with_error ... FAILED",
+    )
+
+    # 11. Real compiler error IS still fingerprinted
+    assert_kept(
+        "real compiler error kept",
+        "error[E0308]: mismatched types",
+    )
+
+    # 12. Passing test result summary is filtered
+    assert_filtered(
+        "passing test result summary filtered",
+        "test result: ok. 3823 passed; 0 failed;",
+    )
+
+    # 13. Failed test result summary IS still fingerprinted
+    assert_kept(
+        "failed test result summary kept",
+        "test result: FAILED. 3823 passed; 1 failed;",
+    )
+
+    # 14. Passing test with ANSI codes is still filtered
+    assert_filtered(
+        "passing test with ANSI codes filtered",
+        "\x1b[32mtest\x1b[0m some::test_with_error ... \x1b[32mok\x1b[0m",
+    )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0

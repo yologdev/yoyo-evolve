@@ -60,6 +60,7 @@ mod commands_refactor;
 mod commands_rename;
 mod commands_retry;
 mod commands_revisit;
+mod commands_risk;
 mod commands_run;
 mod commands_search;
 mod commands_session;
