@@ -247,6 +247,7 @@ pub fn session_resume_hint() -> Option<String> {
 mod tests {
     use super::*;
     use crate::commands_project::ProjectType;
+    use serial_test::serial;
 
     #[test]
     fn test_print_banner_does_not_panic() {
@@ -474,18 +475,21 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_exa_api_key_set_when_present() {
         std::env::set_var("EXA_API_KEY", "test-key-123");
         assert!(exa_api_key_set());
     }
 
     #[test]
+    #[serial]
     fn test_exa_api_key_set_when_empty() {
         std::env::set_var("EXA_API_KEY", "");
         assert!(!exa_api_key_set());
     }
 
     #[test]
+    #[serial]
     fn test_exa_api_key_set_when_missing() {
         std::env::remove_var("EXA_API_KEY");
         assert!(!exa_api_key_set());

@@ -1,8 +1,10 @@
 //! Project-related command handlers: /context, /init, /docs.
 
 use crate::cli;
+use crate::commands_map::build_repo_map;
 use crate::docs;
 use crate::format::*;
+use crate::symbols::FileSymbols;
 
 // Re-export refactoring commands for backward compatibility
 pub use crate::commands_move::handle_move;
@@ -14,7 +16,7 @@ use yoagent::agent::Agent;
 // ── /context ─────────────────────────────────────────────────────────────
 
 /// Subcommands for /context.
-const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files"];
+const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files", "relevant"];
 
 pub fn context_subcommands() -> &'static [&'static str] {
     CONTEXT_SUBCOMMANDS
@@ -29,6 +31,9 @@ pub fn handle_context(input: &str, system_prompt: &str, agent: &Agent) {
         show_context_tokens(system_prompt, agent);
     } else if args.starts_with("files") {
         show_context_files(agent);
+    } else if args.starts_with("relevant") {
+        let query = args.strip_prefix("relevant").unwrap_or("").trim();
+        handle_context_relevant(query);
     } else {
         show_project_context_files();
     }
@@ -819,6 +824,150 @@ pub fn project_type_hints(project_type: &ProjectType) -> Option<String> {
         ProjectType::Unknown => return None,
     };
     Some(hints.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// /context relevant — auto-identify files relevant to a query
+// ---------------------------------------------------------------------------
+
+/// Common stop words filtered out of queries.
+const STOP_WORDS: &[&str] = &[
+    "the", "a", "an", "to", "for", "in", "is", "are", "and", "or", "of", "with", "on", "it",
+    "this", "that", "my", "do", "how",
+];
+
+/// Tokenize a natural-language query into keywords.
+///
+/// Splits on whitespace, lowercases, and filters out common stop words.
+fn tokenize_query(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .filter(|w| !STOP_WORDS.contains(&w.as_str()))
+        .collect()
+}
+
+/// A single file's relevance score and matching details.
+#[derive(Debug)]
+struct RelevanceResult {
+    path: String,
+    score: usize,
+    matched_keywords: Vec<String>,
+}
+
+/// Score files from a repo map against a set of keywords.
+///
+/// Scoring:
+///   - Filename component match (split by `/`, `_`, `.`): 3 points per keyword
+///   - Symbol name match (function/struct/enum names): 2 points per keyword
+///
+/// Matches are case-insensitive substring matches.
+fn score_files(files: &[FileSymbols], keywords: &[String]) -> Vec<RelevanceResult> {
+    let mut results = Vec::new();
+
+    for file in files {
+        let mut score = 0usize;
+        let mut matched = Vec::new();
+
+        // Split filename into components by path separators, underscores, and dots
+        let path_lower = file.path.to_lowercase();
+        let path_components: Vec<&str> = path_lower.split(&['/', '\\', '_', '.'][..]).collect();
+
+        for kw in keywords {
+            let mut kw_matched = false;
+
+            // Filename component matching (3x weight)
+            for comp in &path_components {
+                if comp.contains(kw.as_str()) {
+                    score += 3;
+                    kw_matched = true;
+                    break;
+                }
+            }
+
+            // Symbol name matching (2x weight)
+            for sym in &file.symbols {
+                let sym_lower = sym.name.to_lowercase();
+                if sym_lower.contains(kw.as_str()) {
+                    score += 2;
+                    kw_matched = true;
+                    break;
+                }
+            }
+
+            if kw_matched {
+                matched.push(kw.clone());
+            }
+        }
+
+        if score > 0 {
+            results.push(RelevanceResult {
+                path: file.path.clone(),
+                score,
+                matched_keywords: matched,
+            });
+        }
+    }
+
+    // Sort by score descending, then by path for stability
+    results.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
+    results
+}
+
+/// Handle `/context relevant <query>`.
+pub fn handle_context_relevant(query: &str) {
+    let query = query.trim();
+    if query.is_empty() {
+        eprintln!(
+            "{BOLD}Usage:{RESET} /context relevant <query>\n\
+             Example: /context relevant web search fallback\n\n\
+             Finds project files most relevant to a natural-language query\n\
+             by matching keywords against filenames and symbol names."
+        );
+        return;
+    }
+
+    let keywords = tokenize_query(query);
+    if keywords.is_empty() {
+        eprintln!(
+            "{YELLOW}No meaningful keywords{RESET} in query \"{query}\". Try more specific terms."
+        );
+        return;
+    }
+
+    let repo_map = build_repo_map(None, false);
+    let results = score_files(&repo_map, &keywords);
+
+    if results.is_empty() {
+        eprintln!(
+            "{YELLOW}No matching files{RESET} for keywords: {}. Try more specific or different terms.",
+            keywords.join(", ")
+        );
+        return;
+    }
+
+    let top = &results[..results.len().min(10)];
+
+    eprintln!("\n{BOLD_CYAN}Files relevant to \"{query}\":{RESET}\n");
+    eprintln!("  {DIM}Keywords:{RESET} {}\n", keywords.join(", "));
+
+    for (i, r) in top.iter().enumerate() {
+        let rank = i + 1;
+        eprintln!(
+            "  {BOLD}{rank:>2}.{RESET} {GREEN}{}{RESET} {DIM}(score: {}, matched: {}){RESET}",
+            r.path,
+            r.score,
+            r.matched_keywords.join(", "),
+        );
+    }
+
+    if results.len() > 10 {
+        eprintln!(
+            "\n  {DIM}… and {} more files with matches{RESET}",
+            results.len() - 10
+        );
+    }
+    eprintln!();
 }
 
 #[cfg(test)]
@@ -2056,5 +2205,96 @@ mod tests {
         assert!(!FileAction::Written.icon().is_empty());
         assert!(!FileAction::Listed.icon().is_empty());
         assert!(!FileAction::Searched.icon().is_empty());
+    }
+
+    // --- /context relevant tests ---
+
+    #[test]
+    fn test_tokenize_query_filters_stop_words() {
+        let tokens = tokenize_query("fix the web search");
+        assert_eq!(tokens, vec!["fix", "web", "search"]);
+    }
+
+    #[test]
+    fn test_tokenize_query_empty_after_stop_words() {
+        // All stop words → empty result
+        let tokens = tokenize_query("the a an to for");
+        assert!(tokens.is_empty());
+
+        // Completely empty query
+        let tokens2 = tokenize_query("");
+        assert!(tokens2.is_empty());
+    }
+
+    #[test]
+    fn test_score_files_empty_keywords() {
+        use crate::symbols::{Symbol, SymbolKind};
+        let files = vec![FileSymbols {
+            path: "src/main.rs".into(),
+            lines: 100,
+            symbols: vec![Symbol {
+                name: "main".into(),
+                kind: SymbolKind::Function,
+                is_public: true,
+                line: 1,
+            }],
+        }];
+        let results = score_files(&files, &[]);
+        assert!(
+            results.is_empty(),
+            "Empty keywords should produce no matches"
+        );
+    }
+
+    #[test]
+    fn test_score_files_ranking() {
+        use crate::symbols::{Symbol, SymbolKind};
+
+        let files = vec![
+            FileSymbols {
+                path: "src/commands_web.rs".into(),
+                lines: 200,
+                symbols: vec![Symbol {
+                    name: "web_search".into(),
+                    kind: SymbolKind::Function,
+                    is_public: true,
+                    line: 10,
+                }],
+            },
+            FileSymbols {
+                path: "src/main.rs".into(),
+                lines: 50,
+                symbols: vec![Symbol {
+                    name: "main".into(),
+                    kind: SymbolKind::Function,
+                    is_public: true,
+                    line: 1,
+                }],
+            },
+        ];
+
+        let keywords = tokenize_query("web search");
+        let results = score_files(&files, &keywords);
+
+        // commands_web.rs should score higher: "web" matches path component (3x)
+        // + "web" matches symbol "web_search" (2x) + "search" matches symbol (2x)
+        // + "search" might match path component — either way it's higher than main.rs
+        assert!(!results.is_empty());
+        assert_eq!(results[0].path, "src/commands_web.rs");
+
+        // main.rs should have score 0 (no keyword matches) → not in results,
+        // or at minimum score lower
+        if results.len() > 1 {
+            assert!(
+                results[0].score > results[1].score,
+                "commands_web.rs should score higher than main.rs"
+            );
+        }
+    }
+
+    #[test]
+    fn test_handle_context_relevant_no_panic() {
+        // Running against the actual yoyo repo should not panic
+        handle_context_relevant("web search");
     }
 }

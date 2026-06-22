@@ -676,7 +676,11 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
                /context files  — Show files referenced in this conversation\n\
                                  Lists all files the agent has read, edited, written,\n\
                                  listed, or searched during the current session,\n\
-                                 grouped by action type and deduplicated.",
+                                 grouped by action type and deduplicated.\n\
+               /context relevant <query> — Find files relevant to a query\n\
+                                 Scores project files by keyword matches against\n\
+                                 filenames and symbol names. Shows top 10 results.\n\
+                                 Example: /context relevant web search fallback",
         ),
         "copy" => Some(
             "/copy [last|code|<text>] — Copy text to the system clipboard\n\n\
@@ -1292,7 +1296,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "commit" => Some("Commit staged changes"),
         "compact" => Some("Compact conversation to save context"),
         "config" => Some("Show current settings"),
-        "context" => Some("Show project context, system prompt sections, or token budget"),
+        "context" => Some("Show project context, system prompt, tokens, or relevant files"),
         "copy" => Some("Copy text to the system clipboard"),
         "cost" => Some("Show estimated session cost"),
         "diff" => Some("Show git changes"),
