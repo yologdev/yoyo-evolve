@@ -1,0 +1,96 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure, then extract the risk-related code from commands_info.rs into a new commands_risk.rs file.
+  ▶ todo add 'Identify all risk-related code in commands_info.rs…' ✓ (0ms)
+  ▶ todo add 'Create src/commands_risk.rs with extracted code an…' ✓ (0ms)
+  ▶ todo add 'Remove extracted code from commands_info.rs' ✓ (0ms)
+  ▶ todo add 'Update commands.rs, main.rs, and CLAUDE.md' ✓ (0ms)
+  ▶ todo add 'Build, test, clippy, fmt verification' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  6 tools completed in 14.5s (6 ✓)
+
+Let me first understand the file structure and find the risk-related code boundaries.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_info.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ $ grep -n "^pub\|^fn \|^pub(crate)\|^struct \|^enum \|^const \|^type \|^impl \|^#\… ✓ (5ms)
+  ▶ $ grep -n "^    fn \|^    #\[test\]" src/commands_info.rs | tail -120 ✓ (5ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now let me identify the exact boundaries of the risk-related code and the test functions:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find the start of risk code (struct FileRisk) and where no… (2 lines) ✓ (3ms)
+  ▶ $ # Find end of risk code before tests module (2 lines) ✓ (3ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Good. Now let me find the test boundaries - which tests are risk-related vs not:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Get line numbers of all test functions (2 lines) ✓ (5ms)
+
+Now I can see the clear boundary. Risk tests start at line 4216 (test_normalize_scores_basic) and go to the end of file. The non-risk tests are from the start of the test module to line 4215. Let me delegate the heavy extraction work to a sub-agent:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent '
+Read the file `src/commands_info.rs` and extract the follow…' ✓ (52.5s)
+
+Now let me read the actual code sections precisely:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_info.rs && echo "---" && sed -n '1551,1552p' src/commands_inf… ✓ (5ms)
+  ▶ $ # Find the exact line of the comment/doc before FileRisk (2 lines) ✓ (3ms)
+  ▶ $ # Find exactly where handle_risk_validate ends (2 lines) ✓ (4ms)
+  ▶ $ # Where do risk tests start? Look for the risk scoring tests… (2 lines) ✓ (3ms)
+  ▶ $ # Check last few lines (2 lines) ✓ (3ms)
+  5 tools completed in 16.1s (5 ✓)
+
+Good. Now let me read the exact risk production code and risk test code:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Extract the risk production code (lines 1552-2789) (3 lines) ✓ (5ms)
+  ▶ $ # Extract risk test code (lines 4213-5108)   (3 lines) ✓ (3ms)
+  ▶ $ # Extract risk tests (lines 4213-5107) - before the final cl… (4 lines) ✓ (5ms)
+  3 tools completed in 10.8s (3 ✓)
+
+Now let me check how commands.rs references handle_risk:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "handle_risk\|commands_risk" src/commands.rs ✓ (9ms)
+  ▶ $ # Check how other commands_*.rs are declared in main.rs (2 lines) ✓ (3ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me also check what other files reference risk functions from commands_info:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "commands_info::.*risk\|commands_info::FileRisk\|commands_info::compute… ✓ (43ms)
+  ▶ $ # Check if FileRisk, compute_file_risk_scores, or format_ris… (2 lines) ✓ (7ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Only handle_risk is referenced externally. Now let me build the new file. I need to read the actual risk production code carefully:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1552..2790 ✓ (9ms)
+
+Now let me read the risk tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '4213,5108p' src/commands_info.rs > /tmp/risk_tests_f… (2 lines) ✓ (5ms)
+  ▶ read src/commands_info.rs:4213..5109 ✓ (7ms)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  4 tools completed in 9.9s (4 ✓)
+
+Now I have all the information I need. Let me create the new file by extracting the code:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Build the new file from the extracted sections (36 lines) ✓ (9ms)
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo wip #3 ✓ (0ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now remove the extracted code from commands_info.rs. I need to remove:
+1. Lines 1552-2789 (the risk production code, including the blank line before it)  
+2. Lines 4213-5107 (the risk tests, including the blank lines before them)
+
+I'll do this carefully to keep the file structure intact:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Strategy: remove the risk tests first (higher line numbers… (15 lines) ✓ (9ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

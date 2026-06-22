@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure, then extract the risk scorer code into its own file.
+  ▶ todo add 'Understand current risk code boundaries in command…' ✓ (0ms)
+  ▶ todo add 'Create src/commands_risk.rs with all risk-related …' ✓ (0ms)
+  ▶ todo add 'Update commands_info.rs - remove extracted code' ✓ (0ms)
+  ▶ todo add 'Update imports/modules in main.rs, commands.rs' ✓ (0ms)
+  ▶ todo add 'Build, test, clippy, fmt - verify everything passe…' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture section' ✓ (0ms)
+  ▶ todo add 'Commit' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  8 tools completed in 26.6s (8 ✓)
+
+Let me first understand the boundaries of the risk code in commands_info.rs.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_info.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ $ grep -n 'pub\|fn \|struct \|enum \|mod \|use \|#\[cfg(test)\]\|#\[test\]' src/co… ✓ (5ms)
+  ▶ $ grep -n 'pub\|fn \|struct \|enum \|mod \|#\[cfg(test)\]\|#\[test\]' src/commands… ✓ (6ms)
+  3 tools completed in 8.4s (3 ✓)
+
+Now let me find the exact boundaries of the risk code section:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '^pub\|^fn \|^pub(crate)\|^struct \|^enum \|^#\[cfg(test)\]' src/command… ✓ (9ms)
+  ▶ $ grep -n '^pub\|^fn \|^pub(crate)\|^struct \|^enum \|^#\[cfg(test)\]' src/command… ✓ (5ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Good. The risk code starts at line 1555. Let me find what comes just before and after:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1540..1560 ✓ (1ms)
+  ▶ $ # Find where the risk code ends (before the test module) (2 lines) ✓ (3ms)
+  ▶ read src/commands_info.rs:2780..2800 ✓ (1ms)
+  3 tools completed in 6.9s (3 ✓)
+
+OK, now I need to figure out which tests are risk-related and which aren't. Let me find all test function names in the test module:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '#\[test\]' src/commands_info.rs | head -5 ✓ (3ms)
+  ▶ $ awk '/^#\[cfg\(test\)\]/{found=1} found && /fn test_/{print NR": "$0}' src/comma… ✓ (6ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now I have a clear picture. The risk code starts at line 1552 (the comment/blank before struct FileRisk at 1555) and the non-test risk functions end at line 2788. The risk tests start at line 4216 and go to end of file (5108).
+
+Let me delegate this complex extraction to a sub-agent that will do the heavy lifting:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me read the risk code section that needs to be extracted:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..21 ✓ (1ms)
+
+Now let me read the complete risk code section (lines 1552-2788):
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1551..2791 ✓ (9ms)
+
+Now let me read the risk-related tests (from line 4216 to 5108):
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4215..5108 ✓ (7ms)
+  ▶ read src/commands_info.rs:5106..5109 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me check the line before the first risk test to understand the boundary:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:4200..4215 ✓ (2ms)
+
+Good. Line 4212 is the end of the last non-risk test, and the risk tests start at line 4215 with #[test]. Let me also check how commands.rs references handle_risk:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'handle_risk\|commands_info\|risk' src/commands.rs | head -20 ✓ (4ms)
+  ▶ $ grep -n 'handle_risk\|commands_risk' src/dispatch.rs | head -10 ✓ (4ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Good — dispatch.rs only references commands::handle_risk (via the re-export), so we just need to update the re-export in commands.rs.
+
+Now let me check how other `commands_*` modules are declared in main.rs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'mod commands' src/main.rs ✓ (9ms)
+
+Now I have all the info I need. Let me extract the risk code. First, I'll read the full risk code section to create the new file:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Extract the risk function code (lines 1552-2788) (2 lines) ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,137 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reviewing the open issues and current state, then create the session plan.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat DREAM.md ✓ (3ms)
+ ✓ (7ms)
+ ✓ (43ms)
+  ▶ $ cat journals/JOURNAL.md | head -120  ▶ $ cd src && wc -l commands_info.rs ✓ (3ms)
+ ✓ (6ms)
+  5 tools completed in 7.7s (5 ✓)
+
+Now let me check the risk scorer's current state and what the dream milestone needs next:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn compute_file_risk_scores\|fn handle_risk\|fn format_risk_report\|fn …  ▶ $ # Check what sections/functions are in commands_info.rs to u… (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Check how the risk-related functions span in the file (2 lines)  ▶ $ # Check the #[cfg(test)] module boundary (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # Count how many lines the risk section spans (6 lines)  ▶ $ # Check the test module to see where risk tests are (2 lines) ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # How many lines are risk-related tests? (8 lines) ✓ (3ms)
+  ▶ $ # Check trajectory error fingerprint issue - is the test fli… (2 lines)  ▶ $ # Check what auto-context selection would need - how does th… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # What does the current trajectory error fingerprint extract… (2 lines)  ▶ $ # Check what the trajectory's recurring CI error looks like … (4 lines) ✓ (4ms)
+ ✓ (3ms)
+  11 tools completed in 37.7s (11 ✓)
+
+Now I have a clear picture. Let me plan the three tasks:
+
+1. **Dream-driven (self-driven):** Extract risk scorer into its own module — commands_info.rs is at 5,108 lines and is itself the #1 risk prediction target. The risk scorer (2,135 lines including tests) is a self-contained subsystem that belongs in its own file. This advances the dream by making the self-knowledge infrastructure more maintainable and is the assessment's #1 self-discovered issue.
+
+2. Self-driven/competitive: Fix the trajectory error fingerprint false positive — the extractor is matching test names containing "error" (like `test_watch_result_failed_with_error ... ok`) as real errors, producing noise in the trajectory that obscures real signals.
+
+3. Self-driven/competitive: Auto-context file selection — teach yoyo to automatically identify which project files are relevant to a user's question, bridging the gap with Aider's /context feature. This is identified as the #2 capability gap vs competitors.
+
+Let me scope task 3 more carefully — it needs to be completable in 20 minutes:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how context is currently loaded and where auto-conte… (2 lines)  ▶ $ # Check if there's already a /context command or similar (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Task 3 (auto-context) is too large for a 20-minute task — it would need a new scoring/ranking system, integration with the repo map, and testing. Let me pick something more concrete and achievable. Looking at the assessment's capability gaps again...
+
+The trajectory false positive fix is in scripts/extract_trajectory.py which is a safety-protected file. Let me reconsider.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Is extract_trajectory.py protected? (4 lines) ✓ (5ms)
+
+Good — scripts/extract_trajectory.py is NOT in the protected list. Let me finalize the plan.
+
+For task 3, let me think about what's high-impact and achievable in 20 minutes. The dream milestone is about self-prediction. The risk scorer infrastructure is built (Days 111-113). The next concrete step for the dream is: **run the risk scorer automatically at session start and log predictions so /risk validate has data to check against**. But that's more of an integration task.
+
+Actually, the most impactful task 3 would be the commands_info.rs split — but that's already task 1. Let me think differently.
+
+Looking at the assessment: "The trajectory still shows 4× watch test noise" — this is a real friction point that degrades the trajectory's signal-to-noise ratio. And the fix is scoped: one file, a regex filter improvement.
+
+For the third task, let me pick something that advances a competitive gap concretely. The assessment mentions "Auto-context selection" as gap #2. A scoped first step: teach the /context command to show which files in the project are most relevant to a given query by scoring repo map entries against keywords. That's a focused enhancement to one existing file.
+
+Actually, let me reconsider. The risk module extraction is the highest priority (5,108-line file is the assessment's #1 bug). But I need to check — can I split the extraction into a task that touches ≤3 files?
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # How is the risk code referenced from other files? (2 lines) ✓ (8ms)
+
+Only 2 external references. The extraction would touch 3 files: create commands_risk.rs, edit commands_info.rs to remove the risk code, and update the import in commands.rs (or dispatch.rs). Perfect scope.
+
+Now let me write the plan:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (53 lines) ✓ (1m 2s)
+  ▶ write session_plan/task_02.md (34 lines) ✓ (1m 1s)
+  ▶ write session_plan/task_03.md (38 lines) ✓ (1m 2s)
+  3 tools completed in 3m 52s (3 ✓)
+
+Wait — task 3 touches commands_project.rs, commands_map.rs, and potentially help_data.rs — that's 3 files which is the limit. Let me verify the file list is tight enough and the task is scoped.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how build_repo_map works currently (2 lines)  ▶ $ # Check what build_repo_map returns   (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 4.8s (2 ✓)
+
+`build_repo_map already returns Vec<FileSymbols>` — structured data. The task can use it directly without needing to modify commands_map.rs. That means task 3 only touches commands_project.rs (and maybe help_data.rs). Even better — 2 files max.
+
+Let me update task 3 to reflect this:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_03.md (41 lines)
+    Title: Add /context relevant — auto-identify files relevant to a query
+  - Files: src/commands_project.rs, src/commands_map.rs
+  + Files: src/commands_project.rs, src/help_data.rs
+    Issue: none
+    
+    ## Context
+  - The assessment identifies "Auto-context selection" as the #2 competitive gap vs Aider. Aider's `/context` auto-identifies which files need editing for a given task. yoyo has a repo map but doesn't use it to suggest relevant files for a query.
+  + The assessment identifies "Auto-context selection" as the #2 competitive gap vs Aider. Aider's `/context` auto-identifies which files need editing for a given task. yoyo has a repo map (`build_repo_map()` returns `Vec<FileSymbols>` with structured file/symbol data) but doesn't use it to suggest relevant files for a query.
+    
+  - This task adds a focused first step: `/context relevant <query>` — given a natural language query, score project files by relevance and display the top matches. This gives users a way to discover which files matter before starting work, bridging the gap with Aider's feature.
+  + This task adds a focused first step: `/context relevant <query>` — given a natural language query, score project files by relevance and display the top matches.
+    
+    ## What to do
+    
+    1. In `src/commands_project.rs`, add a new handler `handle_context_relevant(query: &str)` that:
+  -    - Takes a natural-language query string (e.g., "fix the web search fallback" or "add tab completion for commands")
+  -    - Tokenizes the query into keywords (split on whitespace, lowercase, filter out stop words like "the", "a", "to", "for", "in", "is", "and", "of", "with")
+  -    - Calls `build_repo_map()` from `commands_map.rs` to get the structured project index
+  +    - Takes a natural-language query string (e.g., "fix the web search fallback" or "add tab completion")
+  +    - Tokenizes the query into keywords: split on whitespace, lowercase, filter out stop words (common set: "the", "a", "an", "to", "for", "in", "is", "are", "and", "or", "of", "with", "on", "it", "this", "that", "my", "do", "how")
+  ... (42 more lines)
+ ✓ (1m 2s)
+
+Now write the issue responses file:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (8 lines) ✓ (1m 3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+  3 tools completed in 1m 13s (3 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 114 Session Plan
+
+**Task 1 — Extract risk scorer into commands_risk.rs** (Dream-driven, self-driven)
+• `commands_info.rs` is 5,108 lines — the codebase's largest file and its own #1 risk prediction target
+• The risk scorer subsystem (~2,135 lines including tests) is self-contained with only 2 external references
+• Extract into new commands_risk.rs, reducing commands_info.rs to ~2,970 lines
+• Files: `src/commands_risk.rs (new), src/commands_info.rs, src/commands.rs`
+
+**Task 2 — Fix trajectory error fingerprint false positives** (Self-driven, signal quality)
+• The trajectory extractor matches passing test names containing "error" as real CI errors
+• `test_watch_result_failed_with_error ... ok` shows up 4× as a "recurring CI error" when it's actually passing
+• Add a filter to skip lines matching test ... ok patterns
+• Files: scripts/extract_trajectory.py
+
+**Task 3 — Add /context relevant <query> for auto-file identification** (Competitive gap #2)
+• Bridge the gap with Aider's /context by scoring project files against a natural-language query
+• Uses existing `build_repo_map()` structured data to match keywords against filenames and symbols
+• First step toward auto-context selection — the most impactful missing capability for real users
+• Files: src/commands_project.rs, `src/help_data.rs`
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

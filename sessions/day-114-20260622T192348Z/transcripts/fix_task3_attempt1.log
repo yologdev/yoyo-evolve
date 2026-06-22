@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the existing implementation to understand what's already in place, then add the missing tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_context_relevant… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '840,975p' src/commands_p… ✓ (4ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now let me see what tests already exist and the end of the test module:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '973,${p}' src/commands_p… ✓ (15ms)
+
+Now let me check the FileSymbols and Symbol struct definitions to make sure I construct them correctly in tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct FileSymbols\… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '230,270p' src/symbols.rs ✓ (4ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me check how `STOP_WORDS` is defined:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "STOP_WORDS" src/command… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '834,840p' src/commands_p… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now let me check the SymbolKind enum to construct test symbols:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '210,242p' src/symbols.rs ✓ (3ms)
+
+Good. Now I have all the info I need. Let me check how symbols module is imported in the test section:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_project.rs ✓ (3ms)
+
+Good, FileSymbols is imported. Let me now check if Symbol and `SymbolKind` are imported:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::symbols" src… ✓ (3ms)
+
+I'll need to also import Symbol and SymbolKind in the test module. Let me find the end of the test module to add the tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_project.rs ✓ (3ms)
+
+Now let me add the 4 required tests. I'll insert them just before the closing } of the test module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2190.. ✓ (2ms)
+  ▶ edit src/commands_project.rs (3 → 91 lines)
+            assert!(!FileAction::Searched.icon().is_empty());
+  +     }
+  + 
+  +     // --- /context relevant tests ---
+  + 
+  +     #[test]
+  +     fn test_tokenize_query_filters_stop_words() {
+  +         let tokens = tokenize_query("fix the web search");
+  +         assert_eq!(tokens, vec!["fix", "web", "search"]);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_tokenize_query_empty_after_stop_words() {
+  +         // All stop words → empty result
+  +         let tokens = tokenize_query("the a an to for");
+  +         assert!(tokens.is_empty());
+  + 
+  +         // Completely empty query
+  +         let tokens2 = tokenize_query("");
+  +         assert!(tokens2.is_empty());
+  ... (71 more lines)
+ ✓ (1m 32s)
+            assert!(!FileAction::Searched.icon().is_empty());
+  +     }
+  + 
+  +     // --- /context relevant tests ---
+  + 
+  +     #[test]
+  +     fn test_tokenize_query_filters_stop_words() {
+  +         let tokens = tokenize_query("fix the web search");
+  ... (13 more lines)
+  2 tools completed in 1m 48s (2 ✓)
+
+Now let's run the build, format, clippy, and tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (819ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (7.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 16s)
+  4 tools completed in 1m 51s (4 ✓)
+
+All 88 tests pass. Let me verify the new tests specifically ran:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "conte… ✓ (46.4s)
+
+All 5 new tests are running and passing (the test names include: test_tokenize_query_filters_stop_words, test_tokenize_query_empty_after_stop_words, `test_score_files_empty_keywords, test_score_files_ranking, and test_handle_context_relevant_no_panic`).
+
+Let me do the final combined verification as specified:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 16s)
+
+All checks pass. Here's a summary of what I added:
+
+**5 tests added to src/commands_project.rs** (covering all 4 required test cases from the task):
+
+1. `test_tokenize_query_filters_stop_words` — Verifies that tokenize_query("fix the web search") produces `["fix", "web", "search"]` with stop words removed.
+
+2. `test_tokenize_query_empty_after_stop_words` — Tests that an all-stop-words query and an empty query both produce empty results.
+
+3. `test_score_files_empty_keywords` — Tests that `score_files` with empty keywords returns no matches.
+
+4. `test_score_files_ranking` — Tests that a file named commands_web.rs with a symbol web_search scores higher for query "web search" than a file named main.rs with no matching keywords.
+
+5. `test_handle_context_relevant_no_panic` — Tests that handle_context_relevant("web search") doesn't panic when run against the actual yoyo repo.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

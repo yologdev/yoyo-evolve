@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll focus on the core task: fixing trajectory error fingerprint false positives on test names in `scripts/extract_trajectory.py`.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (129ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (117ms)
+  2 tools completed in 6.9s (2 ✓)
+
+The --self-test flag is crashing before reaching the self-test code. Let me check how it's invoked:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'self.test\|--self-test\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,445p' scripts/extrac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '628,635p' scripts/extrac… ✓ (3ms)
+  3 tools completed in 9.3s (3 ✓)
+
+The flag is --test not --self-test. Let me try:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/extract_trajecto… ✓ (40ms)
+
+All self-tests pass. Let me verify the actual filtering logic in the diff more carefully:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '237,250p' scripts/extrac… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '320,332p' scripts/extrac… ✓ (3ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me also verify the Rust build passes and that the risk module extraction (bonus work) is clean:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (46.3s)
+
+All tests pass. The task was specifically about scripts/extract_trajectory.py — the diff also includes a bonus refactor (extracting `commands_risk.rs from commands_info.rs`) which is unrelated but harmless. Let me verify the core requirements are met:
+
+1. ✅ Filter added in collect_failed_ci_fingerprints() to skip passing test lines (PASSING_TEST_RE)
+2. ✅ Filter added for test result: ok. summary lines (TEST_RESULT_OK_RE) — correctly only filters "ok." not "FAILED."
+3. ✅ Self-tests added covering all 5 required cases plus a bonus ANSI-codes case
+4. ✅ Self-tests pass (`python3 scripts/extract_trajectory.py --test`)
+5. ✅ cargo test passes
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 15s)
+
+Verdict: PASS
+Reason: The false-positive filter for passing test lines and test result summaries is correctly implemented in collect_failed_ci_fingerprints() with proper ANSI-stripping, all 6 self-tests pass (`--test flag), and cargo test passes. The bonus commands_risk.rs` extraction is unrelated but clean.
+

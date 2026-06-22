@@ -1,0 +1,376 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code structure before making changes.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Research the codebase to understand the structures and impor…' ✓ (52.1s)
+
+Now I have a clear picture. Let me implement this step by step.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add tokenize_query helper + scoring logic + handle…' ✓ (0ms)
+  ▶ todo add 'Wire /context relevant into handle_context + conte…' ✓ (0ms)
+  ▶ todo add 'Add tests for tokenize_query, scoring logic, and h…' ✓ (0ms)
+  ▶ todo add 'Update help_data.rs with /context relevant docs' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt + clippy + build + test, fix any iss…' ✓ (0ms)
+  5 tools completed in 17.0s (5 ✓)
+
+Let me first read the relevant sections of commands_project.rs to understand the full context:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs (50 lines) ✓ (1ms)
+
+Now let me check if there's a test module in this file:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_project.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/commands_project.rs ✓ (3ms)
+  ▶ read src/commands_project.rs:820..870 ✓ (1ms)
+  3 tools completed in 16.5s (3 ✓)
+
+Good. Let me see the end of the test module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^}" src/commands_project.rs | tail -5 ✓ (6ms)
+  ▶ read src/commands_project.rs:2050.. ✓ (1ms)
+  2 tools completed in 8.4s (2 ✓)
+
+Now let me check the SymbolKind display/label — does Symbol have a name field I can use?
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/symbols.rs (60 lines) ✓ (1ms)
+  ▶ search 'pub struct Symbol' in src/symbols.rs ✓ (3ms)
+  ▶ read src/symbols.rs:225..265 ✓ (1ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Now let me check the import path for `build_repo_map`:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn build_repo_map' in src/commands_map.rs ✓ (2ms)
+  ▶ read src/commands_map.rs (20 lines) ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Good. Now I have everything I need. Let me implement the feature.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+First, I'll add the import and the new functions right after the existing `handle_context` function:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (3 → 5 lines)
+    use crate::cli;
+  + use crate::commands_map::build_repo_map;
+    use crate::docs;
+    use crate::format::*;
+  + use crate::symbols::FileSymbols;
+ ✓ (15.4s)
+    use crate::cli;
+  + use crate::commands_map::build_repo_map;
+    use crate::docs;
+    use crate::format::*;
+  + use crate::symbols::FileSymbols;
+
+Expected — the imports aren't used yet. Let me now add the core implementation. I need to add the functions before the test module. Let me find a good insertion point:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:815..830 ✓ (1ms)
+
+Now I'll add the core implementation right before the test module:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (4 → 174 lines)
+  + // ---------------------------------------------------------------------------
+  + // /context relevant — auto-identify files relevant to a query
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Common stop words filtered out of queries.
+  + const STOP_WORDS: &[&str] = &[
+  +     "the", "a", "an", "to", "for", "in", "is", "are", "and", "or", "of", "with", "on", "it",
+  +     "this", "that", "my", "do", "how",
+  + ];
+  + 
+  + /// Tokenize a natural-language query into keywords.
+  + ///
+  + /// Splits on whitespace, lowercases, and filters out common stop words.
+  + fn tokenize_query(query: &str) -> Vec<String> {
+  +     query
+  +         .split_whitespace()
+  +         .map(|w| w.to_lowercase())
+  +         .filter(|w| !STOP_WORDS.contains(&w.as_str()))
+  +         .collect()
+  + }
+  ... (153 more lines)
+ ✓ (9.8s)
+  + // ---------------------------------------------------------------------------
+  + // /context relevant — auto-identify files relevant to a query
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Common stop words filtered out of queries.
+  + const STOP_WORDS: &[&str] = &[
+  +     "the", "a", "an", "to", "for", "in", "is", "are", "and", "or", "of", "with", "on", "it",
+  +     "this", "that", "my", "do", "how",
+  ... (13 more lines)
+
+The color constants aren't associated functions on Color — they're standalone constants. Let me check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub const BOLD' in src/format/mod.rs ✓ (3ms)
+  ▶ search '^pub (const|static) (BOLD|RESET|GREEN|YELLOW|CYAN|DIM)' in src/format/mod.rs ✓ (3ms)
+  ▶ search 'BOLD' in src/format/mod.rs ✓ (3ms)
+  ▶ read src/format/mod.rs:188..218 ✓ (1ms)
+  4 tools completed in 13.0s (4 ✓)
+
+They're module-level statics, not Color:: associated. Since use crate::format::* is already imported, I just use them directly. Let me fix:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (81 → 60 lines)
+        let query = query.trim();
+        if query.is_empty() {
+            eprintln!(
+  -             "{}Usage:{} /context relevant <query>\n\
+  +             "{BOLD}Usage:{RESET} /context relevant <query>\n\
+                 Example: /context relevant web search fallback\n\n\
+                 Finds project files most relevant to a natural-language query\n\
+  -              by matching keywords against filenames and symbol names.",
+  -             Color::BOLD,
+  -             Color::RESET
+  +              by matching keywords against filenames and symbol names."
+            );
+            return;
+        }
+  ···
+        let keywords = tokenize_query(query);
+        if keywords.is_empty() {
+            eprintln!(
+  -             "{}No meaningful keywords{} in query \"{}\". Try more specific terms.",
+  -             Color::YELLOW,
+  ... (64 more lines)
+ ✓ (15.7s)
+        let query = query.trim();
+        if query.is_empty() {
+            eprintln!(
+  -             "{}Usage:{} /context relevant <query>\n\
+  +             "{BOLD}Usage:{RESET} /context relevant <query>\n\
+                 Example: /context relevant web search fallback\n\n\
+                 Finds project files most relevant to a natural-language query\n\
+  -              by matching keywords against filenames and symbol names.",
+  ... (13 more lines)
+
+Good — the functions exist but aren't called yet. Let me wire them up in `handle_context and context_subcommands`:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ edit src/commands_project.rs (1 → 1 lines)
+  - const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files"];
+  + const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files", "relevant"];
+ ✓ (15.5s)
+  - const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files"];
+  + const CONTEXT_SUBCOMMANDS: &[&str] = &["system", "tokens", "files", "relevant"];
+  3 tools completed in 25.5s (3 ✓)
+
+Now wire the routing:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (9 → 12 lines)
+            show_context_tokens(system_prompt, agent);
+        } else if args.starts_with("files") {
+            show_context_files(agent);
+  +     } else if args.starts_with("relevant") {
+  +         let query = args.strip_prefix("relevant").unwrap_or("").trim();
+  +         handle_context_relevant(query);
+        } else {
+            show_project_context_files();
+        }
+ ✓ (1m 32s)
+            show_context_tokens(system_prompt, agent);
+        } else if args.starts_with("files") {
+            show_context_files(agent);
+  +     } else if args.starts_with("relevant") {
+  +         let query = args.strip_prefix("relevant").unwrap_or("").trim();
+  +         handle_context_relevant(query);
+        } else {
+            show_project_context_files();
+        }
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3920 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the failing test to understand what's happening:
+  ▶ read src/banner.rs:470..495 ✓ (2ms)
+
+This is a flaky test due to env var race conditions between parallel tests - test_exa_api_key_set_when_present sets EXA_API_KEY to a value, but test_exa_api_key_set_when_missing or test_exa_api_key_set_when_empty can remove/empty it in parallel. This is a pre-existing issue, not caused by my changes.
+
+Let me verify my changes are actually working correctly first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.6s)
+
+Clippy passes. Now let me run just the test that's failing:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test banner::tests::test_e… ✓ (164ms)
+
+It passes when run alone — this is a pre-existing env var race condition between the three `exa_api_key` tests running in parallel. This is not caused by my changes.
+
+Let me now check my changes are complete and all tests (including my new ones) pass:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (142ms)
+
+All my tests pass. Now let me fix the pre-existing flaky test. The three `exa_api_key tests race on the EXA_API_KEY` env var. The standard fix is to use serial_test or restructure them. Let me check if the project uses serial_test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -r "serial_test\|serial" /home/runner/work/yoyo-evolve/yoyo-evolve/Cargo.to…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (39ms)
+  ▶ search 'serial_test' in src/banner.rs ✓ (2ms)
+  2 tools completed in 6.1s (2 ✓)
+
+The crate has serial_test but the banner tests don't use it. Let me add `#[serial]` to the three env-var-mutating tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/banner.rs ✓ (2ms)
+  ▶ search 'mod tests"' in src/banner.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/banner.rs ✓ (3ms)
+  ▶ read src/banner.rs:245..255 ✓ (0ms)
+  ▶ edit src/banner.rs (4 → 5 lines)
+    mod tests {
+        use super::*;
+        use crate::commands_project::ProjectType;
+  +     use serial_test::serial;
+ ✓ (15.4s)
+    mod tests {
+        use super::*;
+        use crate::commands_project::ProjectType;
+  +     use serial_test::serial;
+  5 tools completed in 36.1s (5 ✓)
+
+Need to use it on the tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/banner.rs (17 → 20 lines)
+        #[test]
+  +     #[serial]
+        fn test_exa_api_key_set_when_present() {
+            std::env::set_var("EXA_API_KEY", "test-key-123");
+            assert!(exa_api_key_set());
+        }
+    
+        #[test]
+  +     #[serial]
+        fn test_exa_api_key_set_when_empty() {
+            std::env::set_var("EXA_API_KEY", "");
+            assert!(!exa_api_key_set());
+        }
+    
+        #[test]
+  +     #[serial]
+        fn test_exa_api_key_set_when_missing() {
+            std::env::remove_var("EXA_API_KEY");
+            assert!(!exa_api_key_set());
+ ✓ (1m 32s)
+        #[test]
+  +     #[serial]
+        fn test_exa_api_key_set_when_present() {
+            std::env::set_var("EXA_API_KEY", "test-key-123");
+            assert!(exa_api_key_set());
+        }
+    
+        #[test]
+  ... (11 more lines)
+
+Now let me run the full check:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 16s)
+  2 tools completed in 1m 38s (2 ✓)
+
+All 3920 tests pass now, including the previously flaky exa_api_key tests. Let me verify my changes are complete by reviewing what I've done:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+
+Let me also confirm the help_data.rs update was already done in the previous agent session:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/help_data.rs ✓ (3ms)
+
+The help_data.rs wasn't updated yet. Let me add the /context relevant documentation there:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'context files.*Show files referenced' in src/help_data.rs ✓ (3ms)
+  ▶ read src/help_data.rs:673..688 ✓ (1ms)
+  ▶ edit src/help_data.rs (4 → 8 lines)
+                   /context files  — Show files referenced in this conversation\n\
+                                     Lists all files the agent has read, edited, written,\n\
+                                     listed, or searched during the current session,\n\
+  -                                  grouped by action type and deduplicated.",
+  +                                  grouped by action type and deduplicated.\n\
+  +                /context relevant <query> — Find files relevant to a query\n\
+  +                                  Scores project files by keyword matches against\n\
+  +                                  filenames and symbol names. Shows top 10 results.\n\
+  +                                  Example: /context relevant web search fallback",
+ ✓ (1m 32s)
+                   /context files  — Show files referenced in this conversation\n\
+                                     Lists all files the agent has read, edited, written,\n\
+                                     listed, or searched during the current session,\n\
+  -                                  grouped by action type and deduplicated.",
+  +                                  grouped by action type and deduplicated.\n\
+  +                /context relevant <query> — Find files relevant to a query\n\
+  +                                  Scores project files by keyword matches against\n\
+  +                                  filenames and symbol names. Shows top 10 results.\n\
+  +                                  Example: /context relevant web search fallback",
+  3 tools completed in 1m 53s (3 ✓)
+
+Now update the short description for "context" to mention `relevant`:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search '"context" => Some\("Show project context' in src/help_data.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'context.*Show project context' in src/help_data.rs ✓ (3ms)
+  ▶ edit src/help_data.rs (1 → 1 lines)
+  -         "context" => Some("Show project context, system prompt sections, or token budget"),
+  +         "context" => Some("Show project context, system prompt sections, token budget, or find relevant files"),
+ ✓ (1m 29s)
+  -         "context" => Some("Show project context, system prompt sections, or token budget"),
+  +         "context" => Some("Show project context, system prompt sections, token budget, or find relevant files"),
+  3 tools completed in 1m 37s (2 ✓, 1 ✗)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+Let me look at the failing test to understand the constraint:
+  ▶ search 'test_short_descriptions_are_actually_short' in src/help_data.rs ✓ (3ms)
+  ▶ read src/help_data.rs:1425..1450 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+My short description is too long (>80 chars). Let me shorten it:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help_data.rs (1 → 1 lines)
+  -         "context" => Some("Show project context, system prompt sections, token budget, or find relevant files"),
+  +         "context" => Some("Show project context, system prompt, tokens, or relevant files"),
+ ✓ (1m 33s)
+  -         "context" => Some("Show project context, system prompt sections, token budget, or find relevant files"),
+  +         "context" => Some("Show project context, system prompt, tokens, or relevant files"),
+  ▶ $ echo -n "Show project context, system prompt, tokens, or relevant files" | wc -c ✓ (3ms)
+  2 tools completed in 1m 40s (2 ✓)
+
+62 chars, well under 80. Now let me run the full check:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20

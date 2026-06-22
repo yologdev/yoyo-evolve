@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant file to understand the current code structure.
+  ▶ $ wc -l scripts/extract_trajectory.py📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ $ sed -n '290,350p' scripts/extract_trajectory.py ✓ (4ms)
+  ▶ $ grep -n 'ERROR_LINE_RE' scripts/extract_trajectory.py ✓ (9ms)
+  ▶ $ sed -n '235,260p' scripts/extract_trajectory.py ✓ (4ms)
+  ▶ $ sed -n '260,275p' scripts/extract_trajectory.py ✓ (3ms)
+  5 tools completed in 11.1s (5 ✓)
+
+Now let me look at the run_self_tests() function:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'run_self_tests\|def run_self' scripts/extract_trajectory.py ✓ (9ms)
+  ▶ $ sed -n '471,551p' scripts/extract_trajectory.py ✓ (4ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now I have a clear picture. Let me also check what --self-test vs --test flag is used:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"--test\|"--self-test' scripts/extract_trajectory.py ✓ (8ms)
+
+Good — the flag is --test (the task description says --self-test but the code uses --test). Now let me also understand the flow better — lines where `ERROR_LINE_RE` is used in the filtering:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '308,325p' scripts/extract_trajectory.py ✓ (3ms)
+
+Now I have the full picture. The fix is:
+
+1. Add a regex to detect passing Rust test lines and `test result: ok.` lines
+2. Skip those lines in the collect_failed_ci_fingerprints loop
+3. Add self-tests to verify the filtering
+
+Let me implement this:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (1 → 10 lines)
+    ERROR_LINE_RE = re.compile(r"(error|panicked|FAILED|fatal)", re.IGNORECASE)
+  + 
+  + # Passing Rust test lines that may contain error-like words in the test name
+  + # e.g. "test watch::tests::test_watch_result_failed_with_error ... ok"
+  + PASSING_TEST_RE = re.compile(r"test\s+\S+\s+\.\.\.\s+ok", re.IGNORECASE)
+  + 
+  + # Test result summary line that passed (may mention "0 failed" which matches ERROR_LINE_RE)
+  + # e.g. "test result: ok. 3823 passed; 0 failed;"
+  + # NOTE: "test result: FAILED." IS a real error — only skip "ok." lines
+  + TEST_RESULT_OK_RE = re.compile(r"test result:\s*ok\.", re.IGNORECASE)
+ ✓ (59.2s)
+    ERROR_LINE_RE = re.compile(r"(error|panicked|FAILED|fatal)", re.IGNORECASE)
+  + 
+  + # Passing Rust test lines that may contain error-like words in the test name
+  + # e.g. "test watch::tests::test_watch_result_failed_with_error ... ok"
+  + PASSING_TEST_RE = re.compile(r"test\s+\S+\s+\.\.\.\s+ok", re.IGNORECASE)
+  + 
+  + # Test result summary line that passed (may mention "0 failed" which matches ERROR_LINE_RE)
+  + # e.g. "test result: ok. 3823 passed; 0 failed;"
+  + # NOTE: "test result: FAILED." IS a real error — only skip "ok." lines
+  + TEST_RESULT_OK_RE = re.compile(r"test result:\s*ok\.", re.IGNORECASE)
+
+Now add the filter in the loop:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (3 → 10 lines)
+            for ln in tail:
+                if ERROR_LINE_RE.search(ln):
+  +                 stripped = strip_ansi(ln)
+  +                 # Skip passing test lines (e.g. test names containing "error")
+  +                 if PASSING_TEST_RE.search(stripped):
+  +                     continue
+  +                 # Skip passing test result summaries (e.g. "test result: ok. 3823 passed; 0 failed;")
+  +                 if TEST_RESULT_OK_RE.search(stripped):
+  +                     continue
+                    fp = fingerprint_error_line(ln)
+ ✓ (1m 15s)
+            for ln in tail:
+                if ERROR_LINE_RE.search(ln):
+  +                 stripped = strip_ansi(ln)
+  +                 # Skip passing test lines (e.g. test names containing "error")
+  +                 if PASSING_TEST_RE.search(stripped):
+  +                     continue
+  +                 # Skip passing test result summaries (e.g. "test result: ok. 3823 passed; 0 failed;")
+  +                 if TEST_RESULT_OK_RE.search(stripped):
+  +                     continue
+                    fp = fingerprint_error_line(ln)
+
+Now add the self-tests before the final print statement in run_self_tests():
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'ANSI stripped' scripts/extract_trajectory.py ✓ (9ms)
+  ▶ $ sed -n '553,565p' scripts/extract_trajectory.py ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I'll add the new tests. I need a helper to test whether a line would be fingerprinted (i.e., passes both the ERROR_LINE_RE check and the new filters):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (8 → 76 lines)
+        fp_n = fingerprint_error_line(line_n)
+        fp_o = fingerprint_error_line(line_o)
+        assert_eq("subsecond precision clusters", fp_n, fp_o)
+  + 
+  +     # --- False-positive filtering tests ---
+  +     print("\n=== false-positive filter self-tests ===\n")
+  + 
+  +     def would_fingerprint(line: str) -> bool:
+  +         """Simulate the filtering logic in collect_failed_ci_fingerprints."""
+  +         if not ERROR_LINE_RE.search(line):
+  +             return False
+  +         stripped = strip_ansi(line)
+  +         if PASSING_TEST_RE.search(stripped):
+  +             return False
+  +         if TEST_RESULT_OK_RE.search(stripped):
+  +             return False
+  +         return True
+  + 
+  +     def assert_filtered(label: str, line: str) -> None:
+  +         """Assert that a line is NOT fingerprinted (filtered out)."""
+  ... (53 more lines)
+ ✓ (1m 15s)
+        fp_n = fingerprint_error_line(line_n)
+        fp_o = fingerprint_error_line(line_o)
+        assert_eq("subsecond precision clusters", fp_n, fp_o)
+  + 
+  +     # --- False-positive filtering tests ---
+  +     print("\n=== false-positive filter self-tests ===\n")
+  + 
+  +     def would_fingerprint(line: str) -> bool:
+  ... (13 more lines)
+
+Now let's run the self-tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 scripts/extract_trajectory.py --test ✓ (39ms)
+
+All tests pass. Now let's run the Rust build/test checks:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 ✓ (16.7s)
+  ▶ $ cargo build 2>&1 | tail -3 ✓ (155ms)
+  ▶ $ cargo test 2>&1 | tail -5 ✓ (59.2s)
+  3 tools completed in 1m 22s (3 ✓)
+
+All checks pass. Let me verify the full self-test output cleanly:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 scripts/extract_trajectory.py --test ✓ (39ms)
+
+All passing. Now commit:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 114 (17:21): Fix trajectory error fingerprint f… ✓ (22ms)
+
+Done. Here's what I did:
+
+1. **Added two new filter regexes** next to ERROR_LINE_RE:
+   • PASSING_TEST_RE — matches `test some::path ... ok` lines (passing Rust tests whose names contain error-like words)
+   • TEST_RESULT_OK_RE — matches `test result: ok.` summary lines (which mention "0 failed" but aren't errors)
+
+2. Applied the filters in collect_failed_ci_fingerprints() — after a line matches `ERROR_LINE_RE`, it's checked against both filters. ANSI codes are stripped before the check so colored CI output is handled correctly. Lines matching either filter are skipped.
+
+3. Added 6 self-tests covering:
+   • Passing test with "error" in name → filtered ✓
+   • FAILED test with "error" in name → kept ✓
+   • Real compiler error → kept ✓
+   • test result: ok. summary → filtered ✓
+   • test result: FAILED. summary → kept ✓
+   • Passing test with ANSI color codes → filtered ✓
+
+This eliminates the `[4×] test watch::tests::test_watch_result_failed_with_error ... ok` false positive while preserving detection of actual CI errors.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

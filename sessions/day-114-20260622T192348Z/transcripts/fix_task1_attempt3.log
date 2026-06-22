@@ -1,0 +1,245 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the codebase, then perform the extraction.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_info.rs src/c… ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+So commands_risk.rs exists but nothing was removed from commands_info.rs. Let me plan this carefully.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Identify exact line ranges for risk code + tests i…' ✓ (0ms)
+  ▶ todo add 'Create proper commands_risk.rs with all risk code …' ✓ (0ms)
+  ▶ todo add 'Remove risk code + tests from commands_info.rs' ✓ (0ms)
+  ▶ todo add 'Update commands.rs import, add mod commands_risk t…' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture section' ✓ (0ms)
+  ▶ todo add 'Build, test, clippy, fmt verification' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  7 tools completed in 17.7s (7 ✓)
+
+Let me identify the exact boundaries of risk-related code and tests in commands_info.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^pub(crate)\|^fn … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    fn \|^    #\[test\… ✓ (5ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me identify exactly where the risk code starts and the test boundaries:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1550,1560p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1545,1556p' src/commands… ✓ (3ms)
+  2 tools completed in 4.2s (2 ✓)
+
+So the risk code starts at line 1553 (the /// doc comment for FileRisk). Let me find where it ends before the tests module:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2780,2800p' src/commands… ✓ (4ms)
+
+Now let me find where the risk tests start and end within the tests module. The first risk test is test_normalize_scores_basic at line 4216:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4210,4220p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5100,5108p' src/commands… ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Good. So the risk tests run from line 4213 (the blank line before #[test]) to line 5108 (end of file). Let me now understand the structure more precisely:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the file /home/runner/work/yoyo-evolve/yoyo-evolve/src/…' ✓ (45.4s)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 49.6s (2 ✓)
+
+Now let me check what's in the existing commands_risk.rs and whether CommitEntry/parse_git_log_name_only are defined in commands_info.rs or git.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommitEntry\|parse_git_… ✓ (4ms)
+
+So CommitEntry and parse_git_log_name_only are local to commands_info.rs (they're part of the risk code). file_change_counts is in git.rs. Let me also check run_git:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub fn run_git\b" src/… ✓ (3ms)
+
+Good. Now let me check imports in commands.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_risk\|commands_i… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk\|handle_r… ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Good - dispatch.rs uses it via commands::handle_risk. Let me check main.rs for how modules are declared:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod " src/main.rs ✓ (4ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me extract the risk code. First, let me read the exact content I need to extract:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1553,2789p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4213,5107p' src/commands… ✓ (4ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me read the risk function code and the risk tests to create the new file:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1553,2789p' src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4213,5107p' src/commands… ✓ (5ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me check if compute_file_risk_scores or format_risk_report or FileRisk is used by any non-risk code:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compute_file_risk_scor… ✓ (8ms)
+
+Good - only `handle_risk is used externally. Let me also check if any risk functions reference functions from commands_info.rs` that are NOT in the risk section:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1553,2789p' src/commands… ✓ (5ms)
+
+The risk code calls enable_quiet() from `crate::format, file_change_counts() from crate::git, and run_git() from crate::git`. All available via the glob imports. Let me check enable_quiet:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enable_quiet" src/comma… ✓ (3ms)
+
+That's just example strings in docs/comments, not actual calls. Good.
+
+Now let me check what the risk tests need for imports. Let me look at the test section more carefully:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4213,4220p' src/commands… ✓ (3ms)
+
+The tests use super::* from the main tests module. I need to check if the risk tests use any types/functions from non-risk code in commands_info:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4213,5107p' src/commands… ✓ (5ms)
+
+The risk tests reference CommitEntry, FileRisk, HistoryValidation, ValidationResult — all defined in the risk section. They also use HashMap, HashSet from std. They don't reference any non-risk types from commands_info.
+
+Let me also check if any test uses std::fs::File or tempfile:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4213,5107p' src/commands… ✓ (4ms)
+
+OK, it needs tempfile. Let me check if it's a dev dependency:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "tempfile" Cargo.toml ✓ (3ms)
+
+Good. Now let me construct the new file properly. Let me read the full risk functions block and the full risk tests block:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -11 src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:1..21 ✓ (2ms)
+  2 tools completed in 2.9s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3920 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_openai ... ok
+test agent_builder::tests::...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the failing test to understand what's going on:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test "banner::tests::test_… ✓ (131ms)
+
+The test passes now. Let me check the current state of the repo - the main task was the extraction which wasn't done:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && wc -l src/commands… ✓ (6ms)
+
+The extraction hasn't been done yet. commands_info.rs is still 5108 lines and the existing commands_risk.rs is just an untracked file but nothing was wired up. Let me do the full extraction properly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ todo clear ✓ (0ms)
+  ▶ todo add 'Identify exact line ranges for risk code + tests i…' ✓ (0ms)
+  ▶ todo add 'Create proper commands_risk.rs with all risk code,…' ✓ (0ms)
+  ▶ todo add 'Remove risk code + tests from commands_info.rs' ✓ (0ms)
+  ▶ todo add 'Update commands.rs import and add mod commands_ris…' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture section' ✓ (0ms)
+  ▶ todo add 'Build, test, clippy, fmt verification' ✓ (0ms)
+  7 tools completed in 22.2s (7 ✓)
+
+First, let me identify the exact boundaries:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^pub(crate)\|^fn … ✓ (5ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Now let me see the exact boundary - what's on the lines before the risk code:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1548,1556p' src/commands… ✓ (3ms)
+
+So risk code starts at line 1552 (the blank line before the doc comment). Let me see what ends the risk code:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2785,2795p' src/commands… ✓ (3ms)
+
+Risk functions end at line 2789 (closing }). The #[cfg(test)] starts at 2790.
+
+Now for the test section, I need to identify which tests are risk-related (to move) vs non-risk (to keep). Let me get all test function names:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "    fn test_" src/comma… ✓ (5ms)
+
+Risk tests start at line 4216 (test_normalize_scores_basic). The last non-risk test ends before that. Let me check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4205,4220p' src/commands… ✓ (3ms)
+
+Non-risk tests end at line 4211 (the } closing test_per_turn_breakdown_top_10_limit). Risk tests start at line 4213 (blank line + #[test] at 4214).
+
+The risk tests run from line 4213 to line 5107 (the line before the final }).
+
+Let me check the end:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '5100,5108p' src/commands… ✓ (3ms)
+
+Line 5108 is the final } closing the mod tests. So risk tests are lines 4213 through 5107, and then line 5108 closes the mod.
+
+Now let me also check what helper functions inside the tests module are used by risk tests. Let me look at the helper functions:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "    fn make_\|    fn bu… ✓ (4ms)
+
+These are helper functions for the per_turn_breakdown tests (non-risk). The risk tests don't use them.
+
+Let me verify the risk tests don't reference `Agent, Usage, AnthropicProvider, or the make_*` helpers:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4213,5107p' src/commands… ✓ (4ms)
+
+No references. The risk tests are self-contained.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now let me create the proper commands_risk.rs. I'll extract the risk functions (lines 1553-2789) and risk tests (lines 4213-5107), adding proper module-level imports:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/b… (49 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Let me verify the file starts and ends correctly:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/commands_risk.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -10 src/commands_risk.rs ✓ (3ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Good. Now let me check if it compiles standalone by trying a quick build after the other changes:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo wip #3 ✓ (0ms)
+  2 tools completed in 2.3s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
