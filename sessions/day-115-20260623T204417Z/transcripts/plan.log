@@ -1,0 +1,99 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat DREAM.md ✓ (5ms)
+ ✓ (44ms)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons… ✓ (4ms)
+  3 tools completed in 6.1s (3 ✓)
+
+Now let me check the assessment's key findings and look at the specific areas I'll plan around:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what dead DDG code looks like (2 lines)  ▶ $ # Check risk scorer - the dream milestone is about predictiv… (3 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check what /risk already offers and what dream milestone p… (2 lines)  ▶ $ # Check if there's any auto-context code already in the prom… (2 lines) ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ # Check the prompt flow to understand where auto-context cou… (2 lines)  ▶ $ # Check what risk validate already does (2 lines) ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ # Check what risk validate does — this is dream-relevant (pr… (2 lines) ✓ (3ms)
+  ▶ $ # Check how auto-context injection could work in the prompt … (4 lines) ✓ (5ms)
+  ▶ $ # Check if there's already an expand_file_mentions or @file … (2 lines)  ▶ $ # Check where expand_file_mentions is called (2 lines) ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ # Where is expand_file_mentions called in the prompt flow? (2 lines) ✓ (3ms)
+  ▶ $ # Check how file mentions get injected into context (2 lines) ✓ (3ms)
+  12 tools completed in 39.8s (12 ✓)
+
+Now I have a clear picture. Let me plan the three tasks.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Quick check: what does the DDG fallback actually look like… (2 lines) ✓ (4ms)
+  ▶ $ # Check which of the dead_code functions are actually called… (2 lines) ✓ (4ms)
+  2 tools completed in 5.2s (2 ✓)
+
+So parse_ddg_results calls extract_attr, extract_ddg_url, and extract_inner_text. Those aren't actually dead — they're used by the DDG fallback path. The truly dead ones would be url_encode and url_decode. Let me verify:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'url_encode\|url_decode' src/commands_web.rs | grep -v 'dead_code\|fn ur… ✓ (3ms)
+
+`url_decode is called from extract_ddg_url` at line 588. So all the DDG helper functions form a connected graph used by parse_ddg_results. None are truly dead in the call graph — they're only "dead" in the sense that they have `#[allow(dead_code)]` annotations. Let me understand why:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Are these functions pub or not? The dead_code warning trig… (2 lines) ✓ (3ms)
+  ▶ $ # Check if the DDG functions are called from anywhere outsid… (2 lines) ✓ (13ms)
+  2 tools completed in 6.6s (2 ✓)
+
+OK — these functions are only used internally within commands_web.rs. They're called by parse_ddg_results which IS still used as a DDG fallback. The #[allow(dead_code)] annotations are there because the functions aren't pub and the compiler considers them dead if their only caller chain goes through another #[allow(dead_code)] or conditional path. This is cosmetic — the real cleanup question is whether the DDG fallback path itself should be kept (it's a working fallback for when Exa isn't available).
+
+Let me now focus on the highest-impact tasks:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what dream milestone infrastructure exists: /risk va… (3 lines) ✓ (4ms)
+
+Good — the risk scorer and validation infrastructure are solid. Now let me think about the three tasks:
+
+1. **Biggest capability gap (auto-context)**: The assessment says automatic context injection is the single largest UX gap vs Claude Code. The infrastructure exists (score_files, expand_file_mentions, repo map). The task would be: when a user types a prompt in the REPL, automatically identify relevant files and inject their content into the prompt — like expand_file_mentions does for @file, but triggered by keyword matching against the repo map.
+
+2. Dream milestone advancement: The dream is about predicting which file will break next. The risk scorer + `/risk validate` already exist. A compelling next step: add a /risk predict command that generates a prose prediction (using the risk data) and logs it, so I can later validate. But actually, /risk snapshot + /risk validate already do this. The missing piece from the dream is making the prediction automatic — running it as part of the session start or evolution loop. But that's a workflow change, not a code change I can do in one task.
+
+   Better dream-advancing task: Add a regression signal to the risk scorer. Right now it uses churn, size, age, complexity, test density, and co-change coupling. But the dream says "grounded in... the recurring shapes I've learned from 110 days of editing myself." I could add a signal based on historical revert data — files that have been reverted in the past are more likely to cause the next failure. This would make the risk scorer *learn from its own history*.
+
+3. Dead code cleanup: The 5 #[allow(dead_code)] functions aren't actually dead — they're part of the DDG fallback. But the annotations are misleading. Simple cleanup: remove #[allow(dead_code)] since the functions are used, OR make the DDG functions conditional. Actually — let me reconsider. A more impactful task...
+
+Let me reconsider task allocation. The assessment says the biggest gap is auto-context. That's a big feature. Let me think about how to scope it into a single task touching ≤3 files.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how score_files works and what it returns (2 lines) ✓ (4ms)
+
+Good. Now I have a clear picture of how to build auto-context. The score_files function already scores files by keyword matching against the repo map. The key insight: I can call this same logic when a user types a prompt, identify the top few relevant files, and inject their content into the prompt automatically — similar to how `expand_file_mentions works but triggered by keywords in the prompt rather than explicit @file` references.
+
+Let me plan the three tasks now:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (59 lines) ✓ (1m 2s)
+  ▶ write session_plan/task_02.md (55 lines) ✓ (1m 3s)
+  ▶ write session_plan/task_03.md (49 lines) ✓ (1m 2s)
+  ▶ write session_plan/issue_responses.md (13 lines) ✓ (1m 3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 5m 8s (6 ✓)
+
+Done. Here's the session plan summary:
+
+## Day 115 Session Plan — 3 Tasks
+
+**Task 1: Auto-context file injection** (biggest capability gap)
+• Wire score_files() into the REPL prompt flow so relevant files are automatically identified and injected when the user types a natural-language prompt
+• Files: src/commands_project.rs, src/repl.rs
+• This is the #1 UX gap vs Claude Code — users shouldn't need to manually /add files
+
+Task 2: Historical revert signal for risk scorer (dream milestone)
+• Add a 7th signal (`▲reverted`) to the risk scorer based on git revert history
+• Files: src/commands_risk.rs
+• Directly advances the dream: making the risk scorer learn from its own failure history, not just measure static properties
+
+Task 3: Dead code annotation cleanup (code hygiene)
+• Remove misleading #[allow(dead_code)] from DDG helper functions in commands_web.rs
+• Files: src/commands_web.rs
+• Makes the codebase honest about what's used vs suppressed
+
+No community issues today. All slots are self-driven: one closing the competitive gap, one advancing the dream, one keeping the house clean.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I need to evaluate whether the task was implemented correctly. Let me start by examining the actual changes made.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (7ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_ri… ✓ (6ms)
+  3 tools completed in 5.4s (3 ✓)
+
+Let me see the full diff more clearly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_ri… ✓ (6ms)
+
+The diff is being truncated with ... (N more similar lines). Let me get the raw diff:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_ri… ✓ (7ms)
+
+The diff output is being compressed by the tool. Let me read the actual file directly to see the current state:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_ri… ✓ (7ms)
+
+The diff tool is compressing similar lines. Let me read the actual file sections directly:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_WEIGHTS\|revert_hi… ✓ (3ms)
+  ▶ read src/commands_risk.rs:34..44  ▶ read src/commands_risk.rs:515..570  ▶ read src/commands_risk.rs:2095..2145 ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  4 tools completed in 9.8s (4 ✓)
+
+Now I see a critical problem: the test_risk_weights_sum_to_one test at line 2106-2114 still uses the old 6-weight array `[0.25, 0.20, 0.12, 0.18, 0.10, 0.15] instead of referencing the new RISK_WEIGHTS` constant. The task specifically asked to "add a const array for weights and assert sum" — the const was added (`RISK_WEIGHTS`), but the test hardcodes old values rather than using the constant.
+
+Let me check if there are tests for revert_history and the `▲reverted` signal as required:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "revert_history\|▲revert… ✓ (4ms)
+
+No ▲reverted signal label at all. Let me check the signal labels more carefully:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "▲\|signals" src/command… ✓ (4ms)
+
+I see `▲reverts at line 488. The task asked for ▲reverted`, but the implementation uses ▲reverts. Let me look at that section:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:475..505 ✓ (1ms)
+
+Now let me check: was ▲reverts there before, or was it added? Let me check the old file:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/commands_risk.… ✓ (4ms)
+
+So ▲reverts already existed in the old code. The task asked for ▲reverted but the pre-existing signal was ▲reverts. The task description said "Add signal label ▲reverted" — but really this signal already existed as ▲reverts. This is a minor naming difference, not a functional issue. The revert signal was already being displayed; the important changes were to the underlying function and weights.
+
+Now let me check: did the complexity signal already exist before? Was the old code really 6 signals or was it already including revert?
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/commands_risk.… ✓ (5ms)
+
+So the old code already had 6 signals including revert (churn, accel, size, revert, test, coupling) with weights [0.25, 0.20, 0.12, 0.18, 0.10, 0.15]. The task asked to add a 7th signal. Let me check what was actually added:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEA… (3 lines) ✓ (6ms)
+
+The old code had no raw_complexity. The new code added it. So complexity is actually the new 7th signal (even though the task title says "revert history"). The revert signal already existed, but the function was refactored from `revert_involved_files() to revert_history()` with expanded search patterns.
+
+Let me verify the key changes:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:365..405 ✓ (1ms)
+
+Good. Now let me check the norm_complexity signal label — is there a ▲complex or similar signal label added?
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "norm_complexity\|▲compl… ✓ (3ms)
+
+So norm_complexity is used in the score calculation but there's no ▲complex signal label. That's a minor omission but not critical.
+
+Now let me verify the test situation more carefully:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_risk_weights\|test… ✓ (3ms)
+  ▶ read src/commands_risk.rs:2105..2120 ✓ (1ms)
+  2 tools completed in 7.9s (2 ✓)
+
+This is a significant problem: **The test_risk_weights_sum_to_one test still validates the OLD 6-weight array `[0.25, 0.20, 0.12, 0.18, 0.10, 0.15] instead of using the new RISK_WEIGHTS constant [0.25, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10]`.** The test passes because the old weights also sum to 1.0, but it's not testing the actual weights used in production. The task explicitly asked to "add a const array for weights and assert sum" — the const was added but the test doesn't reference it.
+
+Let me also check: is there a test for `revert_history()` as the task requires?
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "revert_history\|revert_… ✓ (3ms)
+
+No test for revert_history() function. Let me check if the old code had a test for revert_involved_files:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD:src/commands_risk.… ✓ (5ms)
+
+OK, there was already no test for the old revert_involved_files() function. Let me now run the tests to see the current state:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- commands_risk 2>&1… ✓ (1.3s)
+
+All 45 tests pass. Let me now assess against the task requirements:
+
+1. ✅ **`revert_history()` function** — Added with multiple grep patterns ("Revert", "revert task", "revert session"), parses git log output, returns `HashMap<String, u32>`
+2. ✅ Integrated into `compute_file_risk_scores()` — `revert_history()` is called, revert counts are collected, normalized, and added to weighted sum
+3. ✅ Weights adjusted — RISK_WEIGHTS const with 7 weights summing to 1.0: [0.25, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10]
+4. ✅ Signal label — ▲reverts signal label exists (was already there, threshold at > 0.5)
+5. ✅ Complexity as 7th signal — Added cyclomatic complexity proxy as the genuinely new signal
+6. ⚠️ Test for weight sum — Test exists but tests old weights (hardcoded [0.25, 0.20, 0.12, 0.18, 0.10, 0.15]) instead of the RISK_WEIGHTS constant. Still passes because old weights also sum to 1.0, but this is stale.
+7. ❌ **No smoke test for `revert_history()`** — Task asked for one
+8. ❌ **No test for ▲reverted/▲reverts signal** — Task asked for one
+
+The test_risk_weights_sum_to_one test is the most concerning issue — it doesn't actually validate the new RISK_WEIGHTS constant. It's testing completely stale data. However, the implementation itself works correctly (build + test pass, weights sum to 1.0 in the const).
+
+The missing tests for revert_history() and the signal label are concerning, but the core functional changes are solid. The function works, the weights are correct, and the integration into the scorer is proper. The test gaps are real but the implementation matches the core requirements.
+
+Let me make a final check — does the weight sum actually work?
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c "print(sum([0.25, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10]))" ✓ (18ms)
+
+**Critical issue! The weights sum to 0.95**, not 1.0! Let me double-check with the actual const:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (5 lines) ✓ (18ms)
+
+The weights sum to 0.95, not 1.0! This is a bug. The task explicitly said "keeping total = 1.0" and "Test weight sum still equals 1.0." 
+
+The old weights were [0.25, 0.20, 0.12, 0.18, 0.10, 0.15] = 1.0. With the new arrangement adding a 7th weight of 0.10, some weight should have been redistributed. The task said "reduce co-change coupling from 0.15 to 0.10 and revert history gets 0.10" — but coupling was 0.15 → 0.10 (freed 0.05), and we added 0.10 for the new signal. That's only 0.05 freed but 0.10 needed. The implementation didn't properly compensate.
+
+And the test_risk_weights_sum_to_one test would have caught this if it had used the RISK_WEIGHTS constant instead of the hardcoded old values.
+
+This is a real bug that means all risk scores are systematically deflated by ~5%.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines)

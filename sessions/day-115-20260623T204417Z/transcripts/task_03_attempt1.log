@@ -1,0 +1,200 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by examining the current state of the #[allow(dead_code)] annotations in commands_web.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[allow(dead_code)\]' … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '525,650p' src/commands_w… ✓ (4ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Good, I can see all 5 functions. Now let me check their callers to understand the call chain:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'url_encode\|url_decode\… ✓ (4ms)
+
+Now let me check where url_encode is used outside of tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'url_encode' src/command… ✓ (4ms)
+
+So url_encode is only used in tests. Let me search more broadly:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'url_encode' src/ | gre… ✓ (7ms)
+
+`url_encode is indeed dead code (only used in tests). Let me check the ddg_search` function to see how the query URL is built:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn ddg_search\|url_enco… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1101,1140p' src/commands… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Interesting! ddg_search has its own inline encoding logic and does NOT call url_encode. So url_encode is genuinely dead — only used in tests.
+
+Now let me verify the full call chain for the other 4 functions:
+• parse_ddg_results calls `extract_attr, extract_ddg_url, extract_inner_text`
+• extract_ddg_url calls url_decode
+• parse_ddg_results is called from ddg_search (line ~1117)
+• ddg_search is called from web_search and `web_search_and_read`
+
+So url_decode, extract_ddg_url, extract_attr, extract_inner_text are all live code. Only url_encode is truly dead.
+
+Let me now take action. The plan:
+1. Remove #[allow(dead_code)] from the 4 live functions
+2. Remove url_encode function and its tests (it's dead)
+3. Verify with build/clippy
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Remove #[allow(dead_code)] from url_decode, extrac…' ✓ (0ms)
+  ▶ todo add 'Remove dead url_encode function and its tests' ✓ (0ms)
+  ▶ todo add 'Run cargo build, clippy, test, fmt to verify' ✓ (0ms)
+  ▶ todo add 'Commit changes' ✓ (0ms)
+  4 tools completed in 8.7s (4 ✓)
+
+Let me start. First, remove the #[allow(dead_code)] annotations from the 4 live functions:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ read src/commands_web.rs:546..551 ✓ (1ms)
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Decode a percent-encoded string (e.g. from a URL query parameter).
+  - #[allow(dead_code)]
+    fn url_decode(s: &str) -> String {
+ ✓ (1m 32s)
+    /// Decode a percent-encoded string (e.g. from a URL query parameter).
+  - #[allow(dead_code)]
+    fn url_decode(s: &str) -> String {
+  ▶ read src/commands_web.rs:576..581 ✓ (1ms)
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
+  - #[allow(dead_code)]
+    pub(crate) fn extract_ddg_url(href: &str) -> String {
+ ✓ (1m 34s)
+    /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
+  - #[allow(dead_code)]
+    pub(crate) fn extract_ddg_url(href: &str) -> String {
+  ▶ read src/commands_web.rs:599..604 ✓ (1ms)
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// `extract_attr(tag, "href")` returns the value inside the quotes.
+  - #[allow(dead_code)]
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+ ✓ (1m 33s)
+    /// `extract_attr(tag, "href")` returns the value inside the quotes.
+  - #[allow(dead_code)]
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+  ▶ read src/commands_web.rs:623..628 ✓ (0ms)
+  ▶ edit src/commands_web.rs (3 → 2 lines)
+    /// Returns the inner text with HTML tags stripped.
+  - #[allow(dead_code)]
+    fn extract_inner_text(html: &str) -> String {
+ ✓ (1m 34s)
+    /// Returns the inner text with HTML tags stripped.
+  - #[allow(dead_code)]
+    fn extract_inner_text(html: &str) -> String {
+  ▶ todo done #1 ✓ (0ms)
+  10 tools completed in 6m 42s (10 ✓)
+
+Now remove the dead url_encode function and its #[allow(dead_code)]:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ read src/commands_web.rs:525..547 ✓ (1ms)
+  ▶ edit src/commands_web.rs (22 → 2 lines)
+  - }
+  - 
+  - /// Simple percent-encoding for URL query parameters.
+  - /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  - #[allow(dead_code)]
+  - fn url_encode(s: &str) -> String {
+  -     let mut out = String::with_capacity(s.len() * 2);
+  -     for b in s.bytes() {
+  -         match b {
+  -             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+  -                 out.push(b as char);
+  -             }
+  -             b' ' => out.push('+'),
+  -             _ => {
+  -                 out.push('%');
+  -                 out.push_str(&format!("{b:02X}"));
+  -             }
+  -         }
+  -     }
+  -     out
+  ... (2 more lines)
+ ✓ (9.6s)
+  - }
+  - 
+  - /// Simple percent-encoding for URL query parameters.
+  - /// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
+  - #[allow(dead_code)]
+  - fn url_encode(s: &str) -> String {
+  -     let mut out = String::with_capacity(s.len() * 2);
+  -     for b in s.bytes() {
+  ... (13 more lines)
+  3 tools completed in 18.3s (3 ✓)
+
+As expected — the tests for url_encode need to be removed too. Let me find and remove them:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'url_encode' src/command… ✓ (3ms)
+  ▶ read src/commands_web.rs:1494..1514 ✓ (1ms)
+  ▶ edit src/commands_web.rs (20 → 0 lines)
+  - 
+  -     #[test]
+  -     fn test_url_encode_basic() {
+  -         assert_eq!(url_encode("hello world"), "hello+world");
+  -         assert_eq!(url_encode("rust lang"), "rust+lang");
+  -         assert_eq!(url_encode("simple"), "simple");
+  -     }
+  - 
+  -     #[test]
+  -     fn test_url_encode_special_chars() {
+  -         assert_eq!(url_encode("a&b=c"), "a%26b%3Dc");
+  -         assert_eq!(url_encode("foo bar?baz"), "foo+bar%3Fbaz");
+  -         assert_eq!(url_encode("100%"), "100%25");
+  -     }
+  - 
+  -     #[test]
+  -     fn test_url_encode_preserves_unreserved() {
+  -         assert_eq!(url_encode("a-b_c.d~e"), "a-b_c.d~e");
+  -         assert_eq!(url_encode("ABC123"), "ABC123");
+  -     }
+ ✓ (9.5s)
+  - 
+  -     #[test]
+  -     fn test_url_encode_basic() {
+  -         assert_eq!(url_encode("hello world"), "hello+world");
+  -         assert_eq!(url_encode("rust lang"), "rust+lang");
+  -         assert_eq!(url_encode("simple"), "simple");
+  -     }
+  - 
+  ... (12 more lines)
+  3 tools completed in 19.1s (3 ✓)
+
+The roundtrip test also needs to go. Let me find it:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1708..1723 ✓ (1ms)
+  ▶ edit src/commands_web.rs (10 → 2 lines)
+  - 
+  -     #[test]
+  -     fn test_url_encode_roundtrip() {
+  -         let original = "rust programming language + guide";
+  -         let encoded = url_encode(original);
+  -         let decoded = url_decode(&encoded);
+  -         assert_eq!(decoded, original);
+  -     }
+    
+        #[test]
+ ✓ (1m 32s)
+  - 
+  -     #[test]
+  -     fn test_url_encode_roundtrip() {
+  -         let original = "rust programming language + guide";
+  -         let encoded = url_encode(original);
+  -         let decoded = url_decode(&encoded);
+  -         assert_eq!(decoded, original);
+  -     }
+    
+        #[test]
+  ▶ todo done #2 ✓ (0ms)
+  3 tools completed in 1m 41s (3 ✓)
+
+Now let me verify everything compiles and passes:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

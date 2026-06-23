@@ -1,0 +1,207 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current risk scorer implementation, then add the revert history signal.
+  ▶ read src/commands_risk.rs ✓ (13ms)
+
+Let me look at the key sections more closely - the compute_file_risk_scores function and the current weights:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn compute_file_risk_scores' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:250..450 ✓ (2ms)
+  ▶ read src/commands_risk.rs:449..499 ✓ (1ms)
+  ▶ read src/commands_risk.rs:498..548 ✓ (1ms)
+  4 tools completed in 10.1s (4 ✓)
+
+Now I have a clear picture. The codebase already has revert_involved_files() and a raw_revert vector! It already has a revert signal. Let me look at the current weights and understand what's already implemented vs what the task asks for.
+
+Current state:
+• revert_involved_files() already exists (line 484-508) — searches for "Revert" in git log
+• raw_revert vector already exists (line 302)
+• The revert signal is already integrated with weight 0.18 in the weights array `[0.25, 0.20, 0.12, 0.18, 0.10, 0.15]`
+• "▲reverts" signal already exists (line 455-457)
+• The valid signals already include "▲reverts" (line 2111)
+
+Wait — this looks like the revert signal is already there! Let me re-read the task carefully. The task says to add a "revert_history()" function, but `revert_involved_files()` already does this. Let me check if the task description's implementation plan was written without fully checking the existing code.
+
+Let me examine what the task actually asks for more carefully and see what's missing vs what exists:
+
+1. ✅ revert_involved_files() — already exists, does what `revert_history()` would do
+2. ✅ Integration into `compute_file_risk_scores()` — already done with weight 0.18
+3. ✅ "▲reverts" signal — already exists
+
+But wait, let me check the task more carefully. The task says:
+• "Also check for `git log --all --oneline --grep="revert task" --name-only` patterns"
+• The current function only greps for "Revert" (capital R)
+
+Let me check what the evolve loop actually uses for revert commit messages:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'revert' in scripts/evolve.sh ✓ (3ms)
+
+Now I see — the evolve loop uses messages like "revert session changes" and "Task reverted:" in issues. Let me look at what patterns appear in actual git history:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --all --oneline --grep="… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --all --oneline --grep="… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --all --oneline | head -… ✓ (4ms)
+  3 tools completed in 8.6s (3 ✓)
+
+OK, so the git history in this CI environment is shallow. The revert function and signal already exist. But looking more carefully at the task requirements vs the existing code, I see:
+
+1. The existing revert_involved_files() only greps for "Revert" (capital R) — the task says to also grep for "revert task" patterns (lowercase)
+2. The task wants specific weight adjustments that don't match current weights
+3. The task wants a WEIGHTS constant array and a test that weights sum to 1.0
+4. The task wants the signal name "▲reverted" but current code uses "▲reverts" 
+
+Wait, let me re-check the valid_signals test — it already has "▲reverts". The task says `"▲reverted"`. Let me just implement what the task actually asks for, improving the existing code rather than duplicating.
+
+Let me create a plan:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Improve revert_involved_files() to also grep for l…' ✓ (0ms)
+  ▶ todo add 'Extract WEIGHTS into a named const array, add test…' ✓ (0ms)
+  ▶ todo add 'Add tests for the improved revert_history function…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test to verify' ✓ (0ms)
+  ▶ todo add 'Commit the changes' ✓ (0ms)
+  5 tools completed in 16.9s (5 ✓)
+
+Now let me look at what tests currently exist for the risk module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2020..2170 ✓ (1ms)
+
+Interesting — there's already a `test_risk_weights_sum_to_one` test, but it uses a local array rather than a shared constant. Now let me understand the full picture:
+
+Already exists:
+• `revert_involved_files()` function (greps for "Revert" capital R only)
+• raw_revert vector integration
+• Weight 0.18 for reverts
+• "▲reverts" signal
+• Weight sum test (but with local array, not shared const)
+
+What I need to do:
+1. Rename `revert_involved_files() → revert_history()` and enhance it to also search for lowercase "revert" patterns used by the evolve loop
+2. Extract weights into a const RISK_WEIGHTS shared between compute_file_risk_scores and the test
+3. Add better tests
+
+Let me start implementing:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+First, let me enhance revert_involved_files() to also catch lowercase revert patterns:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (26 → 40 lines)
+  - /// Find files that appear in revert commits.
+  - fn revert_involved_files() -> std::collections::HashMap<String, u32> {
+  -     let output = match crate::git::run_git(&[
+  -         "log",
+  -         "--all",
+  -         "--oneline",
+  -         "--grep=Revert",
+  -         "--name-only",
+  -         "--pretty=format:",
+  -     ]) {
+  -         Ok(o) => o,
+  -         Err(_) => return std::collections::HashMap::new(),
+  -     };
+  - 
+  + /// Build a map of file paths → number of times that file appeared in a revert commit.
+  + ///
+  + /// Searches git history for multiple revert patterns:
+  + /// - "Revert" (git's default `git revert` prefix)
+  + /// - "revert task" (evolve loop's task-level revert messages)
+  + /// - "revert session" (evolve loop's session-level revert messages)
+  ... (40 more lines)
+ ✓ (9.3s)
+  - /// Find files that appear in revert commits.
+  - fn revert_involved_files() -> std::collections::HashMap<String, u32> {
+  -     let output = match crate::git::run_git(&[
+  -         "log",
+  -         "--all",
+  -         "--oneline",
+  -         "--grep=Revert",
+  -         "--name-only",
+  ... (13 more lines)
+
+Need to update the call site:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (1 → 1 lines)
+  -     let revert_files = revert_involved_files();
+  +     let revert_files = revert_history();
+ ✓ (1m 33s)
+  -     let revert_files = revert_involved_files();
+  +     let revert_files = revert_history();
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 1m 40s (2 ✓)
+
+Now let's extract the weights into a shared constant:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+Let me check what comment block is above the weights line and add the constant:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:415..430 ✓ (1ms)
+
+Now I'll add a constant at module level and use it in both the computation and the test. Let me add it right after the FileRisk struct and normalize_scores:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:30..40 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (2 → 10 lines)
+        values.iter().map(|v| (v - min) / range).collect()
+    }
+  + 
+  + /// Risk signal weights: [churn, acceleration, size, revert_history, test_density, coupling].
+  + ///
+  + /// These six weights must sum to 1.0. The revert_history weight (0.18) captures
+  + /// empirical failure data — files that have been reverted are more likely to cause
+  + /// future regressions. This is the first signal that makes the risk scorer learn
+  + /// from its own history rather than just measuring static properties.
+  + const RISK_WEIGHTS: [f64; 6] = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+ ✓ (15.4s)
+        values.iter().map(|v| (v - min) / range).collect()
+    }
+  + 
+  + /// Risk signal weights: [churn, acceleration, size, revert_history, test_density, coupling].
+  + ///
+  + /// These six weights must sum to 1.0. The revert_history weight (0.18) captures
+  + /// empirical failure data — files that have been reverted are more likely to cause
+  + /// future regressions. This is the first signal that makes the risk scorer learn
+  + /// from its own history rather than just measuring static properties.
+  + const RISK_WEIGHTS: [f64; 6] = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+  2 tools completed in 24.3s (2 ✓)
+
+I need to update the function to use the constant:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (3 → 2 lines)
+        // Weighted sum → final score (6 signals, sum = 1.0)
+  -     let weights = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+        let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
+ ✓ (9.5s)
+        // Weighted sum → final score (6 signals, sum = 1.0)
+  -     let weights = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+        let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
+  ▶ read src/commands_risk.rs:436..451 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (6 → 6 lines)
+  -         let mut score = norm_churn[i] * weights[0]
+  -             + norm_accel[i] * weights[1]
+  -             + norm_size[i] * weights[2]
+  -             + norm_revert[i] * weights[3]
+  -             + norm_test[i] * weights[4]
+  -             + norm_coupling[i] * weights[5];
+  +         let mut score = norm_churn[i] * RISK_WEIGHTS[0]
+  +             + norm_accel[i] * RISK_WEIGHTS[1]
+  +             + norm_size[i] * RISK_WEIGHTS[2]
+  +             + norm_revert[i] * RISK_WEIGHTS[3]
+  +             + norm_test[i] * RISK_WEIGHTS[4]
+  +             + norm_coupling[i] * RISK_WEIGHTS[5];
+ ✓ (1m 32s)
+  -         let mut score = norm_churn[i] * weights[0]
+  -             + norm_accel[i] * weights[1]
+  -             + norm_size[i] * weights[2]
+  -             + norm_revert[i] * weights[3]
+  -             + norm_test[i] * weights[4]
+  -             + norm_coupling[i] * weights[5];
+  +         let mut score = norm_churn[i] * RISK_WEIGHTS[0]
+  +             + norm_accel[i] * RISK_WEIGHTS[1]
+  ... (4 more lines)
+  3 tools completed in 1m 49s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

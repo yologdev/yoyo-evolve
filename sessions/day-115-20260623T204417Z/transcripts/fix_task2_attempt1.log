@@ -1,0 +1,287 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "revert" src/commands_ri… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,50p' src/commands_ris… ✓ (3ms)
+  2 tools completed in 5.0s (2 ✓)
+
+Now I can see the current state. The evaluator says:
+
+1. **No "▲reverted" signal label** — but I see "▲reverts" on line 463. The task requires "▲reverted".
+2. No new tests — need smoke test for revert_history(), signal label test, and weight sum test.
+3. Weights not adjusted to 7-signal scheme — currently 6 weights, task wants 7 signals: size 0.15, churn 0.25, recency 0.15, complexity 0.10, test_density 0.10, coupling 0.10, revert_history 0.10.
+
+Let me see the full compute_file_risk_scores to understand the current signal structure:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '290,480p' src/commands_r… ✓ (5ms)
+
+Now let me see the current weights and what exactly the task requires. The current state has 6 signals with weights `[0.25, 0.20, 0.12, 0.18, 0.10, 0.15]` (churn, acceleration, size, revert_history, test_density, coupling). 
+
+The task wants 7 signals: size 0.15, churn 0.25, recency 0.15, complexity 0.10, test_density 0.10, coupling 0.10, revert_history 0.10. Let me understand the mapping:
+
+Looking at the task description more carefully:
+• The original code (before any modification) had 6 signals: "file size, churn frequency, recency, cyclomatic complexity proxy, test density, and co-change coupling" — and the task says to add a 7th "revert history".
+
+But the current code already has revert_history as one of its 6 signals, and it's missing the "recency" and "complexity" signals from the original 6. It seems like the previous implementation replaced signals instead of adding a 7th.
+
+Let me check git to understand the original state:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- src/commands_… ✓ (6ms)
+
+Good, now I see what happened. The previous implementation:
+1. Renamed revert_involved_files() → revert_history() and added extra grep patterns
+2. Extracted the weight array to a const RISK_WEIGHTS
+3. But kept the same 6-signal scheme with the same weights
+
+The evaluator wants:
+1. ✅ revert_history() function — exists (renamed)
+2. ❌ Signal label "▲reverted" — current code uses "▲reverts", task says "▲reverted"
+3. ❌ 7-signal weight scheme — task says add recency and complexity as separate signals, making it 7 signals with specific weights
+4. ❌ Tests — no new tests added
+
+Wait, let me re-read the evaluator feedback more carefully:
+
+│ The revert signal already existed before this task (as revert_involved_files() with weight 0.18). The implementation only renamed the function and added extra grep patterns, but failed to deliver the key requested changes: no "▲reverted" signal label was added (task explicitly required it when normalized score > 0.5), no new tests were written (task required smoke test for revert_history() and signal label test), and the weights were not adjusted to the 7-signal scheme specified in the task.
+
+So the evaluator says:
+1. Change signal label from "▲reverts" to "▲reverted" 
+2. Adjust weights to 7-signal scheme: size 0.15, churn 0.25, recency 0.15, complexity 0.10, test_density 0.10, coupling 0.10, revert_history 0.10
+3. Add tests
+
+Wait, but looking at the current code, I only see 6 raw signal vectors. The task mentions 7 signals. Let me re-read:
+
+The task says the current code has: "file size, churn frequency, recency, cyclomatic complexity proxy, test density, and co-change coupling" = 6 signals, and we add "revert history" as 7th. But looking at the actual code, the 6 current signals map to: churn, acceleration(recency), size, revert(was already there), test_density, coupling. So the code already has revert but doesn't have "complexity".
+
+Actually, the task description is describing a hypothetical state. The real issue is: the current code has 6 signals with 6 weights. The task wants 7 signals with 7 weights. Let me look at what signals the code currently computes vs what the task wants.
+
+Current signals in code: churn, accel(recency), size, revert, test_density, coupling = 6
+Task wants: size, churn, recency, complexity, test_density, coupling, revert_history = 7
+
+So I need to add a "complexity" signal. Let me check if there was any complexity calculation before:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "complex\|cyclomatic" sr… ✓ (3ms)
+
+No complexity signal exists. Let me look at the original code before the diff to see what signals existed:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~1:src/commands_ris… ✓ (5ms)
+
+OK so the original code already had 6 signals including revert. The task description was somewhat aspirational about what "currently exists" vs what actually exists. But the evaluator feedback is clear about what's needed:
+
+1. Signal label `"▲reverted" (not "▲reverts"`)
+2. Weights adjusted to the 7-signal scheme specified in the task
+3. Tests added
+
+For the 7-signal scheme, I need to add a complexity proxy signal. The task says: size 0.15, churn 0.25, recency 0.15, complexity 0.10, test_density 0.10, coupling 0.10, revert_history 0.10.
+
+Let me plan this:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Change signal label from "▲reverts" to "▲reverted"' ✓ (0ms)
+  ▶ todo add 'Add complexity proxy signal (7th signal) to comput…' ✓ (0ms)
+  ▶ todo add 'Update RISK_WEIGHTS to 7-signal scheme: size 0.15,…' ✓ (0ms)
+  ▶ todo add 'Add tests: smoke test for revert_history(), signal…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  5 tools completed in 18.0s (5 ✓)
+
+Now let me look at the full structure more carefully to understand signal ordering and make all changes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '33,40p' src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '430,475p' src/commands_r… ✓ (4ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now let me see what existing tests look like:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|#\[test… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1266,1350p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_\|#\[test\]" src/c… ✓ (4ms)
+  3 tools completed in 11.6s (3 ✓)
+
+Let me check for the existing weight sum test and what `"▲reverts"` is used in tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2080,2165p' src/commands… ✓ (4ms)
+
+Now I have a full picture. Let me make the changes:
+
+1. Update `RISK_WEIGHTS` to 7 signals with the specified weights
+2. Add a complexity proxy signal
+3. Change "▲reverts" to "▲reverted" 
+4. Update the existing test_risk_weights_sum_to_one and valid_signals array
+5. Add the required new tests
+
+Let me start implementing:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ edit src/commands_risk.rs (7 → 8 lines)
+  - /// Risk signal weights: [churn, acceleration, size, revert_history, test_density, coupling].
+  + /// Risk signal weights: [churn, recency, size, complexity, test_density, coupling, revert_history].
+    ///
+  - /// These six weights must sum to 1.0. The revert_history weight (0.18) captures
+  + /// These seven weights must sum to 1.0. The revert_history weight (0.10) captures
+    /// empirical failure data — files that have been reverted are more likely to cause
+  - /// future failures. This is the first signal that makes the risk scorer *learn*
+  + /// future failures. This is the signal that makes the risk scorer *learn*
+    /// from its own history rather than just measuring static properties.
+  - const RISK_WEIGHTS: [f64; 6] = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+  + /// The complexity proxy (0.10) estimates cyclomatic complexity via branch/match density.
+  + const RISK_WEIGHTS: [f64; 7] = [0.25, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
+ ✗ (3ms)
+    │ old_text not found in src/commands_risk.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '34,40p' src/commands_ris… ✓ (3ms)
+  ▶ read src/commands_risk.rs:34..41 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (7 → 8 lines)
+  - /// Risk signal weights: [churn, acceleration, size, revert_history, test_density, coupling].
+  + /// Risk signal weights: [churn, recency, size, complexity, test_density, coupling, revert_history].
+    ///
+  - /// These six weights must sum to 1.0. The revert_history weight (0.18) captures
+  + /// These seven weights must sum to 1.0. The revert_history weight (0.10) captures
+    /// empirical failure data — files that have been reverted are more likely to cause
+  - /// future regressions. This is the first signal that makes the risk scorer learn
+  + /// future regressions. The complexity proxy (0.10) estimates cyclomatic complexity
+  + /// via branch/match density. This is the signal set that makes the risk scorer learn
+    /// from its own history rather than just measuring static properties.
+  - const RISK_WEIGHTS: [f64; 6] = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+  + const RISK_WEIGHTS: [f64; 7] = [0.25, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
+ ✓ (1m 33s)
+  - /// Risk signal weights: [churn, acceleration, size, revert_history, test_density, coupling].
+  + /// Risk signal weights: [churn, recency, size, complexity, test_density, coupling, revert_history].
+    ///
+  - /// These six weights must sum to 1.0. The revert_history weight (0.18) captures
+  + /// These seven weights must sum to 1.0. The revert_history weight (0.10) captures
+    /// empirical failure data — files that have been reverted are more likely to cause
+  - /// future regressions. This is the first signal that makes the risk scorer learn
+  + /// future regressions. The complexity proxy (0.10) estimates cyclomatic complexity
+  ... (4 more lines)
+  ▶ todo done #3 ✓ (0ms)
+  6 tools completed in 2m 4s (5 ✓, 1 ✗)
+
+Now add the complexity proxy signal. Let me find where the raw signal vectors are declared and where the per-file loop collects signals:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:306..318 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (11 → 12 lines)
+        let mut raw_churn: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_accel: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     let mut raw_complexity: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
+        // Tests-per-100-lines metric (exposed on FileRisk for display)
+        let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
+    
+  -     // 4. Revert involvement — weight 0.18
+  +     // 4. Revert involvement — weight 0.10
+ ✓ (15.4s)
+        let mut raw_churn: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_accel: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+  +     let mut raw_complexity: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
+        let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
+        // Tests-per-100-lines metric (exposed on FileRisk for display)
+  ... (4 more lines)
+  2 tools completed in 27.1s (2 ✓)
+
+Expected — I need to add the complexity calculation and use it. Let me now find where the file content is read (for size calculation) and add complexity there:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:363..383 ✓ (1ms)
+
+I see the file is being read twice (once for size, once for test density). I should add the complexity proxy alongside the size read to avoid a third read. But to keep changes minimal, let me add a complexity calculation alongside the existing reads. Actually, let me combine the size and complexity reads:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (5 → 25 lines)
+  -         // File size (line count)
+  -         let line_count = std::fs::read_to_string(path)
+  -             .map(|content| content.lines().count() as f64)
+  -             .unwrap_or(0.0);
+  +         // File size (line count) and complexity proxy (branch/match density)
+  +         let (line_count, complexity) = std::fs::read_to_string(path)
+  +             .map(|content| {
+  +                 let lines = content.lines().count() as f64;
+  +                 if lines == 0.0 {
+  +                     return (0.0, 0.0);
+  +                 }
+  +                 // Cyclomatic complexity proxy: count branching constructs
+  +                 let branches = content
+  +                     .lines()
+  +                     .filter(|l| {
+  +                         let t = l.trim();
+  +                         t.starts_with("if ")
+  +                             || t.starts_with("} else")
+  +                             || t.starts_with("match ")
+  +                             || t.starts_with("for ")
+  ... (9 more lines)
+ ✓ (1m 33s)
+  -         // File size (line count)
+  -         let line_count = std::fs::read_to_string(path)
+  -             .map(|content| content.lines().count() as f64)
+  -             .unwrap_or(0.0);
+  +         // File size (line count) and complexity proxy (branch/match density)
+  +         let (line_count, complexity) = std::fs::read_to_string(path)
+  +             .map(|content| {
+  +                 let lines = content.lines().count() as f64;
+  ... (13 more lines)
+
+Now update the normalization and weighted sum sections:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:445..460 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (10 → 11 lines)
+        let norm_churn = normalize_scores(&raw_churn);
+        let norm_accel = normalize_scores(&raw_accel);
+        let norm_size = normalize_scores(&raw_size);
+  -     let norm_revert = normalize_scores(&raw_revert);
+  +     let norm_complexity = normalize_scores(&raw_complexity);
+        let norm_test = normalize_scores(&raw_test_density);
+        let norm_coupling = normalize_scores(&raw_coupling);
+  +     let norm_revert = normalize_scores(&raw_revert);
+    
+  -     // Weighted sum → final score (6 signals, sum = 1.0)
+  +     // Weighted sum → final score (7 signals, sum = 1.0)
+        let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
+ ✓ (15.5s)
+        let norm_churn = normalize_scores(&raw_churn);
+        let norm_accel = normalize_scores(&raw_accel);
+        let norm_size = normalize_scores(&raw_size);
+  -     let norm_revert = normalize_scores(&raw_revert);
+  +     let norm_complexity = normalize_scores(&raw_complexity);
+        let norm_test = normalize_scores(&raw_test_density);
+        let norm_coupling = normalize_scores(&raw_coupling);
+  +     let norm_revert = normalize_scores(&raw_revert);
+  ... (4 more lines)
+  2 tools completed in 33.0s (2 ✓)
+
+Expected — now let me update the weighted sum to use 7 signals. The order in RISK_WEIGHTS is: [churn, recency, size, complexity, test_density, coupling, revert_history]:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:459..474 ✓ (0ms)
+  ▶ edit src/commands_risk.rs (7 → 9 lines)
+            // Base weighted score from normalized signals
+  +         // Order: churn, recency, size, complexity, test_density, coupling, revert_history
+            let mut score = norm_churn[i] * RISK_WEIGHTS[0]
+                + norm_accel[i] * RISK_WEIGHTS[1]
+                + norm_size[i] * RISK_WEIGHTS[2]
+  -             + norm_revert[i] * RISK_WEIGHTS[3]
+  +             + norm_complexity[i] * RISK_WEIGHTS[3]
+                + norm_test[i] * RISK_WEIGHTS[4]
+  -             + norm_coupling[i] * RISK_WEIGHTS[5];
+  +             + norm_coupling[i] * RISK_WEIGHTS[5]
+  +             + norm_revert[i] * RISK_WEIGHTS[6];
+ ✓ (1m 33s)
+            // Base weighted score from normalized signals
+  +         // Order: churn, recency, size, complexity, test_density, coupling, revert_history
+            let mut score = norm_churn[i] * RISK_WEIGHTS[0]
+                + norm_accel[i] * RISK_WEIGHTS[1]
+                + norm_size[i] * RISK_WEIGHTS[2]
+  -             + norm_revert[i] * RISK_WEIGHTS[3]
+  +             + norm_complexity[i] * RISK_WEIGHTS[3]
+                + norm_test[i] * RISK_WEIGHTS[4]
+  ... (3 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  3 tools completed in 1m 46s (3 ✓)
+
+Now fix the signal label "▲reverts" → `"▲reverted"`:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
