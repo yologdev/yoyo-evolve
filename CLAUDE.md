@@ -85,6 +85,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`)
 - `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview (extracted from `prompt.rs`)
 - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
+- `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
 - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
 - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`
 - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping

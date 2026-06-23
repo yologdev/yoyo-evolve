@@ -2,6 +2,7 @@
 
 use crate::cli;
 use crate::commands_map::build_repo_map;
+use crate::commands_search::is_binary_extension;
 use crate::docs;
 use crate::format::*;
 use crate::symbols::FileSymbols;
@@ -968,6 +969,117 @@ pub fn handle_context_relevant(query: &str) {
         );
     }
     eprintln!();
+}
+
+/// Maximum number of files to auto-inject into a prompt.
+const AUTO_CONTEXT_MAX_FILES: usize = 3;
+
+/// Minimum relevance score for a file to be auto-injected.
+const AUTO_CONTEXT_MIN_SCORE: usize = 5;
+
+/// Maximum lines to read from a single file for auto-context.
+const AUTO_CONTEXT_MAX_LINES: usize = 200;
+
+/// Files longer than this get truncated with a note.
+const AUTO_CONTEXT_LARGE_FILE: usize = 500;
+
+/// Automatically identify project files relevant to a user prompt.
+///
+/// Returns `(path, content)` pairs for the top files with score ≥ `AUTO_CONTEXT_MIN_SCORE`.
+/// Skips binary files, caps content at `AUTO_CONTEXT_MAX_LINES` lines, and excludes
+/// paths that already appear in `recent_context` (to avoid re-injecting files the
+/// conversation has already seen).
+pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(String, String)> {
+    // Gate: skip slash commands, @-mention prompts, and very short follow-ups
+    if prompt.starts_with('/') || prompt.contains('@') || prompt.len() < 20 {
+        return Vec::new();
+    }
+
+    let keywords = tokenize_query(prompt);
+    if keywords.is_empty() {
+        return Vec::new();
+    }
+
+    let repo_map = build_repo_map(None, false);
+    let results = score_files(&repo_map, &keywords);
+
+    let mut out = Vec::new();
+
+    for r in &results {
+        if out.len() >= AUTO_CONTEXT_MAX_FILES {
+            break;
+        }
+        if r.score < AUTO_CONTEXT_MIN_SCORE {
+            break; // results are sorted descending, so all remaining are lower
+        }
+
+        // Skip files already in the conversation context
+        if recent_context.iter().any(|ctx| ctx.contains(&r.path)) {
+            continue;
+        }
+
+        // Skip binary files
+        if is_binary_extension(&r.path) {
+            continue;
+        }
+
+        // Read file content
+        let content = match std::fs::read_to_string(&r.path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let lines: Vec<&str> = content.lines().collect();
+        let total_lines = lines.len();
+
+        let truncated = if total_lines > AUTO_CONTEXT_LARGE_FILE {
+            // Large file: take first MAX_LINES with a note
+            let mut text: String = lines[..AUTO_CONTEXT_MAX_LINES].join("\n");
+            text.push_str(&format!(
+                "\n\n[… truncated — file has {} lines, showing first {}]",
+                total_lines, AUTO_CONTEXT_MAX_LINES
+            ));
+            text
+        } else if total_lines > AUTO_CONTEXT_MAX_LINES {
+            let mut text: String = lines[..AUTO_CONTEXT_MAX_LINES].join("\n");
+            text.push_str(&format!(
+                "\n\n[… truncated at {} of {} lines]",
+                AUTO_CONTEXT_MAX_LINES, total_lines
+            ));
+            text
+        } else {
+            content
+        };
+
+        out.push((r.path.clone(), truncated));
+    }
+
+    out
+}
+
+/// Format auto-context results into a prefix for the user prompt.
+///
+/// Returns `None` if `files` is empty.
+pub fn format_auto_context(files: &[(String, String)], original_prompt: &str) -> Option<String> {
+    if files.is_empty() {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    parts.push(
+        "[Auto-context: yoyo identified these files as relevant to your prompt]\n".to_string(),
+    );
+
+    for (path, content) in files {
+        parts.push(format!("--- {path} ---"));
+        parts.push(content.clone());
+    }
+
+    parts.push(String::new());
+    parts.push("[Your prompt]:".to_string());
+    parts.push(original_prompt.to_string());
+
+    Some(parts.join("\n"))
 }
 
 #[cfg(test)]
@@ -2296,5 +2408,110 @@ mod tests {
     fn test_handle_context_relevant_no_panic() {
         // Running against the actual yoyo repo should not panic
         handle_context_relevant("web search");
+    }
+
+    // --- auto_context_for_prompt tests ---
+
+    #[test]
+    fn test_auto_context_web_search_returns_relevant_files() {
+        // A prompt about "web search" should return web-related files from this repo
+        let results =
+            auto_context_for_prompt("how does the web search tool work in this project", &[]);
+        // Should return at least one file, and it should be web-related
+        assert!(
+            !results.is_empty(),
+            "web search query should return relevant files"
+        );
+        let paths: Vec<&str> = results.iter().map(|r| r.0.as_str()).collect();
+        let has_web_file = paths.iter().any(|p| p.contains("web"));
+        assert!(
+            has_web_file,
+            "results should include a web-related file, got: {:?}",
+            paths
+        );
+        // Should return at most MAX_FILES
+        assert!(results.len() <= AUTO_CONTEXT_MAX_FILES);
+        // Each result should have non-empty content
+        for (path, content) in &results {
+            assert!(!path.is_empty());
+            assert!(!content.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_auto_context_empty_and_short_queries_return_empty() {
+        // Empty prompt
+        assert!(auto_context_for_prompt("", &[]).is_empty());
+        // Very short prompt (< 20 chars)
+        assert!(auto_context_for_prompt("fix the bug", &[]).is_empty());
+        // Prompt of only stop words (tokens empty after filtering)
+        assert!(auto_context_for_prompt("the a an to for with and or but", &[]).is_empty());
+    }
+
+    #[test]
+    fn test_auto_context_slash_commands_return_empty() {
+        // Slash commands should be skipped entirely
+        assert!(auto_context_for_prompt("/help me with web search stuff", &[]).is_empty());
+        assert!(auto_context_for_prompt("/add src/main.rs to context", &[]).is_empty());
+        // @-mention prompts should also be skipped
+        assert!(
+            auto_context_for_prompt("look at @src/main.rs and fix the issue there", &[]).is_empty()
+        );
+    }
+
+    #[test]
+    fn test_auto_context_threshold_filtering() {
+        // A query with a very obscure/nonsense keyword should return nothing
+        // because no files will score >= AUTO_CONTEXT_MIN_SCORE
+        let results =
+            auto_context_for_prompt("xyzzyplugh frobnicate the glorpweasel machinery", &[]);
+        assert!(
+            results.is_empty(),
+            "nonsense keywords should not match any files above threshold, got: {:?}",
+            results.iter().map(|r| &r.0).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_auto_context_skips_files_in_context() {
+        // First get results without context filtering
+        let results_all =
+            auto_context_for_prompt("how does the web search tool work in this project", &[]);
+        if results_all.is_empty() {
+            return; // skip if repo map doesn't find matches (unlikely in this repo)
+        }
+        // Now pass the first result's path as already-in-context
+        let first_path = results_all[0].0.clone();
+        let recent = vec![format!("I already loaded {}", first_path)];
+        let results_filtered =
+            auto_context_for_prompt("how does the web search tool work in this project", &recent);
+        // The first file should no longer appear
+        let filtered_paths: Vec<&str> = results_filtered.iter().map(|r| r.0.as_str()).collect();
+        assert!(
+            !filtered_paths.contains(&first_path.as_str()),
+            "file already in context should be skipped: {}",
+            first_path
+        );
+    }
+
+    #[test]
+    fn test_format_auto_context_empty() {
+        assert!(format_auto_context(&[], "hello").is_none());
+    }
+
+    #[test]
+    fn test_format_auto_context_structure() {
+        let files = vec![
+            ("src/foo.rs".to_string(), "fn foo() {}".to_string()),
+            ("src/bar.rs".to_string(), "fn bar() {}".to_string()),
+        ];
+        let result = format_auto_context(&files, "fix the bug").unwrap();
+        assert!(result.contains("[Auto-context:"));
+        assert!(result.contains("--- src/foo.rs ---"));
+        assert!(result.contains("--- src/bar.rs ---"));
+        assert!(result.contains("fn foo() {}"));
+        assert!(result.contains("fn bar() {}"));
+        assert!(result.contains("[Your prompt]:"));
+        assert!(result.contains("fix the bug"));
     }
 }

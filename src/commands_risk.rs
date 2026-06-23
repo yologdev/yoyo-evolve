@@ -31,6 +31,15 @@ fn normalize_scores(values: &[f64]) -> Vec<f64> {
     values.iter().map(|v| (v - min) / range).collect()
 }
 
+/// Risk signal weights: [churn, recency, size, complexity, test_density, coupling, revert_history].
+///
+/// These seven weights must sum to 1.0. The revert_history weight (0.10) captures
+/// empirical failure data — files that have been reverted are more likely to cause
+/// future regressions. The complexity proxy (0.10) estimates cyclomatic complexity
+/// via branch/match density. This is the signal set that makes the risk scorer learn
+/// from its own history rather than just measuring static properties.
+const RISK_WEIGHTS: [f64; 7] = [0.30, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
+
 /// Build a map of source file paths → count of test-containing files that reference them.
 ///
 /// For each `.rs` file in `src/` and `tests/` that contains `#[test]`, we parse
@@ -299,14 +308,15 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     let mut raw_churn: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_accel: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_size: Vec<f64> = Vec::with_capacity(all_files.len());
+    let mut raw_complexity: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_revert: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_test_density: Vec<f64> = Vec::with_capacity(all_files.len());
     let mut raw_coupling: Vec<f64> = Vec::with_capacity(all_files.len());
     // Tests-per-100-lines metric (exposed on FileRisk for display)
     let mut tests_per_100: Vec<f64> = Vec::with_capacity(all_files.len());
 
-    // 4. Revert involvement — weight 0.18
-    let revert_files = revert_involved_files();
+    // 4. Revert involvement — weight 0.10
+    let revert_files = revert_history();
 
     // 6. Co-change coupling — weight 0.15
     let coupling_map = co_change_coupling();
@@ -355,11 +365,31 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
         };
         raw_accel.push(accel);
 
-        // File size (line count)
-        let line_count = std::fs::read_to_string(path)
-            .map(|content| content.lines().count() as f64)
-            .unwrap_or(0.0);
+        // File size (line count) and complexity proxy (branch/match density)
+        let (line_count, complexity) = std::fs::read_to_string(path)
+            .map(|content| {
+                let lines = content.lines().count() as f64;
+                if lines == 0.0 {
+                    return (0.0, 0.0);
+                }
+                // Cyclomatic complexity proxy: count branching constructs
+                let branches = content
+                    .lines()
+                    .filter(|l| {
+                        let t = l.trim();
+                        t.starts_with("if ")
+                            || t.starts_with("} else")
+                            || t.starts_with("match ")
+                            || t.starts_with("for ")
+                            || t.starts_with("while ")
+                            || t.contains("=> ")
+                    })
+                    .count() as f64;
+                (lines, branches / lines)
+            })
+            .unwrap_or((0.0, 0.0));
         raw_size.push(line_count);
+        raw_complexity.push(complexity);
 
         // Revert involvement
         let rev_count = *revert_files.get(path.as_str()).unwrap_or(&0) as f64;
@@ -418,23 +448,25 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     let norm_churn = normalize_scores(&raw_churn);
     let norm_accel = normalize_scores(&raw_accel);
     let norm_size = normalize_scores(&raw_size);
-    let norm_revert = normalize_scores(&raw_revert);
+    let norm_complexity = normalize_scores(&raw_complexity);
     let norm_test = normalize_scores(&raw_test_density);
     let norm_coupling = normalize_scores(&raw_coupling);
+    let norm_revert = normalize_scores(&raw_revert);
 
-    // Weighted sum → final score (6 signals, sum = 1.0)
-    let weights = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
+    // Weighted sum → final score (7 signals, sum = 1.0)
     let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
 
     for (i, path) in all_files.into_iter().enumerate() {
         let td = tests_per_100[i];
         // Base weighted score from normalized signals
-        let mut score = norm_churn[i] * weights[0]
-            + norm_accel[i] * weights[1]
-            + norm_size[i] * weights[2]
-            + norm_revert[i] * weights[3]
-            + norm_test[i] * weights[4]
-            + norm_coupling[i] * weights[5];
+        // Order: churn, recency, size, complexity, test_density, coupling, revert_history
+        let mut score = norm_churn[i] * RISK_WEIGHTS[0]
+            + norm_accel[i] * RISK_WEIGHTS[1]
+            + norm_size[i] * RISK_WEIGHTS[2]
+            + norm_complexity[i] * RISK_WEIGHTS[3]
+            + norm_test[i] * RISK_WEIGHTS[4]
+            + norm_coupling[i] * RISK_WEIGHTS[5]
+            + norm_revert[i] * RISK_WEIGHTS[6];
 
         // Penalty: files with fewer than 5 tests per 100 lines get a bump
         // (only for .rs files where test density is meaningful)
@@ -480,28 +512,42 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     risks
 }
 
-/// Find files that appear in revert commits.
-fn revert_involved_files() -> std::collections::HashMap<String, u32> {
-    let output = match crate::git::run_git(&[
-        "log",
-        "--all",
-        "--oneline",
-        "--grep=Revert",
-        "--name-only",
-        "--pretty=format:",
-    ]) {
-        Ok(o) => o,
-        Err(_) => return std::collections::HashMap::new(),
-    };
-
+/// Build a map of file paths → number of times that file appeared in a revert commit.
+///
+/// Searches git history for multiple revert patterns:
+/// - "Revert" (git's default `git revert` prefix)
+/// - "revert task" (evolve loop's task-level revert messages)
+/// - "revert session" (evolve loop's session-level revert messages)
+///
+/// This is the empirical failure signal — files that have been reverted in the past
+/// are more likely to cause future failures. Part of the dream milestone: predictive
+/// self-understanding grounded in historical failure data.
+fn revert_history() -> std::collections::HashMap<String, u32> {
     let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    for line in output.lines() {
-        let path = line.trim();
-        if path.is_empty() {
-            continue;
-        }
-        if path.starts_with("src/") && path.ends_with(".rs") {
-            *counts.entry(path.to_string()).or_insert(0) += 1;
+
+    // Search for multiple revert patterns used by both `git revert` and the evolve loop
+    let patterns = ["Revert", "revert task", "revert session"];
+    for pattern in &patterns {
+        let output = match crate::git::run_git(&[
+            "log",
+            "--all",
+            "--oneline",
+            &format!("--grep={pattern}"),
+            "--name-only",
+            "--pretty=format:",
+        ]) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+
+        for line in output.lines() {
+            let path = line.trim();
+            if path.is_empty() {
+                continue;
+            }
+            if path.starts_with("src/") && path.ends_with(".rs") {
+                *counts.entry(path.to_string()).or_insert(0) += 1;
+            }
         }
     }
     counts
@@ -2058,9 +2104,8 @@ src/baz.rs
 
     #[test]
     fn test_risk_weights_sum_to_one() {
-        // The 6 risk signal weights must sum to 1.0 (within floating-point tolerance)
-        let weights: [f64; 6] = [0.25, 0.20, 0.12, 0.18, 0.10, 0.15];
-        let sum: f64 = weights.iter().sum();
+        // The 7 risk signal weights must sum to 1.0 (within floating-point tolerance)
+        let sum: f64 = RISK_WEIGHTS.iter().sum();
         assert!(
             (sum - 1.0).abs() < 1e-10,
             "Risk weights should sum to 1.0, got {sum}"

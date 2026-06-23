@@ -518,8 +518,8 @@ pub use crate::commands_plan::{
     PLAN_MODE_PROMPT,
 };
 pub use crate::commands_project::{
-    handle_context, handle_docs, handle_extract, handle_init, handle_move, handle_refactor,
-    handle_rename,
+    auto_context_for_prompt, format_auto_context, handle_context, handle_docs, handle_extract,
+    handle_init, handle_move, handle_refactor, handle_rename,
 };
 
 pub use crate::commands_todo::handle_todo;

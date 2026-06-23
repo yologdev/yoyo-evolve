@@ -524,28 +524,7 @@ pub(crate) struct WebSearchResult {
     pub snippet: String,
 }
 
-/// Simple percent-encoding for URL query parameters.
-/// Encodes everything except unreserved characters (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`).
-#[allow(dead_code)]
-fn url_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() * 2);
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            b' ' => out.push('+'),
-            _ => {
-                out.push('%');
-                out.push_str(&format!("{b:02X}"));
-            }
-        }
-    }
-    out
-}
-
 /// Decode a percent-encoded string (e.g. from a URL query parameter).
-#[allow(dead_code)]
 fn url_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -576,7 +555,6 @@ fn url_decode(s: &str) -> String {
 ///
 /// We extract the `uddg=` value and percent-decode it. If the href doesn't
 /// contain `uddg=`, we return it as-is (stripping a leading `//` if present).
-#[allow(dead_code)]
 pub(crate) fn extract_ddg_url(href: &str) -> String {
     // Look for uddg= parameter
     if let Some(pos) = href.find("uddg=") {
@@ -600,7 +578,6 @@ pub(crate) fn extract_ddg_url(href: &str) -> String {
 ///
 /// Given `<a class="result__a" href="/l/?uddg=...">`, calling
 /// `extract_attr(tag, "href")` returns the value inside the quotes.
-#[allow(dead_code)]
 fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
     // Search for attr_name= (case-insensitive for the attr name)
     let needle = format!("{attr_name}=");
@@ -624,7 +601,6 @@ fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
 
 /// Extract text content between an opening tag at position 0 and its closing tag.
 /// Returns the inner text with HTML tags stripped.
-#[allow(dead_code)]
 fn extract_inner_text(html: &str) -> String {
     // Strip all tags from the fragment
     let mut out = String::with_capacity(html.len());
@@ -1517,26 +1493,6 @@ mod tests {
     }
 
     #[test]
-    fn test_url_encode_basic() {
-        assert_eq!(url_encode("hello world"), "hello+world");
-        assert_eq!(url_encode("rust lang"), "rust+lang");
-        assert_eq!(url_encode("simple"), "simple");
-    }
-
-    #[test]
-    fn test_url_encode_special_chars() {
-        assert_eq!(url_encode("a&b=c"), "a%26b%3Dc");
-        assert_eq!(url_encode("foo bar?baz"), "foo+bar%3Fbaz");
-        assert_eq!(url_encode("100%"), "100%25");
-    }
-
-    #[test]
-    fn test_url_encode_preserves_unreserved() {
-        assert_eq!(url_encode("a-b_c.d~e"), "a-b_c.d~e");
-        assert_eq!(url_encode("ABC123"), "ABC123");
-    }
-
-    #[test]
     fn test_url_decode_basic() {
         assert_eq!(url_decode("hello+world"), "hello world");
         assert_eq!(url_decode("hello%20world"), "hello world");
@@ -1749,14 +1705,6 @@ mod tests {
         // Should not have a third indented line for empty snippet
         let lines: Vec<&str> = formatted.lines().collect();
         assert_eq!(lines.len(), 2); // title + url only
-    }
-
-    #[test]
-    fn test_url_encode_roundtrip() {
-        let original = "rust programming language + guide";
-        let encoded = url_encode(original);
-        let decoded = url_decode(&encoded);
-        assert_eq!(decoded, original);
     }
 
     #[test]

@@ -882,6 +882,60 @@ pub async fn run_repl(
             effective_input
         };
 
+        // ── Auto-context: inject relevant files when no @mentions are present ──
+        let (effective_input, auto_context_files) = if file_results.is_empty()
+            && !commands::is_architect_mode()
+        {
+            // Collect recent message text so we don't re-inject files already seen
+            let recent_msgs: Vec<String> = agent
+                .messages()
+                .iter()
+                .rev()
+                .take(10)
+                .filter_map(|m| {
+                    if let yoagent::AgentMessage::Llm(yoagent::types::Message::User {
+                        content,
+                        ..
+                    }) = m
+                    {
+                        Some(
+                            content
+                                .iter()
+                                .filter_map(|c| {
+                                    if let yoagent::types::Content::Text { text } = c {
+                                        Some(text.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let auto_files = commands::auto_context_for_prompt(&effective_input, &recent_msgs);
+
+            if let Some(formatted) = commands::format_auto_context(&auto_files, &effective_input) {
+                // Print a brief note to stderr
+                let paths: Vec<&str> = auto_files.iter().map(|(p, _)| p.as_str()).collect();
+                eprintln!(
+                    "  📎 Auto-attached: {} (use @file to control manually)",
+                    paths.join(", ")
+                );
+
+                (formatted, auto_files)
+            } else {
+                (effective_input, Vec::new())
+            }
+        } else {
+            (effective_input, Vec::new())
+        };
+        let _ = &auto_context_files; // suppress unused warning when not logging
+
         let prompt_start = Instant::now();
         turn_count += 1;
 
