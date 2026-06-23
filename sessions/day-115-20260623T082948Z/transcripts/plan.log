@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No issues file found"📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat DREAM.md ✓ (5ms)
+ ✓ (44ms)
+  ▶ $ cat CHANGELOG.md | head -40  ▶ $ cat skills/release/SKILL.md | head -30 ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # Check what's changed since the last release (v0.1.14 on Da… (3 lines) ✓ (6ms)
+  ▶ $ # Check if there's a version tag (2 lines)  ▶ $ # Check what DDG dead code functions exist (2 lines) ✓ (3ms)
+ ✓ (5ms)
+  ▶ $ # See the dead functions (2 lines) ✓ (4ms)
+  ▶ $ # Check if extract_ddg_url is used elsewhere (it's pub(crate… (2 lines) ✓ (16ms)
+  ▶ $ # Check which of these are used only in tests vs actual code (2 lines) ✓ (4ms)
+  ▶ $ # Check where parse_ddg_results is used and if ddg_search st… (2 lines) ✓ (4ms)
+  11 tools completed in 24.7s (11 ✓)
+
+Now I understand the full picture. The DDG functions are NOT dead — they're used by `parse_ddg_results which is still called by ddg_search`, which is the fallback when no Exa API key is set. The #[allow(dead_code)] annotations are wrong — these functions are actually called from within the same file. Let me verify more carefully:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # These 5 functions — are they actually dead or used by pars… (9 lines) ✓ (2ms)
+  ▶ $ # Check the dream milestone more carefully - what does /risk… (2 lines) ✓ (4ms)
+  ▶ $ # Check the FileRisk struct and what signals it uses (2 lines) ✓ (4ms)
+  ▶ $ # What signals does compute_file_risk_scores currently use? (2 lines) ✓ (4ms)
+  4 tools completed in 11.8s (4 ✓)
+
+Now I have a good picture. Let me check what the dream milestone is about and what would advance it:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check /risk validate - how does it compare predictions to … (2 lines) ✓ (4ms)
+
+Good. Now let me think about what tasks to create. Here's my assessment:
+
+1. Dream milestone — The risk scorer exists with 6 signals (churn, acceleration, size, reverts, test density, co-change coupling). The next step toward the dream of "predicting which file breaks next" would be to integrate the risk scorer into the evolution loop — make it automatically snapshot predictions and validate them. But that's more of a harness change. A better code-level dream step: add a complexity signal to the risk scorer. File complexity (cyclomatic complexity approximation, function count, nesting depth) is a well-known predictor of bugs that the current scorer doesn't use.
+
+2. Dead code cleanup — The assessment flagged 5 #[allow(dead_code)] functions in `commands_web.rs. But investigation shows only url_encode is truly production-dead (only used in tests). The others are used by the DDG fallback path. The #[allow(dead_code)]` annotations are misleading — they should be removed since clippy isn't flagging them. This is a small cleanup.
+
+3. Biggest competitive gap — Automatic context selection. The assessment correctly identifies this as the single most impactful gap vs all competitors. But this is a multi-session effort. A good Day 115 step: wire the existing /context relevant keyword scoring into the prompt pipeline so that when a user types a prompt, the most relevant files are automatically mentioned in a brief context block.
+
+Let me plan three tasks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons… ✓ (4ms)
+  ▶ $ # Check what /context relevant currently does and where it l… (2 lines) ✓ (4ms)
+  ▶ $ sed -n '918,1000p' src/commands_project.rs ✓ (4ms)
+  ▶ $ # Check the score_files and scoring infrastructure (2 lines) ✓ (3ms)
+  ▶ $ sed -n '830,920p' src/commands_project.rs ✓ (4ms)
+  ▶ $ # How does build_repo_map work? (2 lines) ✓ (4ms)
+  ▶ $ grep -rn 'fn build_repo_map\|pub.*build_repo_map' src/ --include='*.rs' ✓ (44ms)
+  ▶ $ sed -n '13,40p' src/commands_map.rs ✓ (3ms)
+  8 tools completed in 26.9s (8 ✓)
+
+Now I understand the landscape well. The relevance scoring exists but is manual-only (`/context relevant`). The dream is about self-prediction. Let me now plan the three tasks.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check complexity/nesting depth computation - does anything… (2 lines) ✓ (4ms)
+  ▶ $ # Check what the risk score weights currently are (2 lines) ✓ (4ms)
+  ▶ $ # Check what signals are there and labeled (2 lines) ✓ (4ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now let me think about what's most impactful:
+
+**Task 1 (Dream/Self-driven): Add a complexity signal** to the risk scorer — count functions per file and average function length. Files with many functions and/or very long functions are empirically more likely to have bugs. This advances the dream milestone directly by adding a new predictive signal.
+
+Task 2 (Competitive gap/Capability): Clean up the dead code in commands_web.rs — remove the misleading #[allow(dead_code)] annotations from the 4 functions that ARE used by the DDG fallback path, and move url_encode to `#[cfg(test)]` since it's only used in tests. This is honest maintenance that keeps the codebase truthful.
+
+Task 3 (Competitive gap/Self-driven): The biggest gap is automatic context injection. Build the foundation: a `suggest_relevant_files function that can be called from prompt.rs` to automatically identify and inject relevant file paths into the system prompt context. This is a first step — we won't wire it into every prompt yet, but we'll build the machinery and expose it via a config option.
+
+Actually, let me reconsider Task 3. Wiring automatic context into prompts is a big multi-file change. Let me scope it better.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check how context is currently loaded into prompts (2 lines) ✓ (4ms)
+  ▶ $ sed -n '127,235p' src/context.rs ✓ (4ms)
+  2 tools completed in 3.0s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
