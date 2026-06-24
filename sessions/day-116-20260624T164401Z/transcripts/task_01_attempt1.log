@@ -1,0 +1,257 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to find the most impactful improvement. Let me assess the codebase systematically.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (7ms)
+ ✓ (36.6s)
+  2 tools completed in 38.8s (2 ✓)
+
+Good, all tests pass. Let me look at some key areas for improvement opportunities.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "unwrap()" src/*.rs src… ✓ (9ms)
+ ✓ (16.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.clone()" src/*.rs sr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|HACK\|XXX… ✓ (9ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "let _ =" src/*.rs src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.lock()\." src/*.rs s… ✓ (8ms)
+ ✓ (7ms)
+  6 tools completed in 31.4s (6 ✓)
+
+Let me look at specific high-impact areas — the prompt system, error handling patterns, and core functionality.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the yoyo codebase for high-impact improvement opport…' ✓ (1m 3s)
+
+Excellent analysis. The #3 finding about looks_incomplete false positives is the most impactful improvement I can make — it directly affects user experience by wasting tokens and confusing users with unnecessary auto-continue turns. Let me investigate this deeply.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_incomplete" src/r… ✓ (3ms)
+  ▶ read src/repl.rs:1146..1316 ✓ (2ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Now I see the issue clearly. Pattern 6 (action_phrases) has no guard for completion signals. When the agent says "I've finished. Let me update you on what happened" — the "let me update" phrase triggers auto-continue even though the work is done. Let me also look at what the existing tests say:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1911..2051 ✓ (1ms)
+
+Now I can see the problem clearly. Let me construct the false-positive scenarios:
+
+1. "I've finished all changes. Let me update you on what I did." → triggers Pattern 6 ("let me update") → FALSE POSITIVE
+2. "All done! I'll add a summary: everything works correctly." → triggers Pattern 6 ("i'll add") → FALSE POSITIVE
+3. "The fix is complete. Let me write a summary of what changed." → triggers Pattern 6 ("let me write") → FALSE POSITIVE
+4. "Tests pass. Let me create a brief recap of the changes." → triggers Pattern 6 ("let me create") → FALSE POSITIVE
+
+The fix: add a **completion guard** — when the tail contains strong completion signals, skip Pattern 6 (and also Pattern 3's weaker signals). The completion check should be placed before Pattern 6, and it needs to be robust enough to not suppress genuine incomplete responses.
+
+Let me also check Pattern 2 and Pattern 3 for similar issues:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (27 lines) ✓ (20ms)
+
+Clear false positives confirmed. Now let me design and implement the fix. The key insight: when strong completion signals appear in the same tail, action phrases are being used in a summary/recap context, not as work-in-progress signals.
+
+I'll write the test first:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:2043..2058 ✓ (1ms)
+  ▶ read src/repl.rs:2057..2137 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me implement the fix. First, tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (2 → 49 lines)
+  +     #[test]
+  +     fn test_looks_incomplete_completion_guard() {
+  +         // When the tail contains strong completion signals, action phrases in
+  +         // summary/recap context should NOT trigger auto-continue.
+  +         assert!(!looks_incomplete(
+  +             "I've finished all the changes. Let me update you on what I did: the parser is fixed."
+  +         ));
+  +         assert!(!looks_incomplete(
+  +             "All done! Let me write a brief summary of everything that changed."
+  +         ));
+  +         assert!(!looks_incomplete(
+  +             "The implementation is complete. Let me add a note: test coverage is at 95%."
+  +         ));
+  +         assert!(!looks_incomplete(
+  +             "Everything is working now. I'll create a recap of the three files I modified."
+  +         ));
+  +         assert!(!looks_incomplete(
+  +             "That's all the changes. Let me update the summary for you."
+  +         ));
+  +         assert!(!looks_incomplete(
+  ... (29 more lines)
+ ✓ (1m 22s)
+  +     #[test]
+  +     fn test_looks_incomplete_completion_guard() {
+  +         // When the tail contains strong completion signals, action phrases in
+  +         // summary/recap context should NOT trigger auto-continue.
+  +         assert!(!looks_incomplete(
+  +             "I've finished all the changes. Let me update you on what I did: the parser is fixed."
+  +         ));
+  +         assert!(!looks_incomplete(
+  ... (13 more lines)
+
+Let me see the test results:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test looks_incomplete 2>&1 ✓ (131ms)
+
+Good — tests fail as expected since the logic isn't implemented yet. Now let me implement the completion guard. I'll add a helper function and integrate it into the looks_incomplete function:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1146..1161 ✓ (1ms)
+
+Now I need to add a completion guard. The key design decision: which patterns should the completion guard suppress? 
+
+• Pattern 1 (continuation phrases like "i'll continue", "let me proceed") — these are strong incomplete signals, probably genuine even with completion words nearby. Keep triggering.
+• Pattern 3 (trailing ellipsis with work signals) — should be suppressed when completion signals present
+• Pattern 6 (action phrases like "let me update", "let me fix") — should be suppressed when completion signals present
+• Pattern 7 (ordinal progression) — should be suppressed when completion signals present
+
+Let me implement this:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (12 → 20 lines)
+        let tail_start = safe_byte_index(text, text.len().saturating_sub(300));
+        let tail = &text[tail_start..];
+        let tail_lower = tail.to_lowercase();
+  + 
+  +     // ── Completion guard ──
+  +     // When the tail contains strong completion signals, weaker patterns (action
+  +     // phrases, ellipsis with work signals, ordinal progression) are likely being
+  +     // used in a summary/recap context rather than indicating unfinished work.
+  +     // Strong patterns (explicit continuation, unclosed fences, step N of M) still
+  +     // override completion signals because they're structurally unambiguous.
+  +     let has_completion_signal = tail_has_completion_signal(&tail_lower);
+    
+        // ── Pattern 1: explicit continuation phrases near the end ──
+ ✓ (10.2s)
+        let tail_start = safe_byte_index(text, text.len().saturating_sub(300));
+        let tail = &text[tail_start..];
+        let tail_lower = tail.to_lowercase();
+  + 
+  +     // ── Completion guard ──
+  +     // When the tail contains strong completion signals, weaker patterns (action
+  +     // phrases, ellipsis with work signals, ordinal progression) are likely being
+  +     // used in a summary/recap context rather than indicating unfinished work.
+  ... (5 more lines)
+
+Expected — I need to add the helper function and add the guards to patterns 3, 6, and 7. Let me do it all together:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1355..1360 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn step_x_of_y\|^fn ex… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn safe_byte_index" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_byte_index" src/re… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn safe_byte_index" sr… ✓ (5ms)
+  5 tools completed in 15.8s (5 ✓)
+
+Good. Now let me add the helper function and apply the completion guard to patterns 3, 6, and 7:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 1 lines) ✓ (9.6s)
+  ▶ edit src/repl.rs (1 → 32 lines)
+  + /// Check if the tail contains strong completion signals.
+  + ///
+  + /// These indicate the agent has finished work and is summarising/recapping,
+  + /// so weaker incomplete-patterns (action phrases, ellipsis with work signals,
+  + /// ordinal progression) should be suppressed — the action phrase is being used
+  + /// in a summary context, not as a genuine work-in-progress signal.
+  + fn tail_has_completion_signal(tail_lower: &str) -> bool {
+  +     const COMPLETION_PHRASES: &[&str] = &[
+  +         "all done",
+  +         "that's all",
+  +         "that\u{2019}s all",
+  +         "all complete",
+  +         "is complete",
+  +         "is done",
+  +         "are done",
+  +         "have been applied",
+  +         "have been completed",
+  +         "everything is working",
+  +         "everything works",
+  +         "all changes",
+  ... (12 more lines)
+ ✓ (15.9s)
+  + /// Check if the tail contains strong completion signals.
+  + ///
+  + /// These indicate the agent has finished work and is summarising/recapping,
+  + /// so weaker incomplete-patterns (action phrases, ellipsis with work signals,
+  + /// ordinal progression) should be suppressed — the action phrase is being used
+  + /// in a summary context, not as a genuine work-in-progress signal.
+  + fn tail_has_completion_signal(tail_lower: &str) -> bool {
+  +     const COMPLETION_PHRASES: &[&str] = &[
+  ... (13 more lines)
+  2 tools completed in 37.4s (2 ✓)
+
+Now I need to actually use the has_completion_signal variable in patterns 3, 6, and 7. Let me apply the guards:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (5 → 6 lines)
+        // Only trigger if the tail also contains signals of ongoing work.
+        // LLMs commonly end prose with "..." (e.g. "handles errors, logging, etc...")
+        // without intending to continue — that's a rhetorical trailing off, not a cutoff.
+  -     if text.ends_with("...") || text.ends_with("…") {
+  +     // Skip when completion signals are present (the "..." is a summary flourish).
+  +     if !has_completion_signal && (text.ends_with("...") || text.ends_with("…")) {
+ ✓ (1m 19s)
+        // Only trigger if the tail also contains signals of ongoing work.
+        // LLMs commonly end prose with "..." (e.g. "handles errors, logging, etc...")
+        // without intending to continue — that's a rhetorical trailing off, not a cutoff.
+  -     if text.ends_with("...") || text.ends_with("…") {
+  +     // Skip when completion signals are present (the "..." is a summary flourish).
+  +     if !has_completion_signal && (text.ends_with("...") || text.ends_with("…")) {
+
+Now Pattern 6:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (2 → 4 lines)
+        // ── Pattern 6: action intent phrases near the end ──
+  -     let action_phrases = [
+  +     // Skip when completion signals are present — the action phrase is being used
+  +     // to introduce a recap/summary rather than signal unfinished work.
+  +     if !has_completion_signal {
+ ✓ (303ms)
+        // ── Pattern 6: action intent phrases near the end ──
+  -     let action_phrases = [
+  +     // Skip when completion signals are present — the action phrase is being used
+  +     // to introduce a recap/summary rather than signal unfinished work.
+  +     if !has_completion_signal {
+
+I need to read the full Pattern 6 to wrap it properly:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1258..1283 ✓ (1ms)
+
+I see, the edit replaced the let action_phrases = [ line. Let me fix this:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (25 → 27 lines)
+        // Skip when completion signals are present — the action phrase is being used
+        // to introduce a recap/summary rather than signal unfinished work.
+        if !has_completion_signal {
+  -         "let me update",
+  -         "let me fix",
+  -         "let me modify",
+  -         "let me add",
+  -         "let me create",
+  -         "let me write",
+  -         "let me implement",
+  -         "let me handle",
+  -         "i'll update",
+  -         "i'll fix",
+  -         "i'll modify",
+  -         "i'll add",
+  -         "i'll create",
+  -         "i'll implement",
+  -         "i'll handle",
+  -     ];
+  -     for phrase in &action_phrases {
+  ... (25 more lines)
+ ✓ (1m 21s)
+        // Skip when completion signals are present — the action phrase is being used
+        // to introduce a recap/summary rather than signal unfinished work.
+        if !has_completion_signal {
+  -         "let me update",
+  -         "let me fix",
+  -         "let me modify",
+  -         "let me add",
+  -         "let me create",
+  ... (13 more lines)
+
+Now Pattern 7 (ordinal progression):
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1286..1316 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
