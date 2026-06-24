@@ -1,0 +1,400 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code in src/commands_project.rs, specifically the tokenize_query and score_files functions, then implement the changes.
+  ▶ search 'fn tokenize_query' in src/commands_project.rs  ▶ search 'fn score_files' in src/commands_project.rs  ▶ search 'fn auto_context_for_prompt' in src/commands_project.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/commands_project.rs:830..950 ✓ (2ms)
+  4 tools completed in 5.4s (4 ✓)
+
+Now let me check the existing test section to understand the test patterns:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_project.rs ✓ (2ms)
+  ▶ search '#\[test\]' in src/commands_project.rs ✓ (3ms)
+  ▶ read src/commands_project.rs:1180..1240 ✓ (1ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now let me find the existing tokenize_query tests and the `score_files` tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'tokenize_query|score_files' in src/commands_project.rs ✓ (3ms)
+  ▶ search 'tokenize' in src/commands_project.rs ✓ (3ms)
+  ▶ read src/commands_project.rs:2415..2535 ✓ (2ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Good. Now I have a clear picture of the code. Let me also look at how FileSymbols and Symbol are used to understand the imports:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::symbols' in src/commands_project.rs ✓ (3ms)
+
+Now let me understand the full plan and implement:
+
+1. **Add `decompose_identifier`** — splits snake_case and camelCase identifiers into lowercase words
+2. Update `tokenize_query` — decompose any snake_case/camelCase tokens
+3. Update `score_files` — decompose symbol names before matching
+4. Add tests for decompose_identifier with edge cases
+
+Let me implement step by step. First, I'll add the decompose_identifier function and its tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:835..845 ✓ (1ms)
+
+Now I'll add the `decompose_identifier function right before the STOP_WORDS constant, then update tokenize_query` and score_files:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (5 → 64 lines)
+  + /// Decompose a snake_case or camelCase identifier into lowercase component words.
+  + ///
+  + /// Examples:
+  + /// - `agent_builder` → `["agent", "builder"]`
+  + /// - `StreamingBashTool` → `["streaming", "bash", "tool"]`
+  + /// - `auto_context_for_prompt` → `["auto", "context", "for", "prompt"]`
+  + /// - `HTMLParser` → `["html", "parser"]`
+  + /// - `getURLValue` → `["get", "url", "value"]`
+  + fn decompose_identifier(ident: &str) -> Vec<String> {
+  +     let mut words = Vec::new();
+  +     // First split on underscores, hyphens, dots, slashes (common separators)
+  +     for segment in ident.split(|c: char| c == '_' || c == '-' || c == '.' || c == '/') {
+  +         if segment.is_empty() {
+  +             continue;
+  +         }
+  +         // Then split camelCase / PascalCase within each segment
+  +         let mut current = String::new();
+  +         let chars: Vec<char> = segment.chars().collect();
+  +         for i in 0..chars.len() {
+  +             let c = chars[i];
+  ... (42 more lines)
+ ✓ (15.8s)
+  + /// Decompose a snake_case or camelCase identifier into lowercase component words.
+  + ///
+  + /// Examples:
+  + /// - `agent_builder` → `["agent", "builder"]`
+  + /// - `StreamingBashTool` → `["streaming", "bash", "tool"]`
+  + /// - `auto_context_for_prompt` → `["auto", "context", "for", "prompt"]`
+  + /// - `HTMLParser` → `["html", "parser"]`
+  + /// - `getURLValue` → `["get", "url", "value"]`
+  ... (13 more lines)
+
+Let me fix the clippy issue and now update tokenize_query and score_files to use the function:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (1 → 1 lines)
+  -     for segment in ident.split(|c: char| c == '_' || c == '-' || c == '.' || c == '/') {
+  +     for segment in ident.split(['_', '-', '.', '/']) {
+ ✓ (15.8s)
+  -     for segment in ident.split(|c: char| c == '_' || c == '-' || c == '.' || c == '/') {
+  +     for segment in ident.split(['_', '-', '.', '/']) {
+
+Good, just the "never used" warning left. Now let me update tokenize_query to use decomposition:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (10 → 22 lines)
+    /// Tokenize a natural-language query into keywords.
+    ///
+  - /// Splits on whitespace, lowercases, and filters out common stop words.
+  + /// Splits on whitespace, lowercases, filters out common stop words, and
+  + /// decomposes any snake_case/camelCase tokens into component words.
+    fn tokenize_query(query: &str) -> Vec<String> {
+  -     query
+  -         .split_whitespace()
+  -         .map(|w| w.to_lowercase())
+  -         .filter(|w| !STOP_WORDS.contains(&w.as_str()))
+  -         .collect()
+  +     let mut keywords = Vec::new();
+  +     for word in query.split_whitespace() {
+  +         let lower = word.to_lowercase();
+  +         // Try decomposing — if it yields multiple parts, use those
+  +         let parts = decompose_identifier(&lower);
+  +         if parts.len() > 1 {
+  +             for part in parts {
+  +                 if !STOP_WORDS.contains(&part.as_str()) {
+  +                     keywords.push(part);
+  ... (8 more lines)
+ ✓ (1m 33s)
+    /// Tokenize a natural-language query into keywords.
+    ///
+  - /// Splits on whitespace, lowercases, and filters out common stop words.
+  + /// Splits on whitespace, lowercases, filters out common stop words, and
+  + /// decomposes any snake_case/camelCase tokens into component words.
+    fn tokenize_query(query: &str) -> Vec<String> {
+  -     query
+  -         .split_whitespace()
+  ... (13 more lines)
+
+Now update score_files to decompose symbol names:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (9 → 12 lines)
+                // Symbol name matching (2x weight)
+  +             // Decompose camelCase/snake_case symbol names for better matching
+                for sym in &file.symbols {
+                    let sym_lower = sym.name.to_lowercase();
+  -                 if sym_lower.contains(kw.as_str()) {
+  +                 let sym_parts = decompose_identifier(&sym.name);
+  +                 let matched_via_decomposed = sym_parts.iter().any(|p| p == kw.as_str());
+  +                 if matched_via_decomposed || sym_lower.contains(kw.as_str()) {
+                        score += 2;
+                        kw_matched = true;
+                        break;
+ ✓ (1m 34s)
+                // Symbol name matching (2x weight)
+  +             // Decompose camelCase/snake_case symbol names for better matching
+                for sym in &file.symbols {
+                    let sym_lower = sym.name.to_lowercase();
+  -                 if sym_lower.contains(kw.as_str()) {
+  +                 let sym_parts = decompose_identifier(&sym.name);
+  +                 let matched_via_decomposed = sym_parts.iter().any(|p| p == kw.as_str());
+  +                 if matched_via_decomposed || sym_lower.contains(kw.as_str()) {
+  ... (3 more lines)
+
+Now let me run the build to see if it compiles:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.1s)
+
+Clippy passes. Now let me add the tests. Let me find where the existing context relevant tests end:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2470..2520 ✓ (1ms)
+
+Now let me add tests. I'll insert them right after the existing tokenize_query tests and before the score_files tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (10 → 97 lines)
+            // Completely empty query
+            let tokens2 = tokenize_query("");
+            assert!(tokens2.is_empty());
+  +     }
+  + 
+  +     // --- decompose_identifier tests ---
+  + 
+  +     #[test]
+  +     fn test_decompose_snake_case() {
+  +         assert_eq!(
+  +             decompose_identifier("agent_builder"),
+  +             vec!["agent", "builder"]
+  +         );
+  +         assert_eq!(
+  +             decompose_identifier("auto_context_for_prompt"),
+  +             vec!["auto", "context", "for", "prompt"]
+  +         );
+  +     }
+  + 
+  +     #[test]
+  ... (71 more lines)
+ ✓ (1m 34s)
+            // Completely empty query
+            let tokens2 = tokenize_query("");
+            assert!(tokens2.is_empty());
+  +     }
+  + 
+  +     // --- decompose_identifier tests ---
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+The output was truncated. Let me run the tests directly:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (45.1s)
+
+Two issues:
+1. All-caps "HTML" — each uppercase letter is being treated as a new word boundary
+2. tokenize_query lowercases before decomposing, so StreamingBashTool becomes streamingbashtool which doesn't get decomposed
+
+Let me fix both issues. First, the decompose_identifier function needs to handle all-caps sequences properly. Second, tokenize_query should decompose BEFORE lowercasing:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:900..930 ✓ (2ms)
+
+The core problem: decompose_identifier splits on uppercase boundaries but the input is already lowercased, so camelCase boundaries are lost. I need to decompose with the original casing, then lowercase the results. Also, the all-caps handling needs fixing — consecutive uppercase letters without a following lowercase should stay together.
+
+Let me rewrite the function more carefully:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (58 → 61 lines)
+            for i in 0..chars.len() {
+                let c = chars[i];
+                if c.is_uppercase() {
+  -                 // Detect transitions: look at whether we're starting a new word
+                    if !current.is_empty() {
+  -                     // If current is all uppercase and next char is lowercase,
+  -                     // the last char of current starts a new word (e.g., "HTML" + "Parser")
+  +                     // Check if we're in an all-caps run followed by lowercase
+  +                     // e.g., "HTMLParser" — when we hit 'P' (uppercase after uppercase run),
+  +                     // and the next char 'a' is lowercase, we split "HTM" + "LParser"
+  +                     let prev_is_upper = i > 0 && chars[i - 1].is_uppercase();
+                        let next_is_lower =
+                            i + 1 < chars.len() && chars[i + 1].is_lowercase();
+  -                     let current_is_upper = current.chars().all(|ch| ch.is_uppercase());
+  -                     if current_is_upper && next_is_lower && current.len() > 1 {
+  -                         // e.g., in "HTMLParser", when we hit 'P', split "HTM" | "L" + "Parser"
+  -                         // Push all but last char of current as one word
+  +                     if prev_is_upper && next_is_lower && current.len() > 1 {
+  +                         // Split: keep all but last char as one word, start new with last + current
+                            let last = current.pop().unwrap();
+  ... (24 more lines)
+ ✓ (1m 34s)
+            for i in 0..chars.len() {
+                let c = chars[i];
+                if c.is_uppercase() {
+  -                 // Detect transitions: look at whether we're starting a new word
+                    if !current.is_empty() {
+  -                     // If current is all uppercase and next char is lowercase,
+  -                     // the last char of current starts a new word (e.g., "HTML" + "Parser")
+  +                     // Check if we're in an all-caps run followed by lowercase
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 3944 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me look at the current state of the code and the failing tests to understand what's wrong.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (162ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (130ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Two bugs:
+1. HTMLParser → ["htm", "lparser"] — the acronym boundary detection is wrong. When we see 'P' after "HTML", `prev_is_upper is true, next_is_lower ('a') is true, current.len() > 1` ("HTML" has len 4) — so it pops the last char 'L', pushes "HTM", starts new word with "LP"... The issue is that `chars[i-1]` is 'L' which is uppercase (correct), but we're checking the wrong index. The prev_is_upper check should look at whether the current accumulator ends with uppercase, not chars[i-1].
+
+Actually wait, the issue is simpler: when we hit 'P', current = "HTML". We pop 'L', push "HTM", then set current = "L" then push 'P' → current = "LP". Then 'a', 'r', 's', 'e', 'r' get appended → "LParser". That's wrong — it should be "html" and "parser". The pop logic is off by one: when we see uppercase 'P' after all-caps "HTML" with lowercase 'a' following, the split should be "HTML" → keep as word, then start new word with 'P'. Wait no, the correct split is HTML|Parser, so when we see 'P' at position 4, we need to realize the boundary is between 'L' and 'P'.
+
+Actually, looking again: `current = "HTML", we see 'P' (uppercase). prev_is_upper` = true (chars[3] = 'L' is uppercase). next_is_lower = true (chars[5] = 'a'). current.len() > 1 = true. So we pop 'L' from current → current becomes "HTM", push "HTM" as word. Then current = "L", push 'P' → current = "LP". Then lowercase chars follow → "LParser".
+
+The bug: we shouldn't pop the last char. The boundary is between the current run and the new word starting at the current position. For "HTMLParser", when we hit 'P': the previous uppercase run is "HTML" but the 'L' actually belongs with 'P' since "LP..." starts "LParser" — no wait, that's wrong too. The correct split is "HTML" + "Parser". So when we hit 'P' (uppercase, with 'a' lowercase after), we should push the entire current "HTML" and start fresh with "P".
+
+The problem is the algorithm assumes the last char of the uppercase run belongs to the next word (because in "getURLValue", the 'V' starts "Value"). But "HTMLParser" — the 'L' is the last char of the acronym "HTML", and 'P' starts "Parser". So the split should happen *before* 'P', keeping all of "HTML".
+
+The fix: when we have consecutive uppercase followed by an uppercase + lowercase, the boundary is right before the current char, not one char back. Let me reconsider. The standard convention:
+
+• HTMLParser → HTML, Parser (split before P, because P starts a new word Pa...)  
+• getURLValue → get, URL, Value (split before V, keeping URL together)
+
+The rule: when at position i with uppercase char, and i-1 was uppercase, and i+1 is lowercase — the boundary is before position i. So we push the full `current` and start a new word with the current char.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:834..899 ✓ (1ms)
+
+The fix for bug 1: when prev is uppercase, next is lowercase, and current len > 1, we should push the FULL current as a word, then start fresh with just the current char. NOT pop+split. For "HTMLParser" at 'P': push "HTML", start "P", then lowercase chars follow → "Parser". That gives ["html", "parser"]. ✓
+
+For "getURLValue" at 'V': current = "URL", prev 'L' is uppercase, next 'a' is lowercase, len > 1 → push "URL", start "V" → eventually "Value". That gives ["get", "url", "value"]. ✓
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (16 → 12 lines)
+                        // Check if we're in an all-caps run followed by lowercase
+                        // e.g., "HTMLParser" — when we hit 'P' (uppercase after uppercase run),
+  -                     // and the next char 'a' is lowercase, we split "HTM" + "LParser"
+  +                     // and the next char 'a' is lowercase, push the full acronym and start fresh
+                        let prev_is_upper = i > 0 && chars[i - 1].is_uppercase();
+                        let next_is_lower =
+                            i + 1 < chars.len() && chars[i + 1].is_lowercase();
+                        if prev_is_upper && next_is_lower && current.len() > 1 {
+  -                         // Split: keep all but last char as one word, start new with last + current
+  -                         let last = current.pop().unwrap();
+  -                         if !current.is_empty() {
+  -                             words.push(current.to_lowercase());
+  -                         }
+  +                         // "HTML" is complete; 'P' starts new word "Parser"
+  +                         words.push(current.to_lowercase());
+                            current = String::new();
+  -                         current.push(last);
+                            current.push(c);
+                        } else if prev_is_upper {
+ ✓ (1m 31s)
+                        // Check if we're in an all-caps run followed by lowercase
+                        // e.g., "HTMLParser" — when we hit 'P' (uppercase after uppercase run),
+  -                     // and the next char 'a' is lowercase, we split "HTM" + "LParser"
+  +                     // and the next char 'a' is lowercase, push the full acronym and start fresh
+                        let prev_is_upper = i > 0 && chars[i - 1].is_uppercase();
+                        let next_is_lower =
+                            i + 1 < chars.len() && chars[i + 1].is_lowercase();
+                        if prev_is_upper && next_is_lower && current.len() > 1 {
+  ... (11 more lines)
+
+Now fix bug 2: tokenize_query lowercases before decomposing, so camelCase is lost. Need to decompose from the original word:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:899..919 ✓ (1ms)
+  ▶ edit src/commands_project.rs (22 → 25 lines)
+    fn tokenize_query(query: &str) -> Vec<String> {
+        let mut keywords = Vec::new();
+        for word in query.split_whitespace() {
+  -         let lower = word.to_lowercase();
+  -         // Try decomposing — if it yields multiple parts, use those
+  -         let parts = decompose_identifier(&lower);
+  +         // Decompose from the original casing (so camelCase boundaries are visible)
+  +         let parts = decompose_identifier(word);
+            if parts.len() > 1 {
+                for part in parts {
+                    if !STOP_WORDS.contains(&part.as_str()) {
+                        keywords.push(part);
+                    }
+                }
+  -         } else if !STOP_WORDS.contains(&lower.as_str()) {
+  -             keywords.push(lower);
+  +         } else {
+  +             // Single word or no decomposition — just lowercase and filter
+  +             let lower = word.to_lowercase();
+  +             if !STOP_WORDS.contains(&lower.as_str()) {
+  ... (5 more lines)
+ ✓ (1m 34s)
+    fn tokenize_query(query: &str) -> Vec<String> {
+        let mut keywords = Vec::new();
+        for word in query.split_whitespace() {
+  -         let lower = word.to_lowercase();
+  -         // Try decomposing — if it yields multiple parts, use those
+  -         let parts = decompose_identifier(&lower);
+  +         // Decompose from the original casing (so camelCase boundaries are visible)
+  +         let parts = decompose_identifier(word);
+  ... (13 more lines)
+  2 tools completed in 1m 44s (2 ✓)
+
+Now let me also check the `test_decompose_all_caps_acronym` test to make sure the expectations match the fixed algorithm:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (175ms)
+
+All decompose tests pass. Now let me run the tokenize tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_project::tes… ✓ (134ms)
+
+Now let me run the full check suite:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (1m 17s)
+  2 tools completed in 1m 40s (2 ✓)
+
+All 3944+ tests pass, clippy is clean, format is clean. Let me commit:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (17ms)
+
+Done. Here's what I implemented:
+
+1. **`decompose_identifier`** — splits snake_case, camelCase, PascalCase, and acronym patterns (like HTMLParser → ["html", "parser"]) into lowercase component words. Handles underscores, hyphens, dots, and path separators as delimiters, plus camelCase boundary detection with proper acronym handling (consecutive uppercase chars stay grouped until a lowercase transition signals a new word).
+
+2. **Updated tokenize_query** — now decomposes any snake_case/camelCase tokens in the user's query before filtering stop words. Decomposition happens on the original casing so camelCase boundaries are preserved.
+
+3. **Updated `score_files`** — symbol names are now decomposed before matching, so keyword "streaming" correctly matches StreamingBashTool via its decomposed parts ["streaming", "bash", "tool"].
+
+4. **Added 8 tests**: snake_case, camelCase, all-caps acronyms (`HTML, HTMLParser, getURLValue`), single word, mixed separators, numbers, empty input, and tokenize_query decomposition integration.
+
+  ✓ Watch passed after fix (attempt 1)
+

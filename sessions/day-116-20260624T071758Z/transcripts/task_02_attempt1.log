@@ -1,0 +1,249 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "web_search" src/command…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "web_search" src/tools.r… ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1095,1160p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1118,1155p' src/commands… ✓ (4ms)
+  4 tools completed in 16.7s (4 ✓)
+
+Now let me look at format_search_results and the `WebSearchTool in tools.rs`:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_search_results" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_search_result… ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '745,790p' src/commands_w… ✓ (4ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Now let me look at the WebSearchTool in tools.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '690,770p' src/tools.rs ✓ (4ms)
+
+Now I understand the full picture. Let me look at the existing tests to understand the pattern:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1870,1940p' src/commands… ✓ (4ms)
+
+Now I have a clear picture. The issue is:
+
+1. web_search() returns `Ok(empty_vec)` when DDG is scraped but returns no results (captcha/blocked)
+2. format_search_results() returns "No results found." for empty results
+3. `web_search_and_read() returns format_search_results(&results)` which is just "No results found." — no hint about the missing API key
+
+My plan:
+1. Write a test first that verifies the warning appears when results are empty and EXA_API_KEY is unset
+2. Modify web_search_and_read() to append a warning when DDG returns empty results and EXA_API_KEY is not set
+3. The warning will propagate through WebSearchTool since it calls web_search_and_read()
+
+Let me also check how web_search (the Result-returning version) is used vs web_search_and_read:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "web_search(" src/ --in… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '311,340p' src/commands_w… ✓ (3ms)
+  2 tools completed in 8.3s (2 ✓)
+
+Good. So handle_web_search (the /web search command handler) also suffers from the same issue — it shows "(no results found)" without explanation. But the task scope says only src/commands_web.rs and src/tools.rs, and the main path for the agent is via WebSearchTool → web_search_and_read. Let me focus the fix there but I'll also improve handle_web_search since it's in `commands_web.rs`.
+
+Now let me write the test first, then implement:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1935,1939p' src/commands… ✓ (3ms)
+
+Wait — the existing test test_web_search_and_read_no_exa_key_no_panic asserts that the output does NOT mention EXA_API_KEY. But our change will make it mention EXA_API_KEY when results are empty. I need to update that existing test too.
+
+But actually, let me re-read it. The test checks web_search_and_read output. In CI, DDG may actually return results (or may not). The assertion says it shouldn't mention EXA_API_KEY. After our change, if DDG returns empty results, the output WILL mention EXA_API_KEY. So I need to update that test.
+
+Let me think about where to add the warning. The cleanest approach:
+
+1. Add a helper function like `no_results_exa_hint()` that returns the warning string
+2. In web_search_and_read(): after the DDG path returns results, check if results is empty AND exa key is not set → append the hint
+3. Update `format_search_results` to NOT be the place for this logic (it's a pure formatting function)
+4. Write a test using format_search_results + the hint logic directly (unit-testable without network)
+
+Let me implement:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1097,1102p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1095,1100p' src/commands… ✓ (3ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me add the helper and modify web_search_and_read:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1095..1100 ✓ (1ms)
+  ▶ edit src/commands_web.rs (3 → 11 lines)
+  + /// Warning hint returned when DDG fallback yields empty results and EXA_API_KEY is unset.
+  + pub(crate) fn exa_key_missing_hint() -> String {
+  +     "Note: No results found. The EXA_API_KEY environment variable is not set, so search \
+  +      used DuckDuckGo scraping which is unreliable.\n\
+  +      For reliable web search, set: export EXA_API_KEY=your-key"
+  +         .to_string()
+  + }
+  + 
+    /// Perform a web search — tries Exa API first, falls back to DuckDuckGo.
+    ///
+    /// If `EXA_API_KEY` is set, uses the Exa API (richer results with page content).
+ ✓ (15.9s)
+  + /// Warning hint returned when DDG fallback yields empty results and EXA_API_KEY is unset.
+  + pub(crate) fn exa_key_missing_hint() -> String {
+  +     "Note: No results found. The EXA_API_KEY environment variable is not set, so search \
+  +      used DuckDuckGo scraping which is unreliable.\n\
+  +      For reliable web search, set: export EXA_API_KEY=your-key"
+  +         .to_string()
+  + }
+  + 
+  ... (3 more lines)
+  2 tools completed in 28.2s (2 ✓)
+
+Good — the function is defined but not yet used. Let me now modify web_search_and_read to use it. Let me read the current state:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1125,1160p' src/commands… ✓ (4ms)
+
+I need to modify the DDG fallback paths to check for empty results. There are two DDG paths — the "no exa key" path and the "exa failed, falling back to DDG" path (the latter has exa key set so that shouldn't show the hint). Let me update the "No Exa key" path:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (6 → 7 lines)
+        // No Exa key — use DDG directly
+        match ddg_search(query, max_results) {
+  +         Ok(results) if results.is_empty() => exa_key_missing_hint(),
+            Ok(results) => format_search_results(&results),
+  -         Err(e) => format!("Web search failed: {e}"),
+  +         Err(e) => format!("Web search failed: {e}\n\n{}", exa_key_missing_hint()),
+        }
+    }
+ ✓ (1m 31s)
+        // No Exa key — use DDG directly
+        match ddg_search(query, max_results) {
+  +         Ok(results) if results.is_empty() => exa_key_missing_hint(),
+            Ok(results) => format_search_results(&results),
+  -         Err(e) => format!("Web search failed: {e}"),
+  +         Err(e) => format!("Web search failed: {e}\n\n{}", exa_key_missing_hint()),
+        }
+    }
+
+Let me check if it compiles now:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (158ms)
+
+Good, compiles. Now let me also update handle_web_search for the /web search interactive path:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "has_exa_key\|exa_api_ke… ✓ (4ms)
+
+Now let me also add the hint to handle_web_search (the interactive /web search path):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '319,324p' src/commands_w… ✓ (3ms)
+  ▶ edit src/commands_web.rs (4 → 13 lines)
+        match web_search(query, 8) {
+            Ok(results) if results.is_empty() => {
+  -             println!("  {DIM}(no results found){RESET}\n");
+  +             let has_exa = std::env::var("EXA_API_KEY")
+  +                 .ok()
+  +                 .filter(|k| !k.is_empty())
+  +                 .is_some();
+  +             if has_exa {
+  +                 println!("  {DIM}(no results found){RESET}\n");
+  +             } else {
+  +                 println!("  {YELLOW}No results found. EXA_API_KEY is not set — DuckDuckGo scraping is unreliable.{RESET}");
+  +                 println!("  {DIM}For reliable search: export EXA_API_KEY=your-key{RESET}\n");
+  +             }
+            }
+ ✓ (1m 34s)
+        match web_search(query, 8) {
+            Ok(results) if results.is_empty() => {
+  -             println!("  {DIM}(no results found){RESET}\n");
+  +             let has_exa = std::env::var("EXA_API_KEY")
+  +                 .ok()
+  +                 .filter(|k| !k.is_empty())
+  +                 .is_some();
+  +             if has_exa {
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (166ms)
+  3 tools completed in 1m 58s (3 ✓)
+
+Good. Now let me write the test and also fix the existing test that will conflict. Let me look at the existing test that needs updating:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1935,1955p' src/commands… ✓ (4ms)
+
+This test asserts that the output should NOT contain EXA_API_KEY. But now, if DDG returns empty results (likely in CI due to captchas), it WILL mention EXA_API_KEY. I need to update this test. The intent was "it shouldn't error about missing EXA key" but now we intentionally provide a helpful hint. Let me update the test:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (12 → 11 lines)
+            // web_search_and_read should not panic when EXA_API_KEY is unset
+            std::env::remove_var("EXA_API_KEY");
+            let result = web_search_and_read("rust programming language", 3);
+  -         // Should return some string (either results or an error message), never panic
+  +         // Should return some string (either results or an error/hint message), never panic
+            assert!(!result.is_empty());
+  -         // Should not mention needing EXA_API_KEY
+  -         assert!(
+  -             !result.contains("EXA_API_KEY"),
+  -             "Should not require EXA_API_KEY, got: {result}"
+  -         );
+  +         // If DDG returned empty (captcha), we expect the helpful hint about EXA_API_KEY.
+  +         // If DDG returned results, they'll be formatted normally.
+  +         // Either way: no panic, non-empty output.
+  +     }
+ ✓ (345ms)
+            // web_search_and_read should not panic when EXA_API_KEY is unset
+            std::env::remove_var("EXA_API_KEY");
+            let result = web_search_and_read("rust programming language", 3);
+  -         // Should return some string (either results or an error message), never panic
+  +         // Should return some string (either results or an error/hint message), never panic
+            assert!(!result.is_empty());
+  -         // Should not mention needing EXA_API_KEY
+  -         assert!(
+  ... (7 more lines)
+
+There's a mismatched brace — the original test had a closing `}` for the test function plus the module closing brace. Let me check:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -10 src/commands_web.rs ✓ (3ms)
+
+Ah, one extra }. Let me check what it was before — the original had a } to close the function and a } to close the module:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (4 → 3 lines)
+            // Either way: no panic, non-empty output.
+  -     }
+        }
+    }
+ ✓ (1m 31s)
+            // Either way: no panic, non-empty output.
+  -     }
+        }
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 ✓ (154ms)
+  2 tools completed in 1m 41s (2 ✓)
+
+Good. Now let me add the new test that verifies the warning message appears when results are empty and EXA_API_KEY is unset:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_web.rs ✓ (3ms)
+  ▶ edit src/commands_web.rs (5 → 40 lines)
+            // If DDG returned empty (captcha), we expect the helpful hint about EXA_API_KEY.
+            // If DDG returned results, they'll be formatted normally.
+            // Either way: no panic, non-empty output.
+  +     }
+  + 
+  +     #[test]
+  +     fn test_exa_key_missing_hint_content() {
+  +         let hint = exa_key_missing_hint();
+  +         assert!(
+  +             hint.contains("EXA_API_KEY"),
+  +             "Hint should mention EXA_API_KEY, got: {hint}"
+  +         );
+  +         assert!(
+  +             hint.contains("export EXA_API_KEY"),
+  +             "Hint should include export instruction, got: {hint}"
+  +         );
+  +         assert!(
+  +             hint.contains("No results found"),
+  +             "Hint should mention no results, got: {hint}"
+  +         );
+  ... (20 more lines)
+ ✓ (1m 33s)
+            // If DDG returned empty (captcha), we expect the helpful hint about EXA_API_KEY.
+            // If DDG returned results, they'll be formatted normally.
+            // Either way: no panic, non-empty output.
+  +     }
+  + 
+  +     #[test]
+  +     fn test_exa_key_missing_hint_content() {
+  +         let hint = exa_key_missing_hint();
+  ... (13 more lines)
+  2 tools completed in 1m 49s (2 ✓)
+
+Now let me run the full check:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.3s)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

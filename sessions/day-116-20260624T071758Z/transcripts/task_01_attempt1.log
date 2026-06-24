@@ -1,0 +1,440 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of auto_context_for_prompt and the repo map infrastructure, then implement the changes.
+  ▶ search 'fn auto_context_for_prompt' in src/commands_project.rs  ▶ search 'fn format_auto_context' in src/commands_project.rs  ▶ search 'build_repo_map\|generate_repo_map' in src/commands_project.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (3ms)
+  ▶ read src/commands_project.rs:985..1105 ✓ (2ms)
+  4 tools completed in 6.3s (4 ✓)
+
+Now let me look at build_repo_map and the repo map data structures:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn build_repo_map' in src/commands_map.rs  ▶ search 'pub struct|pub fn|struct RepoEntry|RepoMapEntry' in src/commands_map.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/commands_map.rs:1..81 ✓ (1ms)
+  3 tools completed in 6.6s (3 ✓)
+
+Now let me look at the FileSymbols and Symbol structs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub struct FileSymbols|pub struct Symbol|pub enum SymbolKind' in src/symbols.rs ✓ (3ms)
+  ▶ search 'struct FileSymbols|struct Symbol|enum SymbolKind' in src/symbols.rs ✓ (3ms)
+  ▶ search 'FileSymbols' in src/symbols.rs ✓ (3ms)
+  ▶ read src/symbols.rs:230..280 ✓ (1ms)
+  4 tools completed in 14.0s (4 ✓)
+
+Now let me look at the score_files function and understand what data it returns:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn score_files|struct.*Score|AUTO_CONTEXT' in src/commands_project.rs ✓ (3ms)
+  ▶ search 'score_files' in src/commands_project.rs ✓ (3ms)
+  ▶ read src/commands_project.rs:855..915 ✓ (1ms)
+  ▶ read src/commands_project.rs:914..924 ✓ (1ms)
+  4 tools completed in 12.1s (4 ✓)
+
+Now let me look at constants:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'AUTO_CONTEXT_MAX_FILES|AUTO_CONTEXT_MIN_SCORE|AUTO_CONTEXT_M…' in src/commands_project.rs ✓ (3ms)
+  ▶ search 'AUTO_CONTEXT' in src/commands_project.rs ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me see the full constants area and the SymbolKind display:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:970..990 ✓ (1ms)
+
+Now let's look at how SymbolKind is rendered — does it implement Display?
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'impl.*Display.*SymbolKind|impl.*fmt.*SymbolKind' in src/symbols.rs ✓ (3ms)
+  ▶ search 'enum SymbolKind' in src/symbols.rs ✓ (3ms)
+  ▶ read src/symbols.rs:220..240 ✓ (1ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Now let me check how handle_context_relevant uses the repo map for formatting — it might give me a good model:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:918..998 ✓ (1ms)
+
+Now let me also check if there's a `generate_repo_map_for_prompt_with_limit` function:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'generate_repo_map_for_prompt' in src/commands_map.rs ✓ (3ms)
+  ▶ read src/commands_map.rs:221..281 ✓ (1ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now I have a clear picture. Let me look at the existing test structure and the `RelevanceResult`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:848..858 ✓ (1ms)
+
+Now let me check the existing tests more carefully to understand the testing patterns:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2413..2513 ✓ (2ms)
+  ▶ read src/commands_project.rs:2512..2522 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Good. Now let me understand the full plan:
+
+1. Add a new function build_signature_block that takes a &[FileSymbols] and a list of matched file paths, and produces a compact signature string (capped at ~2000 chars).
+2. Modify `auto_context_for_prompt` to also return the signature block. I need to think about the return type — currently it returns Vec<(String, String)>. The simplest approach: if we have matched files with symbols, insert the signature block as the first item in the vec with a special path like `[signatures]`.
+3. Modify `format_auto_context` to detect and format the signature block specially.
+4. Write tests.
+
+Actually, looking more carefully at the design, I think the cleanest approach is:
+• Build the signature block from the matched file paths and the already-available repo_map data
+• Insert it as the first entry in the returned Vec<(String, String)> with a sentinel path
+• In format_auto_context, handle it with a different header
+
+Let me now implement this. Let me start with the code:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1..6 ✓ (1ms)
+  ▶ search 'use crate::symbols' in src/commands_project.rs ✓ (3ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Good, FileSymbols is already imported. Let me also check if SymbolKind is imported at the top level:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1..16 ✓ (1ms)
+
+I need `SymbolKind` too. Now let me implement the changes:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (1 → 1 lines)
+  - use crate::symbols::FileSymbols;
+  + use crate::symbols::{FileSymbols, SymbolKind};
+ ✓ (16.9s)
+  - use crate::symbols::FileSymbols;
+  + use crate::symbols::{FileSymbols, SymbolKind};
+
+That's expected — I haven't used it yet. Let me now add the build_signature_block function and modify `auto_context_for_prompt`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:973..976 ✓ (1ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unused import: `SymbolKind`[0m
+ [1m[94m--> [0msrc/commands_project.rs:8:35
+  [1m[94m|[0m
+[1m[94m8[0m [1m[94m|[0m use crate::symbols::{FileSymbols, SymbolKind};
+  [1m[94m|[0m                                   [1m[91m^^^^^^^^^^[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `-D unused-imports` implied by `-D warnings`
+  [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_imports)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the file to understand what's been done so far and what still needs to be implemented.
+  ▶ read src/commands_project.rs:1..16 ✓ (1ms)
+
+The previous agent added SymbolKind to the import but got cut off before actually using it in the code. The task was to wire repo map signatures into auto-context injection. Let me check what else was changed:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (8ms)
+
+Only the import was changed - the actual feature wasn't implemented yet. I need to both fix the lint error AND implement the full feature. Let me understand the codebase first:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:973..1063 ✓ (1ms)
+  ▶ read src/commands_project.rs:1060..1090 ✓ (1ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Now let me look at the SymbolKind kind_label pattern already used in commands_map.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_map.rs:240..270 ✓ (1ms)
+
+Now let me check the existing test for format_auto_context to understand what I need to update:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2497..2517 ✓ (1ms)
+
+Good. Now I have the full picture. Let me implement the feature properly. The approach:
+
+1. Add a constant `SIGNATURE_BLOCK_MAX_CHARS` (2000)
+2. Add a sentinel path constant for the signature entry
+3. Add `build_signature_block` function that takes the repo_map and matched paths, builds a compact signature block
+4. Modify `auto_context_for_prompt` to build and prepend the signature block
+5. Modify format_auto_context to handle the signature entry with a different header
+6. Add tests
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (11 → 72 lines)
+    
+    /// Files longer than this get truncated with a note.
+    const AUTO_CONTEXT_LARGE_FILE: usize = 500;
+  + 
+  + /// Maximum chars for the compact signature block injected into auto-context.
+  + const SIGNATURE_BLOCK_MAX_CHARS: usize = 2000;
+  + 
+  + /// Sentinel path used to identify the signature block entry in auto-context results.
+  + const SIGNATURE_SENTINEL: &str = "[signatures]";
+  + 
+  + /// Build a compact signature block for the given file paths from the repo map.
+  + ///
+  + /// Lists function/struct/enum/trait/type signatures for each matched file,
+  + /// capped at `SIGNATURE_BLOCK_MAX_CHARS`. Returns `None` if no symbols found.
+  + fn build_signature_block(repo_map: &[FileSymbols], matched_paths: &[String]) -> Option<String> {
+  +     if matched_paths.is_empty() {
+  +         return None;
+  +     }
+  + 
+  +     let mut output = String::new();
+  ... (44 more lines)
+ ✓ (15.9s)
+    
+    /// Files longer than this get truncated with a note.
+    const AUTO_CONTEXT_LARGE_FILE: usize = 500;
+  + 
+  + /// Maximum chars for the compact signature block injected into auto-context.
+  + const SIGNATURE_BLOCK_MAX_CHARS: usize = 2000;
+  + 
+  + /// Sentinel path used to identify the signature block entry in auto-context results.
+  ... (13 more lines)
+
+Good, the function is defined but not used yet. Now let me wire it into `auto_context_for_prompt`:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (67 → 77 lines)
+        let results = score_files(&repo_map, &keywords);
+    
+        let mut out = Vec::new();
+  +     let mut matched_paths = Vec::new();
+    
+        for r in &results {
+  -         if out.len() >= AUTO_CONTEXT_MAX_FILES {
+  +         if matched_paths.len() >= AUTO_CONTEXT_MAX_FILES {
+                break;
+            }
+            if r.score < AUTO_CONTEXT_MIN_SCORE {
+  ···
+                continue;
+            }
+    
+  -         // Read file content
+  -         let content = match std::fs::read_to_string(&r.path) {
+  +         matched_paths.push(r.path.clone());
+  +     }
+  + 
+  ... (20 more lines)
+ ✓ (1m 17s)
+        let results = score_files(&repo_map, &keywords);
+    
+        let mut out = Vec::new();
+  +     let mut matched_paths = Vec::new();
+    
+        for r in &results {
+  -         if out.len() >= AUTO_CONTEXT_MAX_FILES {
+  +         if matched_paths.len() >= AUTO_CONTEXT_MAX_FILES {
+  ... (13 more lines)
+
+Partial output. Let me now update format_auto_context to handle the signature sentinel:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (21 → 34 lines)
+        parts.push(
+            "[Auto-context: yoyo identified these files as relevant to your prompt]\n".to_string(),
+        );
+  + 
+  +     // Emit the signature block first if present
+  +     for (path, content) in files {
+  +         if path == SIGNATURE_SENTINEL {
+  +             parts.push("--- Relevant signatures ---".to_string());
+  +             parts.push(content.clone());
+  +             parts.push(String::new());
+  +         }
+  +     }
+    
+  +     // Then emit file contents (skip the signature sentinel entry)
+        for (path, content) in files {
+  +         if path == SIGNATURE_SENTINEL {
+  +             continue;
+  +         }
+            parts.push(format!("--- {path} ---"));
+            parts.push(content.clone());
+  ... (1 more lines)
+ ✓ (1m 17s)
+        parts.push(
+            "[Auto-context: yoyo identified these files as relevant to your prompt]\n".to_string(),
+        );
+  + 
+  +     // Emit the signature block first if present
+  +     for (path, content) in files {
+  +         if path == SIGNATURE_SENTINEL {
+  +             parts.push("--- Relevant signatures ---".to_string());
+  ... (13 more lines)
+
+Let me run the full check to see the actual output:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.5s)
+
+Clippy passes. Now tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (43.5s)
+
+Two test failures:
+
+1. test_auto_context_web_search_returns_relevant_files — the signature entry is counted as an extra item, pushing `results.len() over AUTO_CONTEXT_MAX_FILES`
+2. test_auto_context_skips_files_in_context — the signature sentinel [signatures] is showing up as the "first result" and isn't being properly handled
+
+The issue is that out now contains the signature sentinel entry plus file entries, so out.len() can be MAX_FILES + 1. Let me look at the tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2500..2540 ✓ (1ms)
+  ▶ read src/commands_project.rs:2555..2585 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+I need to update the tests to account for the signature sentinel entry. The test at line 2517 checks results.len() <= AUTO_CONTEXT_MAX_FILES but now there can be a signature entry too (+1). And the test at line 2568 grabs results_all[0] which is now the `[signatures]` sentinel instead of a real file.
+
+Let me fix both tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (2 → 6 lines)
+  -         // Should return at most MAX_FILES
+  -         assert!(results.len() <= AUTO_CONTEXT_MAX_FILES);
+  +         // Should return at most MAX_FILES file entries (plus optional signature block)
+  +         let file_count = results
+  +             .iter()
+  +             .filter(|(p, _)| p != SIGNATURE_SENTINEL)
+  +             .count();
+  +         assert!(file_count <= AUTO_CONTEXT_MAX_FILES);
+ ✓ (1m 21s)
+  -         // Should return at most MAX_FILES
+  -         assert!(results.len() <= AUTO_CONTEXT_MAX_FILES);
+  +         // Should return at most MAX_FILES file entries (plus optional signature block)
+  +         let file_count = results
+  +             .iter()
+  +             .filter(|(p, _)| p != SIGNATURE_SENTINEL)
+  +             .count();
+  +         assert!(file_count <= AUTO_CONTEXT_MAX_FILES);
+
+Now fix the second test — the one that grabs results_all[0]:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (21 → 31 lines)
+            if results_all.is_empty() {
+                return; // skip if repo map doesn't find matches (unlikely in this repo)
+            }
+  -         // Now pass the first result's path as already-in-context
+  -         let first_path = results_all[0].0.clone();
+  +         // Find the first real file path (skip the signature sentinel)
+  +         let first_file = results_all
+  +             .iter()
+  +             .find(|(p, _)| p != SIGNATURE_SENTINEL);
+  +         let first_path = match first_file {
+  +             Some((p, _)) => p.clone(),
+  +             None => return, // only signatures, no files to test
+  +         };
+            let recent = vec![format!("I already loaded {}", first_path)];
+            let results_filtered =
+                auto_context_for_prompt("how does the web search tool work in this project", &recent);
+            // The first file should no longer appear
+  -         let filtered_paths: Vec<&str> = results_filtered.iter().map(|r| r.0.as_str()).collect();
+  +         let filtered_paths: Vec<&str> = results_filtered
+  +             .iter()
+  ... (6 more lines)
+ ✓ (1m 23s)
+            if results_all.is_empty() {
+                return; // skip if repo map doesn't find matches (unlikely in this repo)
+            }
+  -         // Now pass the first result's path as already-in-context
+  -         let first_path = results_all[0].0.clone();
+  +         // Find the first real file path (skip the signature sentinel)
+  +         let first_file = results_all
+  +             .iter()
+  ... (13 more lines)
+
+Now let me add new tests for the signature feature at the end of the test module:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2598..2618 ✓ (1ms)
+  ▶ edit src/commands_project.rs (16 → 155 lines)
+            assert!(result.contains("fn bar() {}"));
+            assert!(result.contains("[Your prompt]:"));
+            assert!(result.contains("fix the bug"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_signature_block_basic() {
+  +         use crate::symbols::{Symbol, SymbolKind};
+  + 
+  +         let repo_map = vec![FileSymbols {
+  +             path: "src/foo.rs".to_string(),
+  +             lines: 100,
+  +             symbols: vec![
+  +                 Symbol {
+  +                     name: "do_stuff".to_string(),
+  +                     kind: SymbolKind::Function,
+  +                     is_public: true,
+  +                     line: 10,
+  +                 },
+  +                 Symbol {
+  ... (124 more lines)
+ ✓ (1m 17s)
+            assert!(result.contains("fn bar() {}"));
+            assert!(result.contains("[Your prompt]:"));
+            assert!(result.contains("fix the bug"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_signature_block_basic() {
+  +         use crate::symbols::{Symbol, SymbolKind};
+  ... (13 more lines)
+  2 tools completed in 1m 40s (2 ✓)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+Let me look at the failing test and understand what's happening:
+  ▶ read src/commands_project.rs:2660..2700 ✓ (1ms)
+
+The test panics at line 2689 - the .unwrap(). That means build_signature_block returned None. Let me look at the implementation:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn build_signature_block' in src/commands_project.rs ✓ (3ms)
+  ▶ read src/commands_project.rs:996..1046 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+The problem: the first file (`src/big.rs) has 200 symbols with long names. The file_block for that single file will exceed SIGNATURE_BLOCK_MAX_CHARS` (2000). When output.is_empty() and `file_block.len() > SIGNATURE_BLOCK_MAX_CHARS, we hit the break` without adding anything, so output stays empty and we return None.
+
+The fix: when the first file's block already exceeds the limit, we should still include a truncated version of it rather than returning nothing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (6 → 18 lines)
+            if output.len() + file_block.len() > SIGNATURE_BLOCK_MAX_CHARS {
+  -             if !output.is_empty() {
+  +             if output.is_empty() {
+  +                 // First file already exceeds the cap — truncate it to fit
+  +                 let mut truncated = String::new();
+  +                 for line in file_block.lines() {
+  +                     if truncated.len() + line.len() + 1 > SIGNATURE_BLOCK_MAX_CHARS {
+  +                         truncated.push_str("  …\n");
+  +                         break;
+  +                     }
+  +                     truncated.push_str(line);
+  +                     truncated.push('\n');
+  +                 }
+  +                 output = truncated;
+  +             } else {
+                    output.push_str("  …\n");
+                }
+                break;
+ ✓ (1m 22s)
+            if output.len() + file_block.len() > SIGNATURE_BLOCK_MAX_CHARS {
+  -             if !output.is_empty() {
+  +             if output.is_empty() {
+  +                 // First file already exceeds the cap — truncate it to fit
+  +                 let mut truncated = String::new();
+  +                 for line in file_block.lines() {
+  +                     if truncated.len() + line.len() + 1 > SIGNATURE_BLOCK_MAX_CHARS {
+  +                         truncated.push_str("  …\n");
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_build_signature_… ✓ (134ms)
+  2 tools completed in 1m 28s (2 ✓)
+
+Now let me run the full check:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 4s)
+  2 tools completed in 1m 26s (2 ✓)
+
+All 3934 tests pass, clippy is clean, formatting is clean. Let me verify the full pipeline once more end to end:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 6s)
+
+Everything passes. Now let me commit:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Committed. The fix was straightforward — when the first file's signature block already exceeds the character cap, we now truncate it line-by-line to fit within the limit rather than returning None. This ensures `build_signature_block` always produces output when there are symbols to show.
+
+  ✓ Watch passed after fix (attempt 2)
+

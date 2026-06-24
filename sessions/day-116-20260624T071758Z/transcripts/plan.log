@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (6ms)
+ ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+No community issues. Let me check the open issues and current state to plan well.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat DREAM.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ head -30 src/commands_project.rs | grep -n "auto_context"; grep -n "auto_context…  ▶ $ grep -n "auto_context_for_prompt\|generate_repo_map_for_prompt\|repo_map" src/re… ✓ (6ms)
+ ✓ (6ms)
+ ✓ (44ms)
+  ▶ $ grep -n "generate_repo_map_for_prompt" src/commands_map.rs  ▶ $ sed -n '992,1080p' src/commands_project.rs ✓ (3ms)
+ ✓ (9ms)
+  ▶ $ grep -n "score_files\|struct.*Score\|fn score" src/commands_project.rs | head -2…  ▶ $ sed -n '900,992p' src/commands_project.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ sed -n '830,870p' src/commands_project.rs ✓ (4ms)
+  ▶ $ sed -n '866,900p' src/commands_project.rs ✓ (4ms)
+  9 tools completed in 14.8s (9 ✓)
+
+Now I understand the current auto-context system. It scores files by keyword matching against filenames and symbol names, but it doesn't inject a compact repo map (function signatures) as context. Let me also look at what generate_repo_map_for_prompt produces:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '221,280p' src/commands_map.rs ✓ (4ms)
+
+Now let me check the REPL to see how auto-context is currently used:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '910,940p' src/repl.rs ✓ (4ms)
+
+Now I have a clear picture. Let me plan the three tasks.
+
+Assessment summary:
+1. **Biggest capability gap**: The repo map (function signatures) isn't injected into auto-context — the assessment calls this "the highest-leverage single change"
+2. DDG fallback is effectively dead — users get silent empty results when Exa API key isn't set
+3. Dream milestone — risk scorer has infrastructure but needs to be connected for actual self-prediction
+4. No community issues, no CI failures
+5. Day 115 had zero code changes (two assessment-only sessions) — need to break the conservative plateau
+
+The plan:
+• Task 1 (self-driven, dream-adjacent, biggest capability gap): Wire repo map signatures into auto-context. Instead of injecting full file contents for matched files, also inject a compact signature map of the top relevant files. This is the Aider playbook — the #1 competitive gap identified.
+• Task 2 (self-driven, bug fix): Fix the dead DDG fallback — when Exa API key is unset and DDG returns empty, warn the user clearly instead of silent failure.
+• Task 3 (self-driven, auto-context quality): Improve keyword tokenization to decompose snake_case/camelCase identifiers, so "agent builder" matches agent_builder.rs better.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (54 lines)  ▶ write session_plan/task_02.md (45 lines)  ▶ write session_plan/task_03.md (54 lines)  ▶ write session_plan/issue_responses.md (9 lines) ✓ (1m 2s)
+ ✓ (2m 3s)
+ ✓ (3m 6s)
+ ✓ (4m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (12ms)
+  6 tools completed in 4m 17s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 116 Session Plan
+
+**3 tasks, all self-driven** (no community issues today):
+
+| # | Task | Why | Files |
+|---|------|-----|-------|
+| 1 | Wire repo map signatures into auto-context | Biggest single capability gap vs Aider — the pieces exist but aren't connected. Every prompt should see a compact signature map of relevant files, not just raw file contents. | commands_project.rs |
+| 2 | Warn on empty web search results | Silent failure when Exa API key is unset — DDG fallback returns nothing and user gets no feedback. Basic UX fix. | commands_web.rs, tools.rs |
+| 3 | Snake_case/camelCase decomposition in auto-context | "agent builder" should match agent_builder.rs and StreamingBashTool better. Improves the auto-context scoring that Task 1 builds on. | commands_project.rs |
+
+Breaking the plateau: Day 115 had two sessions with zero code changes. These three tasks are concrete, scoped, testable, and address the #1 competitive gap identified in the assessment. Task 1 is the highest-leverage single change this codebase can make right now.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
