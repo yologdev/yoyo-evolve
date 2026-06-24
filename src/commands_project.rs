@@ -5,7 +5,7 @@ use crate::commands_map::build_repo_map;
 use crate::commands_search::is_binary_extension;
 use crate::docs;
 use crate::format::*;
-use crate::symbols::FileSymbols;
+use crate::symbols::{FileSymbols, SymbolKind};
 
 // Re-export refactoring commands for backward compatibility
 pub use crate::commands_move::handle_move;
@@ -983,6 +983,79 @@ const AUTO_CONTEXT_MAX_LINES: usize = 200;
 /// Files longer than this get truncated with a note.
 const AUTO_CONTEXT_LARGE_FILE: usize = 500;
 
+/// Maximum chars for the compact signature block injected into auto-context.
+const SIGNATURE_BLOCK_MAX_CHARS: usize = 2000;
+
+/// Sentinel path used to identify the signature block entry in auto-context results.
+const SIGNATURE_SENTINEL: &str = "[signatures]";
+
+/// Build a compact signature block for the given file paths from the repo map.
+///
+/// Lists function/struct/enum/trait/type signatures for each matched file,
+/// capped at `SIGNATURE_BLOCK_MAX_CHARS`. Returns `None` if no symbols found.
+fn build_signature_block(repo_map: &[FileSymbols], matched_paths: &[String]) -> Option<String> {
+    if matched_paths.is_empty() {
+        return None;
+    }
+
+    let mut output = String::new();
+
+    for path in matched_paths {
+        let entry = match repo_map.iter().find(|f| &f.path == path) {
+            Some(e) => e,
+            None => continue,
+        };
+        if entry.symbols.is_empty() {
+            continue;
+        }
+
+        let mut file_block = format!("{}\n", entry.path);
+        for sym in &entry.symbols {
+            let kind_label = match sym.kind {
+                SymbolKind::Function => "fn",
+                SymbolKind::Struct => "struct",
+                SymbolKind::Enum => "enum",
+                SymbolKind::Trait => "trait",
+                SymbolKind::Interface => "interface",
+                SymbolKind::Class => "class",
+                SymbolKind::Type => "type",
+                SymbolKind::Const => "const",
+                SymbolKind::Impl => "impl",
+                SymbolKind::Module => "mod",
+                SymbolKind::Macro => "macro",
+                SymbolKind::Namespace => "namespace",
+            };
+            file_block.push_str(&format!("  {kind_label} {}\n", sym.name));
+        }
+
+        if output.len() + file_block.len() > SIGNATURE_BLOCK_MAX_CHARS {
+            if output.is_empty() {
+                // First file already exceeds the cap — truncate it to fit
+                let mut truncated = String::new();
+                for line in file_block.lines() {
+                    if truncated.len() + line.len() + 1 > SIGNATURE_BLOCK_MAX_CHARS {
+                        truncated.push_str("  …\n");
+                        break;
+                    }
+                    truncated.push_str(line);
+                    truncated.push('\n');
+                }
+                output = truncated;
+            } else {
+                output.push_str("  …\n");
+            }
+            break;
+        }
+        output.push_str(&file_block);
+    }
+
+    if output.is_empty() {
+        None
+    } else {
+        Some(output.trim_end().to_string())
+    }
+}
+
 /// Automatically identify project files relevant to a user prompt.
 ///
 /// Returns `(path, content)` pairs for the top files with score ≥ `AUTO_CONTEXT_MIN_SCORE`.
@@ -1004,9 +1077,10 @@ pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(
     let results = score_files(&repo_map, &keywords);
 
     let mut out = Vec::new();
+    let mut matched_paths = Vec::new();
 
     for r in &results {
-        if out.len() >= AUTO_CONTEXT_MAX_FILES {
+        if matched_paths.len() >= AUTO_CONTEXT_MAX_FILES {
             break;
         }
         if r.score < AUTO_CONTEXT_MIN_SCORE {
@@ -1023,8 +1097,17 @@ pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(
             continue;
         }
 
-        // Read file content
-        let content = match std::fs::read_to_string(&r.path) {
+        matched_paths.push(r.path.clone());
+    }
+
+    // Build a compact signature block for matched files and prepend it
+    if let Some(sig_block) = build_signature_block(&repo_map, &matched_paths) {
+        out.push((SIGNATURE_SENTINEL.to_string(), sig_block));
+    }
+
+    // Read file contents for matched files
+    for path in &matched_paths {
+        let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -1051,7 +1134,7 @@ pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(
             content
         };
 
-        out.push((r.path.clone(), truncated));
+        out.push((path.clone(), truncated));
     }
 
     out
@@ -1070,7 +1153,20 @@ pub fn format_auto_context(files: &[(String, String)], original_prompt: &str) ->
         "[Auto-context: yoyo identified these files as relevant to your prompt]\n".to_string(),
     );
 
+    // Emit the signature block first if present
     for (path, content) in files {
+        if path == SIGNATURE_SENTINEL {
+            parts.push("--- Relevant signatures ---".to_string());
+            parts.push(content.clone());
+            parts.push(String::new());
+        }
+    }
+
+    // Then emit file contents (skip the signature sentinel entry)
+    for (path, content) in files {
+        if path == SIGNATURE_SENTINEL {
+            continue;
+        }
         parts.push(format!("--- {path} ---"));
         parts.push(content.clone());
     }
@@ -2429,8 +2525,12 @@ mod tests {
             "results should include a web-related file, got: {:?}",
             paths
         );
-        // Should return at most MAX_FILES
-        assert!(results.len() <= AUTO_CONTEXT_MAX_FILES);
+        // Should return at most MAX_FILES file entries (plus optional signature block)
+        let file_count = results
+            .iter()
+            .filter(|(p, _)| p != SIGNATURE_SENTINEL)
+            .count();
+        assert!(file_count <= AUTO_CONTEXT_MAX_FILES);
         // Each result should have non-empty content
         for (path, content) in &results {
             assert!(!path.is_empty());
@@ -2480,13 +2580,21 @@ mod tests {
         if results_all.is_empty() {
             return; // skip if repo map doesn't find matches (unlikely in this repo)
         }
-        // Now pass the first result's path as already-in-context
-        let first_path = results_all[0].0.clone();
+        // Find the first real file path (skip the signature sentinel)
+        let first_file = results_all.iter().find(|(p, _)| p != SIGNATURE_SENTINEL);
+        let first_path = match first_file {
+            Some((p, _)) => p.clone(),
+            None => return, // only signatures, no files to test
+        };
         let recent = vec![format!("I already loaded {}", first_path)];
         let results_filtered =
             auto_context_for_prompt("how does the web search tool work in this project", &recent);
         // The first file should no longer appear
-        let filtered_paths: Vec<&str> = results_filtered.iter().map(|r| r.0.as_str()).collect();
+        let filtered_paths: Vec<&str> = results_filtered
+            .iter()
+            .filter(|(p, _)| p != SIGNATURE_SENTINEL)
+            .map(|r| r.0.as_str())
+            .collect();
         assert!(
             !filtered_paths.contains(&first_path.as_str()),
             "file already in context should be skipped: {}",
@@ -2513,5 +2621,144 @@ mod tests {
         assert!(result.contains("fn bar() {}"));
         assert!(result.contains("[Your prompt]:"));
         assert!(result.contains("fix the bug"));
+    }
+
+    #[test]
+    fn test_build_signature_block_basic() {
+        use crate::symbols::{Symbol, SymbolKind};
+
+        let repo_map = vec![FileSymbols {
+            path: "src/foo.rs".to_string(),
+            lines: 100,
+            symbols: vec![
+                Symbol {
+                    name: "do_stuff".to_string(),
+                    kind: SymbolKind::Function,
+                    is_public: true,
+                    line: 10,
+                },
+                Symbol {
+                    name: "MyStruct".to_string(),
+                    kind: SymbolKind::Struct,
+                    is_public: true,
+                    line: 20,
+                },
+            ],
+        }];
+        let matched = vec!["src/foo.rs".to_string()];
+        let block = build_signature_block(&repo_map, &matched).unwrap();
+        assert!(block.contains("src/foo.rs"));
+        assert!(block.contains("fn do_stuff"));
+        assert!(block.contains("struct MyStruct"));
+    }
+
+    #[test]
+    fn test_build_signature_block_empty_paths() {
+        let repo_map: Vec<FileSymbols> = Vec::new();
+        assert!(build_signature_block(&repo_map, &[]).is_none());
+    }
+
+    #[test]
+    fn test_build_signature_block_no_symbols() {
+        let repo_map = vec![FileSymbols {
+            path: "src/empty.rs".to_string(),
+            lines: 5,
+            symbols: vec![],
+        }];
+        let matched = vec!["src/empty.rs".to_string()];
+        assert!(build_signature_block(&repo_map, &matched).is_none());
+    }
+
+    #[test]
+    fn test_build_signature_block_caps_at_limit() {
+        use crate::symbols::{Symbol, SymbolKind};
+
+        // Create a file with many symbols to test the char cap
+        let mut symbols = Vec::new();
+        for i in 0..200 {
+            symbols.push(Symbol {
+                name: format!("very_long_function_name_number_{i}"),
+                kind: SymbolKind::Function,
+                is_public: true,
+                line: i,
+            });
+        }
+        let repo_map = vec![
+            FileSymbols {
+                path: "src/big.rs".to_string(),
+                lines: 5000,
+                symbols: symbols.clone(),
+            },
+            FileSymbols {
+                path: "src/big2.rs".to_string(),
+                lines: 3000,
+                symbols,
+            },
+        ];
+        let matched = vec!["src/big.rs".to_string(), "src/big2.rs".to_string()];
+        let block = build_signature_block(&repo_map, &matched).unwrap();
+        // Should be capped near SIGNATURE_BLOCK_MAX_CHARS
+        assert!(
+            block.len() <= SIGNATURE_BLOCK_MAX_CHARS + 100,
+            "signature block too large: {} chars",
+            block.len()
+        );
+    }
+
+    #[test]
+    fn test_format_auto_context_with_signatures() {
+        let files = vec![
+            (
+                SIGNATURE_SENTINEL.to_string(),
+                "src/foo.rs\n  fn do_stuff\n  struct MyStruct".to_string(),
+            ),
+            ("src/foo.rs".to_string(), "fn do_stuff() {}".to_string()),
+        ];
+        let result = format_auto_context(&files, "explain do_stuff").unwrap();
+        // Signature block should appear with its own header
+        assert!(
+            result.contains("--- Relevant signatures ---"),
+            "should contain signature header"
+        );
+        assert!(
+            result.contains("fn do_stuff\n  struct MyStruct"),
+            "should contain signature content"
+        );
+        // File content should also appear
+        assert!(result.contains("--- src/foo.rs ---"));
+        assert!(result.contains("fn do_stuff() {}"));
+        // Signature header should come before file content
+        let sig_pos = result.find("--- Relevant signatures ---").unwrap();
+        let file_pos = result.find("--- src/foo.rs ---").unwrap();
+        assert!(
+            sig_pos < file_pos,
+            "signatures should appear before file contents"
+        );
+    }
+
+    #[test]
+    fn test_auto_context_includes_signatures() {
+        // A prompt about "web search" should include a signature block
+        let results =
+            auto_context_for_prompt("how does the web search tool work in this project", &[]);
+        if results.is_empty() {
+            return; // skip if repo map doesn't find matches
+        }
+        let has_sig = results.iter().any(|(p, _)| p == SIGNATURE_SENTINEL);
+        assert!(
+            has_sig,
+            "auto-context should include a signature block when files match"
+        );
+        // The signature content should contain symbol-like entries
+        let sig_content = &results
+            .iter()
+            .find(|(p, _)| p == SIGNATURE_SENTINEL)
+            .unwrap()
+            .1;
+        assert!(
+            sig_content.contains("fn ") || sig_content.contains("struct "),
+            "signature block should contain fn/struct entries, got: {}",
+            &sig_content[..sig_content.len().min(200)]
+        );
     }
 }
