@@ -831,6 +831,63 @@ pub fn project_type_hints(project_type: &ProjectType) -> Option<String> {
 // /context relevant — auto-identify files relevant to a query
 // ---------------------------------------------------------------------------
 
+/// Decompose a snake_case or camelCase identifier into lowercase component words.
+///
+/// Examples:
+/// - `agent_builder` → `["agent", "builder"]`
+/// - `StreamingBashTool` → `["streaming", "bash", "tool"]`
+/// - `auto_context_for_prompt` → `["auto", "context", "for", "prompt"]`
+/// - `HTMLParser` → `["html", "parser"]`
+/// - `getURLValue` → `["get", "url", "value"]`
+fn decompose_identifier(ident: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    // First split on underscores, hyphens, dots, slashes (common separators)
+    for segment in ident.split(['_', '-', '.', '/']) {
+        if segment.is_empty() {
+            continue;
+        }
+        // Then split camelCase / PascalCase within each segment
+        let mut current = String::new();
+        let chars: Vec<char> = segment.chars().collect();
+        for i in 0..chars.len() {
+            let c = chars[i];
+            if c.is_uppercase() {
+                if !current.is_empty() {
+                    // Check if we're in an all-caps run followed by lowercase
+                    // e.g., "HTMLParser" — when we hit 'P' (uppercase after uppercase run),
+                    // and the next char 'a' is lowercase, push the full acronym and start fresh
+                    let prev_is_upper = i > 0 && chars[i - 1].is_uppercase();
+                    let next_is_lower = i + 1 < chars.len() && chars[i + 1].is_lowercase();
+                    if prev_is_upper && next_is_lower && current.len() > 1 {
+                        // "HTML" is complete; 'P' starts new word "Parser"
+                        words.push(current.to_lowercase());
+                        current = String::new();
+                        current.push(c);
+                    } else if prev_is_upper {
+                        // Still in an all-caps run (e.g., "HTM" in "HTML"), keep accumulating
+                        current.push(c);
+                    } else {
+                        // Normal camelCase boundary (lowercase → uppercase)
+                        words.push(current.to_lowercase());
+                        current = String::new();
+                        current.push(c);
+                    }
+                } else {
+                    current.push(c);
+                }
+            } else {
+                current.push(c);
+            }
+        }
+        if !current.is_empty() {
+            words.push(current.to_lowercase());
+        }
+    }
+    // Filter out empty strings
+    words.retain(|w| !w.is_empty());
+    words
+}
+
 /// Common stop words filtered out of queries.
 const STOP_WORDS: &[&str] = &[
     "the", "a", "an", "to", "for", "in", "is", "are", "and", "or", "of", "with", "on", "it",
@@ -839,13 +896,28 @@ const STOP_WORDS: &[&str] = &[
 
 /// Tokenize a natural-language query into keywords.
 ///
-/// Splits on whitespace, lowercases, and filters out common stop words.
+/// Splits on whitespace, lowercases, filters out common stop words, and
+/// decomposes any snake_case/camelCase tokens into component words.
 fn tokenize_query(query: &str) -> Vec<String> {
-    query
-        .split_whitespace()
-        .map(|w| w.to_lowercase())
-        .filter(|w| !STOP_WORDS.contains(&w.as_str()))
-        .collect()
+    let mut keywords = Vec::new();
+    for word in query.split_whitespace() {
+        // Decompose from the original casing (so camelCase boundaries are visible)
+        let parts = decompose_identifier(word);
+        if parts.len() > 1 {
+            for part in parts {
+                if !STOP_WORDS.contains(&part.as_str()) {
+                    keywords.push(part);
+                }
+            }
+        } else {
+            // Single word or no decomposition — just lowercase and filter
+            let lower = word.to_lowercase();
+            if !STOP_WORDS.contains(&lower.as_str()) {
+                keywords.push(lower);
+            }
+        }
+    }
+    keywords
 }
 
 /// A single file's relevance score and matching details.
@@ -887,9 +959,12 @@ fn score_files(files: &[FileSymbols], keywords: &[String]) -> Vec<RelevanceResul
             }
 
             // Symbol name matching (2x weight)
+            // Decompose camelCase/snake_case symbol names for better matching
             for sym in &file.symbols {
                 let sym_lower = sym.name.to_lowercase();
-                if sym_lower.contains(kw.as_str()) {
+                let sym_parts = decompose_identifier(&sym.name);
+                let matched_via_decomposed = sym_parts.iter().any(|p| p == kw.as_str());
+                if matched_via_decomposed || sym_lower.contains(kw.as_str()) {
                     score += 2;
                     kw_matched = true;
                     break;
@@ -2432,6 +2507,84 @@ mod tests {
         // Completely empty query
         let tokens2 = tokenize_query("");
         assert!(tokens2.is_empty());
+    }
+
+    // --- decompose_identifier tests ---
+
+    #[test]
+    fn test_decompose_snake_case() {
+        assert_eq!(
+            decompose_identifier("agent_builder"),
+            vec!["agent", "builder"]
+        );
+        assert_eq!(
+            decompose_identifier("auto_context_for_prompt"),
+            vec!["auto", "context", "for", "prompt"]
+        );
+    }
+
+    #[test]
+    fn test_decompose_camel_case() {
+        assert_eq!(
+            decompose_identifier("StreamingBashTool"),
+            vec!["streaming", "bash", "tool"]
+        );
+        assert_eq!(decompose_identifier("AgentConfig"), vec!["agent", "config"]);
+    }
+
+    #[test]
+    fn test_decompose_all_caps_acronym() {
+        // "HTML" stays as one word
+        assert_eq!(decompose_identifier("HTML"), vec!["html"]);
+        // "HTMLParser" → "html", "parser"
+        assert_eq!(decompose_identifier("HTMLParser"), vec!["html", "parser"]);
+        // "getURLValue" → "get", "url", "value"
+        assert_eq!(
+            decompose_identifier("getURLValue"),
+            vec!["get", "url", "value"]
+        );
+    }
+
+    #[test]
+    fn test_decompose_single_word() {
+        assert_eq!(decompose_identifier("agent"), vec!["agent"]);
+        assert_eq!(decompose_identifier("main"), vec!["main"]);
+    }
+
+    #[test]
+    fn test_decompose_mixed_separators() {
+        // Path-like input
+        assert_eq!(
+            decompose_identifier("src/agent_builder.rs"),
+            vec!["src", "agent", "builder", "rs"]
+        );
+        // Hyphenated
+        assert_eq!(decompose_identifier("web-search"), vec!["web", "search"]);
+    }
+
+    #[test]
+    fn test_decompose_with_numbers() {
+        assert_eq!(
+            decompose_identifier("phase2Handler"),
+            vec!["phase2", "handler"]
+        );
+    }
+
+    #[test]
+    fn test_decompose_empty() {
+        let result = decompose_identifier("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_tokenize_query_decomposes_identifiers() {
+        // A query containing a camelCase identifier should be decomposed
+        let tokens = tokenize_query("fix StreamingBashTool");
+        assert_eq!(tokens, vec!["fix", "streaming", "bash", "tool"]);
+
+        // A query containing a snake_case identifier should be decomposed
+        let tokens2 = tokenize_query("agent_builder config");
+        assert_eq!(tokens2, vec!["agent", "builder", "config"]);
     }
 
     #[test]

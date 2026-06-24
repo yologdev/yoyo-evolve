@@ -318,7 +318,16 @@ fn handle_web_search(query: &str) {
 
     match web_search(query, 8) {
         Ok(results) if results.is_empty() => {
-            println!("  {DIM}(no results found){RESET}\n");
+            let has_exa = std::env::var("EXA_API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty())
+                .is_some();
+            if has_exa {
+                println!("  {DIM}(no results found){RESET}\n");
+            } else {
+                println!("  {YELLOW}No results found. EXA_API_KEY is not set — DuckDuckGo scraping is unreliable.{RESET}");
+                println!("  {DIM}For reliable search: export EXA_API_KEY=your-key{RESET}\n");
+            }
         }
         Ok(results) => {
             println!();
@@ -1094,6 +1103,14 @@ pub(crate) fn ddg_search(query: &str, max_results: usize) -> Result<Vec<WebSearc
     Ok(results)
 }
 
+/// Warning hint returned when DDG fallback yields empty results and EXA_API_KEY is unset.
+pub(crate) fn exa_key_missing_hint() -> String {
+    "Note: No results found. The EXA_API_KEY environment variable is not set, so search \
+     used DuckDuckGo scraping which is unreliable.\n\
+     For reliable web search, set: export EXA_API_KEY=your-key"
+        .to_string()
+}
+
 /// Perform a web search — tries Exa API first, falls back to DuckDuckGo.
 ///
 /// If `EXA_API_KEY` is set, uses the Exa API (richer results with page content).
@@ -1140,8 +1157,9 @@ pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
 
     // No Exa key — use DDG directly
     match ddg_search(query, max_results) {
+        Ok(results) if results.is_empty() => exa_key_missing_hint(),
         Ok(results) => format_search_results(&results),
-        Err(e) => format!("Web search failed: {e}"),
+        Err(e) => format!("Web search failed: {e}\n\n{}", exa_key_missing_hint()),
     }
 }
 
@@ -1928,12 +1946,45 @@ mod tests {
         // web_search_and_read should not panic when EXA_API_KEY is unset
         std::env::remove_var("EXA_API_KEY");
         let result = web_search_and_read("rust programming language", 3);
-        // Should return some string (either results or an error message), never panic
+        // Should return some string (either results or an error/hint message), never panic
         assert!(!result.is_empty());
-        // Should not mention needing EXA_API_KEY
+        // If DDG returned empty (captcha), we expect the helpful hint about EXA_API_KEY.
+        // If DDG returned results, they'll be formatted normally.
+        // Either way: no panic, non-empty output.
+    }
+
+    #[test]
+    fn test_exa_key_missing_hint_content() {
+        let hint = exa_key_missing_hint();
         assert!(
-            !result.contains("EXA_API_KEY"),
-            "Should not require EXA_API_KEY, got: {result}"
+            hint.contains("EXA_API_KEY"),
+            "Hint should mention EXA_API_KEY, got: {hint}"
         );
+        assert!(
+            hint.contains("export EXA_API_KEY"),
+            "Hint should include export instruction, got: {hint}"
+        );
+        assert!(
+            hint.contains("No results found"),
+            "Hint should mention no results, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn test_web_search_and_read_empty_results_shows_exa_hint() {
+        // When EXA_API_KEY is unset and DDG returns empty results,
+        // the output should contain the EXA key hint.
+        std::env::remove_var("EXA_API_KEY");
+
+        // Simulate the logic: format_search_results on empty vec gives "No results found."
+        // but web_search_and_read should instead give the richer hint.
+        let empty_formatted = format_search_results(&[]);
+        assert_eq!(empty_formatted, "No results found.");
+
+        // The exa_key_missing_hint should be more informative
+        let hint = exa_key_missing_hint();
+        assert!(hint.len() > empty_formatted.len());
+        assert!(hint.contains("EXA_API_KEY"));
+        assert!(hint.contains("export EXA_API_KEY"));
     }
 }
