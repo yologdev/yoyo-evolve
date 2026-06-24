@@ -1154,6 +1154,14 @@ pub(crate) fn looks_incomplete(text: &str) -> bool {
     let tail = &text[tail_start..];
     let tail_lower = tail.to_lowercase();
 
+    // ── Completion guard ──
+    // When the tail contains strong completion signals, weaker patterns (action
+    // phrases, ellipsis with work signals, ordinal progression) are likely being
+    // used in a summary/recap context rather than indicating unfinished work.
+    // Strong patterns (explicit continuation, unclosed fences, step N of M) still
+    // override completion signals because they're structurally unambiguous.
+    let has_completion_signal = tail_has_completion_signal(&tail_lower);
+
     // ── Pattern 1: explicit continuation phrases near the end ──
     let continuation_phrases = [
         "next, i'll",
@@ -1191,7 +1199,8 @@ pub(crate) fn looks_incomplete(text: &str) -> bool {
     // Only trigger if the tail also contains signals of ongoing work.
     // LLMs commonly end prose with "..." (e.g. "handles errors, logging, etc...")
     // without intending to continue — that's a rhetorical trailing off, not a cutoff.
-    if text.ends_with("...") || text.ends_with("…") {
+    // Skip when completion signals are present (the "..." is a summary flourish).
+    if !has_completion_signal && (text.ends_with("...") || text.ends_with("…")) {
         let fence_count = text.matches("```").count();
         let has_work_signal = tail_lower.contains("remaining")
             || tail_lower.contains("need to")
@@ -1247,26 +1256,30 @@ pub(crate) fn looks_incomplete(text: &str) -> bool {
     }
 
     // ── Pattern 6: action intent phrases near the end ──
-    let action_phrases = [
-        "let me update",
-        "let me fix",
-        "let me modify",
-        "let me add",
-        "let me create",
-        "let me write",
-        "let me implement",
-        "let me handle",
-        "i'll update",
-        "i'll fix",
-        "i'll modify",
-        "i'll add",
-        "i'll create",
-        "i'll implement",
-        "i'll handle",
-    ];
-    for phrase in &action_phrases {
-        if tail_lower.contains(phrase) {
-            return true;
+    // Skip when completion signals are present — the action phrase is being used
+    // to introduce a recap/summary rather than signal unfinished work.
+    if !has_completion_signal {
+        let action_phrases = [
+            "let me update",
+            "let me fix",
+            "let me modify",
+            "let me add",
+            "let me create",
+            "let me write",
+            "let me implement",
+            "let me handle",
+            "i'll update",
+            "i'll fix",
+            "i'll modify",
+            "i'll add",
+            "i'll create",
+            "i'll implement",
+            "i'll handle",
+        ];
+        for phrase in &action_phrases {
+            if tail_lower.contains(phrase) {
+                return true;
+            }
         }
     }
 
@@ -1310,6 +1323,37 @@ pub(crate) fn looks_incomplete(text: &str) -> bool {
 }
 
 /// Extract a step number from patterns like "step 3:", "3. ", "**step 3**"
+/// Check if the tail contains strong completion signals.
+///
+/// These indicate the agent has finished work and is summarising/recapping,
+/// so weaker incomplete-patterns (action phrases, ellipsis with work signals,
+/// ordinal progression) should be suppressed — the action phrase is being used
+/// in a summary context, not as a genuine work-in-progress signal.
+fn tail_has_completion_signal(tail_lower: &str) -> bool {
+    const COMPLETION_PHRASES: &[&str] = &[
+        "all done",
+        "that's all",
+        "that\u{2019}s all",
+        "all complete",
+        "is complete",
+        "is done",
+        "are done",
+        "have been applied",
+        "have been completed",
+        "everything is working",
+        "everything works",
+        "all changes",
+        "finished all",
+        "completed all",
+        "implementation is complete",
+        "all set",
+        "that's it",
+        "that\u{2019}s it",
+        "successfully",
+    ];
+    COMPLETION_PHRASES.iter().any(|p| tail_lower.contains(p))
+}
+
 fn extract_step_number(line: &str) -> Option<u32> {
     // "step N:" or "**step N**" or "step N."
     if let Some(rest) = line
@@ -2041,6 +2085,53 @@ mod tests {
         ));
         assert!(!looks_incomplete(
             "The first thing to note is that this approach works well."
+        ));
+    }
+
+    #[test]
+    fn test_looks_incomplete_completion_guard() {
+        // When the tail contains strong completion signals, action phrases in
+        // summary/recap context should NOT trigger auto-continue.
+        assert!(!looks_incomplete(
+            "I've finished all the changes. Let me update you on what I did: the parser is fixed."
+        ));
+        assert!(!looks_incomplete(
+            "All done! Let me write a brief summary of everything that changed."
+        ));
+        assert!(!looks_incomplete(
+            "The implementation is complete. Let me add a note: test coverage is at 95%."
+        ));
+        assert!(!looks_incomplete(
+            "Everything is working now. I'll create a recap of the three files I modified."
+        ));
+        assert!(!looks_incomplete(
+            "That's all the changes. Let me update the summary for you."
+        ));
+        assert!(!looks_incomplete(
+            "All changes have been applied successfully. Let me handle the final summary."
+        ));
+
+        // But action phrases WITHOUT completion signals should still trigger
+        assert!(looks_incomplete(
+            "I've reviewed the code. Let me update the configuration file now."
+        ));
+        assert!(looks_incomplete(
+            "Found the bug. Let me fix the parser to handle this edge case."
+        ));
+        assert!(looks_incomplete(
+            "Good, that worked. I'll implement the remaining handlers."
+        ));
+    }
+
+    #[test]
+    fn test_looks_incomplete_completion_guard_with_ellipsis() {
+        // Completion + ellipsis: should NOT trigger even with work signals,
+        // because the completion phrase overrides.
+        assert!(!looks_incomplete(
+            "Everything is done. The changes cover auth, DB, API..."
+        ));
+        assert!(!looks_incomplete(
+            "All complete. I'll add that the tests handle edge cases..."
         ));
     }
 
