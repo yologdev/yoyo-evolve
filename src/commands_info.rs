@@ -219,6 +219,15 @@ pub fn handle_status(
     if let Some((s, t, pct)) = compute_self_written_pct() {
         println!("  {}", format_self_written(s, t, pct));
     }
+    // Show top-3 riskiest files
+    let top_risks = crate::commands_risk::top_risk_files(3);
+    if !top_risks.is_empty() {
+        let risk_parts: Vec<String> = top_risks
+            .iter()
+            .map(|(path, score)| format!("{path} ({score:.2})"))
+            .collect();
+        println!("  risk:    {}", risk_parts.join(" · "));
+    }
     println!("{RESET}");
 }
 

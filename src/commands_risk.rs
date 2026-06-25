@@ -512,6 +512,19 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     risks
 }
 
+/// Return the top `n` riskiest files as `(path, score)` pairs, sorted descending.
+///
+/// Convenience wrapper around `compute_file_risk_scores()` for use by `/status`
+/// and other consumers that just need names and numbers.
+pub(crate) fn top_risk_files(n: usize) -> Vec<(String, f64)> {
+    let risks = compute_file_risk_scores();
+    risks
+        .into_iter()
+        .take(n)
+        .map(|r| (r.path, r.score))
+        .collect()
+}
+
 /// Build a map of file paths → number of times that file appeared in a revert commit.
 ///
 /// Searches git history for multiple revert patterns:
@@ -617,6 +630,11 @@ pub(crate) fn handle_risk(input: &str) {
         return;
     }
 
+    if sub == "predict" {
+        handle_risk_predict();
+        return;
+    }
+
     let show_all = input.contains("--all");
     let risks = compute_file_risk_scores();
     let report = format_risk_report(&risks, show_all);
@@ -683,6 +701,261 @@ fn write_risk_snapshot_to(path: &std::path::Path, json_line: &str) -> Result<(),
     Ok(())
 }
 
+// ── /risk predict ────────────────────────────────────────────────────
+
+/// Map signal count to a confidence level label.
+fn predict_confidence_level(signal_count: usize) -> &'static str {
+    match signal_count {
+        0 => "low",
+        1 => "low",
+        2 => "medium",
+        _ => "high",
+    }
+}
+
+/// Format the confidence dots: ●●●○ high, ●●○○ medium, ●○○○ low.
+fn predict_confidence_dots(level: &str) -> String {
+    let (filled, label) = match level {
+        "high" => (3, "high"),
+        "medium" => (2, "medium"),
+        _ => (1, "low"),
+    };
+    let dots: String = "●".repeat(filled) + &"○".repeat(4 - filled);
+    format!("{dots} {label}")
+}
+
+/// Generate a human-readable "why this file is dangerous" explanation
+/// based on the active signals for a file.
+fn predict_reason(signals: &[&str], test_density: f64) -> String {
+    let has = |s: &str| signals.iter().any(|sig| sig.contains(s));
+
+    let low_test = has("low-test") || test_density < 1.0;
+    let high_churn = has("churn");
+    let high_coupled = has("coupled");
+    let has_reverts = has("revert");
+    let high_size = has("size");
+    let recent = has("recent");
+
+    // Pick the most descriptive combination
+    if high_churn && low_test {
+        "frequently changed with weak test coverage".to_string()
+    } else if high_coupled && high_churn {
+        "frequently changed alongside other files — breakage cascades".to_string()
+    } else if has_reverts {
+        "has been reverted before — historically fragile".to_string()
+    } else if (high_size || signals.iter().any(|s| s.contains("complex"))) && recent {
+        "complex file recently modified — regression risk".to_string()
+    } else if high_churn && recent {
+        "frequently changed with recent modifications".to_string()
+    } else if high_churn {
+        "high change frequency — more opportunities for bugs".to_string()
+    } else if low_test {
+        "low test coverage — changes go unvalidated".to_string()
+    } else if high_coupled {
+        "tightly coupled — changes here ripple to other files".to_string()
+    } else if recent {
+        "recently modified — fresh changes may contain regressions".to_string()
+    } else {
+        "elevated risk score from combined signals".to_string()
+    }
+}
+
+/// Build a short reason summary for the top-level prediction line.
+fn predict_top_reason(risk: &FileRisk) -> String {
+    let has = |s: &str| risk.signals.iter().any(|sig| sig.contains(s));
+
+    let mut parts = Vec::new();
+    if has("churn") {
+        parts.push("high churn");
+    }
+    if has("low-test") || risk.test_density < 1.0 {
+        parts.push("low test density");
+    }
+    if has("coupled") {
+        parts.push("high coupling");
+    }
+    if has("revert") {
+        parts.push("revert history");
+    }
+    if has("size") {
+        parts.push("large file");
+    }
+    if has("recent") {
+        parts.push("recent changes");
+    }
+
+    if parts.is_empty() {
+        "elevated risk score".to_string()
+    } else {
+        parts.join(" + ")
+    }
+}
+
+/// Format a single prediction card for one file.
+fn format_prediction_card(rank: usize, risk: &FileRisk) -> String {
+    let mut out = String::new();
+    let score_str = format!("{:.2}", risk.score);
+    let signal_names: Vec<&str> = risk.signals.to_vec();
+    let signal_list = if signal_names.is_empty() {
+        "(none)".to_string()
+    } else {
+        signal_names.join(", ")
+    };
+    let density_str = format!("{:.1}", risk.test_density);
+    let reason = predict_reason(&risk.signals, risk.test_density);
+    let confidence = predict_confidence_level(risk.signals.len());
+    let dots = predict_confidence_dots(confidence);
+
+    out.push_str(&format!(
+        "  │\n  │  {BOLD}#{rank}{RESET}  {CYAN}{}{RESET}",
+        risk.path
+    ));
+    // Right-align score
+    let pad = 50usize.saturating_sub(risk.path.len() + format!("#{rank}").len() + 2);
+    out.push_str(&" ".repeat(pad));
+    out.push_str(&format!("score: {score_str}\n"));
+
+    out.push_str(&format!("  │      signals: {signal_list}\n"));
+    out.push_str(&format!(
+        "  │      test density: {density_str} per 100 lines\n"
+    ));
+    out.push_str(&format!("  │      {DIM}→ {reason}{RESET}\n"));
+    out.push_str(&format!("  │      confidence: {dots}\n"));
+
+    out
+}
+
+/// Load past prediction accuracy from snapshot history.
+/// Returns `(precision_pct, snapshot_count, trend)` if snapshots exist.
+fn load_past_accuracy() -> Option<(f64, usize, &'static str)> {
+    load_past_accuracy_from(std::path::Path::new(RISK_SNAPSHOT_PATH))
+}
+
+/// Load past prediction accuracy from a given snapshot file path.
+fn load_past_accuracy_from(path: &std::path::Path) -> Option<(f64, usize, &'static str)> {
+    let content = std::fs::read_to_string(path).ok()?;
+    if content.trim().is_empty() {
+        return None;
+    }
+    let snapshots = parse_all_snapshots(&content);
+    if snapshots.len() < 2 {
+        return None;
+    }
+
+    // Validate each consecutive pair of snapshots
+    let mut validations = Vec::new();
+    for pair in snapshots.windows(2) {
+        let from = &pair[0];
+        let to = &pair[1];
+
+        // Get files that changed/broke between snapshots
+        let log_output = crate::git::run_git(&[
+            "log",
+            &format!("{}..{}", from.git_hash, to.git_hash),
+            "--name-only",
+            "--oneline",
+        ])
+        .ok()?;
+
+        if log_output.trim().is_empty() {
+            continue;
+        }
+
+        let entries = parse_git_log_name_only(&log_output);
+        let commit_count = entries.len();
+        let broke_files = classify_broke_files(&entries);
+
+        let result = compute_validation(&from.predicted, &broke_files, None, commit_count);
+        validations.push(HistoryValidation {
+            day: from.day,
+            git_hash_from: from.git_hash.clone(),
+            git_hash_to: to.git_hash.clone(),
+            result,
+        });
+    }
+
+    if validations.is_empty() {
+        return None;
+    }
+
+    // Average precision across all intervals
+    let total_precision: f64 = validations.iter().map(|v| precision(&v.result)).sum();
+    let avg_precision = total_precision / validations.len() as f64;
+    let pct = (avg_precision * 100.0).round();
+    let trend = compute_trend(&validations);
+
+    Some((pct, validations.len(), trend))
+}
+
+/// Format the full prediction report (delegates to `format_prediction_report_with_accuracy`).
+fn format_prediction_report(risks: &[FileRisk], top_n: usize) -> String {
+    let accuracy = load_past_accuracy();
+    format_prediction_report_with_accuracy(risks, top_n, accuracy)
+}
+
+/// Format the full prediction report with optional past accuracy data.
+/// Separated from `format_prediction_report` so tests can supply synthetic accuracy.
+fn format_prediction_report_with_accuracy(
+    risks: &[FileRisk],
+    top_n: usize,
+    accuracy: Option<(f64, usize, &str)>,
+) -> String {
+    let mut out = String::new();
+
+    out.push_str(&format!(
+        "\n  ┌ {BOLD}Risk Prediction{RESET} ────────────────────────────\n"
+    ));
+
+    let display_risks: Vec<&FileRisk> = risks.iter().take(top_n).collect();
+
+    if display_risks.is_empty() {
+        out.push_str("  │\n");
+        out.push_str("  │  No risk data available.\n");
+        out.push_str("  └──────────────────────────────────────────────\n\n");
+        return out;
+    }
+
+    for (i, risk) in display_risks.iter().enumerate() {
+        out.push_str(&format_prediction_card(i + 1, risk));
+    }
+
+    // Summary prediction line
+    let top = &display_risks[0];
+    let top_reason = predict_top_reason(top);
+    out.push_str("  │\n");
+    out.push_str(&format!(
+        "  │  {BOLD}Prediction:{RESET} {CYAN}{}{RESET} is most likely to\n",
+        top.path
+    ));
+    out.push_str(&format!("  │  cause the next failure ({top_reason})\n"));
+
+    // Track record from past snapshots
+    if let Some((pct, count, trend)) = accuracy {
+        let trend_arrow = if trend.contains("Improving") {
+            "↑"
+        } else if trend.contains("Declining") {
+            "↓"
+        } else {
+            "→"
+        };
+        out.push_str("  │\n");
+        out.push_str(&format!(
+            "  │  {DIM}Track record: {pct:.0}% precision over {count} snapshots ({} {trend_arrow}){RESET}\n",
+            trend.trim_start_matches(|c: char| !c.is_alphabetic())
+        ));
+    }
+
+    out.push_str("  └──────────────────────────────────────────────\n\n");
+    out
+}
+
+/// Handle `/risk predict` — structured narrative prediction.
+fn handle_risk_predict() {
+    let risks = compute_file_risk_scores();
+    let report = format_prediction_report(&risks, 5);
+    print!("{report}");
+}
+
 /// Handle `/risk snapshot` — save current risk predictions to JSONL.
 fn handle_risk_snapshot() {
     let risks = compute_file_risk_scores();
@@ -711,6 +984,48 @@ fn handle_risk_snapshot() {
             eprintln!("  {RED}Error saving risk snapshot: {e}{RESET}");
         }
     }
+}
+
+/// Automatically capture a risk snapshot after a successful commit.
+///
+/// Called from `commands_git.rs` after each successful `/commit`.
+/// Silently skips on error (prints a dim note to stderr).
+pub(crate) fn auto_risk_snapshot() {
+    let risks = compute_file_risk_scores();
+
+    let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string();
+
+    let day: u32 = std::fs::read_to_string("DAY_COUNT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    let json_line = build_risk_snapshot_json(&risks, day, &git_hash);
+    if let Err(e) = write_risk_snapshot_to(std::path::Path::new(RISK_SNAPSHOT_PATH), &json_line) {
+        eprintln!("  {DIM}(risk snapshot skipped: {e}){RESET}");
+    }
+}
+
+/// Variant of `auto_risk_snapshot` that writes to a specific path (for testing).
+#[cfg(test)]
+fn auto_risk_snapshot_to(path: &std::path::Path) {
+    let risks = compute_file_risk_scores();
+
+    let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string();
+
+    let day: u32 = std::fs::read_to_string("DAY_COUNT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    let json_line = build_risk_snapshot_json(&risks, day, &git_hash);
+    write_risk_snapshot_to(path, &json_line).expect("test snapshot write should succeed");
 }
 
 /// Parsed git-log entry: one commit message + the files it touched.
@@ -2185,5 +2500,501 @@ src/baz.rs
                 assert!(*count > 0, "Coupling count should be positive, got {count}");
             }
         }
+    }
+
+    #[test]
+    fn test_top_risk_files_count_and_order() {
+        let top3 = top_risk_files(3);
+        // Should return at most 3 entries
+        assert!(
+            top3.len() <= 3,
+            "expected at most 3 entries, got {}",
+            top3.len()
+        );
+        // Scores should be in descending order
+        for w in top3.windows(2) {
+            assert!(
+                w[0].1 >= w[1].1,
+                "top_risk_files should be sorted descending: {} >= {} failed",
+                w[0].1,
+                w[1].1
+            );
+        }
+    }
+
+    // ── Test category 1: Confidence level mapping ──
+
+    #[test]
+    fn test_predict_confidence_level_zero_signals_is_low() {
+        assert_eq!(predict_confidence_level(0), "low");
+    }
+
+    #[test]
+    fn test_predict_confidence_level_one_signal_is_low() {
+        assert_eq!(predict_confidence_level(1), "low");
+    }
+
+    #[test]
+    fn test_predict_confidence_level_two_signals_is_medium() {
+        assert_eq!(predict_confidence_level(2), "medium");
+    }
+
+    #[test]
+    fn test_predict_confidence_level_three_signals_is_high() {
+        assert_eq!(predict_confidence_level(3), "high");
+    }
+
+    #[test]
+    fn test_predict_confidence_level_many_signals_is_high() {
+        assert_eq!(predict_confidence_level(5), "high");
+        assert_eq!(predict_confidence_level(10), "high");
+    }
+
+    #[test]
+    fn test_predict_confidence_dots_low() {
+        let dots = predict_confidence_dots("low");
+        assert!(dots.contains("●○○○"), "expected 1 filled dot, got: {dots}");
+        assert!(dots.contains("low"));
+    }
+
+    #[test]
+    fn test_predict_confidence_dots_medium() {
+        let dots = predict_confidence_dots("medium");
+        assert!(dots.contains("●●○○"), "expected 2 filled dots, got: {dots}");
+        assert!(dots.contains("medium"));
+    }
+
+    #[test]
+    fn test_predict_confidence_dots_high() {
+        let dots = predict_confidence_dots("high");
+        assert!(dots.contains("●●●○"), "expected 3 filled dots, got: {dots}");
+        assert!(dots.contains("high"));
+    }
+
+    // ── Test category 2: Reason generation from signal combinations ──
+
+    #[test]
+    fn test_predict_reason_high_churn_low_test() {
+        let signals = vec!["▲churn", "▲low-test"];
+        let reason = predict_reason(&signals, 0.3);
+        assert!(
+            reason.contains("frequently changed") && reason.contains("weak test coverage"),
+            "expected churn + low test reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_reason_high_churn_low_density_inferred() {
+        // test_density < 1.0 triggers "low test" even without ▲low-test signal
+        let signals = vec!["▲churn"];
+        let reason = predict_reason(&signals, 0.5);
+        assert!(
+            reason.contains("frequently changed") && reason.contains("weak test coverage"),
+            "expected churn + low density reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_reason_coupled_and_churn() {
+        let signals = vec!["▲coupled", "▲churn"];
+        let reason = predict_reason(&signals, 5.0); // high density so low-test doesn't trigger first
+        assert!(
+            reason.contains("alongside other files") && reason.contains("cascades"),
+            "expected coupling + churn reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_reason_reverts() {
+        let signals = vec!["▲reverts"];
+        let reason = predict_reason(&signals, 5.0);
+        assert!(
+            reason.contains("reverted") && reason.contains("fragile"),
+            "expected revert reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_reason_complex_recent() {
+        let signals = vec!["▲size", "▲recent"];
+        let reason = predict_reason(&signals, 5.0);
+        assert!(
+            reason.contains("complex") && reason.contains("regression"),
+            "expected complexity + recent reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_reason_churn_recent() {
+        let signals = vec!["▲churn", "▲recent"];
+        let reason = predict_reason(&signals, 5.0); // high density
+        assert!(
+            reason.contains("frequently changed") && reason.contains("recent modifications"),
+            "expected churn + recent reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_reason_only_low_test() {
+        let signals = vec!["▲low-test"];
+        let reason = predict_reason(&signals, 0.2);
+        assert!(
+            reason.contains("low test coverage"),
+            "expected low-test reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_reason_fallback() {
+        // No matching signals at all, high test density
+        let signals: Vec<&str> = vec![];
+        let reason = predict_reason(&signals, 5.0);
+        assert!(
+            reason.contains("combined signals") || reason.contains("elevated"),
+            "expected fallback reason, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_top_reason_multi_signal() {
+        let risk = FileRisk {
+            path: "src/foo.rs".to_string(),
+            score: 0.9,
+            signals: vec!["▲churn", "▲low-test", "▲coupled"],
+            test_density: 0.2,
+        };
+        let reason = predict_top_reason(&risk);
+        assert!(
+            reason.contains("high churn"),
+            "expected churn, got: {reason}"
+        );
+        assert!(
+            reason.contains("low test density"),
+            "expected low test density, got: {reason}"
+        );
+        assert!(
+            reason.contains("high coupling"),
+            "expected coupling, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn test_predict_top_reason_empty_signals() {
+        let risk = FileRisk {
+            path: "src/foo.rs".to_string(),
+            score: 0.5,
+            signals: vec![],
+            test_density: 5.0,
+        };
+        let reason = predict_top_reason(&risk);
+        assert_eq!(reason, "elevated risk score");
+    }
+
+    // ── Test category 3: Prediction card formatting ──
+
+    #[test]
+    fn test_format_prediction_card_contains_all_fields() {
+        let risk = FileRisk {
+            path: "src/commands_git.rs".to_string(),
+            score: 0.87,
+            signals: vec!["▲churn", "▲low-test", "▲size"],
+            test_density: 0.3,
+        };
+        let card = format_prediction_card(1, &risk);
+
+        assert!(card.contains("#1"), "card should contain rank #1");
+        assert!(
+            card.contains("src/commands_git.rs"),
+            "card should contain file path"
+        );
+        assert!(card.contains("0.87"), "card should contain score");
+        assert!(card.contains("signals:"), "card should have signals label");
+        assert!(
+            card.contains("test density:"),
+            "card should have test density label"
+        );
+        assert!(card.contains("0.3"), "card should contain density value");
+        assert!(
+            card.contains("per 100 lines"),
+            "card should contain density unit"
+        );
+        assert!(
+            card.contains("confidence:"),
+            "card should have confidence label"
+        );
+        assert!(
+            card.contains("high"),
+            "3 signals should give high confidence"
+        );
+        // Should contain the reason arrow
+        assert!(card.contains("→"), "card should contain → reason line");
+    }
+
+    #[test]
+    fn test_format_prediction_card_low_confidence() {
+        let risk = FileRisk {
+            path: "src/small.rs".to_string(),
+            score: 0.40,
+            signals: vec!["▲recent"],
+            test_density: 3.0,
+        };
+        let card = format_prediction_card(3, &risk);
+        assert!(card.contains("#3"), "card should contain rank #3");
+        assert!(card.contains("low"), "1 signal should give low confidence");
+    }
+
+    #[test]
+    fn test_format_prediction_card_medium_confidence() {
+        let risk = FileRisk {
+            path: "src/mid.rs".to_string(),
+            score: 0.60,
+            signals: vec!["▲churn", "▲recent"],
+            test_density: 1.5,
+        };
+        let card = format_prediction_card(2, &risk);
+        assert!(
+            card.contains("medium"),
+            "2 signals should give medium confidence"
+        );
+    }
+
+    #[test]
+    fn test_format_prediction_card_no_signals() {
+        let risk = FileRisk {
+            path: "src/empty.rs".to_string(),
+            score: 0.10,
+            signals: vec![],
+            test_density: 0.0,
+        };
+        let card = format_prediction_card(1, &risk);
+        assert!(card.contains("(none)"), "empty signals should show (none)");
+    }
+
+    // ── Test category 4: Past accuracy displayed with mocked accuracy data ──
+
+    #[test]
+    fn test_prediction_report_with_accuracy() {
+        let risks = vec![
+            FileRisk {
+                path: "src/hot.rs".to_string(),
+                score: 0.90,
+                signals: vec!["▲churn", "▲low-test", "▲size"],
+                test_density: 0.2,
+            },
+            FileRisk {
+                path: "src/warm.rs".to_string(),
+                score: 0.70,
+                signals: vec!["▲churn"],
+                test_density: 2.0,
+            },
+        ];
+
+        let report =
+            format_prediction_report_with_accuracy(&risks, 5, Some((67.0, 3, "Improving")));
+
+        // Should contain the track record
+        assert!(
+            report.contains("Track record"),
+            "report should contain track record line"
+        );
+        assert!(
+            report.contains("67%"),
+            "report should contain precision percentage"
+        );
+        assert!(
+            report.contains("3 snapshots"),
+            "report should contain snapshot count"
+        );
+        assert!(report.contains("↑"), "improving trend should show ↑");
+    }
+
+    #[test]
+    fn test_prediction_report_declining_trend() {
+        let risks = vec![FileRisk {
+            path: "src/a.rs".to_string(),
+            score: 0.80,
+            signals: vec!["▲churn"],
+            test_density: 1.0,
+        }];
+
+        let report =
+            format_prediction_report_with_accuracy(&risks, 5, Some((40.0, 5, "Declining")));
+
+        assert!(report.contains("40%"), "report should show 40% precision");
+        assert!(report.contains("↓"), "declining trend should show ↓");
+    }
+
+    #[test]
+    fn test_prediction_report_stable_trend() {
+        let risks = vec![FileRisk {
+            path: "src/a.rs".to_string(),
+            score: 0.80,
+            signals: vec!["▲churn"],
+            test_density: 1.0,
+        }];
+
+        let report = format_prediction_report_with_accuracy(&risks, 5, Some((50.0, 2, "Stable")));
+
+        assert!(report.contains("→"), "stable trend should show →");
+    }
+
+    #[test]
+    fn test_prediction_report_without_accuracy() {
+        let risks = vec![FileRisk {
+            path: "src/a.rs".to_string(),
+            score: 0.80,
+            signals: vec!["▲churn"],
+            test_density: 1.0,
+        }];
+
+        let report = format_prediction_report_with_accuracy(&risks, 5, None);
+
+        assert!(
+            !report.contains("Track record"),
+            "no accuracy data means no track record line"
+        );
+        // But should still have the prediction
+        assert!(
+            report.contains("Prediction"),
+            "report should still contain prediction line"
+        );
+        assert!(
+            report.contains("src/a.rs"),
+            "report should contain the predicted file"
+        );
+    }
+
+    #[test]
+    fn test_prediction_report_empty_risks() {
+        let report = format_prediction_report_with_accuracy(&[], 5, Some((50.0, 1, "Stable")));
+        assert!(
+            report.contains("No risk data"),
+            "empty risks should show no data message"
+        );
+        // Track record should NOT appear when there are no risks
+        assert!(
+            !report.contains("Track record"),
+            "no risks means no track record"
+        );
+    }
+
+    #[test]
+    fn test_prediction_report_contains_summary_line() {
+        let risks = vec![
+            FileRisk {
+                path: "src/top.rs".to_string(),
+                score: 0.95,
+                signals: vec!["▲churn", "▲reverts"],
+                test_density: 0.5,
+            },
+            FileRisk {
+                path: "src/second.rs".to_string(),
+                score: 0.60,
+                signals: vec!["▲recent"],
+                test_density: 3.0,
+            },
+        ];
+
+        let report = format_prediction_report_with_accuracy(&risks, 5, None);
+
+        assert!(
+            report.contains("src/top.rs"),
+            "prediction should name the top file"
+        );
+        assert!(
+            report.contains("most likely"),
+            "prediction should say 'most likely'"
+        );
+        assert!(
+            report.contains("cause the next failure"),
+            "prediction should say 'cause the next failure'"
+        );
+    }
+
+    // ── Test category 5: Routing dispatch ──
+
+    #[test]
+    fn test_risk_predict_dispatches_without_panic() {
+        // Smoke test: `/risk predict` should not panic
+        handle_risk("/risk predict");
+    }
+
+    #[test]
+    fn test_risk_predict_routing_distinct_from_default() {
+        // `/risk predict` and `/risk` should both work without panic
+        // (they exercise different code paths)
+        handle_risk("/risk");
+        handle_risk("/risk predict");
+    }
+
+    #[test]
+    fn test_top_risk_files_respects_n() {
+        let top1 = top_risk_files(1);
+        assert!(
+            top1.len() <= 1,
+            "expected at most 1 entry, got {}",
+            top1.len()
+        );
+
+        let top5 = top_risk_files(5);
+        assert!(
+            top5.len() <= 5,
+            "expected at most 5 entries, got {}",
+            top5.len()
+        );
+
+        // top1 should be a prefix of top5
+        if !top1.is_empty() && !top5.is_empty() {
+            assert_eq!(
+                top1[0].0, top5[0].0,
+                "top-1 file should match first entry of top-5"
+            );
+        }
+    }
+
+    #[test]
+    fn test_auto_risk_snapshot_writes_valid_jsonl() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("snapshots.jsonl");
+
+        auto_risk_snapshot_to(&path);
+
+        let contents = std::fs::read_to_string(&path).expect("read snapshot file");
+        assert!(
+            !contents.trim().is_empty(),
+            "snapshot file should not be empty"
+        );
+
+        // Each line should be valid JSON
+        for line in contents.lines() {
+            let parsed: serde_json::Value =
+                serde_json::from_str(line).expect("each line should be valid JSON");
+            assert!(parsed.get("day").is_some(), "snapshot should have 'day'");
+            assert!(
+                parsed.get("git_hash").is_some(),
+                "snapshot should have 'git_hash'"
+            );
+            assert!(
+                parsed.get("top_10").is_some(),
+                "snapshot should have 'top_10'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_auto_risk_snapshot_appends_not_overwrites() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("snapshots.jsonl");
+
+        // Write two snapshots
+        auto_risk_snapshot_to(&path);
+        auto_risk_snapshot_to(&path);
+
+        let contents = std::fs::read_to_string(&path).expect("read snapshot file");
+        let line_count = contents.lines().count();
+        assert_eq!(
+            line_count, 2,
+            "two calls should produce two lines, got {line_count}"
+        );
     }
 }

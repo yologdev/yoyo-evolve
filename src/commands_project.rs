@@ -1223,6 +1223,10 @@ pub fn format_auto_context(files: &[(String, String)], original_prompt: &str) ->
         return None;
     }
 
+    // Build a risk-score map for high-risk file annotations.
+    // Only files in the top 25% of risk scores get annotated.
+    let risk_map = build_risk_annotation_map();
+
     let mut parts = Vec::new();
     parts.push(
         "[Auto-context: yoyo identified these files as relevant to your prompt]\n".to_string(),
@@ -1242,7 +1246,11 @@ pub fn format_auto_context(files: &[(String, String)], original_prompt: &str) ->
         if path == SIGNATURE_SENTINEL {
             continue;
         }
-        parts.push(format!("--- {path} ---"));
+        if let Some(&score) = risk_map.get(path.as_str()) {
+            parts.push(format!("--- {path} --- (\u{26a0} risk: {score:.2})"));
+        } else {
+            parts.push(format!("--- {path} ---"));
+        }
         parts.push(content.clone());
     }
 
@@ -1251,6 +1259,23 @@ pub fn format_auto_context(files: &[(String, String)], original_prompt: &str) ->
     parts.push(original_prompt.to_string());
 
     Some(parts.join("\n"))
+}
+
+/// Build a map of path → risk score for files in the top 25% of risk.
+///
+/// Used by `format_auto_context` to annotate high-risk file headers.
+fn build_risk_annotation_map() -> std::collections::HashMap<String, f64> {
+    let risks = crate::commands_risk::compute_file_risk_scores();
+    if risks.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    // Top 25%: take the top quarter (at least 1)
+    let cutoff_index = (risks.len() / 4).max(1);
+    risks
+        .into_iter()
+        .take(cutoff_index)
+        .map(|r| (r.path, r.score))
+        .collect()
 }
 
 #[cfg(test)]
@@ -2913,5 +2938,45 @@ mod tests {
             "signature block should contain fn/struct entries, got: {}",
             &sig_content[..sig_content.len().min(200)]
         );
+    }
+
+    #[test]
+    fn test_format_auto_context_risk_annotation_present() {
+        // Use a known high-risk file from the actual codebase risk scores.
+        // The top-risk file should get an annotation when it appears in auto-context.
+        let top = crate::commands_risk::top_risk_files(1);
+        if top.is_empty() {
+            return; // skip if no risk data available
+        }
+        let high_risk_path = &top[0].0;
+        let files = vec![(high_risk_path.clone(), "fn example() {}".to_string())];
+        let result = format_auto_context(&files, "test prompt").unwrap();
+        // The high-risk file should have the ⚠ risk annotation
+        assert!(
+            result.contains("\u{26a0} risk:"),
+            "high-risk file '{}' should have risk annotation in auto-context, got:\n{}",
+            high_risk_path,
+            result
+        );
+        assert!(
+            result.contains(&format!("--- {} ---", high_risk_path)),
+            "should still contain the file path header"
+        );
+    }
+
+    #[test]
+    fn test_format_auto_context_low_risk_no_annotation() {
+        // A file that doesn't exist in risk scores (or is very low risk) should not be annotated
+        let files = vec![(
+            "src/nonexistent_file_that_has_no_risk.rs".to_string(),
+            "fn safe() {}".to_string(),
+        )];
+        let result = format_auto_context(&files, "test prompt").unwrap();
+        assert!(
+            !result.contains("\u{26a0} risk:"),
+            "low-risk/unknown file should NOT have risk annotation, got:\n{}",
+            result
+        );
+        assert!(result.contains("--- src/nonexistent_file_that_has_no_risk.rs ---"));
     }
 }

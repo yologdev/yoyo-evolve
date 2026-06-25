@@ -1409,6 +1409,7 @@ pub fn handle_commit(input: &str) {
         let (ok, output) = run_git_commit_with_trailer(&parsed.message);
         if ok {
             println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+            crate::commands_risk::auto_risk_snapshot();
         } else {
             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
         }
@@ -1437,6 +1438,7 @@ pub fn handle_commit(input: &str) {
                             let (ok, output) = run_git_commit_with_trailer(&suggested);
                             if ok {
                                 println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+                                crate::commands_risk::auto_risk_snapshot();
                             } else {
                                 eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
                             }
@@ -1454,6 +1456,7 @@ pub fn handle_commit(input: &str) {
                                     let (ok, output) = run_git_commit_with_trailer(custom_msg);
                                     if ok {
                                         println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+                                        crate::commands_risk::auto_risk_snapshot();
                                     } else {
                                         eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
                                     }
@@ -1484,6 +1487,7 @@ fn handle_commit_amend(parsed: &CommitArgs) {
         let (ok, output) = run_git_amend_with_message(&parsed.message);
         if ok {
             println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+            crate::commands_risk::auto_risk_snapshot();
         } else {
             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
         }
@@ -1510,6 +1514,7 @@ fn handle_commit_amend(parsed: &CommitArgs) {
                     let (ok, output) = run_git_amend_no_edit();
                     if ok {
                         println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+                        crate::commands_risk::auto_risk_snapshot();
                     } else {
                         eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
                     }
@@ -1527,6 +1532,7 @@ fn handle_commit_amend(parsed: &CommitArgs) {
                             let (ok, output) = run_git_amend_with_message(custom_msg);
                             if ok {
                                 println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+                                crate::commands_risk::auto_risk_snapshot();
                             } else {
                                 eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
                             }
@@ -1543,6 +1549,7 @@ fn handle_commit_amend(parsed: &CommitArgs) {
         let (ok, output) = run_git_amend_no_edit();
         if ok {
             println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+            crate::commands_risk::auto_risk_snapshot();
         } else {
             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
         }
@@ -1624,6 +1631,7 @@ pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
         let (ok, output) = run_git_commit_with_trailer(&parsed.message);
         if ok {
             println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+            crate::commands_risk::auto_risk_snapshot();
         } else {
             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
         }
@@ -1696,6 +1704,7 @@ pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
                 let (ok, output) = run_git_commit_with_trailer(&suggested);
                 if ok {
                     println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+                    crate::commands_risk::auto_risk_snapshot();
                 } else {
                     eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
                 }
@@ -1713,6 +1722,7 @@ pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
                         let (ok, output) = run_git_commit_with_trailer(custom_msg);
                         if ok {
                             println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+                            crate::commands_risk::auto_risk_snapshot();
                         } else {
                             eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
                         }

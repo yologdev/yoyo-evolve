@@ -88,7 +88,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
 - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
 - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`
-- `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping
+- `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, predict, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
 - `commands_move.rs` — move methods between impl blocks, cross-file method relocation
 - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`)
 - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` for poisoned `Mutex` recovery (deduplicated Day 58)
