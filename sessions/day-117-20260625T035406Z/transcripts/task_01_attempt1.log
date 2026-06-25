@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task: wiring risk data into /status and auto-context annotations. Let me start by understanding the existing code.
+  ▶ todo add 'Understand existing risk infrastructure in command…' ✓ (0ms)
+  ▶ todo add 'Add top_risk_files() helper in commands_risk.rs' ✓ (0ms)
+  ▶ todo add 'Wire risk into handle_status() in commands_info.rs' ✓ (0ms)
+  ▶ todo add 'Wire risk annotations into format_auto_context() i…' ✓ (0ms)
+  ▶ todo add 'Write tests for all new functionality' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt/clippy/build/test and fix any issues' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md docs and commit' ✓ (0ms)
+  7 tools completed in 27.1s (7 ✓)
+
+Let me explore the existing code:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ search 'pub.*fn compute_file_risk_scores' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'struct FileRisk' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1..51 ✓ (1ms)
+  ▶ read src/commands_risk.rs:259..339 ✓ (1ms)
+  5 tools completed in 22.3s (5 ✓)
+
+Good, I understand the risk infrastructure. Now let me look at `handle_status()`:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_status' in src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:148..268 ✓ (1ms)
+  2 tools completed in 8.9s (2 ✓)
+
+Now let me look at format_auto_context():
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub fn format_auto_context' in src/commands_project.rs ✓ (3ms)
+  ▶ read src/commands_project.rs:1221..1281 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me check the existing tests in commands_risk.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_risk.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/commands_risk.rs ✓ (2ms)
+  ▶ read src/commands_risk.rs:1285..1345 ✓ (1ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Good, I have a solid understanding now. Let me also check the end of `compute_file_risk_scores()` to see the return shape:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'results\.sort_by' in src/commands_risk.rs ✓ (3ms)
+  ▶ search '\.sort' in src/commands_risk.rs ✓ (2ms)
+  ▶ read src/commands_risk.rs:500..530 ✓ (1ms)
+  ▶ todo done #1 ✓ (0ms)
+  4 tools completed in 13.4s (4 ✓)
+
+Now I have a clear picture. The compute_file_risk_scores() returns a Vec<FileRisk> already sorted descending by score. Let me implement this step by step.
+
+### Step 1: Add `top_risk_files()` helper in `commands_risk.rs`
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ read src/commands_risk.rs:512..517 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (4 → 17 lines)
+  +     risks
+  + }
+  + 
+  + /// Return the top `n` riskiest files as `(path, score)` pairs, sorted descending.
+  + ///
+  + /// Convenience wrapper around `compute_file_risk_scores()` for use by `/status`
+  + /// and other consumers that just need names and numbers.
+  + pub(crate) fn top_risk_files(n: usize) -> Vec<(String, f64)> {
+  +     let risks = compute_file_risk_scores();
+        risks
+  +         .into_iter()
+  +         .take(n)
+  +         .map(|r| (r.path, r.score))
+  +         .collect()
+    }
+    
+    /// Build a map of file paths → number of times that file appeared in a revert commit.
+ ✓ (15.8s)
+  +     risks
+  + }
+  + 
+  + /// Return the top `n` riskiest files as `(path, score)` pairs, sorted descending.
+  + ///
+  + /// Convenience wrapper around `compute_file_risk_scores()` for use by `/status`
+  + /// and other consumers that just need names and numbers.
+  + pub(crate) fn top_risk_files(n: usize) -> Vec<(String, f64)> {
+  ... (9 more lines)
+  3 tools completed in 28.2s (3 ✓)
+
+Expected — it's unused until I wire it in. Let me continue with the other changes before running checks.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #2 ✓ (0ms)
+
+### Step 2: Wire risk into /status
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+I need to add a risk line after the self-written line. Let me look at that section:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:218..228 ✓ (1ms)
+  ▶ edit src/commands_info.rs (6 → 15 lines)
+        }
+        if let Some((s, t, pct)) = compute_self_written_pct() {
+            println!("  {}", format_self_written(s, t, pct));
+  +     }
+  +     // Show top-3 riskiest files
+  +     let top_risks = crate::commands_risk::top_risk_files(3);
+  +     if !top_risks.is_empty() {
+  +         let risk_parts: Vec<String> = top_risks
+  +             .iter()
+  +             .map(|(path, score)| format!("{path} ({score:.2})"))
+  +             .collect();
+  +         println!("  risk:    {}", risk_parts.join(" · "));
+        }
+        println!("{RESET}");
+    }
+ ✓ (1m 23s)
+        }
+        if let Some((s, t, pct)) = compute_self_written_pct() {
+            println!("  {}", format_self_written(s, t, pct));
+  +     }
+  +     // Show top-3 riskiest files
+  +     let top_risks = crate::commands_risk::top_risk_files(3);
+  +     if !top_risks.is_empty() {
+  +         let risk_parts: Vec<String> = top_risks
+  ... (7 more lines)
+  ▶ todo done #3 ✓ (0ms)
+  3 tools completed in 1m 39s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

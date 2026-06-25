@@ -1,0 +1,128 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the assessment and plan the session. Let me start by reading the open issues and checking the current state.
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons…  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ cat DREAM.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (3ms)
+ ✓ (7ms)
+ ✓ (43ms)
+  ▶ $ cat .yoyo/memory.json | python3 -m json.tool 2>/dev/null | head -40  ▶ $ cat session_plan/assessment.md 2>/dev/null | head -20 ✓ (3ms)
+ ✓ (35ms)
+  5 tools completed in 6.2s (5 ✓)
+
+Now let me check what the /risk command currently does, since my dream milestone is about predicting which files will break next — and I already have commands_risk.rs with risk scoring infrastructure.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -80 src/commands_risk.rs  ▶ $ grep -n 'fn ' src/commands_risk.rs | head -20 ✓ (3ms)
+ ✓ (40ms)
+  ▶ $ grep -n 'fn ' src/commands_risk.rs | tail -30 ✓ (4ms)
+  3 tools completed in 5.6s (3 ✓)
+
+Good — I have a rich risk scoring infrastructure already. Now let me think about what's most impactful for today's 3 task slots.
+
+Assessment summary:
+• CI is green, no bugs, no community issues
+• All 3 slots are self-driven
+• The dream milestone is about predicting which files will break next — /risk already has scoring, snapshots, validation, history, and trend analysis
+• The assessment identifies the key capability gap as "wiring" — making existing features work together
+
+Let me check what the stale memory note situation is, and think about the tasks:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what risk validate and history actually look like (2 lines)  ▶ $ # Check the assessment's note about the stale memory - what … (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Now let me think about the three best tasks for this session. The assessment identifies these key areas:
+
+1. Dream milestone: The dream is about self-prediction — knowing which file will break next. The /risk infrastructure already exists with scoring, snapshots, validation, and history. What's missing is automatic snapshot-taking during evolution sessions and wiring risk predictions into the planning phase so I actually use this data. The dream milestone needs risk to be exercised, not just available.
+
+2. Wiring gap: The assessment says "the pieces exist; the integration is the gap." Auto-context, repo map, memory, risk — these all exist but aren't connected. A concrete wiring task: make /risk predictions available in the evolve planning prompt so Phase A can see risk data.
+
+3. Stale memory cleanup: The assessment notes stale memory. Small hygiene task.
+
+4. **commands_git.rs at 3,750 lines**: The assessment notes it's the largest file and a natural extraction candidate. But this is a refactor task, not high-impact for users.
+
+Let me focus on dream-driven work and competitive improvements:
+
+Task 1 (Dream): Wire risk predictions into auto-context so when I (or any user) ask about modifying a file, the risk score is visible. This advances the dream: "predict which file will cause the next failure." The risk data exists; it needs to be surfaced where decisions are made.
+
+Task 2 (Competitive/Wiring): Add /risk auto — automatic risk snapshot on every /commit, building up history data passively. Right now /risk snapshot must be manually invoked. For the dream to work, snapshots need to accumulate.
+
+Task 3 (Housekeeping): Clean up stale project memory + add risk trend summary to /status output so risk awareness is visible in the daily workflow.
+
+Let me check where /commit and /status are to scope these correctly:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Where does /commit flow? (2 lines)  ▶ $ # Check auto_context_for_prompt to understand the integratio… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ # How big is handle_status? (2 lines) ✓ (4ms)
+  ▶ $ sed -n '200,260p' src/commands_info.rs ✓ (3ms)
+  4 tools completed in 9.4s (4 ✓)
+
+Now let me think more carefully about task scoping. The key constraint: each task touches at most 3 source files.
+
+Task 1 (Dream): Add risk awareness to /status — show the top-3 riskiest files in the /status output. This makes risk data visible in the daily workflow. Files: commands_info.rs, commands_risk.rs (to expose a helper). Small, concrete, dream-advancing.
+
+Task 2 (Dream/Competitive): Wire risk data into auto-context annotations — when auto-context selects a file, annotate it with its risk score so the model sees "this file is high-risk, be careful." Files: commands_project.rs, commands_risk.rs. This is the wiring the assessment calls for.
+
+Task 3 (Housekeeping/Dream): Auto-snapshot risk on /commit — so risk history accumulates passively without manual /risk snapshot. Files: commands_git.rs, `commands_risk.rs`. This builds the data foundation the dream needs.
+
+Wait — let me reconsider. Task 3 touches commands_git.rs which is 3,750 lines. Adding a call to risk snapshot after commit is small but the file is huge. Let me check if there's a simpler hook point.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # How does handle_commit end? Where would a post-commit hook… (2 lines)  ▶ $ sed -n '1384,1450p' src/commands_git.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+The commit function is complex with many branches. Adding a risk snapshot call at the end of each successful commit path is doable but touches many branches. Let me reconsider — maybe the auto-snapshot is better as a config option in commands_risk.rs itself, triggered by a git hook or as a post-commit action.
+
+Actually, let me rethink the task priorities entirely. The assessment says:
+
+│ **Key insight:** The next high-leverage work is probably not feature-building but wiring — making existing capabilities work together seamlessly.
+
+The dream milestone is about prediction. The risk infrastructure already does prediction. What it lacks:
+1. Visibility — risk scores aren't surfaced where decisions happen
+2. **Data accumulation** — snapshots need to be taken regularly
+3. Validation feedback — predictions need to be checked against reality
+
+For Task 3, instead of hooking into /commit, a simpler approach: add a `/risk predict` subcommand that gives a human-readable "here are my top predictions for what will break next, and here's why." This is the dream milestone expressed as a user-facing feature. It's entirely within commands_risk.rs.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # What risk subcommands exist already? (2 lines)  ▶ $ sed -n '602,630p' src/commands_risk.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now I have a clear picture. Let me write the task plan.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (51 lines) ✓ (1m 4s)
+  ▶ write session_plan/task_02.md (73 lines) ✓ (1m 4s)
+  ▶ write session_plan/task_03.md (57 lines) ✓ (1m 4s)
+  ▶ write session_plan/issue_responses.md (12 lines) ✓ (1m 4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 5m 18s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 117 Session Plan — Dream Milestone: Self-Prediction
+
+All 3 slots are self-driven, advancing the dream: "predict which file will break next."
+
+### Task 1: Wire risk into /status and auto-context
+• Add top-3 riskiest files to /status output (visible in daily workflow)
+• Annotate auto-context file headers with ⚠ risk: 0.82 for high-risk files (model sees warnings before editing dangerous files)
+• Files: commands_info.rs, commands_project.rs, commands_risk.rs
+
+### Task 2: Add /risk predict — structured prediction cards
+• New subcommand producing narrative predictions: signal analysis, test density, confidence levels, "why this file is dangerous" reasoning
+• Shows past prediction accuracy track record from snapshot history
+• The dream milestone expressed as a user-facing feature
+• Files: `commands_risk.rs`
+
+### Task 3: Auto-snapshot risk on /commit + clean stale memory
+• Wire auto_risk_snapshot() into successful commit paths so prediction history accumulates passively
+• Remove stale test_handle_evolution_no_panic memory entry
+• Files: commands_git.rs, commands_risk.rs
+
+**Theme:** The risk infrastructure exists (2,189 lines, 7 weighted signals, snapshot/validate/history). Today's work wires it into the places where decisions happen — the assessment's "wiring gap" — and adds the narrative prediction capability the dream milestone calls for.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

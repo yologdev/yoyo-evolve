@@ -1,0 +1,208 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the code, then implement the full /risk predict subcommand.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -100 src/commands_risk.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn handle_risk\|fn comp… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '615,720p' src/commands_r… ✓ (4ms)
+  4 tools completed in 13.0s (4 ✓)
+
+Now let me look at the `FileRisk struct and compute_file_risk_scores` more closely, plus the snapshot/validation functions:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '7,17p' src/commands_risk… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '519,575p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1217,1400p' src/commands… ✓ (5ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Let me see the rest of the tests and the validation functions:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1400,1600p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1600,1800p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1800,1950p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1950,2100p' src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -250 src/commands_risk.rs ✓ (5ms)
+  5 tools completed in 18.2s (5 ✓)
+
+Now let me see some key internal functions I'll need - the validate-related structs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'struct ValidationResult… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '803,870p' src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '941,1020p' src/commands_… ✓ (3ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now I have a good understanding of the code. Let me also check how dispatch routes /risk:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'risk' src/dispatch.rs ✓ (3ms)
+
+Now let me look at ParsedSnapshot:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'struct ParsedSnapshot' … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '934,942p' src/commands_r… ✓ (3ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me check the handle_risk function and the commands module reference:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'handle_risk\|risk' src/… ✓ (3ms)
+
+Good. Now I have a clear picture. Let me implement /risk predict. I need to:
+
+1. Add predict_confidence_level, predict_reason, format_prediction_card, format_prediction_report, `load_past_accuracy` functions
+2. Add handle_risk_predict function
+3. Route `predict in handle_risk`
+4. Add comprehensive tests
+5. Update CLAUDE.md
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Implement prediction card helpers (confidence_leve…' ✓ (0ms)
+  ▶ todo add 'Add handle_risk_predict and route it in handle_ris…' ✓ (0ms)
+  ▶ todo add 'Add tests for prediction cards, confidence, reason…' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md with /risk predict' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  5 tools completed in 15.4s (5 ✓)
+
+Now let me find the exact location to insert the new functions — right before `handle_risk_snapshot`:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '695,705p' src/commands_r… ✓ (3ms)
+
+I'll insert the predict functions between the write_risk_snapshot_to function and handle_risk_snapshot. Let me find the exact insertion point:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '690,701p' src/commands_r… ✓ (3ms)
+  ▶ todo wip #1 ✓ (0ms)
+  2 tools completed in 13.4s (2 ✓)
+
+Now let me implement everything. I'll add the predict functionality right before handle_risk_snapshot:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 248 lines)
+  + // ── /risk predict ────────────────────────────────────────────────────
+  + 
+  + /// Map signal count to a confidence level label.
+  + fn predict_confidence_level(signal_count: usize) -> &'static str {
+  +     match signal_count {
+  +         0 => "low",
+  +         1 => "low",
+  +         2 => "medium",
+  +         _ => "high",
+  +     }
+  + }
+  + 
+  + /// Format the confidence dots: ●●●○ high, ●●○○ medium, ●○○○ low.
+  + fn predict_confidence_dots(level: &str) -> String {
+  +     let (filled, label) = match level {
+  +         "high" => (3, "high"),
+  +         "medium" => (2, "medium"),
+  +         _ => (1, "low"),
+  +     };
+  +     let dots: String = "●".repeat(filled) + &"○".repeat(4 - filled);
+  ... (228 more lines)
+ ✓ (17.0s)
+  + // ── /risk predict ────────────────────────────────────────────────────
+  + 
+  + /// Map signal count to a confidence level label.
+  + fn predict_confidence_level(signal_count: usize) -> &'static str {
+  +     match signal_count {
+  +         0 => "low",
+  +         1 => "low",
+  +         2 => "medium",
+  ... (13 more lines)
+
+I need to route the predict subcommand in handle_risk. Let me add it:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 2.9s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `predict_confidence_level` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:702:4
+    [1m[94m|[0m
+[1m[94m702[0m [1m[94m|[0m fn predict_confidence_level(signal_count: usize) -> &'static str {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `predict_confidence_dots` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:712:4
+    [1m[94m|[0m
+[1m[94m712[0m [1m[94m|[0m fn predict_confidence_dots(level: &str) -> String {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `predict_reason` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:724:4
+    [1m[94m|[0m
+[1m[94m724[0m [1m[94m|[0m fn predict_reason(signals: &[&str], test_density: f64) -> String {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `predict_top_reason` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:759:4
+    [1m[94m|[0m
+[1m[94m759[0m [1m[94m|[0m fn predict_top_reason(risk: &FileRisk) -> String {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `format_prediction_card` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:790:4
+    [1m[94m|[0m
+[1m[94m790[0m [1m[94m|[0m fn format_prediction_card(rank: usize, risk: &FileRisk) -> String {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `load_past_accuracy` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:825:4
+    [1m[94m|[0m
+[1m[94m825[0m [1m[94m|[0m fn load_past_accuracy() -> Option<(f64, usize, &'static str)> {
+    [1m[94m|[0m    ...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix both issues: 1) route predict in `handle_risk`, and 2) fix the clippy lint.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'if sub == "validate"' s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '625,640p' src/commands_r… ✓ (3ms)
+  ▶ edit src/commands_risk.rs (6 → 11 lines)
+        if sub == "validate" {
+            handle_risk_validate();
+  +         return;
+  +     }
+  + 
+  +     if sub == "predict" {
+  +         handle_risk_predict();
+            return;
+        }
+    
+ ✓ (16.9s)
+        if sub == "validate" {
+            handle_risk_validate();
+  +         return;
+  +     }
+  + 
+  +     if sub == "predict" {
+  +         handle_risk_predict();
+            return;
+        }
+    
+  3 tools completed in 26.9s (3 ✓)
+
+Now fix the clippy lint:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (1 → 1 lines)
+  -     let signal_names: Vec<&str> = risk.signals.iter().copied().collect();
+  +     let signal_names: Vec<&str> = risk.signals.to_vec();
+ ✓ (1m 38s)
+  -     let signal_names: Vec<&str> = risk.signals.iter().copied().collect();
+  +     let signal_names: Vec<&str> = risk.signals.to_vec();
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (1m 3s)
+  3 tools completed in 3m 6s (3 ✓)
+
+Both issues are fixed:
+
+1. Dead code errors: Added routing for predict in handle_risk() so handle_risk_predict() and all its helper functions are now reachable.
+2. Clippy lint: Changed risk.signals.iter().copied().collect() to risk.signals.to_vec().
+
+All 88 tests pass and clippy is clean.
+
+  ✓ Watch passed after fix (attempt 1)
+

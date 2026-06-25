@@ -1,0 +1,134 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement all three requirements.
+  ▶ todo add 'Add auto_risk_snapshot() function to commands_risk…' ✓ (0ms)
+  ▶ todo add 'Wire auto_risk_snapshot() calls in commands_git.rs…' ✓ (0ms)
+  ▶ todo add 'Remove stale [bug] memory entry from .yoyo/memory.…' ✓ (0ms)
+  ▶ todo add 'Add tests for auto_risk_snapshot()' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md commands_risk.rs description' ✓ (0ms)
+  5 tools completed in 16.4s (5 ✓)
+
+Let me explore the relevant files first:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_SNAPSHOT_PATH' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'fn compute_file_risk_scores' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'build_risk_snapshot_json|write_risk_snapshot' in src/commands_risk.rs ✓ (2ms)
+  3 tools completed in 9.5s (3 ✓)
+
+Let me look at the snapshot handling code:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'snapshot' in src/commands_risk.rs ✓ (3ms)
+
+Now let me see the existing build_risk_snapshot_json and write_risk_snapshot_to functions and the handle_risk_snapshot function:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:647..702 ✓ (1ms)
+
+Now let me see handle_risk_snapshot to understand the pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:959..999 ✓ (1ms)
+
+Good, now let me look at the commit success paths in `commands_git.rs`:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'run_git_commit_with_trailer' in src/commands_git.rs ✓ (3ms)
+
+Let me look at each of these commit success paths:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1405..1430 ✓ (2ms)
+  ▶ read src/commands_git.rs:1430..1470 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me check the amend path:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_commit_amend' in src/commands_git.rs ✓ (3ms)
+  ▶ read src/commands_git.rs:1481..1541 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me also check the second block of commit paths (lines 1620+):
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1600..1710 ✓ (2ms)
+  ▶ read src/commands_git.rs:1709..1734 ✓ (1ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Now let me check the memory file:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read .yoyo/memory.json ✓ (0ms)
+
+Good. Now let me also check the existing tests in commands_risk.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_risk.rs ✓ (2ms)
+  ▶ search '#\[test\]' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1565..1570 ✓ (1ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Let me also check how the DIM/RESET constants are imported:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..16 ✓ (1ms)
+
+Good. Now let me check the end of the file to see where the test module ends, so I know where to add tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2885..2915 ✓ (1ms)
+
+Now I have a complete understanding. Let me implement all three requirements.
+
+### Task 1: Add `auto_risk_snapshot()` to `commands_risk.rs`
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ read src/commands_risk.rs:700..710 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (5 → 28 lines)
+        writeln!(file, "{json_line}")?;
+        Ok(())
+  + }
+  + 
+  + /// Automatically snapshot risk scores after a successful commit.
+  + ///
+  + /// Called from `commands_git` after each successful `/commit`.  Silently
+  + /// logs to stderr on failure — never panics or interrupts the commit flow.
+  + pub(crate) fn auto_risk_snapshot() {
+  +     let risks = compute_file_risk_scores();
+  + 
+  +     let day: u32 = std::fs::read_to_string("DAY_COUNT")
+  +         .ok()
+  +         .and_then(|s| s.trim().parse().ok())
+  +         .unwrap_or(0);
+  + 
+  +     let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+  +         .unwrap_or_else(|_| "unknown".to_string())
+  +         .trim()
+  +         .to_string();
+  ... (8 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/commands_risk.rs.
+  ▶ read src/commands_risk.rs:698..710 ✓ (1ms)
+  4 tools completed in 19.3s (3 ✓, 1 ✗)
+
+There's a blank line 704 that looks like it might have invisible chars. Let me check:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '700,706p' src/commands_risk.rs | cat -A ✓ (5ms)
+
+Unicode box drawing chars. Let me grab the exact line:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '704p' src/commands_risk.rs ✓ (3ms)
+  ▶ $ sed -n '703,706p' src/commands_risk.rs | xxd | head -5 ✓ (3ms)
+  ▶ $ sed -n '704p' src/commands_risk.rs | head -c 200 ✓ (3ms)
+  ▶ $ python3 -c " (8 lines) ✓ (19ms)
+  4 tools completed in 10.6s (4 ✓)
+
+Hmm, it seems the file display had some artifact. Lines 703 and 704 are blank:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (5 lines) ✓ (19ms)
+
+Wait, line 704 is missing from the output? Let me check:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (5 lines) ✓ (19ms)
+
+Interesting - line 704 is skipped in enumeration, which means there are actually lines 702-705. Let me just count properly:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 -c " (6 lines) ✓ (19ms)
+  ▶ $ python3 -c " (5 lines) ✓ (19ms)
+  2 tools completed in 3.3s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

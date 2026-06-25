@@ -1,0 +1,206 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "predict" src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk" CLAUDE.m… ✓ (6ms)
+ ✓ (4ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Good, the implementation exists. Now let me check what tests currently exist and what's missing:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^#\[cfg(test)\]/,$ p' s… ✓ (3ms)
+ ✓ (12ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me look at the predict-related functions in detail to understand their signatures:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,950p' src/commands_r… ✓ (5ms)
+
+Now let me see the FileRisk struct and compute_file_risk_scores and other key types:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct FileRisk" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/commands_risk… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Now I have a clear picture. I need to:
+1. Add the 5 required test categories
+2. Update CLAUDE.md to mention /risk predict
+
+Let me check the existing test functions more carefully and the routing:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "predict" src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '620,650p' src/commands_r… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Good. Now let me look at what format_prediction_report uses in terms of `load_past_accuracy_from` to understand how to mock it for tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '828,895p' src/commands_r… ✓ (4ms)
+
+I see that load_past_accuracy_from uses git commands, which makes it hard to unit test with mocked files. But I can still test the formatting with synthetic data by creating a helper that takes the accuracy data as a parameter. Let me look at how format_prediction_report is structured more carefully:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '890,950p' src/commands_r… ✓ (4ms)
+
+I need to refactor format_prediction_report to make the accuracy part testable. I'll create a variant that takes optional accuracy data as a parameter. Let me now also look at compute_trend and precision:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn precision\|fn comput…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1045,1110p' src/commands… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.3s (2 ✓)
+
+Now I have a comprehensive understanding. Let me now write the tests and make the necessary refactoring to format_prediction_report to support testability with mock accuracy data. Let me also look at the end of the tests module to find the right insertion point:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/commands_risk.rs ✓ (3ms)
+
+Now let me also check the line count so I know where to insert:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs ✓ (3ms)
+
+Now I need to:
+
+1. Refactor format_prediction_report to have a version that takes accuracy data as a parameter (for testability)
+2. Add all 5 required test categories
+3. Update CLAUDE.md
+
+Let me first refactor format_prediction_report:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:890..948 ✓ (1ms)
+
+Now let me see the closing of format_prediction_report fully (check for the closing brace line):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '894,896p' src/commands_r… ✓ (3ms)
+
+That's the header line - empty format. Let me see exact content around line 893-896:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat -A src/commands_risk.rs | se… ✓ (4ms)
+
+OK, it has Unicode box characters. Let me see the raw bytes around 894-895:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '895p' src/commands_risk.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '894,896p' src/commands_r… ✓ (4ms)
+  2 tools completed in 7.2s (2 ✓)
+
+OK, it's box-drawing characters (┌ and ─). Now I understand the full picture. Let me now refactor and add the tests.
+
+The key strategy:
+1. Extract the track record formatting into `format_prediction_report_with_accuracy that takes an Option<(f64, usize, &str)>` parameter
+2. Have format_prediction_report call it with `load_past_accuracy()`
+3. Add all 5 required test categories
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (5 → 16 lines)
+  - /// Format the full prediction report.
+  + /// Format the full prediction report (delegates to `format_prediction_report_with_accuracy`).
+    fn format_prediction_report(risks: &[FileRisk], top_n: usize) -> String {
+  +     let accuracy = load_past_accuracy();
+  +     format_prediction_report_with_accuracy(risks, top_n, accuracy)
+  + }
+  + 
+  + /// Format the full prediction report with optional past accuracy data.
+  + /// Separated from `format_prediction_report` so tests can supply synthetic accuracy.
+  + fn format_prediction_report_with_accuracy(
+  +     risks: &[FileRisk],
+  +     top_n: usize,
+  +     accuracy: Option<(f64, usize, &str)>,
+  + ) -> String {
+        let mut out = String::new();
+    
+        out.push_str(&format!(
+ ✓ (16.2s)
+  - /// Format the full prediction report.
+  + /// Format the full prediction report (delegates to `format_prediction_report_with_accuracy`).
+    fn format_prediction_report(risks: &[FileRisk], top_n: usize) -> String {
+  +     let accuracy = load_past_accuracy();
+  +     format_prediction_report_with_accuracy(risks, top_n, accuracy)
+  + }
+  + 
+  + /// Format the full prediction report with optional past accuracy data.
+  ... (9 more lines)
+
+Right, now I need to update the body of the function to use the accuracy parameter instead of calling load_past_accuracy():
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 2 lines)
+        // Track record from past snapshots
+  -     if let Some((pct, count, trend)) = load_past_accuracy() {
+  +     if let Some((pct, count, trend)) = accuracy {
+ ✓ (1m 37s)
+        // Track record from past snapshots
+  -     if let Some((pct, count, trend)) = load_past_accuracy() {
+  +     if let Some((pct, count, trend)) = accuracy {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (144ms)
+  2 tools completed in 1m 45s (2 ✓)
+
+Good. Now let me add all the required tests. Let me find the exact closing of the tests module:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_risk.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now I need to check what signal names are actually used by the system:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"▲\|"low-\|"high-\|"rev… ✓ (4ms)
+
+So signals use the ▲ prefix (e.g., "▲churn", `"▲recent", "▲size", "▲reverts", "▲low-test", "▲coupled"). The predict_reason function uses has("churn") which does contains("churn"), so it matches "▲churn"`. Good.
+
+Now let me check what the `handle_risk` routing looks like for test routing:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '595,650p' src/commands_r… ✓ (4ms)
+
+Now I have everything I need. Let me add all 5 required test categories:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 455 lines)
+  +     // ── Test category 1: Confidence level mapping ──
+  + 
+  +     #[test]
+  +     fn test_predict_confidence_level_zero_signals_is_low() {
+  +         assert_eq!(predict_confidence_level(0), "low");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_predict_confidence_level_one_signal_is_low() {
+  +         assert_eq!(predict_confidence_level(1), "low");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_predict_confidence_level_two_signals_is_medium() {
+  +         assert_eq!(predict_confidence_level(2), "medium");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_predict_confidence_level_three_signals_is_high() {
+  +         assert_eq!(predict_confidence_level(3), "high");
+  ... (435 more lines)
+ ✓ (1m 36s)
+  +     // ── Test category 1: Confidence level mapping ──
+  + 
+  +     #[test]
+  +     fn test_predict_confidence_level_zero_signals_is_low() {
+  +         assert_eq!(predict_confidence_level(0), "low");
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Now let me run the build and tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 20s)
+  2 tools completed in 1m 50s (2 ✓)
+
+All tests pass. Let me also run just the risk tests to make sure all new ones work:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk 2>&1 | … ✓ (2.4s)
+
+All 77 risk-related tests pass. Now let me update CLAUDE.md to mention /risk predict:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk.rs" CLAUD… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+  + - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, predict, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+ ✓ (1m 18s)
+  - - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+  + - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, predict, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+  2 tools completed in 1m 24s (2 ✓)
+
+Now let me run the full check one more time to make sure everything is clean:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-…

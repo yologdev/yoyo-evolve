@@ -1,0 +1,211 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the implementation and what's missing.
+  ▶ todo add 'Add auto-context risk annotations in format_auto_c…' ✓ (0ms)
+  ▶ todo add 'Add tests for top_risk_files, format_auto_context …' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture description for comm…' ✓ (0ms)
+  3 tools completed in 6.4s (3 ✓)
+
+Let me first look at the existing implementations:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'top_risk_files' in src ✓ (10ms)
+  ▶ search 'format_auto_context' in src/commands_project.rs ✓ (3ms)
+  ▶ read src/commands_project.rs:1221..1281 ✓ (1ms)
+  3 tools completed in 10.7s (3 ✓)
+
+Now let me look at the `compute_file_risk_scores function signature and the FileRisk` struct:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'pub.*struct FileRisk' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1..31 ✓ (1ms)
+  ▶ read src/commands_risk.rs:510..530 ✓ (1ms)
+  3 tools completed in 6.6s (3 ✓)
+
+Good. Now let me check the compute_file_risk_scores signature:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub.*fn compute_file_risk_scores' in src/commands_risk.rs ✓ (3ms)
+
+Now let me look at the existing tests to understand the test patterns used:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2750..2830 ✓ (1ms)
+
+Now let me look at the remaining tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:2855..2915 ✓ (1ms)
+  ▶ read src/commands_project.rs:2914..2919 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me check the existing tests in commands_risk.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_risk.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1300..1400 ✓ (1ms)
+  3 tools completed in 6.5s (3 ✓)
+
+Now let me check the SIGNATURE_SENTINEL constant:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'SIGNATURE_SENTINEL' in src/commands_project.rs ✓ (3ms)
+
+Now let me understand the full picture. I need to:
+
+1. Modify `format_auto_context()` in commands_project.rs to annotate high-risk files
+2. Add tests for `top_risk_files, format_auto_context` risk annotations, and low-risk non-annotation
+3. Update CLAUDE.md
+
+Let me now implement the auto-context risk annotations:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ read src/commands_project.rs:1221..1261 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now I'll modify format_auto_context to add risk annotations. The task says: "Use `compute_file_risk_scores()` to get the scores, build a HashMap of path → score, and append `(⚠ risk: 0.82)` to the file header line for high-risk files" (top 25%).
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (34 → 59 lines)
+        if files.is_empty() {
+            return None;
+        }
+  + 
+  +     // Build a risk-score map for high-risk file annotations.
+  +     // Only files in the top 25% of risk scores get annotated.
+  +     let risk_map = build_risk_annotation_map();
+    
+        let mut parts = Vec::new();
+        parts.push(
+  ···
+            if path == SIGNATURE_SENTINEL {
+                continue;
+            }
+  -         parts.push(format!("--- {path} ---"));
+  +         if let Some(&score) = risk_map.get(path.as_str()) {
+  +             parts.push(format!("--- {path} --- (\u{26a0} risk: {score:.2})"));
+  +         } else {
+  +             parts.push(format!("--- {path} ---"));
+  +         }
+  ... (25 more lines)
+ ✓ (1m 23s)
+        if files.is_empty() {
+            return None;
+        }
+  + 
+  +     // Build a risk-score map for high-risk file annotations.
+  +     // Only files in the top 25% of risk scores get annotated.
+  +     let risk_map = build_risk_annotation_map();
+    
+  ... (13 more lines)
+
+Now I need to make sure compute_file_risk_scores is public enough. Let me check:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub.*fn compute_file_risk_scores' in src/commands_risk.rs ✓ (3ms)
+
+Good, it's `pub(crate). Now let me add the tests. Let me first check the end of the tests module in commands_risk.rs`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (11ms)
+  ▶ read src/commands_risk.rs:2180..2210 ✓ (1ms)
+  2 tools completed in 4.3s (2 ✓)
+
+Now let me add the `top_risk_files test to commands_risk.rs`:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (22 → 52 lines)
+                    );
+                    assert!(*count > 0, "Coupling count should be positive, got {count}");
+                }
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_top_risk_files_count_and_order() {
+  +         let top3 = top_risk_files(3);
+  +         // Should return at most 3 entries
+  +         assert!(top3.len() <= 3, "expected at most 3 entries, got {}", top3.len());
+  +         // Scores should be in descending order
+  +         for w in top3.windows(2) {
+  +             assert!(
+  +                 w[0].1 >= w[1].1,
+  +                 "top_risk_files should be sorted descending: {} >= {} failed",
+  +                 w[0].1,
+  +                 w[1].1
+  +             );
+  +         }
+  ... (16 more lines)
+ ✓ (1m 23s)
+                    );
+                    assert!(*count > 0, "Coupling count should be positive, got {count}");
+                }
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_top_risk_files_count_and_order() {
+  ... (13 more lines)
+
+Now let me add the `format_auto_context risk annotation tests in commands_project.rs`. Let me find the end of the test module:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_project.rs ✓ (10ms)
+  ▶ read src/commands_project.rs:2930..2950 ✓ (1ms)
+  ▶ edit src/commands_project.rs (7 → 47 lines)
+                sig_content.contains("fn ") || sig_content.contains("struct "),
+                "signature block should contain fn/struct entries, got: {}",
+                &sig_content[..sig_content.len().min(200)]
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_auto_context_risk_annotation_present() {
+  +         // Use a known high-risk file from the actual codebase risk scores.
+  +         // The top-risk file should get an annotation when it appears in auto-context.
+  +         let top = crate::commands_risk::top_risk_files(1);
+  +         if top.is_empty() {
+  +             return; // skip if no risk data available
+  +         }
+  +         let high_risk_path = &top[0].0;
+  +         let files = vec![(high_risk_path.clone(), "fn example() {}".to_string())];
+  +         let result = format_auto_context(&files, "test prompt").unwrap();
+  +         // The high-risk file should have the ⚠ risk annotation
+  +         assert!(
+  +             result.contains("\u{26a0} risk:"),
+  ... (26 more lines)
+ ✓ (1m 23s)
+                sig_content.contains("fn ") || sig_content.contains("struct "),
+                "signature block should contain fn/struct entries, got: {}",
+                &sig_content[..sig_content.len().min(200)]
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_auto_context_risk_annotation_present() {
+  ... (13 more lines)
+  3 tools completed in 1m 39s (3 ✓)
+
+Now let me update CLAUDE.md to mention top_risk_files in the architecture description:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ search 'commands_risk.rs' in CLAUDE.md ✓ (2ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping
+  + - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+ ✓ (1m 6s)
+  - - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping
+  + - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+  ▶ todo done #3 ✓ (0ms)
+  5 tools completed in 1m 20s (5 ✓)
+
+Now let me build and test:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (1m 7s)
+  2 tools completed in 1m 28s (2 ✓)
+
+All 88 tests pass. Let me specifically check that the new tests ran:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "top_r… ✓ (38.7s)
+
+All 4 new tests pass. Let me also run the full build to be sure:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (144ms)
+  ▶ todo done #2 ✓ (0ms)
+  2 tools completed in 2.3s (2 ✓)
+

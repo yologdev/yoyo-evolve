@@ -1,0 +1,326 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current codebase, then implement all three requirements.
+  ▶ todo add 'Create auto_risk_snapshot() function in commands_r…' ✓ (0ms)
+  ▶ todo add 'Add auto_risk_snapshot() calls in commands_git.rs …' ✓ (0ms)
+  ▶ todo add 'Remove stale [bug] memory entry from .yoyo/memory.…' ✓ (0ms)
+  ▶ todo add 'Add tests for auto_risk_snapshot()' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md with auto_risk_snapshot mention' ✓ (0ms)
+  5 tools completed in 13.6s (5 ✓)
+
+Let me examine the relevant files first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_SNAPSHOT_PATH' in src/commands_risk.rs ✓ (2ms)
+  ▶ search 'fn build_risk_snapshot|fn write_risk_snapshot|snapshot' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'snapshot' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:647..697 ✓ (1ms)
+  ▶ read src/commands_risk.rs:696..711 ✓ (1ms)
+  5 tools completed in 16.5s (5 ✓)
+
+Now let me look at handle_risk_snapshot() to understand the pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:959..994 ✓ (1ms)
+
+Now let me check the imports at the top of commands_risk.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..11 ✓ (1ms)
+
+Good. Now let me look at the commit success paths in commands_git.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'run_git_commit_with_trailer"' in src/commands_git.rs ✓ (2ms)
+  ▶ search 'run_git_commit_with_trailer' in src/commands_git.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Let me look at each commit success path. Let me read the areas around each call:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1405..1430 ✓ (1ms)
+  ▶ read src/commands_git.rs:1430..1465 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me check the amend path and the -a path (lines ~1620+):
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1615..1655 ✓ (1ms)
+  ▶ read src/commands_git.rs:1680..1730 ✓ (1ms)
+  2 tools completed in 7.6s (2 ✓)
+
+Now let me check the amend path:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_commit_amend' in src/commands_git.rs ✓ (2ms)
+  ▶ read src/commands_git.rs:1481..1541 ✓ (1ms)
+  ▶ read src/commands_git.rs:1540..1550 ✓ (1ms)
+  3 tools completed in 8.4s (3 ✓)
+
+Now let me check the memory file:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read .yoyo/memory.json ✓ (0ms)
+
+Now let me check the existing tests in commands_risk.rs:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]|mod tests"' in src/commands_risk.rs ✓ (2ms)
+  ▶ search '#\[cfg\(test\)\]|mod tests' in src/commands_risk.rs ✓ (2ms)
+  ▶ $ tail -30 src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (39ms)
+  ▶ search '^#\[cfg\(test"' in src/commands_risk.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'cfg.test' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1564..1574 ✓ (1ms)
+  6 tools completed in 18.2s (5 ✓, 1 ✗)
+
+Good, now I have a clear picture. Let me implement all three parts.
+
+## Step 1: Create `auto_risk_snapshot()` in `commands_risk.rs`
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ read src/commands_risk.rs:985..990 ✓ (1ms)
+  2 tools completed in 4.8s (2 ✓)
+
+I'll add the auto_risk_snapshot() public helper right after `handle_risk_snapshot()`:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (5 → 47 lines)
+            }
+  +     }
+  + }
+  + 
+  + /// Automatically capture a risk snapshot after a successful commit.
+  + ///
+  + /// Called from `commands_git.rs` after each successful `/commit`.
+  + /// Silently skips on error (prints a dim note to stderr).
+  + pub(crate) fn auto_risk_snapshot() {
+  +     let risks = compute_file_risk_scores();
+  + 
+  +     let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+  +         .unwrap_or_else(|_| "unknown".to_string())
+  +         .trim()
+  +         .to_string();
+  + 
+  +     let day: u32 = std::fs::read_to_string("DAY_COUNT")
+  +         .ok()
+  +         .and_then(|s| s.trim().parse().ok())
+  +         .unwrap_or(0);
+  ... (27 more lines)
+ ✓ (15.4s)
+            }
+  +     }
+  + }
+  + 
+  + /// Automatically capture a risk snapshot after a successful commit.
+  + ///
+  + /// Called from `commands_git.rs` after each successful `/commit`.
+  + /// Silently skips on error (prints a dim note to stderr).
+  ... (13 more lines)
+
+The function is unused because we haven't wired the calls yet. Let me proceed with step 2, then it will compile.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+
+## Step 2: Wire auto_risk_snapshot() into commands_git.rs
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+I need to add the call after each successful commit. Let me handle all the success paths:
+
+**Path 1: Direct message commit (line 1410-1411)**
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (8 → 9 lines)
+            let (ok, output) = run_git_commit_with_trailer(&parsed.message);
+            if ok {
+                println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +             crate::commands_risk::auto_risk_snapshot();
+            } else {
+                eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            }
+ ✓ (15.4s)
+            let (ok, output) = run_git_commit_with_trailer(&parsed.message);
+            if ok {
+                println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +             crate::commands_risk::auto_risk_snapshot();
+            } else {
+                eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            }
+
+Good progress, auto_risk_snapshot is now used. The test-only function isn't yet used but will be when I add tests. Let me continue wiring the other paths.
+
+**Path 2: Suggested message accepted ("y" branch in handle_commit, ~line 1438)**
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (27 → 29 lines)
+                                let (ok, output) = run_git_commit_with_trailer(&suggested);
+                                if ok {
+                                    println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +                                 crate::commands_risk::auto_risk_snapshot();
+                                } else {
+                                    eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                                }
+  ···
+                                        let (ok, output) = run_git_commit_with_trailer(custom_msg);
+                                        if ok {
+                                            println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +                                         crate::commands_risk::auto_risk_snapshot();
+                                        } else {
+                                            eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                                        }
+ ✓ (15.6s)
+                                let (ok, output) = run_git_commit_with_trailer(&suggested);
+                                if ok {
+                                    println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +                                 crate::commands_risk::auto_risk_snapshot();
+                                } else {
+                                    eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                                }
+  ···
+  ... (7 more lines)
+
+**Path 3: AI commit with message (line ~1624)**
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (8 → 9 lines)
+            let (ok, output) = run_git_commit_with_trailer(&parsed.message);
+            if ok {
+                println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +             crate::commands_risk::auto_risk_snapshot();
+            } else {
+                eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            }
+ ✓ (15.6s)
+            let (ok, output) = run_git_commit_with_trailer(&parsed.message);
+            if ok {
+                println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +             crate::commands_risk::auto_risk_snapshot();
+            } else {
+                eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            }
+
+**Path 4: AI-generated suggested message accepted ("y" branch in handle_commit_ai, ~line 1698)**
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1697..1737 ✓ (1ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `auto_risk_snapshot_to` is never used[0m
+    [1m[94m--> [0msrc/commands_risk.rs:1014:4
+     [1m[94m|[0m
+[1m[94m1014[0m [1m[94m|[0m fn auto_risk_snapshot_to(path: &std::path::Path) {
+     [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of auto_risk_snapshot_to and add the tests that use it, plus finish the remaining work.
+  ▶ read src/commands_risk.rs:1010..1040 ✓ (1ms)
+
+Now let me find the test module to add the tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1607..1622 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now let me find the end of the tests module to add the new tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ tail -40 src/commands_risk.rs ✓ (38ms)
+
+Now I'll add the tests that use `auto_risk_snapshot_to` and also tests for the snapshot functions directly:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (25 → 68 lines)
+                assert_eq!(
+                    top1[0].0, top5[0].0,
+                    "top-1 file should match first entry of top-5"
+  +             );
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_auto_risk_snapshot_writes_valid_jsonl() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let path = dir.path().join("snapshots.jsonl");
+  + 
+  +         auto_risk_snapshot_to(&path);
+  + 
+  +         let contents = std::fs::read_to_string(&path).expect("read snapshot file");
+  +         assert!(!contents.trim().is_empty(), "snapshot file should not be empty");
+  + 
+  +         // Each line should be valid JSON
+  +         for line in contents.lines() {
+  +             let parsed: serde_json::Value =
+  ... (30 more lines)
+ ✓ (1m 36s)
+                assert_eq!(
+                    top1[0].0, top5[0].0,
+                    "top-1 file should match first entry of top-5"
+  +             );
+  +         }
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Now let me check if tempfile is available as a dependency:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'tempfile' in Cargo.toml ✓ (2ms)
+
+Good. Now let me also finish wiring the remaining commit paths in commands_git.rs. Let me check what still needs the call:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1697..1737 ✓ (1ms)
+
+These are the AI commit paths (the handle_commit_ai function). I need to add the snapshot calls here too:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (27 → 29 lines)
+                    let (ok, output) = run_git_commit_with_trailer(&suggested);
+                    if ok {
+                        println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +                     crate::commands_risk::auto_risk_snapshot();
+                    } else {
+                        eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                    }
+  ···
+                            let (ok, output) = run_git_commit_with_trailer(custom_msg);
+                            if ok {
+                                println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +                             crate::commands_risk::auto_risk_snapshot();
+                            } else {
+                                eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                            }
+ ✓ (1m 36s)
+                    let (ok, output) = run_git_commit_with_trailer(&suggested);
+                    if ok {
+                        println!("{GREEN}  ✓ {}{RESET}\n", output.trim());
+  +                     crate::commands_risk::auto_risk_snapshot();
+                    } else {
+                        eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                    }
+  ···
+  ... (7 more lines)
+
+Now let me also add snapshots to the amend success paths. Let me look at the amend function:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_git.rs:1483..1558 ✓ (1ms)
+
+The task mentions "Amend commit success path" as one of the commit paths. Let me add auto_risk_snapshot to the amend paths too:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git.rs (70 → 74 lines)
+            let (ok, output) = run_git_amend_with_message(&parsed.message);
+            if ok {
+                println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+  +             crate::commands_risk::auto_risk_snapshot();
+            } else {
+                eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+            }
+  ···
+                        let (ok, output) = run_git_amend_no_edit();
+                        if ok {
+                            println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+  +                         crate::commands_risk::auto_risk_snapshot();
+                        } else {
+                            eprintln!("{RED}  ✗ {}{RESET}\n", output.trim());
+                        }
+  ···
+                                let (ok, output) = run_git_amend_with_message(custom_msg);
+                                if ok {
+                                    println!("{GREEN}  ✓ (amended) {}{RESET}\n", output.trim());
+  +                                 crate::commands_risk::auto_risk_snapshot();
+  ... (11 more lines)
