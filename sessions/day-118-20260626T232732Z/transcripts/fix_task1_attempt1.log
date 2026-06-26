@@ -1,0 +1,213 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the required changes.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read and summarize the key parts of these files that are rel…' ✓ (49.8s)
+
+Now let me look at the exact end of build_watch_fix_prompt to know where to insert the risk context:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn build_watch_fix_prompt' src/watch.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (10ms)
+  ▶ read src/watch.rs:1023..1123 ✓ (1ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me check the end of compute_file_risk_scores and look at the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub(crate) fn top_risk_files' src/commands_risk.rs ✓ (9ms)
+  ▶ read src/commands_risk.rs:842..872 ✓ (1ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Now let me see how extract_file_paths_from_output is imported in watch.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'extract_file_paths_from_output\|use crate::commands_file\|use crate::co… ✓ (4ms)
+
+Now let me check the imports at the top of watch.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1..21 ✓ (1ms)
+
+Now let me check how FileRisk's signals field is populated to understand what signal labels look like:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'signals.push\|"▲' src/commands_risk.rs | head -20 ✓ (4ms)
+
+Let me also see what signals look like (human-readable) for the prompt format:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:795..825 ✓ (1ms)
+
+Good. Now let me check the signal_label function that might exist for translating these:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'signal_label\|signal_description\|"high churn"\|"low test"' src/command… ✓ (4ms)
+  ▶ read src/commands_risk.rs:1090..1120 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Now I have all the context I need. Let me look at the existing tests at the end of `commands_risk.rs` to find where to add new tests:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '#\[cfg(test)\]\|mod tests' src/commands_risk.rs | head -5 ✓ (4ms)
+  ▶ $ wc -l src/commands_risk.rs ✓ (7ms)
+  ▶ read src/commands_risk.rs:4608..4613 ✓ (1ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Now let me check the test section in watch.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '#\[cfg(test)\]\|mod tests' src/watch.rs ✓ (8ms)
+  ▶ read src/watch.rs:3060..3070 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Good. Now I have all the context needed. Let me implement the changes:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add `risk_context_for_files` helper in commands_ri…' ✓ (0ms)
+  ▶ todo add 'Enrich `build_watch_fix_prompt` in watch.rs with r…' ✓ (0ms)
+  ▶ todo add 'Add tests for risk_context_for_files in commands_r…' ✓ (0ms)
+  ▶ todo add 'Add test for risk context in build_watch_fix_promp…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  5 tools completed in 23.0s (5 ✓)
+
+Now let me implement step 1 — add the risk_context_for_files function. I'll also need a variant that takes pre-computed scores for testability:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_risk.rs (8 → 77 lines)
+            .take(n)
+            .map(|r| (r.path, r.score))
+            .collect()
+  + }
+  + 
+  + /// Given a list of file paths (e.g. from error output), return those with
+  + /// above-median risk scores (> 0.5 normalized) along with their score and
+  + /// active signal labels.
+  + ///
+  + /// Used by `build_watch_fix_prompt` to inject risk-aware guidance into
+  + /// fix prompts — the "action-guidance" property of the body schema.
+  + pub(crate) fn risk_context_for_files(paths: &[String]) -> Vec<(String, f64, Vec<&'static str>)> {
+  +     if paths.is_empty() {
+  +         return Vec::new();
+  +     }
+  +     let risks = compute_file_risk_scores();
+  +     risk_context_for_files_from(paths, &risks)
+  + }
+  + 
+  + /// Inner helper that operates on pre-computed risk scores (testable without git).
+  ... (53 more lines)
+ ✓ (16.1s)
+            .take(n)
+            .map(|r| (r.path, r.score))
+            .collect()
+  + }
+  + 
+  + /// Given a list of file paths (e.g. from error output), return those with
+  + /// above-median risk scores (> 0.5 normalized) along with their score and
+  + /// active signal labels.
+  ... (13 more lines)
+  2 tools completed in 36.2s (2 ✓)
+
+Expected — these functions aren't used yet. Let me proceed with step 2 to integrate them into watch.rs:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me update build_watch_fix_prompt to use the risk context:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (4 → 5 lines)
+    use crate::commands_file::extract_file_paths_from_output;
+    use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
+    use crate::commands_project::detect_project_type;
+  + use crate::commands_risk::{format_risk_context, risk_context_for_files};
+    use crate::format::*;
+ ✓ (15.9s)
+    use crate::commands_file::extract_file_paths_from_output;
+    use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
+    use crate::commands_project::detect_project_type;
+  + use crate::commands_risk::{format_risk_context, risk_context_for_files};
+    use crate::format::*;
+
+Good, now let me update the function body to use the risk context:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (11 → 17 lines)
+        // Enrich the prompt with file paths extracted from the error output
+        // so the agent knows exactly which files to focus on.
+        let error_files = extract_file_paths_from_output(output);
+  +     let risk_section = if !error_files.is_empty() {
+  +         let risk_entries = risk_context_for_files(&error_files);
+  +         format_risk_context(&risk_entries)
+  +     } else {
+  +         String::new()
+  +     };
+        if error_files.is_empty() {
+            base
+        } else {
+            let file_list = error_files.join(", ");
+            format!(
+  -             "{base}\n\nFiles referenced in errors: {file_list}. Focus your fixes on these files."
+  +             "{base}\n\nFiles referenced in errors: {file_list}. Focus your fixes on these files.{risk_section}"
+            )
+        }
+ ✓ (1m 26s)
+        // Enrich the prompt with file paths extracted from the error output
+        // so the agent knows exactly which files to focus on.
+        let error_files = extract_file_paths_from_output(output);
+  +     let risk_section = if !error_files.is_empty() {
+  +         let risk_entries = risk_context_for_files(&error_files);
+  +         format_risk_context(&risk_entries)
+  +     } else {
+  +         String::new()
+  ... (10 more lines)
+  ▶ todo done #2 ✓ (0ms)
+  2 tools completed in 1m 31s (2 ✓)
+
+Now let me verify it compiles:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (149ms)
+
+Now let me add the tests. First, tests for risk_context_for_files_from in commands_risk.rs:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ read src/commands_risk.rs:4602..4612 ✓ (1ms)
+  ▶ read src/commands_risk.rs:4670..4690 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (6 → 121 lines)
+            assert!(
+                !weights_path.exists(),
+                "weights file should NOT be created with fewer than 5 events"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn risk_context_for_files_empty_paths() {
+  +         let risks = vec![FileRisk {
+  +             path: "src/foo.rs".to_string(),
+  +             score: 0.8,
+  +             signals: vec!["▲churn"],
+  +             test_density: 1.0,
+  +         }];
+  +         let result = risk_context_for_files_from(&[], &risks);
+  +         assert!(result.is_empty(), "empty paths should return empty result");
+  +     }
+  + 
+  +     #[test]
+  +     fn risk_context_for_files_no_high_risk() {
+  ... (101 more lines)
+ ✓ (1m 25s)
+            assert!(
+                !weights_path.exists(),
+                "weights file should NOT be created with fewer than 5 events"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn risk_context_for_files_empty_paths() {
+  ... (13 more lines)
+  ▶ todo done #3 ✓ (0ms)
+  5 tools completed in 1m 55s (5 ✓)
+
+Now add the watch.rs test. I need to test that risk context appears in the prompt. Since `build_watch_fix_prompt calls risk_context_for_files which calls compute_file_risk_scores` (requires git), I should make the prompt building testable. Let me look at how to approach this:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #4 ✓ (0ms)
+
+The task says "the risk lookup can be gated behind a helper that's testable independently." I've already made risk_context_for_files_from testable independently, and format_risk_context is also testable. For the watch.rs test, I can test that the format function produces the right output that would be appended. But let me also add a test that exercises the integration point more directly by creating a helper:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1514..1524 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,225 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD ✓ (10ms)
+  ▶ todo add 'Add `file_risk_summary` helper in commands_risk.rs' ✓ (0ms)
+  ▶ todo add 'Modify SmartEditTool in smart_edit.rs to append ri…' ✓ (0ms)
+  ▶ todo add 'Add tests for file_risk_summary and smart_edit ris…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test to verify' ✓ (0ms)
+  5 tools completed in 14.3s (5 ✓)
+
+Let me examine the existing code in both files:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub.*fn.*risk" src/comm… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,50p' src/commands_risk… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '50,100p' src/commands_ri… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '580,900p' src/commands_r… ✓ (5ms)
+  4 tools completed in 11.3s (4 ✓)
+
+Now let me look at the SmartEditTool implementation:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl Tool for SmartEdit… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '328,550p' src/smart_edit… ✓ (5ms)
+  2 tools completed in 19.7s (2 ✓)
+
+Now let me look at how the execute method handles success - I need to understand the exact flow:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '344,370p' src/smart_edit… ✓ (3ms)
+
+Now let me check the struct definition:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '71,85p' src/smart_edit.r… ✓ (3ms)
+
+Now let me check the `with_smart_edit` function:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn with_smart_edit" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '322,330p' src/smart_edit… ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me also see what tests exist at the end of the file:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/smart_edit.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1700,1726p' src/smart_ed… ✓ (3ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now let me check the existing test module structure at the end of `commands_risk.rs`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -15 src/commands_risk.rs ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now I understand the full picture. Let me implement the changes:
+
+1. Add `file_risk_summary in commands_risk.rs`
+2. Modify SmartEditTool::execute in smart_edit.rs to append risk notes after successful edits
+3. Add tests
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+First, let me look at the signal_labels_to_description function for reuse:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn signal_labels_to_des… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,960p' src/commands_r… ✓ (4ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Good. Now I'll add the file_risk_summary function. Let me find a good place after `risk_context_for_files_from`:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '880,905p' src/commands_r… ✓ (3ms)
+
+Now add file_risk_summary right after format_risk_context:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (3 → 32 lines)
+  + /// Check whether a single file has elevated risk (top 25th percentile).
+  + ///
+  + /// Returns `Some((score, signals_description))` if the file is in the top quartile,
+  + /// `None` otherwise. The description uses human-readable signal names.
+  + /// This is the proactive counterpart to `risk_context_for_files` — intended for
+  + /// single-file lookups after a successful edit (body-schema action-guidance).
+  + pub(crate) fn file_risk_summary(path: &str) -> Option<(f64, Vec<&'static str>)> {
+  +     file_risk_summary_from(path, &compute_file_risk_scores())
+  + }
+  + 
+  + /// Inner implementation with pre-computed scores (testable without git).
+  + pub(crate) fn file_risk_summary_from(path: &str, risks: &[FileRisk]) -> Option<(f64, Vec<&'static str>)> {
+  +     if risks.is_empty() {
+  +         return None;
+  +     }
+  +     // Find the 75th percentile threshold (risks are sorted descending by score)
+  +     let p75_index = risks.len() / 4; // top 25% = first quarter of sorted-desc list
+  +     let threshold = risks.get(p75_index).map(|r| r.score).unwrap_or(0.0);
+  + 
+  +     // Look up the file
+  ... (12 more lines)
+ ✓ (16.3s)
+  + /// Check whether a single file has elevated risk (top 25th percentile).
+  + ///
+  + /// Returns `Some((score, signals_description))` if the file is in the top quartile,
+  + /// `None` otherwise. The description uses human-readable signal names.
+  + /// This is the proactive counterpart to `risk_context_for_files` — intended for
+  + /// single-file lookups after a successful edit (body-schema action-guidance).
+  + pub(crate) fn file_risk_summary(path: &str) -> Option<(f64, Vec<&'static str>)> {
+  +     file_risk_summary_from(path, &compute_file_risk_scores())
+  ... (13 more lines)
+
+Expected - the functions aren't used yet. Let me now implement the smart_edit.rs changes.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now modify SmartEditTool::execute to append risk notes after successful edits. The key change is in the `Ok(result) => Ok(result)` arm:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (8 → 16 lines)
+            ctx: yoagent::types::ToolContext,
+        ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+            match self.inner.execute(params.clone(), ctx.clone()).await {
+  -             Ok(result) => Ok(result),
+  +             Ok(mut result) => {
+  +                 // Proactive risk feedback: if the edited file is in src/ and has
+  +                 // elevated risk, append an informational note. This is body-schema
+  +                 // action-guidance — "you just touched something fragile."
+  +                 if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
+  +                     result = Self::maybe_append_risk_note(result, path);
+  +                 }
+  +                 Ok(result)
+  +             }
+                Err(yoagent::types::ToolError::Failed(msg)) if msg.contains("not found") => {
+ ✓ (10.3s)
+            ctx: yoagent::types::ToolContext,
+        ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+            match self.inner.execute(params.clone(), ctx.clone()).await {
+  -             Ok(result) => Ok(result),
+  +             Ok(mut result) => {
+  +                 // Proactive risk feedback: if the edited file is in src/ and has
+  +                 // elevated risk, append an informational note. This is body-schema
+  +                 // action-guidance — "you just touched something fragile."
+  ... (6 more lines)
+
+Now I need to add the maybe_append_risk_note method to the impl SmartEditTool block. Let me find it:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '373,380p' src/smart_edit… ✓ (3ms)
+
+Add the method right at the start of the impl SmartEditTool block:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/smart_edit.rs (2 → 40 lines)
+    impl SmartEditTool {
+  +     /// Append a risk note to a successful edit result if the file is in `src/`
+  +     /// and has elevated risk (top 25th percentile). This is purely informational —
+  +     /// a proprioceptive signal: "you just touched something fragile."
+  +     fn maybe_append_risk_note(
+  +         mut result: yoagent::types::ToolResult,
+  +         path: &str,
+  +     ) -> yoagent::types::ToolResult {
+  +         // Gate: only compute risk for our own source files
+  +         if !path.starts_with("src/") {
+  +             return result;
+  +         }
+  +         if let Some((score, signals)) = crate::commands_risk::file_risk_summary(path) {
+  +             let signal_desc = if signals.is_empty() {
+  +                 "elevated risk score".to_string()
+  +             } else {
+  +                 signals
+  +                     .iter()
+  +                     .filter_map(|s| match *s {
+  +                         "▲churn" => Some("high churn"),
+  ... (20 more lines)
+ ✓ (1m 40s)
+    impl SmartEditTool {
+  +     /// Append a risk note to a successful edit result if the file is in `src/`
+  +     /// and has elevated risk (top 25th percentile). This is purely informational —
+  +     /// a proprioceptive signal: "you just touched something fragile."
+  +     fn maybe_append_risk_note(
+  +         mut result: yoagent::types::ToolResult,
+  +         path: &str,
+  +     ) -> yoagent::types::ToolResult {
+  ... (13 more lines)
+
+Now let me check if it compiles:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (150ms)
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo wip #3 ✓ (0ms)
+  3 tools completed in 9.9s (3 ✓)
+
+Now add the tests. First, tests for `file_risk_summary_from in commands_risk.rs`:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_risk.rs ✓ (3ms)
+  ▶ edit src/commands_risk.rs (5 → 75 lines)
+            assert!(result.contains("src/bar.rs (risk: 0.65)"));
+            assert!(result.contains("frequent co-changes with fragile files"));
+            assert!(result.contains("Be especially careful"));
+  +     }
+  + 
+  +     #[test]
+  +     fn file_risk_summary_from_returns_none_for_missing_file() {
+  +         let risks = vec![
+  +             FileRisk {
+  +                 path: "src/a.rs".to_string(),
+  +                 score: 0.9,
+  +                 signals: vec!["▲churn"],
+  +                 test_density: 0.5,
+  +             },
+  +             FileRisk {
+  +                 path: "src/b.rs".to_string(),
+  +                 score: 0.5,
+  +                 signals: vec![],
+  +                 test_density: 1.0,
+  +             },
+  ... (55 more lines)
+ ✓ (1m 41s)
+            assert!(result.contains("src/bar.rs (risk: 0.65)"));
+            assert!(result.contains("frequent co-changes with fragile files"));
+            assert!(result.contains("Be especially careful"));
+  +     }
+  + 
+  +     #[test]
+  +     fn file_risk_summary_from_returns_none_for_missing_file() {
+  +         let risks = vec![
+  ... (13 more lines)
+  2 tools completed in 1m 53s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
