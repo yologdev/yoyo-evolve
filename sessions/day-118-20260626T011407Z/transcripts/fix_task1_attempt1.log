@@ -1,0 +1,216 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement this task step by step. Let me start by understanding the existing code.
+  ▶ todo add 'Implement auto_validate_after_failure in src/comma…' ✓ (0ms)
+  ▶ todo add 'Add call sites in src/watch.rs' ✓ (0ms)
+  ▶ todo add 'Write tests for auto_validate_after_failure' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md' ✓ (0ms)
+  4 tools completed in 8.6s (4 ✓)
+
+Let me first understand the existing risk snapshot structures and watch result handling.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read and summarize the relevant parts of src/commands_risk.r…' ✓ (1m 13s)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read and summarize the relevant parts of src/watch.rs for me…' ✓ (36.3s)
+  2 tools completed in 1m 58s (2 ✓)
+
+Now let me look at the specific code sections I need to modify:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn auto_risk_snapshot' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:640..730 ✓ (1ms)
+  ▶ read src/commands_risk.rs:993..1043 ✓ (1ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Now let me look at the existing ParsedSnapshot and related types:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1230..1290 ✓ (1ms)
+
+Now let me check the existing ValidationResult:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct ValidationResult' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1100..1130 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me look at the watch.rs return paths:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/watch.rs:1260..1380 ✓ (2ms)
+
+Now let me look at how SessionChanges::snapshot() works:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn snapshot' in src/session.rs ✓ (2ms)
+  ▶ read src/session.rs:14..44 ✓ (1ms)
+  ▶ read src/session.rs:60..80 ✓ (1ms)
+  3 tools completed in 7.5s (3 ✓)
+
+Now let me look at the end of commands_risk.rs to see where to add the new function and tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2950..3000 ✓ (1ms)
+  ▶ read src/commands_risk.rs:2998..3003 ✓ (1ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now let me check what's imported in the file:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..11 ✓ (1ms)
+
+Now let me check the RISK_VALIDATION_PATH - let me see if there's any existing validation file path constant:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'validation' in src/commands_risk.rs ✓ (3ms)
+
+Good, now I have a clear picture. Let me implement the solution.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+Now let me add the auto_validate_after_failure function and its test-variant to `commands_risk.rs, right after auto_risk_snapshot`:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1028..1033 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (4 → 142 lines)
+        write_risk_snapshot_to(path, &json_line).expect("test snapshot write should succeed");
+  + }
+  + 
+  + /// Default path for risk validation JSONL file.
+  + const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
+  + 
+  + /// Automatically validate risk predictions against files that were changed
+  + /// in the current session. Called after watch failures (or successes) to
+  + /// close the prediction-validation loop.
+  + ///
+  + /// - No-op if no snapshots exist.
+  + /// - No-op if no `changed_files` match `src/` paths.
+  + /// - Appends a validation event to `.yoyo/risk_validations.jsonl`.
+  + /// - Prints a brief 2-3 line stderr summary when there are results.
+  + pub(crate) fn auto_validate_after_failure(changed_files: &[String]) {
+  +     auto_validate_after_failure_to(
+  +         changed_files,
+  +         std::path::Path::new(RISK_SNAPSHOT_PATH),
+  +         std::path::Path::new(RISK_VALIDATION_PATH),
+  +     );
+  ... (122 more lines)
+ ✓ (15.4s)
+        write_risk_snapshot_to(path, &json_line).expect("test snapshot write should succeed");
+  + }
+  + 
+  + /// Default path for risk validation JSONL file.
+  + const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
+  + 
+  + /// Automatically validate risk predictions against files that were changed
+  + /// in the current session. Called after watch failures (or successes) to
+  ... (13 more lines)
+  2 tools completed in 46.0s (2 ✓)
+
+Expected — the function isn't called yet. Let me add the call sites in watch.rs first, then add the tests.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now add call sites in src/watch.rs. There are three places to add it:
+1. Budget exhausted early return (line 1309)
+2. Max fix attempts exhausted return (line 1345)
+3. Success return at the end (line 1352)
+
+I need to extract changed file paths from `changes.snapshot()`:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (7 → 10 lines)
+                    eprintln!(
+                        "{DIM}  ⏱ session budget nearly exhausted, stopping watch fix loop early{RESET}"
+                    );
+  +                 let changed: Vec<String> =
+  +                     changes.snapshot().iter().map(|c| c.path.clone()).collect();
+  +                 crate::commands_risk::auto_validate_after_failure(&changed);
+                    return WatchResult {
+                        passed: false,
+                        last_tool_error,
+ ✓ (1m 24s)
+                    eprintln!(
+                        "{DIM}  ⏱ session budget nearly exhausted, stopping watch fix loop early{RESET}"
+                    );
+  +                 let changed: Vec<String> =
+  +                     changes.snapshot().iter().map(|c| c.path.clone()).collect();
+  +                 crate::commands_risk::auto_validate_after_failure(&changed);
+                    return WatchResult {
+                        passed: false,
+                        last_tool_error,
+  ▶ edit src/watch.rs (7 → 10 lines)
+            if !phase_passed {
+                // Stop: don't proceed to later phases if this one can't be fixed
+  +             let changed: Vec<String> =
+  +                 changes.snapshot().iter().map(|c| c.path.clone()).collect();
+  +             crate::commands_risk::auto_validate_after_failure(&changed);
+                return WatchResult {
+                    passed: false,
+                    last_tool_error,
+ ✓ (1m 23s)
+            if !phase_passed {
+                // Stop: don't proceed to later phases if this one can't be fixed
+  +             let changed: Vec<String> =
+  +                 changes.snapshot().iter().map(|c| c.path.clone()).collect();
+  +             crate::commands_risk::auto_validate_after_failure(&changed);
+                return WatchResult {
+                    passed: false,
+                    last_tool_error,
+  2 tools completed in 2m 54s (2 ✓)
+
+Now the success return:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (4 → 9 lines)
+  +     // Validate risk predictions even on success — knowing which predicted-risky
+  +     // files survived is valuable data for the prediction-validation loop.
+  +     let changed: Vec<String> = changes.snapshot().iter().map(|c| c.path.clone()).collect();
+  +     crate::commands_risk::auto_validate_after_failure(&changed);
+  + 
+        WatchResult {
+            passed: true,
+            last_tool_error,
+ ✓ (1m 24s)
+  +     // Validate risk predictions even on success — knowing which predicted-risky
+  +     // files survived is valuable data for the prediction-validation loop.
+  +     let changed: Vec<String> = changes.snapshot().iter().map(|c| c.path.clone()).collect();
+  +     crate::commands_risk::auto_validate_after_failure(&changed);
+  + 
+        WatchResult {
+            passed: true,
+            last_tool_error,
+  ▶ todo done #2 ✓ (0ms)
+  2 tools completed in 1m 29s (2 ✓)
+
+Now let me verify it compiles:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (149ms)
+
+Good, it compiles. Now add the tests:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ search '^    #\[test\]$' in src/commands_risk.rs ✓ (3ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now add the tests at the end of the test module (before the closing }):
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3135..3140 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (4 → 111 lines)
+                "two calls should produce two lines, got {line_count}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_auto_validate_with_synthetic_snapshot() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let snap_path = dir.path().join("snapshots.jsonl");
+  +         let val_path = dir.path().join("validations.jsonl");
+  + 
+  +         // Write a synthetic snapshot with known top-10 files
+  +         let snapshot = serde_json::json!({
+  +             "ts": "2025-01-15T12:00:00Z",
+  +             "day": 100,
+  +             "git_hash": "abc1234",
+  +             "top_10": [
+  +                 {"path": "src/main.rs", "score": 0.9, "signals": ["churn"]},
+  +                 {"path": "src/cli.rs", "score": 0.8, "signals": ["size"]},
+  +                 {"path": "src/watch.rs", "score": 0.7, "signals": ["recent"]},
+  +                 {"path": "src/repl.rs", "score": 0.6, "signals": ["churn"]},
+  ... (91 more lines)

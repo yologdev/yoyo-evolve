@@ -1,0 +1,253 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code structure, then implement the task step by step.
+  ▶ todo add 'Understand existing risk validation and /status co…' ✓ (0ms)
+  ▶ todo add 'Add prediction_accuracy_summary() to commands_risk…' ✓ (0ms)
+  ▶ todo add 'Add tests for prediction_accuracy_summary' ✓ (0ms)
+  ▶ todo add 'Surface prediction accuracy in handle_status()' ✓ (0ms)
+  ▶ todo add 'Run all checks (fmt, clippy, build, test) and comm…' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  6 tools completed in 18.6s (6 ✓)
+
+Let me look at the relevant code sections in both files.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'risk_validations' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'load_validation_history|ValidationEvent|accuracy|hit_rate' in src/commands_risk.rs ✓ (2ms)
+  ▶ search 'struct.*alidation|fn.*validat|fn.*accuracy|fn.*predict' in src/commands_risk.rs ✓ (2ms)
+  ▶ read src/commands_risk.rs:1030..1230 ✓ (2ms)
+  ▶ read src/commands_risk.rs:1229..1429 ✓ (2ms)
+  5 tools completed in 14.9s (5 ✓)
+
+Good. Now let me look at the existing handle_status function:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_status' in src/commands_info.rs ✓ (2ms)
+  ▶ read src/commands_info.rs:148..298 ✓ (2ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Now I have a good picture. Let me also check the existing `top_risk_files function and the public interface of commands_risk`:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'pub.*fn top_risk_files' in src/commands_risk.rs ✓ (3ms)
+
+Now let me check the imports at the top of commands_risk.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..16 ✓ (1ms)
+
+Now let me check the existing imports in commands_info.rs:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_info.rs:1..16 ✓ (2ms)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. Now I have a clear understanding. The code already has:
+• load_validation_history_from() - loads events from the JSONL file
+• compute_accuracy_stats() - computes aggregate stats including hit rate, trend, etc.
+• AccuracyTrend enum with Improving, `Declining, Stable, Insufficient`
+
+I need to:
+1. Add a public `prediction_accuracy_summary() function in commands_risk.rs that returns Option<(f64, usize, &'static str)>` — reusing the existing internals
+2. Add tests for it
+3. Call it from `handle_status() in commands_info.rs`
+
+Let me start with tests first (TDD).
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+Let me find the existing test section in commands_risk.rs:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_risk.rs ✓ (2ms)
+  ▶ search '#\[test\]' in src/commands_risk.rs ✓ (3ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Let me find the test module:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/commands_risk.rs ✓ (3ms)
+
+Let me look at the tests near the validation events area:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn.*accuracy|fn.*validation|fn.*trend' in src/commands_risk.rs (*.rs) ✓ (3ms)
+  ▶ search 'test.*accuracy|test.*validation|test.*trend|test.*predict' in src/commands_risk.rs ✓ (2ms)
+  ▶ search 'accuracy_trend|parse_validation|accuracy_stats' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'fn test.*accura|fn test.*valid|fn test.*predic' in src/commands_risk.rs ✓ (3ms)
+  4 tools completed in 15.1s (4 ✓)
+
+OK, no existing tests for the accuracy/validation functions. Let me see what's at the end of the tests module to add tests there:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3720..3770 ✓ (1ms)
+
+Now I have a complete picture. Let me implement the solution. I'll start by adding the `prediction_accuracy_summary function and its tests to commands_risk.rs`, then add the display code to handle_status.
+
+First, let me also check a helper: I need to understand how prediction_accuracy_summary should work. The task says it needs a _from variant for testing, similar to the existing pattern. Let me also create a version that takes a path for testing:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+Now let me add the public prediction_accuracy_summary function and its _from variant after `handle_risk_accuracy`:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1381..1396 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (9 → 35 lines)
+        let stats = compute_accuracy_stats(&events);
+        let report = format_accuracy_report(&stats);
+        print!("{report}");
+  + }
+  + 
+  + /// Return a compact prediction accuracy summary for ambient display (e.g. `/status`).
+  + ///
+  + /// Returns `Some((hit_rate_pct, validation_count, trend_label))` when there are
+  + /// ≥2 validation entries in `.yoyo/risk_validations.jsonl`, or `None` if there
+  + /// isn't enough data yet. This keeps `/status` clean when no data exists.
+  + pub(crate) fn prediction_accuracy_summary() -> Option<(f64, usize, &'static str)> {
+  +     prediction_accuracy_summary_from(std::path::Path::new(RISK_VALIDATION_PATH))
+  + }
+  + 
+  + /// Inner implementation with configurable path (for testing).
+  + fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usize, &'static str)> {
+  +     let events = load_validation_history_from(path);
+  +     if events.len() < 2 {
+  +         return None;
+  +     }
+  ... (12 more lines)
+ ✓ (15.8s)
+        let stats = compute_accuracy_stats(&events);
+        let report = format_accuracy_report(&stats);
+        print!("{report}");
+  + }
+  + 
+  + /// Return a compact prediction accuracy summary for ambient display (e.g. `/status`).
+  + ///
+  + /// Returns `Some((hit_rate_pct, validation_count, trend_label))` when there are
+  ... (13 more lines)
+  2 tools completed in 26.3s (2 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `prediction_accuracy_summary` is never used[0m
+    [1m[94m--> [0msrc/commands_risk.rs:1394:15
+     [1m[94m|[0m
+[1m[94m1394[0m [1m[94m|[0m pub(crate) fn prediction_accuracy_summary() -> Option<(f64, usize, &'static str)> {
+     [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `prediction_accuracy_summary_from` is never used[0m
+    [1m[94m--> [0msrc/commands_risk.rs:1399:4
+     [1m[94m|[0m
+[1m[94m1399[0m [1m[94m|[0m fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usize, &'static str)> {
+     [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 2 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+The functions are unused because I haven't added the call site in handle_status or the tests yet. Let me add both now.
+  ▶ read src/commands_info.rs:219..234 ✓ (1ms)
+  ▶ edit src/commands_info.rs (10 → 16 lines)
+                .map(|(path, score)| format!("{path} ({score:.2})"))
+                .collect();
+            println!("  risk:    {}", risk_parts.join(" · "));
+  +     }
+  +     // Show prediction accuracy if enough data exists (ambient self-awareness)
+  +     if let Some((hit_rate, count, trend)) =
+  +         crate::commands_risk::prediction_accuracy_summary()
+  +     {
+  +         println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
+        }
+        println!("{RESET}");
+ ✓ (1m 23s)
+                .map(|(path, score)| format!("{path} ({score:.2})"))
+                .collect();
+            println!("  risk:    {}", risk_parts.join(" · "));
+  +     }
+  +     // Show prediction accuracy if enough data exists (ambient self-awareness)
+  +     if let Some((hit_rate, count, trend)) =
+  +         crate::commands_risk::prediction_accuracy_summary()
+  +     {
+  ... (3 more lines)
+  2 tools completed in 1m 32s (2 ✓)
+
+Now add tests at the end of the test module in commands_risk.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3790..3800 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (6 → 95 lines)
+        fn test_risk_accuracy_dispatches_without_panic() {
+            // Smoke test: `/risk accuracy` should not panic
+            handle_risk("/risk accuracy");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_prediction_accuracy_summary_missing_file() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let path = dir.path().join("nonexistent.jsonl");
+  +         assert!(prediction_accuracy_summary_from(&path).is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_prediction_accuracy_summary_too_few_entries() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let path = dir.path().join("validations.jsonl");
+  +         // Only 1 entry — should return None (need ≥2)
+  +         let line = r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/main.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#;
+  +         std::fs::write(&path, format!("{line}\n")).expect("write");
+  +         assert!(prediction_accuracy_summary_from(&path).is_none());
+  ... (74 more lines)
+ ✓ (15.7s)
+        fn test_risk_accuracy_dispatches_without_panic() {
+            // Smoke test: `/risk accuracy` should not panic
+            handle_risk("/risk accuracy");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_prediction_accuracy_summary_missing_file() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  ... (13 more lines)
+  2 tools completed in 40.0s (2 ✓)
+
+Clippy wants arrays instead of vec![]. Let me fix that:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'let lines = vec!\[' src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (19ms)
+  ▶ $ sed -i 's/let lines = vec!\[/let lines = [/g' src/commands_risk.rs ✓ (4ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now run the checks:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (1m 8s)
+  2 tools completed in 1m 29s (2 ✓)
+
+All 88 tests pass, clippy clean, formatted. Let me mark tasks complete and commit:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo done #3 ✓ (0ms)
+  ▶ todo done #4 ✓ (0ms)
+  ▶ todo wip #5 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (19ms)
+  ▶ todo done #5 ✓ (0ms)
+  6 tools completed in 20.9s (6 ✓)
+
+Done. Here's what I built:
+
+**`src/commands_risk.rs** — Added prediction_accuracy_summary() (public) and prediction_accuracy_summary_from()` (testable inner). Reuses existing load_validation_history_from, `compute_accuracy_stats, and AccuracyTrend. Returns Some((hit_rate_pct, validation_count, trend_label))` when ≥2 validation entries exist, None otherwise.
+
+`src/commands_info.rs` — In handle_status(), after the risk line, calls `prediction_accuracy_summary()`. When data exists, displays one ambient line like:
+```
+  predict: 58% accuracy (12 validations, ↑ improving)
+```
+
+Tests (7 new):
+• test_prediction_accuracy_summary_missing_file — returns None
+• test_prediction_accuracy_summary_too_few_entries — 1 entry returns None
+• `test_prediction_accuracy_summary_returns_correct_values` — correct hit rate and count
+• `test_prediction_accuracy_summary_trend_improving` — low→high accuracy
+• test_prediction_accuracy_summary_trend_declining — high→low accuracy
+• `test_prediction_accuracy_summary_trend_stable` — consistent accuracy
+
+This closes the dream milestone gap: prediction accuracy is now ambient in /status — visible every time status is checked, not just when explicitly queried via /risk accuracy. The body doesn't type /risk to know where its hand is.
+
+  ✓ Watch passed after fix (attempt 1)
+

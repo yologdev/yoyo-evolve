@@ -1,0 +1,315 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing /risk command structure and the validation JSONL format from task 01.
+  ▶ search 'handle_risk' (*.rs)  ▶ search 'risk_validations' (*.rs) ✓ (22ms)
+ ✓ (20ms)
+  ▶ read src/commands_risk.rs:615..715 ✓ (1ms)
+  3 tools completed in 3.9s (3 ✓)
+
+Now let me look at the validation JSONL format from the `auto_validate_after_failure` function:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1025..1175 ✓ (2ms)
+
+Now let me check the existing tests section for patterns and look at the end of the file:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' (src/commands_risk.rs)  ▶ search 'mod tests' (src/commands_risk.rs) ✓ (14ms)
+ ✓ (13ms)
+  ▶ search '#\[test\]' (src/commands_risk.rs) ✓ (14ms)
+  ▶ search 'fn test_' (src/commands_risk.rs) ✓ (14ms)
+  4 tools completed in 9.9s (4 ✓)
+
+Let me check how tests are arranged - inline or separate file:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3050..3250 ✓ (2ms)
+
+Now let me see where the test module starts:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test' (src/commands_risk.rs) ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'cfg.test' (src/commands_risk.rs) ✓ (14ms)
+  ▶ search '^mod ' (src/commands_risk.rs) ✓ (14ms)
+  3 tools completed in 6.6s (2 ✓, 1 ✗)
+
+The tests aren't in a #[cfg(test)] module? Let me check around where they start:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2880..2910 ✓ (1ms)
+  ▶ $ grep -n 'mod\|cfg' src/commands_risk.rs | head -30 ✓ (6ms)
+  ▶ $ grep -n 'cfg(test)' src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (11ms)
+  ▶ read src/commands_risk.rs:1744..1754 ✓ (1ms)
+  4 tools completed in 10.0s (4 ✓)
+
+Good. Now I understand the full picture. Let me also check the existing `parse_all_snapshots` function used by validation:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn parse_all_snapshots' (src/commands_risk.rs) ✓ (14ms)
+  ▶ search 'parse_all_snapshots' (src/commands_risk.rs) ✓ (14ms)
+  2 tools completed in 4.3s (2 ✓)
+
+It must have been renamed. Let me check what's used:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'parse_.*snapshot' (src/commands_risk.rs) ✓ (14ms)
+
+Hmm, let me check the exact code more carefully:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'snapshots' src/commands_risk.rs | head -20 ✓ (3ms)
+  ▶ read src/commands_risk.rs:1370..1405 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now I have a clear picture of the JSONL format. Each validation entry looks like:
+```json
+{"ts":"...","day":N,"trigger":"watch_failure","hits":["src/..."],"surprises":["src/..."],"predicted_count":10,"accuracy_pct":60.0}
+```
+
+Let me also check what the DIM/RESET imports look like and other format constants used:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..21 ✓ (1ms)
+
+Good, I have everything I need. Now let me plan and implement:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests first: synthetic JSONL data, trend com…' ✓ (0ms)
+  ▶ todo add 'Add load_validation_history_from() and format_accu…' ✓ (0ms)
+  ▶ todo add 'Add /risk accuracy routing in handle_risk()' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && clippy && build && test' ✓ (0ms)
+  ▶ todo add 'Commit the changes' ✓ (0ms)
+  5 tools completed in 15.0s (5 ✓)
+
+Let me start by writing the tests and implementation together. First, let me write the core data structures and functions, then the tests.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+
+Let me find a good insertion point for the new functions — after `auto_validate_after_failure_to`:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1165..1180 ✓ (1ms)
+
+Now I'll add the new functions right after the auto_validate_after_failure_to function (after line 1167):
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 226 lines)
+  + // ── Risk prediction accuracy tracking ──
+  + 
+  + /// A single parsed validation event from `.yoyo/risk_validations.jsonl`.
+  + struct ValidationEvent {
+  +     day: u32,
+  +     hit_count: usize,
+  +     total_changed: usize,
+  +     accuracy_pct: f64,
+  + }
+  + 
+  + /// Trend direction for accuracy over time.
+  + #[derive(Debug, PartialEq)]
+  + enum AccuracyTrend {
+  +     Improving,
+  +     Declining,
+  +     Stable,
+  +     Insufficient, // not enough data points
+  + }
+  + 
+  + /// Aggregate accuracy statistics computed from validation history.
+  ... (206 more lines)
+ ✓ (9.8s)
+  + // ── Risk prediction accuracy tracking ──
+  + 
+  + /// A single parsed validation event from `.yoyo/risk_validations.jsonl`.
+  + struct ValidationEvent {
+  +     day: u32,
+  +     hit_count: usize,
+  +     total_changed: usize,
+  +     accuracy_pct: f64,
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0428][0m[1m: the name `compute_trend` is defined multiple times[0m
+    [1m[94m--> [0msrc/commands_risk.rs:1655:1
+     [1m[94m|[0m
+[1m[94m1244[0m [1m[94m|[0m fn compute_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+     [1m[94m|[0m [1m[94m-------------------------------------------------------------[0m [1m[94mprevious definition of the value `compute_trend` here[0m
+[1m[94m...[0m
+[1m[94m1655[0m [1m[94m|[0m fn compute_trend(validations: &[HistoryValidation]) -> &'static str {
+     [1m[94m|[0m [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91m`compute_trend` redefined here[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `compute_trend` must be defined only once in the value namespace of this module
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+    [1m[94m--> [0msrc/commands_risk.rs:885:31
+     [1m[94m|[0m
+[1m[94m 885[0m [1m[94m|[0m     let trend = compute_trend(&validations);
+     [1m[94m|[0m                 [1m[94m-------------[0m [1m[91m^^^^^^^^^^^^[0m [1m[91mexpected `&[ValidationEvent]`, found `&Vec<HistoryValidation>`[0m
+     [1m[94m|[0m                 [1m[94m|[0m
+     [1m[94m|[0m                 [1m[94marguments to this function are incorrect[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: expected reference `&[1m[35m[commands_risk::ValidationEvent][0m`
+                found reference `&[1m[35mstd::vec::Vec<commands_risk::HistoryValidation>[0m`
+[1m[92mnote[0m: function defined here
+    [1m[94m--> [0msrc/commands_risk.rs:1244:4
+     [1m[94m|[0m
+[1m[94m1244[0m [1m[94m|[0m fn compute_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+     [1m[94m|[0m    [1m[92m^^^^^^^^^^^^^[0m [1m[94m--------------------------[0m
+
+[1m[91merror[E0308][0m[1m: mismatched types[0m
+   [1m[94m--> [0msrc/...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me understand the problem. My new compute_trend function conflicts with an existing one. Let me examine the existing function and all callers.
+  ▶ search 'compute_trend' (src/commands_risk.rs) ✓ (14ms)
+
+The file may have been partially modified. Let me check the current state:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'compute_trend\|HistoryValidation\|fn compute_trend' src/commands_risk.r… ✓ (9ms)
+  ▶ $ grep -n 'fn compute_trend' src/commands_risk.rs ✓ (9ms)
+  2 tools completed in 4.3s (2 ✓)
+
+There's an existing compute_trend at line 1655 that takes &[HistoryValidation] and returns &'static str. My new one at line 1244 takes &[ValidationEvent] and returns AccuracyTrend. I need to rename my new function to avoid the collision, and make sure the existing callers of the old function still work.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1640..1680 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1679..1689 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me see where the old compute_trend is called:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'compute_trend(' src/commands_risk.rs ✓ (11ms)
+
+Let me see line 885 to understand the caller:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:880..895 ✓ (1ms)
+
+Let me check what type trend is expected to be in line 887:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'fn load_past_accuracy' src/commands_risk.rs ✓ (9ms)
+
+OK, so load_past_accuracy returns Option<(f64, usize, &'static str)> — the old `compute_trend returns &'static str`. My new function is entirely separate. The simplest fix is to rename my new function to `compute_accuracy_trend`:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (3 → 3 lines)
+    /// Compute trend by comparing the average accuracy of the last N events
+    /// vs the first N events. Uses min(5, len/2) as window size.
+  - fn compute_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+  + fn compute_accuracy_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+ ✓ (9.7s)
+    /// Compute trend by comparing the average accuracy of the last N events
+    /// vs the first N events. Uses min(5, len/2) as window size.
+  - fn compute_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+  + fn compute_accuracy_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+
+There's a caller at line 1323 that calls compute_trend(events) where events is &[ValidationEvent]. This must be in my compute_accuracy_stats function. Let me check:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1318..1328 ✓ (1ms)
+
+Yes, that's in my compute_accuracy_stats. I need to update it to call compute_accuracy_trend:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (1 → 1 lines)
+  -     let trend = compute_trend(events);
+  +     let trend = compute_accuracy_trend(events);
+ ✓ (15.8s)
+  -     let trend = compute_trend(events);
+  +     let trend = compute_accuracy_trend(events);
+
+Good — the name collision is fixed. Now the remaining errors are about "never used" — because I haven't wired in the /risk accuracy routing in handle_risk(), and I haven't added the tests yet. Let me add the routing first:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (4 → 9 lines)
+        if sub == "predict" {
+            handle_risk_predict();
+  +         return;
+  +     }
+  + 
+  +     if sub == "accuracy" {
+  +         handle_risk_accuracy();
+            return;
+        }
+ ✓ (1m 24s)
+        if sub == "predict" {
+            handle_risk_predict();
+  +         return;
+  +     }
+  + 
+  +     if sub == "accuracy" {
+  +         handle_risk_accuracy();
+            return;
+        }
+
+Now let me add the tests. Let me find the end of the test module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3470..3475 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (2 → 194 lines)
+  +     }
+  + 
+  +     // ── Test category 7: Accuracy tracking ──
+  + 
+  +     #[test]
+  +     fn test_parse_validation_events_basic() {
+  +         let jsonl = r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/main.rs","src/cli.rs"],"surprises":["src/prompt.rs"],"predicted_count":10,"accuracy_pct":66.7}
+  + {"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"watch_failure","hits":["src/tools.rs"],"surprises":["src/repl.rs","src/watch.rs"],"predicted_count":10,"accuracy_pct":33.3}"#;
+  + 
+  +         let events = parse_validation_events(jsonl);
+  +         assert_eq!(events.len(), 2);
+  +         assert_eq!(events[0].day, 100);
+  +         assert_eq!(events[0].hit_count, 2);
+  +         assert_eq!(events[0].total_changed, 3);
+  +         assert!((events[0].accuracy_pct - 66.7).abs() < 0.1);
+  +         assert_eq!(events[1].day, 101);
+  +         assert_eq!(events[1].hit_count, 1);
+  +         assert_eq!(events[1].total_changed, 3);
+  +     }
+  + 
+  ... (174 more lines)
+ ✗ (0ms)
+    │ old_text matches 11 locations in src/commands_risk.rs. Include more surrounding context to make the match unique.
+  ▶ read src/commands_risk.rs:3462..3477 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (4 → 196 lines)
+                "validation file should not exist when no src/ files changed"
+            );
+  +     }
+  + 
+  +     // ── Test category 7: Accuracy tracking ──
+  + 
+  +     #[test]
+  +     fn test_parse_validation_events_basic() {
+  +         let jsonl = r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/main.rs","src/cli.rs"],"surprises":["src/prompt.rs"],"predicted_count":10,"accuracy_pct":66.7}
+  + {"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"watch_failure","hits":["src/tools.rs"],"surprises":["src/repl.rs","src/watch.rs"],"predicted_count":10,"accuracy_pct":33.3}"#;
+  + 
+  +         let events = parse_validation_events(jsonl);
+  +         assert_eq!(events.len(), 2);
+  +         assert_eq!(events[0].day, 100);
+  +         assert_eq!(events[0].hit_count, 2);
+  +         assert_eq!(events[0].total_changed, 3);
+  +         assert!((events[0].accuracy_pct - 66.7).abs() < 0.1);
+  +         assert_eq!(events[1].day, 101);
+  +         assert_eq!(events[1].hit_count, 1);
+  +         assert_eq!(events[1].total_changed, 3);
+  ... (176 more lines)
+ ✓ (1m 24s)
+                "validation file should not exist when no src/ files changed"
+            );
+  +     }
+  + 
+  +     // ── Test category 7: Accuracy tracking ──
+  + 
+  +     #[test]
+  +     fn test_parse_validation_events_basic() {
+  ... (13 more lines)
+  4 tools completed in 2m 36s (3 ✓, 1 ✗)
+
+Now let me run the checks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.6s)
+
+Clippy passes. Now tests:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -40 ✓ (1m 7s)
+
+All 88 tests pass, 0 failures. Let me verify the new tests are included:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i accura… ✓ (40.2s)
+
+All 14 accuracy-related tests pass. Let me also double-check the build:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (151ms)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 3.5s (2 ✓)
+
+  ✓ Watch passed after fix (attempt 1)
+
