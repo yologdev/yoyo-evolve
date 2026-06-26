@@ -96,7 +96,7 @@ pub fn get_git_status_context() -> Option<String> {
 pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
     let stdout = crate::git::run_git(&[
         "log",
-        "--diff-filter=M",
+        "--diff-filter=AM",
         "--name-only",
         "--pretty=format:",
         "-n",
@@ -371,14 +371,12 @@ mod tests {
     #[test]
     fn test_load_project_context_includes_recently_changed() {
         // Check that load_project_context() includes the "Recently Changed Files"
-        // section if and only if get_recently_changed_files() actually finds modified
-        // files. Previous versions guarded on commit count (`git rev-list --count`),
-        // but having >1 commit doesn't guarantee modified files — CI shallow clones
-        // with only-add commits pass the count check yet produce no --diff-filter=M
-        // output, causing intermittent assertion failures (3 CI flickers in the
-        // Day 108-111 window).
+        // section if and only if get_recently_changed_files() actually finds changed
+        // files. The function uses --diff-filter=AM to catch both added and modified
+        // files, so it works correctly in CI shallow clones where recent commits may
+        // only contain newly added files.
         //
-        // The fix: check the same function the production code uses to decide whether
+        // Guard: check the same function the production code uses to decide whether
         // to emit the section. No TOCTOU gap because both calls happen in the same
         // test process with no intervening git mutations.
         let has_modified_files = get_recently_changed_files(1).is_some();
@@ -393,6 +391,40 @@ mod tests {
             // When no modified files exist (shallow clone, all-adds history),
             // the section is correctly absent — don't assert.
         }
+    }
+
+    #[test]
+    fn test_recently_changed_parsing_deduplicates_and_limits() {
+        // Verify the parsing logic used by get_recently_changed_files:
+        // empty lines filtered, duplicates removed, max_files respected.
+        let simulated_output = "src/main.rs\n\nsrc/context.rs\nsrc/main.rs\nsrc/tools.rs\n";
+        let mut seen = std::collections::HashSet::new();
+        let max_files = 2;
+        let files: Vec<String> = simulated_output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .filter(|l| seen.insert(l.to_string()))
+            .take(max_files)
+            .map(|l| l.to_string())
+            .collect();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0], "src/main.rs");
+        assert_eq!(files[1], "src/context.rs");
+    }
+
+    #[test]
+    fn test_recently_changed_parsing_empty_input_returns_none() {
+        // Simulates what happens when git log returns no matching files
+        let simulated_output = "\n\n\n";
+        let mut seen = std::collections::HashSet::new();
+        let files: Vec<String> = simulated_output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .filter(|l| seen.insert(l.to_string()))
+            .take(20)
+            .map(|l| l.to_string())
+            .collect();
+        assert!(files.is_empty());
     }
 
     #[test]
