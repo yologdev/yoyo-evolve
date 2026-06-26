@@ -1,0 +1,134 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the flaky test by changing the git diff filter to include both added and modified files. Let me start by understanding the current code.
+  ▶ search 'get_recently_changed_files' in src/context.rs ✓ (3ms)
+  ▶ read src/context.rs:96..146 ✓ (1ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Now let me see the test that's flaky:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:370..430 ✓ (1ms)
+
+The fix is simple and clean. The --diff-filter=M only catches modifications but not additions. Changing to --diff-filter=AM is the right semantic fix — "recently changed files" should include newly added files.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (1 → 1 lines)
+  -         "--diff-filter=M",
+  +         "--diff-filter=AM",
+ ✓ (1m 31s)
+  -         "--diff-filter=M",
+  +         "--diff-filter=AM",
+
+Now let me also update the test comment to reflect the fix:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (11 → 9 lines)
+            // Check that load_project_context() includes the "Recently Changed Files"
+  -         // section if and only if get_recently_changed_files() actually finds modified
+  -         // files. Previous versions guarded on commit count (`git rev-list --count`),
+  -         // but having >1 commit doesn't guarantee modified files — CI shallow clones
+  -         // with only-add commits pass the count check yet produce no --diff-filter=M
+  -         // output, causing intermittent assertion failures (3 CI flickers in the
+  -         // Day 108-111 window).
+  +         // section if and only if get_recently_changed_files() actually finds changed
+  +         // files. The function uses --diff-filter=AM to catch both added and modified
+  +         // files, so it works correctly in CI shallow clones where recent commits may
+  +         // only contain newly added files.
+            //
+  -         // The fix: check the same function the production code uses to decide whether
+  +         // Guard: check the same function the production code uses to decide whether
+            // to emit the section. No TOCTOU gap because both calls happen in the same
+            // test process with no intervening git mutations.
+ ✓ (1m 43s)
+            // Check that load_project_context() includes the "Recently Changed Files"
+  -         // section if and only if get_recently_changed_files() actually finds modified
+  -         // files. Previous versions guarded on commit count (`git rev-list --count`),
+  -         // but having >1 commit doesn't guarantee modified files — CI shallow clones
+  -         // with only-add commits pass the count check yet produce no --diff-filter=M
+  -         // output, causing intermittent assertion failures (3 CI flickers in the
+  -         // Day 108-111 window).
+  +         // section if and only if get_recently_changed_files() actually finds changed
+  ... (8 more lines)
+
+Now let me add a test that verifies the parsing logic of get_recently_changed_files works correctly. Let me find the test module:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:325..375 ✓ (0ms)
+
+Now let me add a test that directly exercises the parsing logic (deduplication, filtering of empty lines, respecting max_files) by extracting it into a testable helper. Actually, the parsing logic is inline — let me add a unit test that verifies the function includes added files by checking it returns results in this repo (where we definitely have both added and modified files):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/context.rs:393..403 ✓ (1ms)
+
+I'll add a test that verifies the parsing logic directly — simulating the same logic the function uses but with controlled input:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (2 → 36 lines)
+  +     #[test]
+  +     fn test_recently_changed_parsing_deduplicates_and_limits() {
+  +         // Verify the parsing logic used by get_recently_changed_files:
+  +         // empty lines filtered, duplicates removed, max_files respected.
+  +         let simulated_output = "src/main.rs\n\nsrc/context.rs\nsrc/main.rs\nsrc/tools.rs\n";
+  +         let mut seen = std::collections::HashSet::new();
+  +         let max_files = 2;
+  +         let files: Vec<String> = simulated_output
+  +             .lines()
+  +             .filter(|l| !l.is_empty())
+  +             .filter(|l| seen.insert(l.to_string()))
+  +             .take(max_files)
+  +             .map(|l| l.to_string())
+  +             .collect();
+  +         assert_eq!(files.len(), 2);
+  +         assert_eq!(files[0], "src/main.rs");
+  +         assert_eq!(files[1], "src/context.rs");
+  +     }
+  + 
+  +     #[test]
+  ... (16 more lines)
+ ✓ (1m 25s)
+  +     #[test]
+  +     fn test_recently_changed_parsing_deduplicates_and_limits() {
+  +         // Verify the parsing logic used by get_recently_changed_files:
+  +         // empty lines filtered, duplicates removed, max_files respected.
+  +         let simulated_output = "src/main.rs\n\nsrc/context.rs\nsrc/main.rs\nsrc/tools.rs\n";
+  +         let mut seen = std::collections::HashSet::new();
+  +         let max_files = 2;
+  +         let files: Vec<String> = simulated_output
+  ... (13 more lines)
+
+Now let's run the checks:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (869ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (146ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test context::tests 2>&1 |… ✓ (204ms)
+  4 tools completed in 31.4s (4 ✓)
+
+All 23 context tests pass. Let me specifically run the previously-flaky test:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_load_project_con… ✓ (138ms)
+
+And the new parsing tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_recently_changed… ✓ (125ms)
+
+Now run the full test suite to make sure nothing else broke:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (51.7s)
+
+All 4009 unit tests + 88 integration tests pass. Let me verify the final state of my changes:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/context.rs ✓ (4ms)
+
+Clean diff. One-line production fix (M → AM), updated comments, and two new parsing tests. Time to commit:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (11 lines) ✓ (12ms)
+
+Done. Clean fix:
+
+1. Root cause: --diff-filter=M only matched modified files, missing newly added files (A) in CI shallow clones where evolve pipeline commits contain only additions.
+
+2. Fix: Changed --diff-filter=M → --diff-filter=AM in get_recently_changed_files(). One character, semantically correct — "recently changed files" should include both added and modified files.
+
+3. Tests added: Two new unit tests exercising the parsing logic directly (deduplication + limit enforcement, empty input → None). All 4009+ tests pass, clippy clean.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

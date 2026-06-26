@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code structure in src/commands_risk.rs to see how subcommands are dispatched and what data structures are available.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read and summarize the key parts of src/commands_risk.rs tha…' ✓ (1m 14s)
+
+Wait, the sub-agent mentions accuracy is already in the dispatch. Let me verify that directly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'accuracy' in src/commands_risk.rs  ▶ search 'handle_risk\b' in src/commands_risk.rs ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Interesting — there's already a handle_risk_accuracy function and dispatch! Let me check what it currently does:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_risk_accuracy' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1707..1787 ✓ (1ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now let me see the existing format_accuracy_report to understand what's already there:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1658..1708 ✓ (2ms)
+
+So there's already a basic /risk accuracy implementation. The task is to enhance it significantly with:
+1. Per-signal breakdown with bar charts
+2. Recent validation events
+3. Learning status (from learned weights)
+
+Let me now check the full data structures and what's available:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..101 ✓ (2ms)
+  ▶ read src/commands_risk.rs:100..160 ✓ (1ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now let me look at the validation events more closely, especially the JSONL format:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1500..1580 ✓ (2ms)
+
+Now let me see the RISK_VALIDATION_PATH and RISK_SNAPSHOT_PATH constants:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_VALIDATION_PATH|RISK_SNAPSHOT_PATH' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'const .*PATH' in src/commands_risk.rs ✓ (3ms)
+  2 tools completed in 8.5s (2 ✓)
+
+Good. Now let me check the existing test for /risk accuracy:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'risk.*accuracy|accuracy.*test' in src/commands_risk.rs ✓ (2ms)
+  ▶ read src/commands_risk.rs:4100..4150 ✓ (1ms)
+  ▶ read src/commands_risk.rs:4149..4199 ✓ (1ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Now let me check the existing help_data for risk:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'risk' in src/help_data.rs ✓ (3ms)
+  ▶ read src/help_data.rs:1234..1264 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now let me see the existing `handle_risk` dispatch to understand the full subcommand list:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:937..982 ✓ (2ms)
+
+Now let me check what RISK_SUBCOMMANDS might be used for completions:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_SUBCOMMANDS|risk.*subcommand|risk.*completion' in src ✓ (9ms)
+  ▶ search '"risk"' in src/commands.rs ✓ (3ms)
+  ▶ search 'risk' in src/commands.rs ✓ (3ms)
+  ▶ search 'command_arg_completions' in src/commands.rs ✓ (3ms)
+  ▶ read src/commands.rs:282..342 ✓ (1ms)
+  5 tools completed in 11.6s (5 ✓)
+
+I see there's no /risk in the completion map. I need to add that. Now let me also check the validation JSONL more carefully to understand what data the enhanced accuracy view needs to parse. Let me check what the raw JSONL looks like (the hits and surprises fields):
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1360..1450 ✓ (2ms)
+
+Good. Now let me check the AccuracyStats struct and the compute_accuracy_stats function to see all the data I have:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1595..1665 ✓ (1ms)
+
+Now I have a clear picture. The current handle_risk_accuracy() shows a compact box with basic stats. I need to enhance it significantly with:
+
+1. Per-signal breakdown table (using snapshot + validation cross-reference data)
+2. Recent validation events (last 5)
+3. Learning status (weights)
+
+Let me now look at the `parse_detailed_events` function which cross-references validation against snapshots — that's what I need for per-signal analysis:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:116..216 ✓ (1ms)
+
+Now let me look at compute_adjusted_weights to understand the learning:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:215..315 ✓ (1ms)
+
+Now I have a comprehensive picture. Let me also check what the raw validation JSONL looks like to understand the ts field for recent events:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1448..1478 ✓ (1ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

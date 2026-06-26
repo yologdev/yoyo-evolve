@@ -1,0 +1,113 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure in commands_risk.rs, then implement all the required functionality.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_WEIGHTS" src/comma…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn compute_file_risk_sc… ✓ (5ms)
+ ✓ (3ms)
+  ▶ read src/commands_risk.rs:1..81 ✓ (2ms)
+  ▶ read src/commands_risk.rs:259..509 ✓ (2ms)
+  4 tools completed in 9.1s (4 ✓)
+
+Now let me see the auto_validate_after_failure function and the validation JSONL format:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:998..1198 ✓ (2ms)
+
+Now let me see the snapshot format to understand what data is available:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct.*Snapshot\|fn pa… ✓ (4ms)
+  ▶ read src/commands_risk.rs:620..700 ✓ (1ms)
+  2 tools completed in 7.5s (2 ✓)
+
+Now let me see the ParsedSnapshot struct and how the validation events are structured:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1618..1678 ✓ (1ms)
+
+Now let me look at the snapshot data more carefully - specifically, the top_10 entries have path, score, and signals. I also need to understand what signal values are available for hits/surprises analysis. Let me check what data the validation events carry:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1394..1494 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1488..1528 ✓ (1ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Now let me check the load_validation_history_from and how validation events are parsed:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_validation_hist… ✓ (3ms)
+  ▶ read src/commands_risk.rs:1197..1297 ✓ (2ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me see the existing tests to understand patterns:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]\|^mod t… ✓ (3ms)
+  ▶ read src/commands_risk.rs:1990..2040 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Let me see the end of the test module and the last line of the file:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:3870..3890 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -1 src/commands_risk.rs ✓ (3ms)
+  3 tools completed in 8.8s (3 ✓)
+
+Good, the file ends with a single } closing the test module. Now I need to understand the full picture:
+
+1. Validation events in `.yoyo/risk_validations.jsonl have: hits` (file paths), surprises (file paths), accuracy_pct
+2. Snapshot entries in .yoyo/risk_snapshots.jsonl have: `top_10 array with each entry having path, score, signals` (signal labels like "▲churn")
+3. The signals in the snapshot are labels, not raw values. So I need to work with which signal labels were present for hits vs surprises.
+
+Now let me plan the implementation:
+
+1. `load_learned_weights(path) -> [f64; 7] - loads from .yoyo/risk_weights.json`, falls back to RISK_WEIGHTS
+2. `learn_weights_from_history()` - reads validation history, computes adjusted weights, writes to .yoyo/risk_weights.json
+3. Modify compute_file_risk_scores() to use `load_learned_weights() instead of RISK_WEIGHTS` directly
+4. Call learn_weights_from_history() at the end of auto_validate_after_failure_to()
+5. Add 4 tests
+
+Let me look at how the validation JSONL events store hit/surprise files and what signals exist in snapshots to correlate:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SIGNAL_NAMES\|signal_na… ✓ (4ms)
+
+Now I have a clear understanding. The signal labels in the snapshot top_10 entries are: ▲churn, ▲recent, ▲size, ▲reverts, ▲low-test, ▲coupled. These correspond to the 7 weights (note: complexity has no label in the signal list since it's only visible through the combined score, but there are 6 signal labels for 7 weights - complexity is not separately labeled). 
+
+Let me map signals to weight indices:
+• Index 0: churn → "▲churn"
+• Index 1: recency → "▲recent"
+• Index 2: size → "▲size"
+• Index 3: complexity → (no signal label)
+• Index 4: test_density → "▲low-test"
+• Index 5: coupling → "▲coupled"
+• Index 6: revert_history → "▲reverts"
+
+Now let me also understand: the validation events have the file paths for hits and surprises. I can cross-reference those with the most recent snapshot's top_10 entries (which have signal labels). For hits (predicted AND broke), I know which signals were flagged. For surprises (broke but NOT predicted), they weren't in top_10, so I don't have signal data for them from the snapshot.
+
+The approach: For each validation event, look at the corresponding snapshot to see which signals contributed to hits. Signals present on hits are good predictors. For surprises, since they weren't in the top-10, I can't get signal data from snapshots directly. But I can use the absence of all signals as an indicator that all signals missed them equally.
+
+Let me now create the implementation. I need to be efficient about how I correlate data. Let me also look at the _to pattern for testability:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "const RISK_WEIGHTS_PATH… ✓ (3ms)
+  ▶ read src/commands_risk.rs:2805..2820 ✓ (1ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I have enough context. Let me implement the full feature:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add RISK_WEIGHTS_PATH const, SIGNAL_NAMES const, L…' ✓ (0ms)
+  ▶ todo add 'Add load_learned_weights() and load_learned_weight…' ✓ (0ms)
+  ▶ todo add 'Add learn_weights_from_history() and learn_weights…' ✓ (0ms)
+  ▶ todo add 'Modify compute_file_risk_scores() to use load_lear…' ✓ (0ms)
+  ▶ todo add 'Call learn_weights_from_history() at end of auto_v…' ✓ (0ms)
+  ▶ todo add 'Add 4 required tests' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  7 tools completed in 21.7s (7 ✓)
+
+Let me first understand the expanded validation event format — I need to read the full top_10 objects from snapshots to correlate signals with hit/surprise files:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1627..1657 ✓ (1ms)
+
+I see - ParsedSnapshot only captures the file paths, not the signals. I'll need my own parser for the signal data. Let me now implement everything.
+
+First, let me add the constants and types after RISK_WEIGHTS:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

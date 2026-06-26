@@ -1,0 +1,171 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy" src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy" src/help_data… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,1010p' src/commands_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_risk_accuracy" s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1500,1780p' src/commands… ✓ (5ms)
+  5 tools completed in 12.2s (5 ✓)
+
+Now let me see the full current handle_risk_accuracy and the related structures. Let me also check for learned weights and signal-related code:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_WEIGHTS\|risk_weig… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "learn_weights_from_hist… ✓ (4ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Now let me look at the format_accuracy_report function and the full handle_risk_accuracy:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1663,1720p' src/commands… ✓ (4ms)
+
+Let me see the full format_accuracy_report without the ... truncation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1663..1723 ✓ (2ms)
+
+Now let me understand the validation event data structure more deeply - what fields are in the JSONL:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1360,1510p' src/commands… ✓ (4ms)
+
+Now let me check the validation event JSON structure - I see it has hits, surprises, `ts, day, accuracy_pct. Let me also check the load_learned_weights_from` and learn functions:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '68,115p' src/commands_ri… ✓ (3ms)
+
+Now let me also check what the learn_weights_from_history_to function writes:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '294,350p' src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '350,370p' src/commands_r… ✓ (3ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me check the `ParsedValidationEvent` (the one that captures hits/surprises as strings):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_validation_events… ✓ (4ms)
+
+Good. I now have a clear picture. The current `handle_risk_accuracy` only shows section 1 (overall accuracy summary). I need to add:
+
+1. Per-signal breakdown with bar charts and default→learned weights
+2. **Recent validation events** (last 5)  
+3. Learning status
+4. Help text in help_data.rs
+
+Let me also check what the validation JSONL events look like (they have hits and surprises arrays):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1543,1575p' src/commands… ✓ (3ms)
+
+I see that parse_validation_events only parses the summary fields. For the per-signal breakdown and recent events, I need to parse the raw JSONL which has hits (array of file paths), surprises (array of file paths), and ts fields.
+
+Let me also check the snapshot data to understand signal information per file:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1950,1990p' src/commands… ✓ (3ms)
+
+Now let me check the parse_detailed_events function which already knows how to cross-reference signals:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '116,210p' src/commands_r… ✓ (4ms)
+
+Now let me check what the `compute_adjusted_weights` does, to understand signal scoring:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '210,295p' src/commands_r… ✓ (4ms)
+
+Now let me look at the help_data.rs file for the risk command entry:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A 20 "\"risk\"" src/hel… ✓ (4ms)
+
+Now I also need to look at the line 1699 in commands_risk.rs — that format! seems to have an issue (missing `╰` closing line):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1692,1710p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1692 && NR<=1710' src/c… ✓ (4ms)
+  2 tools completed in 7.9s (2 ✓)
+
+The read_file is truncating. Let me use bash with cat:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1692,1709p' src/commands… ✓ (4ms)
+
+OK, so there IS a closing `╰─...─╯ line. The ...` in the file viewer was hiding lines. Let me get the raw bytes:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1692,1709p' src/commands… ✓ (4ms)
+
+The ... is in the actual output - these are from the reader. Let me try a different approach:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (6 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (5 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines) ✓ (20ms)
+  3 tools completed in 10.5s (3 ✓)
+
+The ... is literally IN the source file! This is line-collapsing from the file view. Let me just grep for the bottom of the format:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "╰\|╭\|╮\|╯" src/command… ✓ (3ms)
+
+So there's no closing ╰─...─╯ line. The box is unclosed. That's fine - I'll be replacing the function anyway. Now let me now check the existing tests:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test.*accuracy\|accurac… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4070,4130p' src/commands… ✓ (4ms)
+  2 tools completed in 6.0s (2 ✓)
+
+Now I have a complete understanding of the codebase. Let me plan the implementation:
+
+1. **Expand `handle_risk_accuracy()`** to show all 4 sections
+2. Create helper functions for:
+   • Per-signal breakdown (bar chart + default→learned weights)
+   • Recent validation events (last 5)
+   • Learning status
+3. Add help text in help_data.rs
+
+Let me also check the `ValidationEvent` struct to see if I need to expand it for recent events display:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1508,1520p' src/commands… ✓ (3ms)
+
+The current ValidationEvent doesn't have ts, hits, or surprises. I'll need a richer event for the "recent validation events" section. Let me create a separate struct for that or parse the raw JSONL directly. Let me check the full event JSON:
+
+The validation event JSON has: ts, day, trigger, hits (array of file paths), surprises (array of file paths), predicted_count, accuracy_pct.
+
+Now let me implement the solution:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (8 lines) ✓ (20ms)
+
+Now let me implement the full solution. I'll need to:
+
+1. Add a RichValidationEvent struct for parsing full event data
+2. Add parse_rich_validation_events function
+3. Add `format_signal_breakdown` function  
+4. Add format_recent_events function
+5. Add format_learning_status function
+6. Expand handle_risk_accuracy to show all 4 sections
+7. Update help text
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (7 → 243 lines)
+  + /// A richer validation event preserving file-level hit/surprise detail and timestamp.
+  + struct RichValidationEvent {
+  +     ts: String,
+  +     day: u32,
+  +     hits: Vec<String>,
+  +     surprises: Vec<String>,
+  +     accuracy_pct: f64,
+  + }
+  + 
+  + /// Parse rich validation events from JSONL content (preserves hit/surprise file lists).
+  + fn parse_rich_validation_events(content: &str) -> Vec<RichValidationEvent> {
+  +     let mut events = Vec::new();
+  +     for line in content.lines() {
+  +         let trimmed = line.trim();
+  +         if trimmed.is_empty() {
+  +             continue;
+  +         }
+  +         let val: serde_json::Value = match serde_json::from_str(trimmed) {
+  +             Ok(v) => v,
+  +             Err(_) => continue,
+  ... (223 more lines)
+ ✓ (1m 41s)
+  + /// A richer validation event preserving file-level hit/surprise detail and timestamp.
+  + struct RichValidationEvent {
+  +     ts: String,
+  +     day: u32,
+  +     hits: Vec<String>,
+  +     surprises: Vec<String>,
+  +     accuracy_pct: f64,
+  + }
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

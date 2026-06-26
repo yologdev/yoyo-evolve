@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and understanding what's needed, then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 2.1s (2 ✓)
+
+No community issues. Let me check the current state of the dream milestone and the prediction-validation loop to plan well.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat DREAM.md📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat DAY_COUNT  ▶ $ wc -l src/commands_risk.rs ✓ (17ms)
+ ✓ (39ms)
+ ✓ (44ms)
+  ▶ $ grep -n "prediction_accuracy_summary\|auto_validate_after_failure\|auto_risk_sna…  ▶ $ grep -n "prediction_accuracy_summary\|auto_validate_after_failure" src/commands_…  ▶ $ grep -n "auto_validate_after_failure\|prediction_accuracy" src/watch.rs | head -… ✓ (5ms)
+ ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ # Check where auto_risk_snapshot is called — is it called af… (2 lines)  ▶ $ # Check the flaky test (2 lines) ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ # Check the flaky test details (2 lines) ✓ (3ms)
+  ▶ $ # Check get_recently_changed_files to understand the root ca… (2 lines)  ▶ $ sed -n "$(grep -n 'fn get_recently_changed_files' src/context.rs | head -1 | cut… ✓ (3ms)
+ ✓ (5ms)
+  11 tools completed in 17.4s (11 ✓)
+
+Now I have a clear picture. Let me think about the three tasks:
+
+1. **Dream milestone (self-driven):** The prediction-validation loop exists but needs the next step — using accuracy data to actually adjust risk weights. The assessment says `auto_validate_after_failure` exists and is wired into watch.rs, and `prediction_accuracy_summary is surfaced in /status`. The next dream step is making the self-model learn from its predictions — adjusting weights based on accuracy feedback.
+
+2. **Flaky test fix (stability):** The test_load_project_context_includes_recently_changed test is causing noisy trajectory data. The assessment says it already has a guard clause but still triggers. The fix: get_recently_changed_files uses --diff-filter=M (only modified), which misses added files in CI shallow clones. Should also include A (added) files, or the test should be more resilient.
+
+3. **`commands_risk.rs` is 3,890 lines and growing fast.** Extract the prediction/validation subsystem into a separate module to keep the file manageable. This is architectural hygiene that prevents future pain.
+
+Let me size these properly — task 3 (module extraction) is risky for a single task slot since it could touch many files. Let me think about what's most impactful.
+
+Actually, for task 3, I could extract just the validation/accuracy part into a new file. But the 3-file limit makes this tight. Let me plan differently.
+
+Better task 3: Instead of a large refactor, something that advances a competitive gap. Looking at the assessment's "biggest practical gap for real developer adoption" — ease of first use. But that's more of a docs/UX thing.
+
+Let me focus on three high-impact tasks:
+
+1. **Dream: Risk weight learning from prediction accuracy** — the next step in proprioception
+2. **Fix the flaky CI test** — stability/noise reduction  
+3. Extract risk validation into its own module — `commands_risk.rs` is the largest file and growing; split out the prediction/validation subsystem
+
+Actually, the module split might touch more than 3 files (new module + old module + mod.rs/imports). Let me check.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # How many files import from commands_risk? (2 lines) ✓ (6ms)
+  ▶ $ # What specific functions are imported from commands_risk in… (2 lines) ✓ (4ms)
+  2 tools completed in 5.1s (2 ✓)
+
+A module split of commands_risk.rs would need to update 5+ consumer files, which exceeds the 3-file limit. Let me pick a different task 3.
+
+Given the dream milestone is "close the prediction-validation loop" and the assessment says it's "partially complete," let me focus the dream task on the specific next step: making predictions adjust based on accuracy feedback. And for the third task, something useful for developers.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Let me check what auto_validate_after_failure actually doe… (2 lines) ✓ (4ms)
+  ▶ $ # Check prediction_accuracy_summary (2 lines) ✓ (4ms)
+  ▶ $ # Check if there's any weight-adjustment mechanism already (2 lines) ✓ (4ms)
+  ▶ $ # Check the risk scoring weights (2 lines) ✓ (4ms)
+  4 tools completed in 13.3s (4 ✓)
+
+Good. The weights are hardcoded as `RISK_WEIGHTS: [f64; 7]`. The dream's next step is to make these weights learnable based on prediction accuracy. This is the core proprioception step — from sensing to knowing.
+
+Now let me plan the three tasks:
+
+**Task 1 (Dream - self-driven):** Add adaptive risk weight learning. When validation events show that certain signals consistently predict failures (hits) or miss them (surprises), adjust the weights. Store learned weights in a JSONL file, load them on startup, fall back to defaults if absent.
+
+Task 2 (Stability): Fix the flaky `test_load_project_context_includes_recently_changed` test. The issue: --diff-filter=M only catches modified files, not added ones. In CI shallow clones, all files may be "added." Fix get_recently_changed_files to include both modified and added files.
+
+Task 3 (Competitive): The assessment notes the biggest gap for adoption is ease of first use. But that's more UX/docs. Instead, let me look at a real capability gap... Actually, the flaky test is a simple fix. Let me think about what else would be high-impact.
+
+Looking at the trajectory: the recurring CI error test_load_project_context_includes_recently_changed appears 3x. Fixing it cleans up trajectory noise — worth doing.
+
+For task 3, I should pick something that helps real developers. Looking at the assessment's capability gaps: /rewind is the biggest gap vs Claude Code. But that's a complex feature. Let me think of something smaller but impactful.
+
+Actually, looking at the dream more carefully — the next milestone is specifically "close the prediction-validation loop" which is partially complete. The two remaining pieces are:
+(a) validating predictions against actual failures (done — auto_validate_after_failure exists)
+(b) using accuracy signal to adjust risk weights
+
+So task 1 should be about (b). But this is complex — it needs weight learning logic + persistence + loading. Let me scope it carefully.
+
+For task 3, let me think about what would be most impactful. The assessment says commands_risk.rs is 3,890 lines and growing. Rather than a full module split (too many files), I could extract just the validation/accuracy subsystem into a new file. The new file would be `commands_risk_validation.rs, and only commands_risk.rs` would need updating for re-exports. That's 2 files.
+
+But wait — that means the weight learning (task 1) and the module extraction (task 3) conflict — if task 1 adds more code to commands_risk.rs and task 3 extracts from it, they'll conflict. Let me sequence carefully.
+
+Better plan: 
+• Task 1: Fix flaky test (small, safe)
+• Task 2: Extract risk validation subsystem into commands_risk_validation.rs (architectural hygiene, makes file manageable)  
+• Task 3: Add adaptive weight learning to the extracted validation module (dream milestone)
+
+Actually, tasks are executed independently in separate sessions, and task 3 depends on task 2's output. That's fine — they're executed sequentially. But if task 2 is reverted, task 3 will fail. Better to make them independent.
+
+Let me reorganize:
+• Task 1: Fix flaky test (stability, 2 files max)
+• Task 2: Dream — adaptive risk weight learning based on validation accuracy (self-driven, max 3 files)
+• Task 3: Something impactful for developers
+
+For task 3, let me look at what would be genuinely useful. The `/rewind` feature is the biggest gap vs Claude Code but too complex for one task. What about improving the getting-started experience? Or a smaller but useful feature?
+
+Let me think about what "ease of first use" means concretely. After `cargo install yoyo`, what's the experience? The setup wizard exists. But maybe something smaller — like auto-detecting the API key from common locations, or showing a helpful first-run message.
+
+Actually, let me reconsider. The assessment mentions the dream milestone is the right next step. Let me make tasks 1 and 2 about the dream (with different scopes) and task 3 the flaky test fix.
+
+Final plan:
+
+**Task 1 (stability):** Fix the flaky CI test — make get_recently_changed_files include both modified and added files, so it works in CI shallow clones. 1 file.
+
+Task 2 (dream/self-driven): Add adaptive risk weight learning. When validation history accumulates, compute per-signal accuracy and generate adjusted weights. Store in `.yoyo/risk_weights.json`. Load at scoring time, falling back to RISK_WEIGHTS defaults. This is the step from body *image to body schema*. Max 2 files (commands_risk.rs + the new weights file logic).
+
+Task 3 (competitive): Surface the risk self-model status more richly — add a `/risk accuracy` subcommand that shows per-signal breakdown (which signals are most predictive), validation event history, and current vs. learned weights. This makes the proprioception visible and debuggable. 1 file (commands_risk.rs).
+
+Wait, tasks 2 and 3 both touch commands_risk.rs — they're independent agents. If they run in parallel, they'll conflict. But per the evolve pipeline, tasks run sequentially. Task 2 first, then task 3. That should be fine.
+
+Let me finalize and write the plan.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (47 lines) ✓ (56.9s)
+  ▶ write session_plan/task_02.md (92 lines) ✓ (1m 8s)
+  ▶ write session_plan/task_03.md (71 lines) ✓ (1m 13s)
+  ▶ write session_plan/issue_responses.md (20 lines) ✓ (1m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+  6 tools completed in 5m 40s (6 ✓)
+
+Session plan committed. Here's the summary:
+
+## Day 118 Session Plan — 3 Tasks
+
+### Task 1: Fix flaky CI test (stability)
+File: src/context.rs
+Change --diff-filter=M → --diff-filter=AM in `get_recently_changed_files() so it includes both modified and added files. This fixes the test_load_project_context_includes_recently_changed` test that fails ~3× per trajectory window in CI shallow clones, producing noisy trajectory data.
+
+### Task 2: Adaptive risk weight learning (dream milestone) 🐙
+File: src/commands_risk.rs
+Add `learn_weights_from_history()` — reads validation events, computes per-signal predictiveness, generates adjusted weights blended conservatively with defaults (learning rate 0.3), stores in .yoyo/risk_weights.json, and loads them in compute_file_risk_scores(). Called automatically after every validation event. This is the dream's next milestone: making the self-model learn from its predictions as a side-effect of acting — the step from body *image to body schema*.
+
+### Task 3: `/risk accuracy` subcommand (visibility)
+Files: src/commands_risk.rs, src/help_data.rs
+Surface the self-model's learning state: per-signal predictiveness breakdown, default vs learned weights, recent validation events, and learning status. Makes proprioception visible and debuggable.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

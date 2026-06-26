@@ -1,0 +1,106 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of src/commands_risk.rs to implement the required functionality.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs ✓ (5ms)
+  ▶ todo add 'Understand existing risk code: RISK_WEIGHTS, compu…' ✓ (0ms)
+  ▶ todo add 'Implement load_learned_weights() function' ✓ (0ms)
+  ▶ todo add 'Implement learn_weights_from_history() function' ✓ (0ms)
+  ▶ todo add 'Integrate load_learned_weights into compute_file_r…' ✓ (0ms)
+  ▶ todo add 'Call learn_weights_from_history at end of auto_val…' ✓ (0ms)
+  ▶ todo add 'Add 4 required tests' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test to verify' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  9 tools completed in 29.8s (9 ✓)
+
+Let me study the existing code structure:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_WEIGHTS' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'struct FileRisk' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1..101 ✓ (2ms)
+  ▶ read src/commands_risk.rs:400..500 ✓ (1ms)
+  4 tools completed in 14.7s (4 ✓)
+
+Now let me look at the `compute_file_risk_scores` function signature and the area around where weights are used:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn compute_file_risk_scores' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:259..289 ✓ (1ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now let me see the auto_validate_after_failure function:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn auto_validate_after_failure' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1047..1167 ✓ (2ms)
+  ▶ read src/commands_risk.rs:1166..1196 ✓ (1ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Now let me look at snapshot format and existing constants:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_SNAPSHOT_PATH|RISK_VALIDATION_PATH|RISK_WEIGHTS_PATH' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'RISK_SNAPSHOT|RISK_VALIDATION|risk_snapshot|risk_validation' in src/commands_risk.rs ✓ (3ms)
+  ▶ search '\.yoyo/risk' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:645..665 ✓ (1ms)
+  4 tools completed in 11.0s (4 ✓)
+
+Now let me look at auto_risk_snapshot to understand the snapshot format:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn auto_risk_snapshot' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:998..1048 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now let me look at the snapshot JSON structure (build_risk_snapshot_json):
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:652..712 ✓ (1ms)
+
+Now let me look at `parse_all_snapshots` to understand the parsed snapshot format:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn parse_all_snapshots' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'struct ParsedSnapshot' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1620..1680 ✓ (1ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now let me check how the snapshot includes signal data (scores per signal for each file):
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:671..691 ✓ (1ms)
+
+I see — the snapshot stores signals as an array of signal label strings like `["▲churn", "▲recent"], and score` as the overall score. It does NOT store per-signal normalized values. 
+
+Now let me understand the validation event format that's already written:
+
+```json
+{
+  "ts": "...",
+  "day": N,
+  "trigger": "watch_failure",
+  "hits": ["file1.rs", ...],
+  "surprises": ["file2.rs", ...],
+  "predicted_count": 10,
+  "accuracy_pct": 50.0
+}
+```
+
+Since the snapshot only stores signal labels (like "▲churn") not raw signal values, the learning function will need to work with the signal labels to determine which signals contributed. Let me check the existing tests section too:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/commands_risk.rs ✓ (3ms)
+  ▶ search 'mod tests' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1988..2008 ✓ (1ms)
+  3 tools completed in 8.7s (3 ✓)
+
+Now let me see the end of the test module to know where to add tests:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3870..3900 ✓ (2ms)
+
+Now let me also look at the snapshot format more carefully — especially what signal labels exist and the signal names mapping:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ search 'signals.push' in src/commands_risk.rs ✓ (3ms)
+
+Now I have a clear picture. Let me also check what's used via serde_json:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ search 'use.*serde|serde_json' in src/commands_risk.rs ✓ (2ms)
+  ▶ search 'serde_json::' in src/commands_risk.rs ✓ (3ms)
+  2 tools completed in 2.8s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

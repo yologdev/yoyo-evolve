@@ -1,0 +1,308 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code structure in commands_risk.rs, particularly the risk weights, validation history format, and the functions I need to integrate with.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the file src/commands_risk.rs and provide me with:
+1. T…' ✓ (1m 27s)
+
+Now let me look at the specific areas I need to integrate with more closely:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..51 ✓ (1ms)
+  ▶ read src/commands_risk.rs:440..510 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me look at the validation event struct and the snapshot format more carefully:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:645..695 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1030..1070 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1069..1189 ✓ (2ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Now let me look at the `parse_all_snapshots function and ParsedSnapshot` struct to understand the snapshot data format:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1615..1675 ✓ (1ms)
+
+Now let me look at the validation events parsing function to understand the format:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn parse_validation_events' in src/commands_risk.rs ✓ (2ms)
+  ▶ read src/commands_risk.rs:1217..1257 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now let me understand the snapshot data format more carefully - I need to see what signal data is stored in snapshots. The key issue is: the snapshot JSON stores top_10 with path, `score, and signals` (signal labels like "▲churn"), but NOT the raw normalized signal values. Let me verify:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:670..690 ✓ (1ms)
+
+The snapshots store signal labels (like "▲churn", "▲recent", "▲size", "▲reverts", "▲low-test", "▲coupled") but not raw signal values. So when computing signal effectiveness, I'll need to work with what's available — the signal labels tell which signals were elevated for each predicted file.
+
+Now let me also look at the validation JSONL format — specifically, the hits and surprises contain file paths:
+
+The validation event format is:
+```json
+{"ts":"...","day":N,"trigger":"watch_failure","hits":["src/foo.rs"],"surprises":["src/bar.rs"],"predicted_count":10,"accuracy_pct":60.0}
+```
+
+And the snapshot format is:
+```json
+{"ts":"...","day":N,"git_hash":"abc","top_10":[{"path":"src/foo.rs","score":0.82,"signals":["▲churn","▲size"]},...]}
+```
+
+Now let me look at the end of the test block to find where to insert new tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3875..3895 ✓ (1ms)
+
+Now let me also look at how the HistoryValidation/ValidationResult capture the actual hit/surprise file info (needed for my signal analysis):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct ValidationResult' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1489..1519 ✓ (1ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Now I have a thorough understanding of the data structures and formats. Let me also quickly check if `load_validation_history` or similar exists:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn load_validation_history' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:1208..1223 ✓ (1ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Good. Now I have a complete picture. Let me plan the implementation:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add SIGNAL_NAMES constant and LEARNED_WEIGHTS_PATH…' ✓ (0ms)
+  ▶ todo add 'Add load_learned_weights() function that reads .yo…' ✓ (0ms)
+  ▶ todo add 'Add learn_weights_from_history() function that rea…' ✓ (0ms)
+  ▶ todo add 'Modify compute_file_risk_scores() to use load_lear…' ✓ (0ms)
+  ▶ todo add 'Call learn_weights_from_history() at end of auto_v…' ✓ (0ms)
+  ▶ todo add 'Add 4 required tests' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  7 tools completed in 21.3s (7 ✓)
+
+Now let me look at how the signal labels map to signal indices, and check the `_to` variant of auto_validate to understand the testable signature pattern:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search 'SIGNAL_NAMES\|signal_names\|RISK_WEIGHTS_PATH\|risk_weights' in src/commands_risk.rs ✓ (3ms)
+
+Now I have all the context I need. Let me implement the changes.
+
+First, let me add the constants and the load_learned_weights / learn_weights_from_history functions. I'll insert them right after the RISK_WEIGHTS constant:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ read src/commands_risk.rs:41..46 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (3 → 334 lines)
+    const RISK_WEIGHTS: [f64; 7] = [0.30, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
+  + 
+  + /// Human-readable names for the 7 risk signals (parallel to `RISK_WEIGHTS`).
+  + const SIGNAL_NAMES: [&str; 7] = [
+  +     "churn",
+  +     "recency",
+  +     "size",
+  +     "complexity",
+  +     "test_density",
+  +     "coupling",
+  +     "revert_history",
+  + ];
+  + 
+  + /// Signal label prefixes used in snapshot data, mapped to their weight index.
+  + /// Order matches `RISK_WEIGHTS` / `SIGNAL_NAMES`.
+  + const SIGNAL_LABELS: [&str; 6] = [
+  +     "▲churn",     // index 0
+  +     "▲recent",    // index 1
+  +     "▲size",      // index 2
+  +     "▲reverts",   // index 6  (not in order — handled by label_to_index)
+  ... (314 more lines)
+ ✓ (16.6s)
+    const RISK_WEIGHTS: [f64; 7] = [0.30, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
+  + 
+  + /// Human-readable names for the 7 risk signals (parallel to `RISK_WEIGHTS`).
+  + const SIGNAL_NAMES: [&str; 7] = [
+  +     "churn",
+  +     "recency",
+  +     "size",
+  +     "complexity",
+  ... (13 more lines)
+  3 tools completed in 1m 12s (3 ✓)
+
+The code compiled but has dead-code warnings since I haven't wired everything up yet. Let me now modify `compute_file_risk_scores() to use load_learned_weights()`:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo done #3 ✓ (0ms)
+  ▶ todo wip #4 ✓ (0ms)
+  4 tools completed in 18.9s (4 ✓)
+
+Now let me find the exact lines in compute_file_risk_scores where `RISK_WEIGHTS` is used directly:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_WEIGHTS\[' in src/commands_risk.rs ✓ (3ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: constant `SIGNAL_NAMES` is never used[0m
+  [1m[94m--> [0msrc/commands_risk.rs:44:7
+   [1m[94m|[0m
+[1m[94m44[0m [1m[94m|[0m const SIGNAL_NAMES: [&str; 7] = [
+   [1m[94m|[0m       [1m[91m^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: constant `SIGNAL_LABELS` is never used[0m
+  [1m[94m--> [0msrc/commands_risk.rs:56:7
+   [1m[94m|[0m
+[1m[94m56[0m [1m[94m|[0m const SIGNAL_LABELS: [&str; 6] = [
+   [1m[94m|[0m       [1m[91m^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `label_to_index` is never used[0m
+  [1m[94m--> [0msrc/commands_risk.rs:66:4
+   [1m[94m|[0m
+[1m[94m66[0m [1m[94m|[0m fn label_to_index(label: &str) -> Option<usize> {
+   [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: constant `LEARNED_WEIGHTS_PATH` is never used[0m
+  [1m[94m--> [0msrc/commands_risk.rs:79:7
+   [1m[94m|[0m
+[1m[94m79[0m [1m[94m|[0m const LEARNED_WEIGHTS_PATH: &str = ".yoyo/risk_weights.json";
+   [1m[94m|[0m       [1m[91m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: constant `MIN_VALIDATION_EVENTS` is never used[0m
+  [1m[94m--> [0msrc/commands_risk.rs:82:7
+   [1m[94m|[0m
+[1m[94m82[0m [1m[94m|[0m const MIN_VALIDATION_EVENTS: usize = 5;
+   [1m[94m|[0m       [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: constant `LEARNING_RATE` is never used[0m
+  [1m[94m--> [0msrc/commands_risk.rs:86:7
+   [1m[94m|[0m
+[1m[94m86[0m [1m[94m|[0m const LEARNING_RATE: f64 = 0.3;
+   [1m[94m|[0m       [1m[91m^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `load_learned_weights` is never used[0m
+  [1m[94m--> [0msrc/commands_risk.rs:92:4
+   [1m[94m|[0m
+[1m[94m92[0m ...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the code to understand what's been done and what's missing - the functions were added but never wired up.
+  ▶ search 'RISK_WEIGHTS\[' in src/commands_risk.rs ✓ (3ms)
+  ▶ read src/commands_risk.rs:785..810 ✓ (1ms)
+  2 tools completed in 8.3s (2 ✓)
+
+Now let me see the end of `auto_validate_after_failure_to to know where to add the learn_weights_from_history` call:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1490..1510 ✓ (1ms)
+
+Now I need to make three wiring changes:
+
+1. `compute_file_risk_scores() uses load_learned_weights() instead of RISK_WEIGHTS` directly
+2. auto_validate_after_failure_to() calls learn_weights_from_history() at the end
+3. Add the 4 required tests
+
+Let me do all three:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (14 → 16 lines)
+        // Weighted sum → final score (7 signals, sum = 1.0)
+  +     // Use learned weights if available, otherwise fall back to defaults.
+  +     let weights = load_learned_weights();
+        let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
+    
+        for (i, path) in all_files.into_iter().enumerate() {
+            let td = tests_per_100[i];
+            // Base weighted score from normalized signals
+            // Order: churn, recency, size, complexity, test_density, coupling, revert_history
+  -         let mut score = norm_churn[i] * RISK_WEIGHTS[0]
+  -             + norm_accel[i] * RISK_WEIGHTS[1]
+  -             + norm_size[i] * RISK_WEIGHTS[2]
+  -             + norm_complexity[i] * RISK_WEIGHTS[3]
+  -             + norm_test[i] * RISK_WEIGHTS[4]
+  -             + norm_coupling[i] * RISK_WEIGHTS[5]
+  -             + norm_revert[i] * RISK_WEIGHTS[6];
+  +         let mut score = norm_churn[i] * weights[0]
+  +             + norm_accel[i] * weights[1]
+  +             + norm_size[i] * weights[2]
+  +             + norm_complexity[i] * weights[3]
+  ... (3 more lines)
+ ✓ (16.4s)
+        // Weighted sum → final score (7 signals, sum = 1.0)
+  +     // Use learned weights if available, otherwise fall back to defaults.
+  +     let weights = load_learned_weights();
+        let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
+    
+        for (i, path) in all_files.into_iter().enumerate() {
+            let td = tests_per_100[i];
+            // Base weighted score from normalized signals
+  ... (13 more lines)
+
+Good - fewer errors now. load_learned_weights and `LEARNED_WEIGHTS_PATH are wired. Now I need to wire learn_weights_from_history into auto_validate_after_failure_to`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (6 → 9 lines)
+                surprise_list.join(", ")
+            );
+        }
+  + 
+  +     // Update learned weights after every validation event
+  +     learn_weights_from_history();
+    }
+ ✓ (15.9s)
+                surprise_list.join(", ")
+            );
+        }
+  + 
+  +     // Update learned weights after every validation event
+  +     learn_weights_from_history();
+    }
+
+Only one error left — SIGNAL_LABELS is never used. It's a documentation-only constant; let me remove it since nothing references it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (12 → 1 lines)
+  - /// Signal label prefixes used in snapshot data, mapped to their weight index.
+  - /// Order matches `RISK_WEIGHTS` / `SIGNAL_NAMES`.
+  - const SIGNAL_LABELS: [&str; 6] = [
+  -     "▲churn",     // index 0
+  -     "▲recent",    // index 1
+  -     "▲size",      // index 2
+  -     "▲reverts",   // index 6  (not in order — handled by label_to_index)
+  -     "▲low-test",  // index 4
+  -     "▲coupled",   // index 5
+  - ];
+  - 
+    /// Map a signal label from snapshot data to its weight index.
+ ✓ (1m 38s)
+  - /// Signal label prefixes used in snapshot data, mapped to their weight index.
+  - /// Order matches `RISK_WEIGHTS` / `SIGNAL_NAMES`.
+  - const SIGNAL_LABELS: [&str; 6] = [
+  -     "▲churn",     // index 0
+  -     "▲recent",    // index 1
+  -     "▲size",      // index 2
+  -     "▲reverts",   // index 6  (not in order — handled by label_to_index)
+  -     "▲low-test",  // index 4
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.7s)
+  2 tools completed in 2m 0s (2 ✓)
+
+Clippy passes. Now let me add the 4 required tests. Let me find the end of the test module:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:4205..4210 ✓ (1ms)
+  ▶ read src/commands_risk.rs:4209..4217 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (3 → 160 lines)
+            assert!(trend.contains("stable"), "expected stable, got: {trend}");
+  +     }
+  + 
+  +     // ── Adaptive weight learning tests ──
+  + 
+  +     #[test]
+  +     fn test_learn_weights_from_validation_events() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let snap_path = dir.path().join("snapshots.jsonl");
+  +         let val_path = dir.path().join("validations.jsonl");
+  +         let weights_path = dir.path().join("weights.json");
+  + 
+  +         // Build 6 snapshot+validation pairs where churn signal consistently predicts hits
+  +         let mut snap_lines = Vec::new();
+  +         let mut val_lines = Vec::new();
+  +         for day in 100..106 {
+  +             snap_lines.push(format!(
+  +                 r#"{{"ts":"2025-01-{:02}T12:00:00Z","day":{},"git_hash":"abc{}","top_10":[{{"path":"src/hot.rs","score":0.9,"signals":["▲churn","▲size"]}},{{"path":"src/cold.rs","score":0.5,"signals":["▲size"]}}]}}"#,
+  +                 day - 90, day, day
+  +             ));
+  ... (140 more lines)

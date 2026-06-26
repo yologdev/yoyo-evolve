@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing code structure in commands_risk.rs, particularly the validation/snapshot functions and the risk weight system.
+  ▶ search 'RISK_WEIGHTS' in src/commands_risk.rs  ▶ search 'auto_validate_after_failure' in src/commands_risk.rs  ▶ search 'auto_risk_snapshot' in src/commands_risk.rs ✓ (4ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/commands_risk.rs:1..51 ✓ (1ms)
+  ▶ read src/commands_risk.rs:440..500 ✓ (1ms)
+  5 tools completed in 8.5s (5 ✓)
+
+Now let me read the snapshot and validation functions:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:998..1118 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1117..1197 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now let me understand the snapshot format:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct.*Snapshot' in src/commands_risk.rs  ▶ search 'parse_all_snapshots' in src/commands_risk.rs  ▶ search 'build_risk_snapshot_json' in src/commands_risk.rs ✓ (3ms)
+ ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/commands_risk.rs:656..706  ▶ read src/commands_risk.rs:1620..1680 ✓ (1ms)
+ ✓ (2ms)
+  5 tools completed in 5.8s (5 ✓)
+
+Now I need to understand the snapshot data format more carefully — the snapshot includes the score and signals for each file in top_10, but does it include the individual signal values? Let me check:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:671..701 ✓ (1ms)
+
+The snapshot stores signals as labels like `["▲churn", "▲recent"]` — not the raw normalized signal values. This means for the weight learning, I'll use the signal labels to determine which signals contributed to a hit or surprise. This is actually simpler and more robust.
+
+Let me also check how validation events look, and see the existing tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1196..1296 ✓ (1ms)
+
+Now let me check the prediction_accuracy_summary function (used in `/status`):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'prediction_accuracy_summary' in src/commands_risk.rs ✓ (3ms)
+
+Now let me look at the existing tests section to understand where to add new tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2790..2840 ✓ (1ms)
+
+Now, let me see the end of the file to understand where to put new code:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3860..3890 ✓ (1ms)
+  ▶ $ tail -1 src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (39ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now let me check if `serde_json` is available as a dependency:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'serde_json' in Cargo.toml ✓ (2ms)
+
+Good. Now let me look at the validation event format more carefully. The `auto_validate_after_failure_to` writes events with hits and surprises as arrays of file paths. I need to cross-reference with snapshot data to understand which signals were active for hits vs surprises.
+
+Let me look at the snapshot format again — the `top_10 array has path, score, and signals (signal labels like "▲churn"`). I'll need to:
+
+1. Parse validation events (already have parse_validation_events)
+2. For each validation event, find the corresponding snapshot to get signal data for predicted files
+3. Use signal labels to compute per-signal effectiveness
+
+Let me also check the RISK_SNAPSHOT_PATH:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search 'RISK_SNAPSHOT_PATH' in src/commands_risk.rs ✓ (3ms)
+
+Now I have a clear picture. Let me also check the validation event format has the actual file names in hits/surprises:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1128..1158 ✓ (1ms)
+
+Good. Now I have a complete picture. Let me plan the implementation:
+
+1. The validation events have hits (file paths) and surprises (file paths)
+2. The snapshots have top_10 with path, score, and signals (label strings like "▲churn")
+3. For weight learning, I'll map signal labels to weight indices
+4. For hits: signals that were active are "good" — they correctly predicted risk
+5. For surprises: I need to check which signals were NOT active for these files (they were in the snapshot's unpredicted files)
+
+Actually, wait — surprises are files that broke but weren't in the top-10 predictions. So they won't be in the snapshot data at all. What I can do is:
+
+• For hits: count which signals were active (from snapshot). These signals are "working" — they contributed to correct predictions.
+• For **surprises**: we don't have signal data (they weren't in top-10). This means signals that should have flagged these files were missing/underweighted.
+
+A simpler and more robust approach: focus on signal effectiveness from the data we actually have:
+• Count how often each signal appears in hit files across all validation events
+• Count how often each signal appears in top-10 predicted files that were NOT hits (false positives / "clean" files)
+• A signal that shows up more in hits than in clean predictions is more useful
+
+Let me think about this differently. The snapshot stores the top-10 predicted files with their signals. The validation events tell us which of those predictions were correct (hits) and which files broke that weren't predicted (surprises). 
+
+For learning:
+• **Signal present on hit file**: signal contributed to a correct prediction → reward
+• **Signal present on predicted file that was clean (not a hit)**: signal contributed to a false alarm → no change or slight penalty  
+• Surprise files have no signal data but their existence means some signals should be stronger
+
+The cleanest approach: compute per-signal hit rate vs overall hit rate.
+
+Let me now implement this. I'll start by writing the tests, then the functions.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests first: test_learn_weights_from_validat…' ✓ (0ms)
+  ▶ todo add 'Implement learn_weights_from_history() function' ✓ (0ms)
+  ▶ todo add 'Implement load_learned_weights() and integrate int…' ✓ (0ms)
+  ▶ todo add 'Call learn_weights_from_history() at end of auto_v…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — verify everyt…' ✓ (0ms)
+  ▶ todo add 'Commit the change' ✓ (0ms)
+  6 tools completed in 19.1s (6 ✓)
+
+Now let me understand the full design. The signal labels in snapshots are: "▲churn", `"▲recent", "▲size", "▲reverts", "▲low-test", "▲coupled"`. These map to 6 of 7 weight indices (complexity has no signal label because it doesn't have a threshold check in the existing code). Let me verify:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:477..507 ✓ (1ms)
+
+So signal labels map to weight indices:
+• "▲churn" → index 0 (churn)
+• "▲recent" → index 1 (recency)
+• "▲size" → index 2 (size)
+• "▲low-test" → index 4 (test_density)
+• `"▲coupled"` → index 5 (coupling)
+• "▲reverts" → index 6 (revert_history)
+• complexity (index 3) has no signal label
+
+For the learning algorithm, I need to parse both validation events AND snapshots to correlate which signals were active on hit files. Let me design the approach:
+
+1. Parse all validation events from `.yoyo/risk_validations.jsonl` 
+2. Parse all snapshots from .yoyo/risk_snapshots.jsonl
+3. For each validation event, find the matching snapshot (by matching the most recent snapshot before or at the same timestamp/day)
+4. For hit files in the validation event, look up their signals in the snapshot's top_10
+5. Compute per-signal hit rate: how often a signal appears on hit files vs all predicted files
+6. Generate weight adjustments
+
+Let me now build the implementation. I'll need an extended `ParsedSnapshot` that also stores signals, or create a new struct for learning.
+
+Let me first write the core functions and tests:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+Let me first check the existing signal_name_to_index idea more carefully and also check for the RISK_WEIGHTS_PATH:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ search 'risk_weights' in src/commands_risk.rs ✓ (3ms)
+
+No existing risk_weights.json path constant. Let me also check what `serde_json` features are available:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "serde" Cargo.toml ✓ (9ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
