@@ -313,6 +313,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
             filter_candidates(crate::commands_revisit::REVISIT_SUBCOMMANDS, &partial_lower)
         }
         "/web" => filter_candidates(crate::commands_web::WEB_SUBCOMMANDS, &partial_lower),
+        "/risk" => filter_candidates(crate::commands_risk::RISK_SUBCOMMANDS, &partial_lower),
         _ => Vec::new(),
     }
 }

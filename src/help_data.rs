@@ -1234,20 +1234,25 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
         "risk" => Some(
             "/risk — Per-file risk scoring for source files\n\n\
              Analyzes source files and ranks them by predicted regression risk.\n\
-             Uses five weighted signals from git history:\n\
+             Uses seven weighted signals from git history:\n\
              \x20 • Change frequency (30-day churn)\n\
              \x20 • Recent acceleration (7-day vs 30-day)\n\
              \x20 • File size (lines of code)\n\
-             \x20 • Revert involvement history\n\
-             \x20 • Test density (low coverage = higher risk)\n\n\
+             \x20 • Complexity (cyclomatic estimate)\n\
+             \x20 • Test density (low coverage = higher risk)\n\
+             \x20 • Co-change coupling\n\
+             \x20 • Revert involvement history\n\n\
              Usage:\n\
              \x20 /risk            Show top 15 riskiest files\n\
              \x20 /risk --all      Show all scored files\n\
              \x20 /risk snapshot   Save current predictions for later validation\n\
-             \x20 /risk validate   Compare past predictions against actual breakage\n\n\
+             \x20 /risk validate   Compare past predictions against actual breakage\n\
+             \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\n\
              The snapshot → validate loop measures prediction accuracy:\n\
              run /risk snapshot, keep coding, then /risk validate to see\n\
              which predictions were right (Precision@10) and what surprised you.\n\n\
+             Use /risk accuracy to inspect which signals are most predictive,\n\
+             view learned vs default weights, and track accuracy trends over time.\n\n\
              Part of yoyo's predictive self-awareness — the first step toward\n\
              knowing which files will break before they do.",
         ),

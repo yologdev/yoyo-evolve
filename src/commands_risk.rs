@@ -40,6 +40,327 @@ fn normalize_scores(values: &[f64]) -> Vec<f64> {
 /// from its own history rather than just measuring static properties.
 const RISK_WEIGHTS: [f64; 7] = [0.30, 0.15, 0.15, 0.10, 0.10, 0.10, 0.10];
 
+/// Human-readable names for the 7 risk signals (parallel to `RISK_WEIGHTS`).
+const SIGNAL_NAMES: [&str; 7] = [
+    "churn",
+    "recency",
+    "size",
+    "complexity",
+    "test_density",
+    "coupling",
+    "revert_history",
+];
+
+/// Map a signal label from snapshot data to its weight index.
+fn label_to_index(label: &str) -> Option<usize> {
+    match label {
+        "▲churn" => Some(0),
+        "▲recent" => Some(1),
+        "▲size" => Some(2),
+        "▲reverts" => Some(6),
+        "▲low-test" => Some(4),
+        "▲coupled" => Some(5),
+        _ => None,
+    }
+}
+
+/// Default path for learned risk weights.
+const LEARNED_WEIGHTS_PATH: &str = ".yoyo/risk_weights.json";
+
+/// Minimum number of validation events required before learning weights.
+const MIN_VALIDATION_EVENTS: usize = 5;
+
+/// Learning rate: how much the computed weights influence the result.
+/// learned = (1 - LEARNING_RATE) * default + LEARNING_RATE * computed
+const LEARNING_RATE: f64 = 0.3;
+
+/// Load learned weights from `.yoyo/risk_weights.json`, falling back to `RISK_WEIGHTS`.
+///
+/// Validates that the file contains exactly 7 weights that sum to approximately 1.0
+/// (within 0.05 tolerance). Returns `RISK_WEIGHTS` on any error.
+fn load_learned_weights() -> [f64; 7] {
+    load_learned_weights_from(std::path::Path::new(LEARNED_WEIGHTS_PATH))
+}
+
+/// Inner implementation with configurable path (for testing).
+fn load_learned_weights_from(path: &std::path::Path) -> [f64; 7] {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return RISK_WEIGHTS,
+    };
+    let val: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return RISK_WEIGHTS,
+    };
+    let weights_arr = match val["weights"].as_array() {
+        Some(a) => a,
+        None => return RISK_WEIGHTS,
+    };
+    if weights_arr.len() != 7 {
+        return RISK_WEIGHTS;
+    }
+    let mut weights = [0.0f64; 7];
+    for (i, v) in weights_arr.iter().enumerate() {
+        match v.as_f64() {
+            Some(w) if w >= 0.0 => weights[i] = w,
+            _ => return RISK_WEIGHTS,
+        }
+    }
+    let sum: f64 = weights.iter().sum();
+    if (sum - 1.0).abs() > 0.05 {
+        return RISK_WEIGHTS;
+    }
+    weights
+}
+
+/// A parsed validation event with per-file signal detail for weight learning.
+struct DetailedValidationEvent {
+    /// File paths that were predicted (in top-10) and actually broke.
+    hit_signals: Vec<Vec<usize>>,
+    /// File paths that broke but weren't in the top-10 predictions.
+    surprise_count: usize,
+}
+
+/// Parse validation events with signal detail by cross-referencing
+/// validations against snapshots.
+///
+/// For each validation event, looks up the corresponding snapshot to find
+/// which signals were elevated for hit files.
+fn parse_detailed_events(
+    validation_content: &str,
+    snapshot_content: &str,
+) -> Vec<DetailedValidationEvent> {
+    // Build a map from snapshot day → signal data per file
+    let mut snapshot_signals: std::collections::HashMap<
+        u64,
+        std::collections::HashMap<String, Vec<usize>>,
+    > = std::collections::HashMap::new();
+
+    for line in snapshot_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let day = val["day"].as_u64().unwrap_or(0);
+        let mut file_signals: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        if let Some(top_10) = val["top_10"].as_array() {
+            for entry in top_10 {
+                if let Some(path) = entry["path"].as_str() {
+                    let mut indices = Vec::new();
+                    if let Some(signals) = entry["signals"].as_array() {
+                        for sig in signals {
+                            if let Some(label) = sig.as_str() {
+                                if let Some(idx) = label_to_index(label) {
+                                    indices.push(idx);
+                                }
+                            }
+                        }
+                    }
+                    file_signals.insert(path.to_string(), indices);
+                }
+            }
+        }
+        // Use the latest snapshot for each day
+        snapshot_signals.insert(day, file_signals);
+    }
+
+    let mut events = Vec::new();
+    for line in validation_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let day = val["day"].as_u64().unwrap_or(0);
+        let hits: Vec<String> = val["hits"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let surprise_count = val["surprises"].as_array().map(|a| a.len()).unwrap_or(0);
+
+        // Look up signal data from the snapshot for the same day
+        let file_signals = snapshot_signals.get(&day);
+
+        let mut hit_signals = Vec::new();
+        for hit_path in &hits {
+            let signals = file_signals
+                .and_then(|fs| fs.get(hit_path))
+                .cloned()
+                .unwrap_or_default();
+            hit_signals.push(signals);
+        }
+
+        events.push(DetailedValidationEvent {
+            hit_signals,
+            surprise_count,
+        });
+    }
+    events
+}
+
+/// Compute adjusted weights from validation history.
+///
+/// For each signal, computes a "hit contribution" score based on how often
+/// it appears in correctly-predicted files. Signals that consistently appear
+/// in hits get boosted; the result is blended with defaults using `LEARNING_RATE`.
+fn compute_adjusted_weights(events: &[DetailedValidationEvent]) -> [f64; 7] {
+    // Count how many times each signal appeared in hits
+    let mut signal_hit_counts = [0u64; 7];
+    let mut total_hits = 0u64;
+    let mut total_surprises = 0u64;
+
+    for event in events {
+        for signals in &event.hit_signals {
+            total_hits += 1;
+            for &idx in signals {
+                if idx < 7 {
+                    signal_hit_counts[idx] += 1;
+                }
+            }
+        }
+        total_surprises += event.surprise_count as u64;
+    }
+
+    // If no hits at all, can't learn anything useful
+    if total_hits == 0 {
+        return RISK_WEIGHTS;
+    }
+
+    // Compute a raw effectiveness score for each signal:
+    // effectiveness[i] = hit_rate[i] * (1 + surprise_penalty)
+    //
+    // hit_rate[i] = how often signal i appeared when we correctly predicted
+    // surprise_penalty = proportion of surprises (signals that were missed)
+    let surprise_ratio = if total_hits + total_surprises > 0 {
+        total_surprises as f64 / (total_hits + total_surprises) as f64
+    } else {
+        0.0
+    };
+
+    let mut raw_weights = [0.0f64; 7];
+    for i in 0..7 {
+        // Base: how often this signal was present in hits
+        let hit_rate = signal_hit_counts[i] as f64 / total_hits as f64;
+        // Boost signals that are consistently present; penalize those absent
+        // when there are many surprises
+        raw_weights[i] = hit_rate + RISK_WEIGHTS[i] * (1.0 + surprise_ratio);
+    }
+
+    // Normalize raw_weights to sum to 1.0
+    let raw_sum: f64 = raw_weights.iter().sum();
+    if raw_sum <= 0.0 {
+        return RISK_WEIGHTS;
+    }
+    for w in &mut raw_weights {
+        *w /= raw_sum;
+    }
+
+    // Blend: learned = (1 - LEARNING_RATE) * default + LEARNING_RATE * computed
+    let mut blended = [0.0f64; 7];
+    for i in 0..7 {
+        blended[i] = (1.0 - LEARNING_RATE) * RISK_WEIGHTS[i] + LEARNING_RATE * raw_weights[i];
+    }
+
+    // Final normalization to ensure sum = 1.0
+    let blended_sum: f64 = blended.iter().sum();
+    if blended_sum > 0.0 {
+        for w in &mut blended {
+            *w /= blended_sum;
+        }
+    }
+
+    blended
+}
+
+/// Learn risk weights from prediction-validation history and save to disk.
+///
+/// Reads `.yoyo/risk_validations.jsonl` and `.yoyo/risk_snapshots.jsonl`,
+/// computes per-signal effectiveness, and writes adjusted weights to
+/// `.yoyo/risk_weights.json`. Requires at least `MIN_VALIDATION_EVENTS`
+/// events before producing learned weights.
+///
+/// All I/O is best-effort — failures are silently ignored.
+fn learn_weights_from_history() {
+    learn_weights_from_history_to(
+        std::path::Path::new(RISK_VALIDATION_PATH),
+        std::path::Path::new(RISK_SNAPSHOT_PATH),
+        std::path::Path::new(LEARNED_WEIGHTS_PATH),
+    );
+}
+
+/// Inner implementation with configurable paths (for testing).
+fn learn_weights_from_history_to(
+    validation_path: &std::path::Path,
+    snapshot_path: &std::path::Path,
+    weights_path: &std::path::Path,
+) {
+    let validation_content = match std::fs::read_to_string(validation_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let snapshot_content = match std::fs::read_to_string(snapshot_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Count total validation events (using the simple parser)
+    let event_count = parse_validation_events(&validation_content).len();
+    if event_count < MIN_VALIDATION_EVENTS {
+        return;
+    }
+
+    let detailed = parse_detailed_events(&validation_content, &snapshot_content);
+    if detailed.is_empty() {
+        return;
+    }
+
+    let weights = compute_adjusted_weights(&detailed);
+
+    // Build output JSON
+    let ts = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let signal_names: Vec<&str> = SIGNAL_NAMES.to_vec();
+    let output = serde_json::json!({
+        "weights": weights.to_vec(),
+        "learned_from": event_count,
+        "last_updated": ts,
+        "signal_names": signal_names,
+    });
+
+    // Write atomically-ish: write to file directly (best-effort)
+    if let Some(parent) = weights_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json_str) = serde_json::to_string_pretty(&output) {
+        let _ = std::fs::write(weights_path, json_str);
+    }
+}
+
 /// Build a map of source file paths → count of test-containing files that reference them.
 ///
 /// For each `.rs` file in `src/` and `tests/` that contains `#[test]`, we parse
@@ -454,19 +775,21 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
     let norm_revert = normalize_scores(&raw_revert);
 
     // Weighted sum → final score (7 signals, sum = 1.0)
+    // Use learned weights if available, otherwise fall back to defaults.
+    let weights = load_learned_weights();
     let mut risks: Vec<FileRisk> = Vec::with_capacity(all_files.len());
 
     for (i, path) in all_files.into_iter().enumerate() {
         let td = tests_per_100[i];
         // Base weighted score from normalized signals
         // Order: churn, recency, size, complexity, test_density, coupling, revert_history
-        let mut score = norm_churn[i] * RISK_WEIGHTS[0]
-            + norm_accel[i] * RISK_WEIGHTS[1]
-            + norm_size[i] * RISK_WEIGHTS[2]
-            + norm_complexity[i] * RISK_WEIGHTS[3]
-            + norm_test[i] * RISK_WEIGHTS[4]
-            + norm_coupling[i] * RISK_WEIGHTS[5]
-            + norm_revert[i] * RISK_WEIGHTS[6];
+        let mut score = norm_churn[i] * weights[0]
+            + norm_accel[i] * weights[1]
+            + norm_size[i] * weights[2]
+            + norm_complexity[i] * weights[3]
+            + norm_test[i] * weights[4]
+            + norm_coupling[i] * weights[5]
+            + norm_revert[i] * weights[6];
 
         // Penalty: files with fewer than 5 tests per 100 lines get a bump
         // (only for .rs files where test density is meaningful)
@@ -610,6 +933,11 @@ pub(crate) fn format_risk_report(risks: &[FileRisk], show_all: bool) -> String {
     out.push('\n');
     out
 }
+
+/// Subcommands for `/risk` tab-completion.
+pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
+    "snapshot", "validate", "history", "predict", "accuracy", "--all",
+];
 
 /// Handle the `/risk` command — display per-file risk scores.
 pub(crate) fn handle_risk(input: &str) {
@@ -1172,6 +1500,9 @@ fn auto_validate_after_failure_to(
             surprise_list.join(", ")
         );
     }
+
+    // Update learned weights after every validation event
+    learn_weights_from_history();
 }
 
 // ── Risk prediction accuracy tracking ──
@@ -1378,12 +1709,253 @@ fn format_accuracy_report(stats: &AccuracyStats) -> String {
     )
 }
 
+/// A richer validation event preserving file-level hit/surprise detail and timestamp.
+struct RichValidationEvent {
+    ts: String,
+    day: u32,
+    hits: Vec<String>,
+    surprises: Vec<String>,
+    accuracy_pct: f64,
+}
+
+/// Parse rich validation events from JSONL content (preserves hit/surprise file lists).
+fn parse_rich_validation_events(content: &str) -> Vec<RichValidationEvent> {
+    let mut events = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let ts = val["ts"].as_str().unwrap_or("unknown").to_string();
+        let day = val["day"].as_u64().unwrap_or(0) as u32;
+        let hits: Vec<String> = val["hits"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let surprises: Vec<String> = val["surprises"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let accuracy_pct = val["accuracy_pct"].as_f64().unwrap_or(0.0);
+
+        events.push(RichValidationEvent {
+            ts,
+            day,
+            hits,
+            surprises,
+            accuracy_pct,
+        });
+    }
+    events
+}
+
+/// Build a bar chart string of filled/empty blocks for a 0.0–1.0 ratio.
+fn signal_bar(ratio: f64, width: usize) -> String {
+    let filled = ((ratio * width as f64).round() as usize).min(width);
+    let empty = width - filled;
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+/// Format the per-signal breakdown table showing predictive power and weight drift.
+fn format_signal_breakdown(
+    snapshot_content: &str,
+    validation_content: &str,
+    learned_weights: &[f64; 7],
+    has_learned: bool,
+) -> String {
+    let detailed = parse_detailed_events(validation_content, snapshot_content);
+
+    // Count how many times each signal appeared in hits vs total hits
+    let mut signal_hit_counts = [0u64; 7];
+    let mut total_hits = 0u64;
+
+    for event in &detailed {
+        for signals in &event.hit_signals {
+            total_hits += 1;
+            for &idx in signals {
+                if idx < 7 {
+                    signal_hit_counts[idx] += 1;
+                }
+            }
+        }
+    }
+
+    let mut out = format!("\n{BOLD}  Per-Signal Breakdown{RESET}\n");
+    out.push_str(&format!(
+        "  {:<16}{:<12}{}\n",
+        "Signal", "Predictive", "Weight (default → learned)"
+    ));
+
+    for i in 0..7 {
+        let ratio = if total_hits > 0 {
+            signal_hit_counts[i] as f64 / total_hits as f64
+        } else {
+            0.0
+        };
+        let bar = signal_bar(ratio, 10);
+        let weight_str = if has_learned {
+            format!("{:.2} → {:.2}", RISK_WEIGHTS[i], learned_weights[i])
+        } else {
+            format!("{:.2} (default)", RISK_WEIGHTS[i])
+        };
+        out.push_str(&format!(
+            "  {:<16}{}  {}\n",
+            SIGNAL_NAMES[i], bar, weight_str
+        ));
+    }
+
+    out
+}
+
+/// Format the last N rich validation events as a compact summary.
+fn format_recent_events(events: &[RichValidationEvent], max_events: usize) -> String {
+    if events.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!("\n{BOLD}  Recent Validation Events{RESET}\n");
+
+    let start = events.len().saturating_sub(max_events);
+    for event in &events[start..] {
+        // Shorten timestamp: prefer date portion only
+        let ts_short = if event.ts.len() >= 10 {
+            &event.ts[..10]
+        } else {
+            &event.ts
+        };
+        out.push_str(&format!(
+            "  {DIM}{ts_short}{RESET}  Day {:<4}  {GREEN}{} hit{RESET}  {RED}{} surprise{RESET}  ({:.0}%)\n",
+            event.day,
+            event.hits.len(),
+            event.surprises.len(),
+            event.accuracy_pct,
+        ));
+        if !event.hits.is_empty() {
+            let hit_list: Vec<&str> = event.hits.iter().map(|s| s.as_str()).collect();
+            let display = if hit_list.len() > 3 {
+                format!(
+                    "{}, ... +{} more",
+                    hit_list[..3].join(", "),
+                    hit_list.len() - 3
+                )
+            } else {
+                hit_list.join(", ")
+            };
+            out.push_str(&format!("    {DIM}✓ {display}{RESET}\n"));
+        }
+        if !event.surprises.is_empty() {
+            let surp_list: Vec<&str> = event.surprises.iter().map(|s| s.as_str()).collect();
+            let display = if surp_list.len() > 3 {
+                format!(
+                    "{}, ... +{} more",
+                    surp_list[..3].join(", "),
+                    surp_list.len() - 3
+                )
+            } else {
+                surp_list.join(", ")
+            };
+            out.push_str(&format!("    {DIM}✗ {display}{RESET}\n"));
+        }
+    }
+
+    out
+}
+
+/// Format the learning status section.
+fn format_learning_status(weights_path: &std::path::Path) -> String {
+    let mut out = format!("\n{BOLD}  Learning Status{RESET}\n");
+
+    let content = match std::fs::read_to_string(weights_path) {
+        Ok(c) => c,
+        Err(_) => {
+            // No weights file — check how many events we have
+            let val_content = std::fs::read_to_string(RISK_VALIDATION_PATH).unwrap_or_default();
+            let event_count = parse_validation_events(&val_content).len();
+            if event_count == 0 {
+                out.push_str(&format!(
+                    "  {DIM}No learned weights yet. Collect validation events\n\
+                     {DIM}  via /risk snapshot → /risk validate to start learning.{RESET}\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  {YELLOW}Learning... ({}/{} events collected){RESET}\n",
+                    event_count, MIN_VALIDATION_EVENTS
+                ));
+            }
+            return out;
+        }
+    };
+
+    let val: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => {
+            out.push_str(&format!(
+                "  {DIM}Weights file exists but is malformed.{RESET}\n"
+            ));
+            return out;
+        }
+    };
+
+    let learned_from = val["learned_from"].as_u64().unwrap_or(0);
+    let last_updated = val["last_updated"].as_str().unwrap_or("unknown");
+
+    out.push_str(&format!(
+        "  {GREEN}✓ Learned weights active{RESET}\n\
+         {DIM}  Based on:     {} validation events\n\
+         {DIM}  Last updated:  {}{RESET}\n",
+        learned_from, last_updated
+    ));
+
+    out
+}
+
 /// Handle the `/risk accuracy` subcommand.
 fn handle_risk_accuracy() {
     let events = load_validation_history_from(std::path::Path::new(RISK_VALIDATION_PATH));
     let stats = compute_accuracy_stats(&events);
+
+    // Section 1: Overall accuracy summary
     let report = format_accuracy_report(&stats);
     print!("{report}");
+
+    // If no data, the accuracy report already explains what to do — stop here
+    if stats.total_validations == 0 {
+        return;
+    }
+
+    // Section 2: Per-signal breakdown
+    let snapshot_content = std::fs::read_to_string(RISK_SNAPSHOT_PATH).unwrap_or_default();
+    let validation_content = std::fs::read_to_string(RISK_VALIDATION_PATH).unwrap_or_default();
+    let learned_weights = load_learned_weights();
+    let has_learned = std::path::Path::new(LEARNED_WEIGHTS_PATH).exists();
+    let signal_section = format_signal_breakdown(
+        &snapshot_content,
+        &validation_content,
+        &learned_weights,
+        has_learned,
+    );
+    print!("{signal_section}");
+
+    // Section 3: Recent validation events (last 5)
+    let rich_events = parse_rich_validation_events(&validation_content);
+    let recent_section = format_recent_events(&rich_events, 5);
+    print!("{recent_section}");
+
+    // Section 4: Learning status
+    let learning_section = format_learning_status(std::path::Path::new(LEARNED_WEIGHTS_PATH));
+    print!("{learning_section}");
 }
 
 /// Return a compact prediction accuracy summary for ambient display (e.g. `/status`).
@@ -3886,5 +4458,155 @@ src/baz.rs
         assert!(result.is_some());
         let (_hit_rate, _count, trend) = result.unwrap();
         assert!(trend.contains("stable"), "expected stable, got: {trend}");
+    }
+
+    // ── Adaptive weight learning tests ──
+
+    #[test]
+    fn test_learn_weights_from_validation_events() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl");
+        let val_path = dir.path().join("validations.jsonl");
+        let weights_path = dir.path().join("weights.json");
+
+        // Build 6 snapshot+validation pairs where churn signal consistently predicts hits
+        let mut snap_lines = Vec::new();
+        let mut val_lines = Vec::new();
+        for day in 100..106 {
+            snap_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T12:00:00Z","day":{},"git_hash":"abc{}","top_10":[{{"path":"src/hot.rs","score":0.9,"signals":["▲churn","▲size"]}},{{"path":"src/cold.rs","score":0.5,"signals":["▲size"]}}]}}"#,
+                day - 90, day, day
+            ));
+            val_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T13:00:00Z","day":{},"trigger":"watch_failure","hits":["src/hot.rs"],"surprises":["src/other.rs"],"predicted_count":10,"accuracy_pct":50.0}}"#,
+                day - 90, day
+            ));
+        }
+        std::fs::write(&snap_path, snap_lines.join("\n") + "\n").expect("write snapshots");
+        std::fs::write(&val_path, val_lines.join("\n") + "\n").expect("write validations");
+
+        learn_weights_from_history_to(&val_path, &snap_path, &weights_path);
+
+        assert!(weights_path.exists(), "weights file should be created");
+        let content = std::fs::read_to_string(&weights_path).expect("read weights");
+        let val: serde_json::Value = serde_json::from_str(&content).expect("parse JSON");
+
+        let weights = val["weights"].as_array().expect("weights array");
+        assert_eq!(weights.len(), 7);
+        assert_eq!(val["learned_from"].as_u64(), Some(6));
+
+        // Churn (index 0) should be boosted relative to default since it was present in all hits
+        let churn_weight = weights[0].as_f64().unwrap();
+        // Size (index 2) was present in hits too, but also in non-hit predictions
+        // Both should be > 0 and the total should sum to ~1.0
+        assert!(churn_weight > 0.0, "churn weight should be positive");
+    }
+
+    #[test]
+    fn test_learned_weights_sum_to_one() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl");
+        let val_path = dir.path().join("validations.jsonl");
+        let weights_path = dir.path().join("weights.json");
+
+        // Create diverse validation data (6 events, meeting the minimum)
+        let mut snap_lines = Vec::new();
+        let mut val_lines = Vec::new();
+        for day in 100..106 {
+            snap_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T12:00:00Z","day":{},"git_hash":"abc{}","top_10":[{{"path":"src/a.rs","score":0.8,"signals":["▲churn","▲recent","▲reverts"]}},{{"path":"src/b.rs","score":0.6,"signals":["▲size","▲coupled"]}}]}}"#,
+                day - 90, day, day
+            ));
+            val_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T13:00:00Z","day":{},"trigger":"watch_failure","hits":["src/a.rs"],"surprises":["src/c.rs"],"predicted_count":10,"accuracy_pct":50.0}}"#,
+                day - 90, day
+            ));
+        }
+        std::fs::write(&snap_path, snap_lines.join("\n") + "\n").expect("write");
+        std::fs::write(&val_path, val_lines.join("\n") + "\n").expect("write");
+
+        learn_weights_from_history_to(&val_path, &snap_path, &weights_path);
+
+        let content = std::fs::read_to_string(&weights_path).expect("read");
+        let val: serde_json::Value = serde_json::from_str(&content).expect("parse");
+        let weights: Vec<f64> = val["weights"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        let sum: f64 = weights.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 0.001,
+            "weights should sum to ~1.0, got {sum}"
+        );
+        for (i, &w) in weights.iter().enumerate() {
+            assert!(w >= 0.0, "weight {i} should be non-negative, got {w}");
+        }
+    }
+
+    #[test]
+    fn test_load_learned_weights_fallback() {
+        // Missing file → defaults
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("nonexistent.json");
+        let weights = load_learned_weights_from(&missing);
+        assert_eq!(weights, RISK_WEIGHTS);
+
+        // Invalid JSON → defaults
+        let bad_json = dir.path().join("bad.json");
+        std::fs::write(&bad_json, "not json").expect("write");
+        let weights = load_learned_weights_from(&bad_json);
+        assert_eq!(weights, RISK_WEIGHTS);
+
+        // Wrong number of weights → defaults
+        let wrong_count = dir.path().join("wrong.json");
+        std::fs::write(&wrong_count, r#"{"weights":[0.5,0.5]}"#).expect("write");
+        let weights = load_learned_weights_from(&wrong_count);
+        assert_eq!(weights, RISK_WEIGHTS);
+
+        // Weights that don't sum to ~1.0 → defaults
+        let bad_sum = dir.path().join("badsum.json");
+        std::fs::write(&bad_sum, r#"{"weights":[0.5,0.5,0.5,0.5,0.5,0.5,0.5]}"#).expect("write");
+        let weights = load_learned_weights_from(&bad_sum);
+        assert_eq!(weights, RISK_WEIGHTS);
+
+        // Valid weights → loaded
+        let good = dir.path().join("good.json");
+        std::fs::write(&good, r#"{"weights":[0.25,0.15,0.15,0.10,0.10,0.15,0.10]}"#)
+            .expect("write");
+        let weights = load_learned_weights_from(&good);
+        assert_eq!(weights, [0.25, 0.15, 0.15, 0.10, 0.10, 0.15, 0.10]);
+    }
+
+    #[test]
+    fn test_learn_weights_minimum_events() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl");
+        let val_path = dir.path().join("validations.jsonl");
+        let weights_path = dir.path().join("weights.json");
+
+        // Only 3 events (below MIN_VALIDATION_EVENTS of 5) — should NOT produce weights
+        let mut snap_lines = Vec::new();
+        let mut val_lines = Vec::new();
+        for day in 100..103 {
+            snap_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T12:00:00Z","day":{},"git_hash":"abc{}","top_10":[{{"path":"src/a.rs","score":0.8,"signals":["▲churn"]}}]}}"#,
+                day - 90, day, day
+            ));
+            val_lines.push(format!(
+                r#"{{"ts":"2025-01-{:02}T13:00:00Z","day":{},"trigger":"watch_failure","hits":["src/a.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}}"#,
+                day - 90, day
+            ));
+        }
+        std::fs::write(&snap_path, snap_lines.join("\n") + "\n").expect("write");
+        std::fs::write(&val_path, val_lines.join("\n") + "\n").expect("write");
+
+        learn_weights_from_history_to(&val_path, &snap_path, &weights_path);
+
+        assert!(
+            !weights_path.exists(),
+            "weights file should NOT be created with fewer than 5 events"
+        );
     }
 }
