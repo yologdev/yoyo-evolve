@@ -347,7 +347,15 @@ impl AgentTool for SmartEditTool {
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
         match self.inner.execute(params.clone(), ctx.clone()).await {
-            Ok(result) => Ok(result),
+            Ok(mut result) => {
+                // Proactive risk feedback: if the edited file is in src/ and has
+                // elevated risk, append an informational note. This is body-schema
+                // action-guidance — "you just touched something fragile."
+                if let Some(path) = params.get("path").and_then(|v| v.as_str()) {
+                    result = Self::maybe_append_risk_note(result, path);
+                }
+                Ok(result)
+            }
             Err(yoagent::types::ToolError::Failed(msg)) if msg.contains("not found") => {
                 // Try whitespace auto-fix before falling back to augmented error
                 if let Some(retry_result) = self.try_whitespace_autofix(&msg, &params, &ctx).await {
@@ -363,6 +371,44 @@ impl AgentTool for SmartEditTool {
 }
 
 impl SmartEditTool {
+    /// Append a risk note to a successful edit result if the file is in `src/`
+    /// and has elevated risk (top 25th percentile). This is purely informational —
+    /// a proprioceptive signal: "you just touched something fragile."
+    fn maybe_append_risk_note(
+        mut result: yoagent::types::ToolResult,
+        path: &str,
+    ) -> yoagent::types::ToolResult {
+        // Gate: only compute risk for our own source files
+        if !path.starts_with("src/") {
+            return result;
+        }
+        if let Some((score, signals)) = crate::commands_risk::file_risk_summary(path) {
+            let signal_desc = if signals.is_empty() {
+                "elevated risk score".to_string()
+            } else {
+                signals
+                    .iter()
+                    .filter_map(|s| match *s {
+                        "▲churn" => Some("high churn"),
+                        "▲recent" => Some("recent changes"),
+                        "▲size" => Some("large file"),
+                        "▲reverts" => Some("revert history"),
+                        "▲low-test" => Some("low test density"),
+                        "▲coupled" => Some("frequent co-changes"),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let note = format!(
+                "\nNote: {path} has elevated risk (score: {score:.2}, signals: {signal_desc}). \
+                 Consider running tests to verify this change."
+            );
+            result.content.push(yoagent::Content::Text { text: note });
+        }
+        result
+    }
+
     /// Attempt to auto-fix a whitespace-only mismatch by extracting the actual text
     /// from the file and retrying with corrected `old_text`.
     ///

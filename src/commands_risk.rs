@@ -848,6 +848,107 @@ pub(crate) fn top_risk_files(n: usize) -> Vec<(String, f64)> {
         .collect()
 }
 
+/// Given a list of file paths (e.g. from error output), return those with
+/// above-median risk scores (> 0.5 normalized) along with their score and
+/// active signal labels.
+///
+/// Used by `build_watch_fix_prompt` to inject risk-aware guidance into
+/// fix prompts — the "action-guidance" property of the body schema.
+pub(crate) fn risk_context_for_files(paths: &[String]) -> Vec<(String, f64, Vec<&'static str>)> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let risks = compute_file_risk_scores();
+    risk_context_for_files_from(paths, &risks)
+}
+
+/// Inner helper that operates on pre-computed risk scores (testable without git).
+pub(crate) fn risk_context_for_files_from(
+    paths: &[String],
+    risks: &[FileRisk],
+) -> Vec<(String, f64, Vec<&'static str>)> {
+    let mut result = Vec::new();
+    for risk in risks {
+        if risk.score > 0.5 && paths.iter().any(|p| p == &risk.path) {
+            result.push((risk.path.clone(), risk.score, risk.signals.clone()));
+        }
+    }
+    // Sort descending by score for consistent output
+    result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    result
+}
+
+/// Format risk context entries into a human-readable prompt section.
+pub(crate) fn format_risk_context(entries: &[(String, f64, Vec<&'static str>)]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut section =
+        String::from("\n\n⚠ Risk context — these error files have elevated historical risk:\n");
+    for (path, score, signals) in entries {
+        let signal_desc = signal_labels_to_description(signals);
+        section.push_str(&format!("• {path} (risk: {score:.2}) — {signal_desc}\n"));
+    }
+    section.push_str(
+        "Be especially careful with changes to these files. Consider smaller, incremental fixes.",
+    );
+    section
+}
+
+/// Check whether a single file has elevated risk (top 25th percentile).
+///
+/// Returns `Some((score, signals_description))` if the file is in the top quartile,
+/// `None` otherwise. The description uses human-readable signal names.
+/// This is the proactive counterpart to `risk_context_for_files` — intended for
+/// single-file lookups after a successful edit (body-schema action-guidance).
+pub(crate) fn file_risk_summary(path: &str) -> Option<(f64, Vec<&'static str>)> {
+    file_risk_summary_from(path, &compute_file_risk_scores())
+}
+
+/// Inner implementation with pre-computed scores (testable without git).
+pub(crate) fn file_risk_summary_from(
+    path: &str,
+    risks: &[FileRisk],
+) -> Option<(f64, Vec<&'static str>)> {
+    if risks.is_empty() {
+        return None;
+    }
+    // Find the 75th percentile threshold (risks are sorted descending by score)
+    let p75_index = risks.len() / 4; // top 25% = first quarter of sorted-desc list
+    let threshold = risks.get(p75_index).map(|r| r.score).unwrap_or(0.0);
+
+    // Look up the file
+    risks.iter().find(|r| r.path == path).and_then(|r| {
+        if r.score >= threshold {
+            Some((r.score, r.signals.clone()))
+        } else {
+            None
+        }
+    })
+}
+
+/// Convert signal labels like `["▲churn", "▲size"]` to a readable description
+/// like `"high churn, large file"`.
+fn signal_labels_to_description(signals: &[&str]) -> String {
+    let parts: Vec<&str> = signals
+        .iter()
+        .filter_map(|s| match *s {
+            "▲churn" => Some("high churn"),
+            "▲recent" => Some("recent changes"),
+            "▲size" => Some("large file"),
+            "▲reverts" => Some("revert history"),
+            "▲low-test" => Some("low test density"),
+            "▲coupled" => Some("frequent co-changes with fragile files"),
+            _ => None,
+        })
+        .collect();
+    if parts.is_empty() {
+        "elevated risk score".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
 /// Build a map of file paths → number of times that file appeared in a revert commit.
 ///
 /// Searches git history for multiple revert patterns:
@@ -4608,5 +4709,189 @@ src/baz.rs
             !weights_path.exists(),
             "weights file should NOT be created with fewer than 5 events"
         );
+    }
+
+    #[test]
+    fn risk_context_for_files_empty_paths() {
+        let risks = vec![FileRisk {
+            path: "src/foo.rs".to_string(),
+            score: 0.8,
+            signals: vec!["▲churn"],
+            test_density: 1.0,
+        }];
+        let result = risk_context_for_files_from(&[], &risks);
+        assert!(result.is_empty(), "empty paths should return empty result");
+    }
+
+    #[test]
+    fn risk_context_for_files_no_high_risk() {
+        let risks = vec![
+            FileRisk {
+                path: "src/foo.rs".to_string(),
+                score: 0.3,
+                signals: vec![],
+                test_density: 5.0,
+            },
+            FileRisk {
+                path: "src/bar.rs".to_string(),
+                score: 0.1,
+                signals: vec![],
+                test_density: 8.0,
+            },
+        ];
+        let paths = vec!["src/foo.rs".to_string(), "src/bar.rs".to_string()];
+        let result = risk_context_for_files_from(&paths, &risks);
+        assert!(
+            result.is_empty(),
+            "no files above 0.5 threshold should return empty"
+        );
+    }
+
+    #[test]
+    fn risk_context_for_files_with_high_risk() {
+        let risks = vec![
+            FileRisk {
+                path: "src/fragile.rs".to_string(),
+                score: 0.82,
+                signals: vec!["▲churn", "▲low-test"],
+                test_density: 0.5,
+            },
+            FileRisk {
+                path: "src/stable.rs".to_string(),
+                score: 0.2,
+                signals: vec![],
+                test_density: 10.0,
+            },
+            FileRisk {
+                path: "src/coupled.rs".to_string(),
+                score: 0.65,
+                signals: vec!["▲coupled"],
+                test_density: 3.0,
+            },
+        ];
+        let paths = vec![
+            "src/fragile.rs".to_string(),
+            "src/stable.rs".to_string(),
+            "src/coupled.rs".to_string(),
+        ];
+        let result = risk_context_for_files_from(&paths, &risks);
+        assert_eq!(result.len(), 2, "should return 2 high-risk files");
+        // Should be sorted descending by score
+        assert_eq!(result[0].0, "src/fragile.rs");
+        assert!((result[0].1 - 0.82).abs() < 0.001);
+        assert_eq!(result[0].2, vec!["▲churn", "▲low-test"]);
+        assert_eq!(result[1].0, "src/coupled.rs");
+        assert!((result[1].1 - 0.65).abs() < 0.001);
+    }
+
+    #[test]
+    fn risk_context_for_files_unmatched_paths_ignored() {
+        let risks = vec![FileRisk {
+            path: "src/fragile.rs".to_string(),
+            score: 0.9,
+            signals: vec!["▲churn"],
+            test_density: 0.5,
+        }];
+        // Query for a path not in the risk data
+        let paths = vec!["src/other.rs".to_string()];
+        let result = risk_context_for_files_from(&paths, &risks);
+        assert!(
+            result.is_empty(),
+            "paths not in risk data should not appear"
+        );
+    }
+
+    #[test]
+    fn format_risk_context_empty() {
+        let result = format_risk_context(&[]);
+        assert!(
+            result.is_empty(),
+            "empty entries should produce empty string"
+        );
+    }
+
+    #[test]
+    fn format_risk_context_with_entries() {
+        let entries = vec![
+            ("src/foo.rs".to_string(), 0.82, vec!["▲churn", "▲low-test"]),
+            ("src/bar.rs".to_string(), 0.65, vec!["▲coupled"]),
+        ];
+        let result = format_risk_context(&entries);
+        assert!(result.contains("⚠ Risk context"));
+        assert!(result.contains("src/foo.rs (risk: 0.82)"));
+        assert!(result.contains("high churn, low test density"));
+        assert!(result.contains("src/bar.rs (risk: 0.65)"));
+        assert!(result.contains("frequent co-changes with fragile files"));
+        assert!(result.contains("Be especially careful"));
+    }
+
+    #[test]
+    fn file_risk_summary_from_returns_none_for_missing_file() {
+        let risks = vec![
+            FileRisk {
+                path: "src/a.rs".to_string(),
+                score: 0.9,
+                signals: vec!["▲churn"],
+                test_density: 0.5,
+            },
+            FileRisk {
+                path: "src/b.rs".to_string(),
+                score: 0.5,
+                signals: vec![],
+                test_density: 1.0,
+            },
+        ];
+        assert!(file_risk_summary_from("src/nonexistent.rs", &risks).is_none());
+    }
+
+    #[test]
+    fn file_risk_summary_from_returns_none_for_empty_risks() {
+        assert!(file_risk_summary_from("src/a.rs", &[]).is_none());
+    }
+
+    #[test]
+    fn file_risk_summary_from_returns_some_for_top_quartile() {
+        // 4 files: top quartile threshold is at index 1 (4/4=1), so score >= 0.70
+        let risks = vec![
+            FileRisk {
+                path: "src/high.rs".to_string(),
+                score: 0.90,
+                signals: vec!["▲churn", "▲size"],
+                test_density: 0.2,
+            },
+            FileRisk {
+                path: "src/medium_high.rs".to_string(),
+                score: 0.70,
+                signals: vec!["▲recent"],
+                test_density: 0.5,
+            },
+            FileRisk {
+                path: "src/medium.rs".to_string(),
+                score: 0.50,
+                signals: vec![],
+                test_density: 1.0,
+            },
+            FileRisk {
+                path: "src/low.rs".to_string(),
+                score: 0.20,
+                signals: vec![],
+                test_density: 2.0,
+            },
+        ];
+
+        // High-risk file should return Some
+        let result = file_risk_summary_from("src/high.rs", &risks);
+        assert!(result.is_some());
+        let (score, signals) = result.unwrap();
+        assert!((score - 0.90).abs() < 0.001);
+        assert_eq!(signals, vec!["▲churn", "▲size"]);
+
+        // At-threshold file should also return Some
+        let result = file_risk_summary_from("src/medium_high.rs", &risks);
+        assert!(result.is_some());
+
+        // Below-threshold file should return None
+        assert!(file_risk_summary_from("src/medium.rs", &risks).is_none());
+        assert!(file_risk_summary_from("src/low.rs", &risks).is_none());
     }
 }

@@ -1052,6 +1052,11 @@ const AUTO_CONTEXT_MAX_FILES: usize = 3;
 /// Minimum relevance score for a file to be auto-injected.
 const AUTO_CONTEXT_MIN_SCORE: usize = 5;
 
+/// Score multiplier numerator for recently-edited files (×3/2 = 1.5×).
+const RECENCY_BOOST_NUM: usize = 3;
+/// Score multiplier denominator for recently-edited files.
+const RECENCY_BOOST_DEN: usize = 2;
+
 /// Maximum lines to read from a single file for auto-context.
 const AUTO_CONTEXT_MAX_LINES: usize = 200;
 
@@ -1131,12 +1136,37 @@ fn build_signature_block(repo_map: &[FileSymbols], matched_paths: &[String]) -> 
     }
 }
 
+/// Get the set of files changed in the last few git commits.
+///
+/// Uses `git diff --name-only HEAD~5` to find recently-edited files.
+/// Falls back gracefully if git is unavailable or there are fewer than 5 commits.
+fn get_recent_git_files() -> std::collections::HashSet<String> {
+    let output = std::process::Command::new("git")
+        .args(["diff", "--name-only", "HEAD~5"])
+        .stderr(std::process::Stdio::null())
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            stdout
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect()
+        }
+        _ => std::collections::HashSet::new(),
+    }
+}
+
 /// Automatically identify project files relevant to a user prompt.
 ///
 /// Returns `(path, content)` pairs for the top files with score ≥ `AUTO_CONTEXT_MIN_SCORE`.
 /// Skips binary files, caps content at `AUTO_CONTEXT_MAX_LINES` lines, and excludes
 /// paths that already appear in `recent_context` (to avoid re-injecting files the
 /// conversation has already seen).
+///
+/// Files that were recently edited (in the last ~5 commits) receive a 1.5× score
+/// boost, making them more likely to clear the threshold and appear in results.
 pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(String, String)> {
     // Gate: skip slash commands, @-mention prompts, and very short follow-ups
     if prompt.starts_with('/') || prompt.contains('@') || prompt.len() < 20 {
@@ -1149,7 +1179,19 @@ pub fn auto_context_for_prompt(prompt: &str, recent_context: &[String]) -> Vec<(
     }
 
     let repo_map = build_repo_map(None, false);
-    let results = score_files(&repo_map, &keywords);
+    let mut results = score_files(&repo_map, &keywords);
+
+    // Apply recency boost: files changed in the last ~5 commits get 1.5× score
+    let recent_files = get_recent_git_files();
+    if !recent_files.is_empty() {
+        for r in &mut results {
+            if recent_files.contains(&r.path) {
+                r.score = r.score * RECENCY_BOOST_NUM / RECENCY_BOOST_DEN;
+            }
+        }
+        // Re-sort after boosting since relative order may have changed
+        results.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
+    }
 
     let mut out = Vec::new();
     let mut matched_paths = Vec::new();
@@ -2688,7 +2730,9 @@ mod tests {
 
     #[test]
     fn test_auto_context_web_search_returns_relevant_files() {
-        // A prompt about "web search" should return web-related files from this repo
+        // A prompt about "web search" should return web-related files from this repo.
+        // With recency boosting, recently-edited files with matching symbols (e.g.,
+        // tools.rs containing WebSearchTool) may rank higher than commands_web.rs.
         let results =
             auto_context_for_prompt("how does the web search tool work in this project", &[]);
         // Should return at least one file, and it should be web-related
@@ -2697,10 +2741,17 @@ mod tests {
             "web search query should return relevant files"
         );
         let paths: Vec<&str> = results.iter().map(|r| r.0.as_str()).collect();
-        let has_web_file = paths.iter().any(|p| p.contains("web"));
+        let has_web_path = paths.iter().any(|p| p.contains("web"));
+        // Also check the signature block for web-related symbols (e.g. WebSearchTool
+        // in tools.rs), since recency boosting may promote files whose path doesn't
+        // contain "web" but whose symbols do.
+        let sig_has_web = results
+            .iter()
+            .find(|(p, _)| p == SIGNATURE_SENTINEL)
+            .is_some_and(|(_, content)| content.to_lowercase().contains("web"));
         assert!(
-            has_web_file,
-            "results should include a web-related file, got: {:?}",
+            has_web_path || sig_has_web,
+            "results should include a web-related file or web symbols in signatures, got: {:?}",
             paths
         );
         // Should return at most MAX_FILES file entries (plus optional signature block)
@@ -2978,5 +3029,72 @@ mod tests {
             result
         );
         assert!(result.contains("--- src/nonexistent_file_that_has_no_risk.rs ---"));
+    }
+
+    #[test]
+    fn test_get_recent_git_files_returns_set() {
+        // Running in the yoyo repo, git diff HEAD~5 should return *something*
+        let files = get_recent_git_files();
+        // We can't assert specific files (depends on git state), but the set
+        // should either be non-empty (normal repo) or empty (shallow clone / no commits)
+        // and should never panic.
+        for f in &files {
+            assert!(!f.is_empty(), "recent git file entry should not be empty");
+        }
+    }
+
+    #[test]
+    fn test_recency_boost_increases_score() {
+        use crate::symbols::{Symbol, SymbolKind};
+
+        // Two files with identical keyword scores
+        let files = vec![
+            FileSymbols {
+                path: "src/alpha.rs".into(),
+                lines: 100,
+                symbols: vec![Symbol {
+                    name: "search".into(),
+                    kind: SymbolKind::Function,
+                    is_public: true,
+                    line: 1,
+                }],
+            },
+            FileSymbols {
+                path: "src/beta.rs".into(),
+                lines: 100,
+                symbols: vec![Symbol {
+                    name: "search".into(),
+                    kind: SymbolKind::Function,
+                    is_public: true,
+                    line: 1,
+                }],
+            },
+        ];
+
+        let keywords = vec!["search".to_string()];
+        let mut results = score_files(&files, &keywords);
+
+        // Both should have the same score initially
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].score, results[1].score);
+
+        // Simulate recency boost for only alpha.rs
+        let recent: std::collections::HashSet<String> =
+            ["src/alpha.rs".to_string()].into_iter().collect();
+        for r in &mut results {
+            if recent.contains(&r.path) {
+                r.score = r.score * RECENCY_BOOST_NUM / RECENCY_BOOST_DEN;
+            }
+        }
+        results.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
+
+        // alpha.rs should now rank first with a higher score
+        assert_eq!(results[0].path, "src/alpha.rs");
+        assert!(
+            results[0].score > results[1].score,
+            "boosted file should have higher score: {} vs {}",
+            results[0].score,
+            results[1].score
+        );
     }
 }

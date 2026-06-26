@@ -8,6 +8,7 @@
 use crate::commands_file::extract_file_paths_from_output;
 use crate::commands_lint::{lint_command_for_project, test_command_for_project, LintStrictness};
 use crate::commands_project::detect_project_type;
+use crate::commands_risk::{format_risk_context, risk_context_for_files};
 use crate::format::*;
 use crate::memory::{auto_remember, build_fix_memory_note, build_learn_memory_note};
 use crate::prompt::run_prompt_auto_retry;
@@ -1089,12 +1090,18 @@ pub fn build_watch_fix_prompt(watch_cmd: &str, output: &str) -> String {
     // Enrich the prompt with file paths extracted from the error output
     // so the agent knows exactly which files to focus on.
     let error_files = extract_file_paths_from_output(output);
+    let risk_section = if !error_files.is_empty() {
+        let risk_entries = risk_context_for_files(&error_files);
+        format_risk_context(&risk_entries)
+    } else {
+        String::new()
+    };
     if error_files.is_empty() {
         base
     } else {
         let file_list = error_files.join(", ");
         format!(
-            "{base}\n\nFiles referenced in errors: {file_list}. Focus your fixes on these files."
+            "{base}\n\nFiles referenced in errors: {file_list}. Focus your fixes on these files.{risk_section}"
         )
     }
 }
