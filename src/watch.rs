@@ -1306,6 +1306,9 @@ pub async fn run_watch_after_prompt(
                 eprintln!(
                     "{DIM}  ⏱ session budget nearly exhausted, stopping watch fix loop early{RESET}"
                 );
+                let changed: Vec<String> =
+                    changes.snapshot().iter().map(|c| c.path.clone()).collect();
+                crate::commands_risk::auto_validate_after_failure(&changed);
                 return WatchResult {
                     passed: false,
                     last_tool_error,
@@ -1342,12 +1345,19 @@ pub async fn run_watch_after_prompt(
 
         if !phase_passed {
             // Stop: don't proceed to later phases if this one can't be fixed
+            let changed: Vec<String> = changes.snapshot().iter().map(|c| c.path.clone()).collect();
+            crate::commands_risk::auto_validate_after_failure(&changed);
             return WatchResult {
                 passed: false,
                 last_tool_error,
             };
         }
     }
+
+    // Validate risk predictions even on success — knowing which predicted-risky
+    // files survived is valuable data for the prediction-validation loop.
+    let changed: Vec<String> = changes.snapshot().iter().map(|c| c.path.clone()).collect();
+    crate::commands_risk::auto_validate_after_failure(&changed);
 
     WatchResult {
         passed: true,

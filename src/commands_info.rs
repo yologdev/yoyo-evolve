@@ -228,6 +228,10 @@ pub fn handle_status(
             .collect();
         println!("  risk:    {}", risk_parts.join(" · "));
     }
+    // Show prediction accuracy if enough data exists (ambient self-awareness)
+    if let Some((hit_rate, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+        println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
+    }
     println!("{RESET}");
 }
 

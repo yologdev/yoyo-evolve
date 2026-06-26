@@ -635,6 +635,11 @@ pub(crate) fn handle_risk(input: &str) {
         return;
     }
 
+    if sub == "accuracy" {
+        handle_risk_accuracy();
+        return;
+    }
+
     let show_all = input.contains("--all");
     let risks = compute_file_risk_scores();
     let report = format_risk_report(&risks, show_all);
@@ -1026,6 +1031,385 @@ fn auto_risk_snapshot_to(path: &std::path::Path) {
 
     let json_line = build_risk_snapshot_json(&risks, day, &git_hash);
     write_risk_snapshot_to(path, &json_line).expect("test snapshot write should succeed");
+}
+
+/// Default path for risk validation JSONL file.
+const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
+
+/// Automatically validate risk predictions against files that were changed
+/// in the current session. Called after watch failures (or successes) to
+/// close the prediction-validation loop.
+///
+/// - No-op if no snapshots exist.
+/// - No-op if no `changed_files` match `src/` paths.
+/// - Appends a validation event to `.yoyo/risk_validations.jsonl`.
+/// - Prints a brief 2-3 line stderr summary when there are results.
+pub(crate) fn auto_validate_after_failure(changed_files: &[String]) {
+    auto_validate_after_failure_to(
+        changed_files,
+        std::path::Path::new(RISK_SNAPSHOT_PATH),
+        std::path::Path::new(RISK_VALIDATION_PATH),
+    );
+}
+
+/// Inner implementation with configurable paths (for testing).
+fn auto_validate_after_failure_to(
+    changed_files: &[String],
+    snapshot_path: &std::path::Path,
+    validation_path: &std::path::Path,
+) {
+    // Filter to only src/ files — risk predictions focus on source code
+    let src_files: Vec<&String> = changed_files
+        .iter()
+        .filter(|f| f.starts_with("src/"))
+        .collect();
+    if src_files.is_empty() {
+        return;
+    }
+
+    // Load the most recent snapshot
+    let content = match std::fs::read_to_string(snapshot_path) {
+        Ok(c) => c,
+        Err(_) => return, // no snapshots exist — no-op
+    };
+    let snapshots = parse_all_snapshots(&content);
+    let last = match snapshots.last() {
+        Some(s) => s,
+        None => return, // no valid snapshots — no-op
+    };
+
+    // Classify: which changed src/ files were predicted (hits) vs not (surprises)
+    let predicted_set: std::collections::HashSet<&str> =
+        last.predicted.iter().map(|s| s.as_str()).collect();
+
+    let mut hits: Vec<String> = Vec::new();
+    let mut surprises: Vec<String> = Vec::new();
+    for f in &src_files {
+        if predicted_set.contains(f.as_str()) {
+            hits.push(f.to_string());
+        } else {
+            surprises.push(f.to_string());
+        }
+    }
+
+    // Only produce output if there's something meaningful to report
+    if hits.is_empty() && surprises.is_empty() {
+        return;
+    }
+
+    let total_changed = hits.len() + surprises.len();
+    let accuracy_pct = if total_changed > 0 {
+        (hits.len() as f64 / total_changed as f64) * 100.0
+    } else {
+        0.0
+    };
+    let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+
+    let day: u32 = std::fs::read_to_string("DAY_COUNT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    let ts = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Build validation event JSON
+    let event = serde_json::json!({
+        "ts": ts,
+        "day": day,
+        "trigger": "watch_failure",
+        "hits": hits,
+        "surprises": surprises,
+        "predicted_count": 10,
+        "accuracy_pct": accuracy_pct_rounded,
+    });
+
+    // Append to validation JSONL
+    if let Some(parent) = validation_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json_str) = serde_json::to_string(&event) {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(validation_path)
+        {
+            let _ = writeln!(file, "{json_str}");
+        }
+    }
+
+    // Brief stderr summary (2-3 lines)
+    eprintln!(
+        "{DIM}  📊 Risk validation: {}/{} changed files were in top-10 predictions ({:.1}% accuracy){RESET}",
+        hits.len(),
+        total_changed,
+        accuracy_pct_rounded,
+    );
+    if !hits.is_empty() {
+        let hit_list: Vec<&str> = hits.iter().map(|s| s.as_str()).collect();
+        eprintln!(
+            "{DIM}     Predicted correctly: {}{RESET}",
+            hit_list.join(", ")
+        );
+    }
+    if !surprises.is_empty() {
+        let surprise_list: Vec<&str> = surprises.iter().map(|s| s.as_str()).collect();
+        eprintln!(
+            "{DIM}     Surprises (not predicted): {}{RESET}",
+            surprise_list.join(", ")
+        );
+    }
+}
+
+// ── Risk prediction accuracy tracking ──
+
+/// A single parsed validation event from `.yoyo/risk_validations.jsonl`.
+struct ValidationEvent {
+    day: u32,
+    hit_count: usize,
+    total_changed: usize,
+    accuracy_pct: f64,
+}
+
+/// Trend direction for accuracy over time.
+#[derive(Debug, PartialEq)]
+enum AccuracyTrend {
+    Improving,
+    Declining,
+    Stable,
+    Insufficient, // not enough data points
+}
+
+/// Aggregate accuracy statistics computed from validation history.
+struct AccuracyStats {
+    total_validations: usize,
+    total_hits: usize,
+    total_changed: usize,
+    overall_hit_rate_pct: f64,
+    trend: AccuracyTrend,
+    best_day: Option<(u32, f64)>,  // (day, accuracy_pct)
+    worst_day: Option<(u32, f64)>, // (day, accuracy_pct)
+}
+
+/// Load validation history from a JSONL file.
+fn load_validation_history_from(path: &std::path::Path) -> Vec<ValidationEvent> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    parse_validation_events(&content)
+}
+
+/// Parse validation events from JSONL content (testable without filesystem).
+fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
+    let mut events = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let day = val["day"].as_u64().unwrap_or(0) as u32;
+        let hits = val["hits"].as_array().map(|a| a.len()).unwrap_or(0);
+        let surprises = val["surprises"].as_array().map(|a| a.len()).unwrap_or(0);
+        let total_changed = hits + surprises;
+        let accuracy_pct = val["accuracy_pct"].as_f64().unwrap_or(0.0);
+
+        events.push(ValidationEvent {
+            day,
+            hit_count: hits,
+            total_changed,
+            accuracy_pct,
+        });
+    }
+    events
+}
+
+/// Compute trend by comparing the average accuracy of the last N events
+/// vs the first N events. Uses min(5, len/2) as window size.
+fn compute_accuracy_trend(events: &[ValidationEvent]) -> AccuracyTrend {
+    if events.len() < 2 {
+        return AccuracyTrend::Insufficient;
+    }
+
+    let window = std::cmp::min(5, events.len() / 2).max(1);
+    let first_avg: f64 =
+        events[..window].iter().map(|e| e.accuracy_pct).sum::<f64>() / window as f64;
+    let last_avg: f64 = events[events.len() - window..]
+        .iter()
+        .map(|e| e.accuracy_pct)
+        .sum::<f64>()
+        / window as f64;
+
+    let diff = last_avg - first_avg;
+    if diff > 5.0 {
+        AccuracyTrend::Improving
+    } else if diff < -5.0 {
+        AccuracyTrend::Declining
+    } else {
+        AccuracyTrend::Stable
+    }
+}
+
+/// Compute aggregate accuracy statistics from validation events.
+fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStats {
+    if events.is_empty() {
+        return AccuracyStats {
+            total_validations: 0,
+            total_hits: 0,
+            total_changed: 0,
+            overall_hit_rate_pct: 0.0,
+            trend: AccuracyTrend::Insufficient,
+            best_day: None,
+            worst_day: None,
+        };
+    }
+
+    let total_validations = events.len();
+    let total_hits: usize = events.iter().map(|e| e.hit_count).sum();
+    let total_changed: usize = events.iter().map(|e| e.total_changed).sum();
+    let overall_hit_rate_pct = if total_changed > 0 {
+        (total_hits as f64 / total_changed as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    // Group by day — average accuracy per day for best/worst
+    let mut day_accuracies: std::collections::BTreeMap<u32, Vec<f64>> =
+        std::collections::BTreeMap::new();
+    for e in events {
+        day_accuracies
+            .entry(e.day)
+            .or_default()
+            .push(e.accuracy_pct);
+    }
+
+    let mut best_day: Option<(u32, f64)> = None;
+    let mut worst_day: Option<(u32, f64)> = None;
+    for (&day, accs) in &day_accuracies {
+        let avg = accs.iter().sum::<f64>() / accs.len() as f64;
+        let avg_rounded = (avg * 10.0).round() / 10.0;
+        match best_day {
+            None => best_day = Some((day, avg_rounded)),
+            Some((_, best_acc)) if avg_rounded > best_acc => best_day = Some((day, avg_rounded)),
+            _ => {}
+        }
+        match worst_day {
+            None => worst_day = Some((day, avg_rounded)),
+            Some((_, worst_acc)) if avg_rounded < worst_acc => worst_day = Some((day, avg_rounded)),
+            _ => {}
+        }
+    }
+
+    let trend = compute_accuracy_trend(events);
+
+    AccuracyStats {
+        total_validations,
+        total_hits,
+        total_changed,
+        overall_hit_rate_pct,
+        trend,
+        best_day,
+        worst_day,
+    }
+}
+
+/// Format the accuracy report as a compact box display.
+fn format_accuracy_report(stats: &AccuracyStats) -> String {
+    if stats.total_validations == 0 {
+        return format!(
+            "\n{BOLD}{CYAN}  No prediction accuracy data yet.{RESET}\n\n\
+             {DIM}  Accuracy tracking starts automatically when watch commands\n\
+             {DIM}  detect failures and validate them against risk predictions.\n\n\
+             {DIM}  Run {RESET}/risk snapshot{DIM} first, then trigger a watch failure{RESET}\n\
+             {DIM}  to begin collecting data.{RESET}\n"
+        );
+    }
+
+    let hit_rate_rounded = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+    let trend_str = match stats.trend {
+        AccuracyTrend::Improving => format!("{GREEN}↑ Improving{RESET}"),
+        AccuracyTrend::Declining => format!("{RED}↓ Declining{RESET}"),
+        AccuracyTrend::Stable => format!("{YELLOW}→ Stable{RESET}"),
+        AccuracyTrend::Insufficient => format!("{DIM}? Too few data points{RESET}"),
+    };
+
+    let best_str = match stats.best_day {
+        Some((day, pct)) => format!("Day {day} ({pct:.0}%)"),
+        None => "—".to_string(),
+    };
+    let worst_str = match stats.worst_day {
+        Some((day, pct)) => format!("Day {day} ({pct:.0}%)"),
+        None => "—".to_string(),
+    };
+
+    format!(
+        "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
+         {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
+         {BOLD}  │{RESET} Hit rate:     {:<13}{BOLD}│{RESET}\n\
+         {BOLD}  │{RESET} Trend:        {:<25}{BOLD}│{RESET}\n\
+         {BOLD}  │{RESET} Best day:     {:<13}{BOLD}│{RESET}\n\
+         {BOLD}  │{RESET} Worst day:    {:<13}{BOLD}│{RESET}\n\
+         {BOLD}  ╰────────────────────────────╯{RESET}\n",
+        stats.total_validations,
+        format!(
+            "{hit_rate_rounded:.0}% ({}/{})",
+            stats.total_hits, stats.total_changed
+        ),
+        trend_str,
+        best_str,
+        worst_str,
+    )
+}
+
+/// Handle the `/risk accuracy` subcommand.
+fn handle_risk_accuracy() {
+    let events = load_validation_history_from(std::path::Path::new(RISK_VALIDATION_PATH));
+    let stats = compute_accuracy_stats(&events);
+    let report = format_accuracy_report(&stats);
+    print!("{report}");
+}
+
+/// Return a compact prediction accuracy summary for ambient display (e.g. `/status`).
+///
+/// Returns `Some((hit_rate_pct, validation_count, trend_label))` when there are
+/// ≥2 validation entries in `.yoyo/risk_validations.jsonl`, or `None` if there
+/// isn't enough data yet. This keeps `/status` clean when no data exists.
+pub(crate) fn prediction_accuracy_summary() -> Option<(f64, usize, &'static str)> {
+    prediction_accuracy_summary_from(std::path::Path::new(RISK_VALIDATION_PATH))
+}
+
+/// Inner implementation with configurable path (for testing).
+fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usize, &'static str)> {
+    let events = load_validation_history_from(path);
+    if events.len() < 2 {
+        return None;
+    }
+    let stats = compute_accuracy_stats(&events);
+    let trend_label = match stats.trend {
+        AccuracyTrend::Improving => "↑ improving",
+        AccuracyTrend::Declining => "↓ declining",
+        AccuracyTrend::Stable => "→ stable",
+        AccuracyTrend::Insufficient => "? insufficient",
+    };
+    let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+    Some((hit_rate, stats.total_validations, trend_label))
 }
 
 /// Parsed git-log entry: one commit message + the files it touched.
@@ -2996,5 +3380,511 @@ src/baz.rs
             line_count, 2,
             "two calls should produce two lines, got {line_count}"
         );
+    }
+
+    #[test]
+    fn test_auto_validate_with_synthetic_snapshot() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl");
+        let val_path = dir.path().join("validations.jsonl");
+
+        // Write a synthetic snapshot with known top-10 files
+        let snapshot = serde_json::json!({
+            "ts": "2025-01-15T12:00:00Z",
+            "day": 100,
+            "git_hash": "abc1234",
+            "top_10": [
+                {"path": "src/main.rs", "score": 0.9, "signals": ["churn"]},
+                {"path": "src/cli.rs", "score": 0.8, "signals": ["size"]},
+                {"path": "src/watch.rs", "score": 0.7, "signals": ["recent"]},
+                {"path": "src/repl.rs", "score": 0.6, "signals": ["churn"]},
+                {"path": "src/tools.rs", "score": 0.5, "signals": ["coupled"]},
+            ]
+        });
+        std::fs::write(&snap_path, serde_json::to_string(&snapshot).unwrap())
+            .expect("write snapshot");
+
+        // Simulate changed files: 3 match predictions, 2 are surprises
+        let changed = vec![
+            "src/main.rs".to_string(),   // hit
+            "src/cli.rs".to_string(),    // hit
+            "src/prompt.rs".to_string(), // surprise
+            "src/safety.rs".to_string(), // surprise
+            "src/watch.rs".to_string(),  // hit
+        ];
+
+        auto_validate_after_failure_to(&changed, &snap_path, &val_path);
+
+        // Verify JSONL output
+        let contents = std::fs::read_to_string(&val_path).expect("read validation file");
+        assert!(
+            !contents.trim().is_empty(),
+            "validation file should not be empty"
+        );
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+        assert_eq!(parsed["trigger"], "watch_failure");
+        assert_eq!(parsed["predicted_count"], 10);
+
+        let hits = parsed["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 3, "should have 3 hits");
+        assert!(hits.contains(&serde_json::json!("src/main.rs")));
+        assert!(hits.contains(&serde_json::json!("src/cli.rs")));
+        assert!(hits.contains(&serde_json::json!("src/watch.rs")));
+
+        let surprises = parsed["surprises"].as_array().unwrap();
+        assert_eq!(surprises.len(), 2, "should have 2 surprises");
+        assert!(surprises.contains(&serde_json::json!("src/prompt.rs")));
+        assert!(surprises.contains(&serde_json::json!("src/safety.rs")));
+
+        // accuracy = 3/5 = 60%
+        let accuracy = parsed["accuracy_pct"].as_f64().unwrap();
+        assert!(
+            (accuracy - 60.0).abs() < 0.1,
+            "accuracy should be ~60%, got {accuracy}"
+        );
+    }
+
+    #[test]
+    fn test_auto_validate_noop_when_no_snapshots() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl"); // does not exist
+        let val_path = dir.path().join("validations.jsonl");
+
+        let changed = vec!["src/main.rs".to_string()];
+        auto_validate_after_failure_to(&changed, &snap_path, &val_path);
+
+        // Validation file should not be created
+        assert!(
+            !val_path.exists(),
+            "validation file should not exist when no snapshots"
+        );
+    }
+
+    #[test]
+    fn test_auto_validate_noop_when_no_src_files() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let snap_path = dir.path().join("snapshots.jsonl");
+        let val_path = dir.path().join("validations.jsonl");
+
+        // Write a valid snapshot
+        let snapshot = serde_json::json!({
+            "ts": "2025-01-15T12:00:00Z",
+            "day": 100,
+            "git_hash": "abc1234",
+            "top_10": [
+                {"path": "src/main.rs", "score": 0.9, "signals": ["churn"]},
+            ]
+        });
+        std::fs::write(&snap_path, serde_json::to_string(&snapshot).unwrap())
+            .expect("write snapshot");
+
+        // Changed files are all non-src/
+        let changed = vec![
+            "README.md".to_string(),
+            "docs/guide.md".to_string(),
+            "Cargo.toml".to_string(),
+        ];
+        auto_validate_after_failure_to(&changed, &snap_path, &val_path);
+
+        // Validation file should not be created
+        assert!(
+            !val_path.exists(),
+            "validation file should not exist when no src/ files changed"
+        );
+    }
+
+    // ── Test category 7: Accuracy tracking ──
+
+    #[test]
+    fn test_parse_validation_events_basic() {
+        let jsonl = r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/main.rs","src/cli.rs"],"surprises":["src/prompt.rs"],"predicted_count":10,"accuracy_pct":66.7}
+{"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"watch_failure","hits":["src/tools.rs"],"surprises":["src/repl.rs","src/watch.rs"],"predicted_count":10,"accuracy_pct":33.3}"#;
+
+        let events = parse_validation_events(jsonl);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].day, 100);
+        assert_eq!(events[0].hit_count, 2);
+        assert_eq!(events[0].total_changed, 3);
+        assert!((events[0].accuracy_pct - 66.7).abs() < 0.1);
+        assert_eq!(events[1].day, 101);
+        assert_eq!(events[1].hit_count, 1);
+        assert_eq!(events[1].total_changed, 3);
+    }
+
+    #[test]
+    fn test_parse_validation_events_empty() {
+        let events = parse_validation_events("");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_parse_validation_events_malformed_lines() {
+        let jsonl =
+            "not json\n{\"day\":5,\"hits\":[],\"surprises\":[],\"accuracy_pct\":0}\ngarbage";
+        let events = parse_validation_events(jsonl);
+        assert_eq!(events.len(), 1, "should skip malformed lines");
+        assert_eq!(events[0].day, 5);
+    }
+
+    #[test]
+    fn test_compute_accuracy_stats_empty() {
+        let stats = compute_accuracy_stats(&[]);
+        assert_eq!(stats.total_validations, 0);
+        assert_eq!(stats.trend, AccuracyTrend::Insufficient);
+        assert!(stats.best_day.is_none());
+        assert!(stats.worst_day.is_none());
+    }
+
+    #[test]
+    fn test_compute_accuracy_stats_single_entry() {
+        let events = vec![ValidationEvent {
+            day: 110,
+            hit_count: 3,
+            total_changed: 5,
+            accuracy_pct: 60.0,
+        }];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.total_validations, 1);
+        assert_eq!(stats.total_hits, 3);
+        assert_eq!(stats.total_changed, 5);
+        assert!((stats.overall_hit_rate_pct - 60.0).abs() < 0.1);
+        assert_eq!(stats.trend, AccuracyTrend::Insufficient);
+        assert_eq!(stats.best_day, Some((110, 60.0)));
+        assert_eq!(stats.worst_day, Some((110, 60.0)));
+    }
+
+    #[test]
+    fn test_compute_accuracy_trend_improving() {
+        let events = vec![
+            ValidationEvent {
+                day: 100,
+                hit_count: 1,
+                total_changed: 5,
+                accuracy_pct: 20.0,
+            },
+            ValidationEvent {
+                day: 101,
+                hit_count: 1,
+                total_changed: 5,
+                accuracy_pct: 25.0,
+            },
+            ValidationEvent {
+                day: 102,
+                hit_count: 2,
+                total_changed: 5,
+                accuracy_pct: 40.0,
+            },
+            ValidationEvent {
+                day: 103,
+                hit_count: 3,
+                total_changed: 5,
+                accuracy_pct: 60.0,
+            },
+            ValidationEvent {
+                day: 104,
+                hit_count: 4,
+                total_changed: 5,
+                accuracy_pct: 80.0,
+            },
+            ValidationEvent {
+                day: 105,
+                hit_count: 4,
+                total_changed: 5,
+                accuracy_pct: 80.0,
+            },
+        ];
+        let trend = compute_accuracy_trend(&events);
+        assert_eq!(trend, AccuracyTrend::Improving);
+    }
+
+    #[test]
+    fn test_compute_accuracy_trend_declining() {
+        let events = vec![
+            ValidationEvent {
+                day: 100,
+                hit_count: 4,
+                total_changed: 5,
+                accuracy_pct: 80.0,
+            },
+            ValidationEvent {
+                day: 101,
+                hit_count: 4,
+                total_changed: 5,
+                accuracy_pct: 75.0,
+            },
+            ValidationEvent {
+                day: 102,
+                hit_count: 3,
+                total_changed: 5,
+                accuracy_pct: 60.0,
+            },
+            ValidationEvent {
+                day: 103,
+                hit_count: 2,
+                total_changed: 5,
+                accuracy_pct: 40.0,
+            },
+            ValidationEvent {
+                day: 104,
+                hit_count: 1,
+                total_changed: 5,
+                accuracy_pct: 20.0,
+            },
+            ValidationEvent {
+                day: 105,
+                hit_count: 1,
+                total_changed: 5,
+                accuracy_pct: 15.0,
+            },
+        ];
+        let trend = compute_accuracy_trend(&events);
+        assert_eq!(trend, AccuracyTrend::Declining);
+    }
+
+    #[test]
+    fn test_compute_accuracy_trend_stable() {
+        let events = vec![
+            ValidationEvent {
+                day: 100,
+                hit_count: 3,
+                total_changed: 5,
+                accuracy_pct: 60.0,
+            },
+            ValidationEvent {
+                day: 101,
+                hit_count: 3,
+                total_changed: 5,
+                accuracy_pct: 58.0,
+            },
+            ValidationEvent {
+                day: 102,
+                hit_count: 3,
+                total_changed: 5,
+                accuracy_pct: 62.0,
+            },
+            ValidationEvent {
+                day: 103,
+                hit_count: 3,
+                total_changed: 5,
+                accuracy_pct: 59.0,
+            },
+        ];
+        let trend = compute_accuracy_trend(&events);
+        assert_eq!(trend, AccuracyTrend::Stable);
+    }
+
+    #[test]
+    fn test_compute_accuracy_trend_insufficient() {
+        let events = vec![ValidationEvent {
+            day: 100,
+            hit_count: 3,
+            total_changed: 5,
+            accuracy_pct: 60.0,
+        }];
+        let trend = compute_accuracy_trend(&events);
+        assert_eq!(trend, AccuracyTrend::Insufficient);
+    }
+
+    #[test]
+    fn test_compute_accuracy_stats_best_worst_day() {
+        let events = vec![
+            ValidationEvent {
+                day: 108,
+                hit_count: 1,
+                total_changed: 5,
+                accuracy_pct: 20.0,
+            },
+            ValidationEvent {
+                day: 110,
+                hit_count: 2,
+                total_changed: 5,
+                accuracy_pct: 40.0,
+            },
+            ValidationEvent {
+                day: 115,
+                hit_count: 4,
+                total_changed: 5,
+                accuracy_pct: 80.0,
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.best_day, Some((115, 80.0)));
+        assert_eq!(stats.worst_day, Some((108, 20.0)));
+    }
+
+    #[test]
+    fn test_compute_accuracy_stats_multiple_events_same_day() {
+        let events = vec![
+            ValidationEvent {
+                day: 110,
+                hit_count: 1,
+                total_changed: 5,
+                accuracy_pct: 20.0,
+            },
+            ValidationEvent {
+                day: 110,
+                hit_count: 4,
+                total_changed: 5,
+                accuracy_pct: 80.0,
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        // Average for day 110 = (20 + 80) / 2 = 50
+        assert_eq!(stats.best_day, Some((110, 50.0)));
+        assert_eq!(stats.worst_day, Some((110, 50.0)));
+    }
+
+    #[test]
+    fn test_format_accuracy_report_empty() {
+        let stats = compute_accuracy_stats(&[]);
+        let report = format_accuracy_report(&stats);
+        assert!(report.contains("No prediction accuracy data yet"));
+        assert!(report.contains("/risk snapshot"));
+    }
+
+    #[test]
+    fn test_format_accuracy_report_with_data() {
+        let stats = AccuracyStats {
+            total_validations: 12,
+            total_hits: 7,
+            total_changed: 12,
+            overall_hit_rate_pct: 58.333,
+            trend: AccuracyTrend::Improving,
+            best_day: Some((115, 80.0)),
+            worst_day: Some((108, 20.0)),
+        };
+        let report = format_accuracy_report(&stats);
+        assert!(report.contains("Risk Prediction Accuracy"));
+        assert!(report.contains("12"));
+        assert!(report.contains("58%"));
+        assert!(report.contains("7/12"));
+        assert!(report.contains("Improving"));
+        assert!(report.contains("Day 115"));
+        assert!(report.contains("Day 108"));
+    }
+
+    #[test]
+    fn test_load_validation_history_from_missing_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("nonexistent.jsonl");
+        let events = load_validation_history_from(&path);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_load_validation_history_from_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        let line = r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/main.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#;
+        std::fs::write(&path, format!("{line}\n")).expect("write test file");
+
+        let events = load_validation_history_from(&path);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].day, 100);
+        assert_eq!(events[0].hit_count, 1);
+        assert_eq!(events[0].total_changed, 1);
+    }
+
+    #[test]
+    fn test_risk_accuracy_dispatches_without_panic() {
+        // Smoke test: `/risk accuracy` should not panic
+        handle_risk("/risk accuracy");
+    }
+
+    #[test]
+    fn test_prediction_accuracy_summary_missing_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("nonexistent.jsonl");
+        assert!(prediction_accuracy_summary_from(&path).is_none());
+    }
+
+    #[test]
+    fn test_prediction_accuracy_summary_too_few_entries() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        // Only 1 entry — should return None (need ≥2)
+        let line = r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/main.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#;
+        std::fs::write(&path, format!("{line}\n")).expect("write");
+        assert!(prediction_accuracy_summary_from(&path).is_none());
+    }
+
+    #[test]
+    fn test_prediction_accuracy_summary_returns_correct_values() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        let line1 = r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/main.rs"],"surprises":["src/cli.rs"],"predicted_count":10,"accuracy_pct":50.0}"#;
+        let line2 = r#"{"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"watch_failure","hits":["src/tools.rs","src/main.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#;
+        std::fs::write(&path, format!("{line1}\n{line2}\n")).expect("write");
+
+        let result = prediction_accuracy_summary_from(&path);
+        assert!(result.is_some());
+        let (hit_rate, count, _trend) = result.unwrap();
+        assert_eq!(count, 2);
+        // 3 hits out of 4 total changed = 75%
+        assert!((hit_rate - 75.0).abs() < 0.2);
+    }
+
+    #[test]
+    fn test_prediction_accuracy_summary_trend_improving() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        // First entries low accuracy, later entries high — should show improving
+        let lines = [
+            r#"{"ts":"2025-01-10T12:00:00Z","day":90,"trigger":"watch_failure","hits":[],"surprises":["src/a.rs","src/b.rs","src/c.rs","src/d.rs","src/e.rs"],"predicted_count":10,"accuracy_pct":0.0}"#,
+            r#"{"ts":"2025-01-11T12:00:00Z","day":91,"trigger":"watch_failure","hits":[],"surprises":["src/a.rs","src/b.rs","src/c.rs"],"predicted_count":10,"accuracy_pct":0.0}"#,
+            r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":["src/a.rs","src/b.rs","src/c.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#,
+            r#"{"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"watch_failure","hits":["src/a.rs","src/b.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#,
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").expect("write");
+
+        let result = prediction_accuracy_summary_from(&path);
+        assert!(result.is_some());
+        let (_hit_rate, count, trend) = result.unwrap();
+        assert_eq!(count, 4);
+        assert!(
+            trend.contains("improving"),
+            "expected improving, got: {trend}"
+        );
+    }
+
+    #[test]
+    fn test_prediction_accuracy_summary_trend_declining() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        // First entries high accuracy, later entries low — should show declining
+        let lines = [
+            r#"{"ts":"2025-01-10T12:00:00Z","day":90,"trigger":"watch_failure","hits":["src/a.rs","src/b.rs","src/c.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#,
+            r#"{"ts":"2025-01-11T12:00:00Z","day":91,"trigger":"watch_failure","hits":["src/a.rs","src/b.rs"],"surprises":[],"predicted_count":10,"accuracy_pct":100.0}"#,
+            r#"{"ts":"2025-01-15T12:00:00Z","day":100,"trigger":"watch_failure","hits":[],"surprises":["src/a.rs","src/b.rs","src/c.rs"],"predicted_count":10,"accuracy_pct":0.0}"#,
+            r#"{"ts":"2025-01-16T12:00:00Z","day":101,"trigger":"watch_failure","hits":[],"surprises":["src/a.rs","src/b.rs","src/c.rs","src/d.rs"],"predicted_count":10,"accuracy_pct":0.0}"#,
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").expect("write");
+
+        let result = prediction_accuracy_summary_from(&path);
+        assert!(result.is_some());
+        let (_hit_rate, _count, trend) = result.unwrap();
+        assert!(
+            trend.contains("declining"),
+            "expected declining, got: {trend}"
+        );
+    }
+
+    #[test]
+    fn test_prediction_accuracy_summary_trend_stable() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+        // Similar accuracy throughout — should show stable
+        let lines = [
+            r#"{"ts":"2025-01-10T12:00:00Z","day":90,"trigger":"watch_failure","hits":["src/a.rs"],"surprises":["src/b.rs"],"predicted_count":10,"accuracy_pct":50.0}"#,
+            r#"{"ts":"2025-01-11T12:00:00Z","day":91,"trigger":"watch_failure","hits":["src/a.rs"],"surprises":["src/b.rs"],"predicted_count":10,"accuracy_pct":50.0}"#,
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").expect("write");
+
+        let result = prediction_accuracy_summary_from(&path);
+        assert!(result.is_some());
+        let (_hit_rate, _count, trend) = result.unwrap();
+        assert!(trend.contains("stable"), "expected stable, got: {trend}");
     }
 }
