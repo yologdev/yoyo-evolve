@@ -1,0 +1,70 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I notice the diff is empty. Let me verify this by checking the actual state of the code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 2.0s (2 ✓)
+
+The diff wasn't provided in the task description but there are actual changes. Let me review them.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_we… ✓ (5ms)
+
+Let me see the full diff more clearly:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_we… ✓ (6ms)
+
+The diff is being truncated. Let me get the raw diff without abbreviation:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD -- src/commands_we… ✓ (6ms)
+
+The diff output is being compressed by some tool. Let me read the actual file content directly to verify the changes.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '44,230p' src/commands_we… ✓ (4ms)
+
+Good, I can see the core changes. Now let me check the Exa request body change:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'includeHtmlTags' src/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'maxCharacters' src/comm… ✓ (3ms)
+  2 tools completed in 4.0s (2 ✓)
+
+**Critical finding**: The actual Exa request body at line 1205 was NOT updated. It still has the old format without includeHtmlTags. Only the test at line 1597 has the new format. Let me verify:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1200,1210p' src/commands… ✓ (3ms)
+
+Confirmed — the Exa request body at line 1205 is not updated. The includeHtmlTags only appears in the test assertion, which tests a separate format string literal that *does* have it. The test passes because it constructs its own string with includeHtmlTags, but the actual production code doesn't have it.
+
+Now let me check the tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1519,1605p' src/commands… ✓ (3ms)
+
+Now let me run the tests to verify they pass:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib -- commands_web… ✓ (107ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (44.1s)
+  2 tools completed in 50.1s (2 ✓)
+
+Tests pass but there is a critical issue. Let me confirm my finding about the missing production code change:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'includeHtmlTags' src/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c 'includeHtmlTags' src/co… ✓ (2ms)
+  2 tools completed in 5.3s (2 ✓)
+
+All 3 occurrences are within the test function strip_html_exa_request_includes_html_tags. The production exa_search() function at line 1205 does NOT include includeHtmlTags. The test is a tautology — it constructs its own string with includeHtmlTags and asserts it's there, rather than testing the actual production format string.
+
+This is a clear miss of task requirement #1: "Update the Exa request body."
+
+Let me also check clippy:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (13.0s)
+
+Now let me write the verdict:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (53.1s)
+
+**Verdict: FAIL**
+
+The core issue: the actual exa_search() function's request body (line 1205) still uses the old format without includeHtmlTags. Only the test has the new format, but it's testing a string it constructs itself — not the production code. The strip_html_tags enhancement (preserving code blocks) works correctly, but without the Exa API actually returning HTML tags, those code blocks will never appear in real results.
+

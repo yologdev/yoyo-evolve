@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of commands_risk.rs to identify exactly what needs to move.
+  ▶ todo add 'Understand commands_risk.rs structure - identify v…' ✓ (0ms)
+  ▶ todo add 'Create risk_validation.rs with extracted types, fu…' ✓ (0ms)
+  ▶ todo add 'Update commands_risk.rs - remove moved code, add i…' ✓ (0ms)
+  ▶ todo add 'Wire up module declaration and fix cross-module im…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test - fix any issue…' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture section' ✓ (0ms)
+  ▶ todo add 'Commit the changes' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  8 tools completed in 22.0s (8 ✓)
+
+Let me first understand the full structure of commands_risk.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (16ms)
+  ▶ $ grep -n "^pub\|^fn \|^pub(crate)\|^struct \|^enum \|^const \|^#\[cfg(test)\]\|^m… ✓ (4ms)
+  ▶ $ grep -n "^    fn \|^    #\[test\]" src/commands_risk.rs | head -120 ✓ (4ms)
+  ▶ $ grep -n "^    fn \|^    #\[test\]" src/commands_risk.rs | tail -120 ✓ (4ms)
+  4 tools completed in 11.3s (4 ✓)
+
+Now let me understand the imports and what's used where:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ head -10 src/commands_risk.rs ✓ (34ms)
+  ▶ $ grep -n "use crate::commands_risk" src/*.rs ✓ (10ms)
+  ▶ $ grep -n "commands_risk\|prediction_accuracy_summary\|auto_validate_after_failure… ✓ (3ms)
+  ▶ $ grep -n "auto_validate_after_failure\|auto_risk_snapshot" src/watch.rs ✓ (7ms)
+  ▶ $ grep -n "auto_risk_snapshot" src/*.rs ✓ (10ms)
+  5 tools completed in 15.4s (5 ✓)
+
+Now I have a clear picture. Let me delegate the heavy lifting to a sub-agent that will read the full file and create the extraction:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the file `src/commands_risk.rs` in its entirety and ide…' ✓ (1m 37s)
+
+Let me read the key sections directly to understand the boundaries:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..11 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1460..1490 ✓ (1ms)
+  ▶ read src/commands_risk.rs:2655..2675 ✓ (1ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Good. So the validation functions span lines 1465-2662. Now let me understand the boundary more carefully. What's at line 1447 (the auto_risk_snapshot_to that should stay)?
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1427..1447 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1446..1451 ✓ (1ms)
+  2 tools completed in 8.2s (2 ✓)
+
+OK, so `auto_risk_snapshot_to (lines 1446-1463) is test-only and stays in commands_risk.rs` because it's about snapshots, not validation. The validation block starts at line 1465.
+
+Now I need to understand what the validation functions need from commands_risk.rs. Let me check what they reference:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1485..1615 ✓ (1ms)
+
+I see that `auto_validate_after_failure_to calls parse_all_snapshots, learn_weights_from_history, and uses DIM/RESET` from format. It also uses serde_json. Let me check what `handle_risk_accuracy and handle_risk_validate` reference:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2026..2076 ✓ (1ms)
+
+Now let me check what `handle_risk_accuracy` references from the main module:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "RISK_SNAPSHOT_PATH\|LEARNED_WEIGHTS_PATH\|load_learned_weights\|learn_w… ✓ (4ms)
+
+I see that the validation code references several things from the main module:
+• RISK_SNAPSHOT_PATH - used in handle_risk_accuracy, handle_risk_validate, handle_risk_history, `auto_validate_after_failure`
+• LEARNED_WEIGHTS_PATH - used in handle_risk_accuracy
+• load_learned_weights() - used in handle_risk_accuracy
+• learn_weights_from_history() - called from auto_validate_after_failure_to
+• compute_file_risk_scores() - used in `handle_risk_validate`
+• SIGNAL_NAMES - let me check
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "SIGNAL_NAMES\|RISK_WEIGHTS\|FileRisk" src/commands_risk.rs | grep -v "t… ✓ (4ms)
+
+Now let me check what `format_signal_breakdown` needs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1873..1933 ✓ (1ms)
+
+I see that format_signal_breakdown references parse_detailed_events, RISK_WEIGHTS, and SIGNAL_NAMES from the main module. And handle_risk_validate at line 2576 references compute_file_risk_scores. 
+
+This means:
+1. The validation module needs to import some constants and functions from commands_risk
+2. Some things like `RISK_SNAPSHOT_PATH` are used by both sides
+
+Let me now look at `handle_risk_validate and handle_risk_history`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2478..2578 ✓ (1ms)
+  ▶ read src/commands_risk.rs:2576..2666 ✓ (1ms)
+  2 tools completed in 3.2s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

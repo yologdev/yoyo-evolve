@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of commands_risk.rs to identify exactly what needs to be extracted.
+  ▶ todo clear ✓ (0ms)
+  ▶ todo add 'Analyze commands_risk.rs to identify all functions…' ✓ (0ms)
+  ▶ todo add 'Create src/risk_validation.rs with extracted code' ✓ (0ms)
+  ▶ todo add 'Update commands_risk.rs to remove extracted code a…' ✓ (0ms)
+  ▶ todo add 'Wire up module in main.rs, update imports in comma…' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture section' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test to verify' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  8 tools completed in 21.7s (8 ✓)
+
+Let me first understand the full structure of the file:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (11ms)
+  ▶ $ grep -n "^pub\|^fn \|^pub(crate)\|^struct \|^enum \|^const \|^#\[cfg(test)\]\|^m… ✓ (4ms)
+  ▶ $ grep -n "^#\[cfg(test)\]\|^mod tests\|^    fn test_\|^    fn \|^    #\[test\]" s… ✓ (4ms)
+  3 tools completed in 13.3s (3 ✓)
+
+Now let me understand the exact boundaries better. Let me read the key sections:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^fn \|^pub \|^pub(crate) fn\|^struct \|^enum \|^const \|^#\[cfg(test)\]… ✓ (8ms)
+
+Let me get a clearer picture of the function boundaries:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ awk '/^(pub|pub\(crate\)|fn |struct |enum |const |#\[cfg\(test\)\]|mod )/{printf… ✓ (4ms)
+
+Now I need to understand the test boundaries — which tests belong to validation functions:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "    #\[test\]" src/commands_risk.rs ✓ (10ms)
+  ▶ $ grep -n "    #\[test\]\|    fn test_" src/commands_risk.rs | head -80 ✓ (4ms)
+  ▶ $ grep -n "    #\[test\]\|    fn test_" src/commands_risk.rs | tail -80 ✓ (4ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Now let me check what imports `commands_info.rs and watch.rs use from commands_risk`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "commands_risk" src/commands_info.rs src/watch.rs src/main.rs 2>/dev/nul… ✓ (3ms)
+
+Now I have a clear picture. Let me delegate the heavy extraction work to a sub-agent:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 5.1s (2 ✓)
+
+Let me read the full file content for the section that needs to be extracted (lines 1466-2662):
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1..21 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1466..2666 ✓ (7ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now let me read the remaining test section to identify which tests to move:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2663..4903 ✓ (12ms)
+
+Now I need to carefully identify which tests belong to validation functions. Let me categorize all test functions:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "    fn test_\|    fn risk_\|    fn file_\|    fn format_risk" src/comma… ✓ (4ms)
+
+Now I have a clear picture of everything. Let me read the full validation code and handle_risk_history and handle_risk_validate sections, plus identify exactly what needs to cross-reference:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1039..1084 ✓ (1ms)
+
+Good. handle_risk calls handle_risk_history, handle_risk_validate, and handle_risk_accuracy — those will move to the new module, so handle_risk needs to call them via the new module. Let me also check what handle_risk_history and handle_risk_validate use from the parent:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2478..2578 ✓ (2ms)
+  ▶ read src/commands_risk.rs:2576..2666 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now I need to read the handle_risk_accuracy function to understand what it accesses:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:2026..2076 ✓ (1ms)
+
+Good. handle_risk_accuracy uses load_learned_weights() and LEARNED_WEIGHTS_PATH from the parent module. Those stay in commands_risk.rs. The validation module will need to accept these as parameters or import them.
+
+Let me check what `load_past_accuracy_from` does since it's used in the prediction report:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1264..1324 ✓ (1ms)
+
+Now I have a complete understanding. load_past_accuracy and load_past_accuracy_from use parse_all_snapshots, parse_git_log_name_only, classify_broke_files, compute_validation, HistoryValidation, precision, and compute_trend — all validation functions. But load_past_accuracy is used by `format_prediction_report_with_accuracy` which stays. So I need to think about whether to move load_past_accuracy too, or keep it.
+
+The task says `load_past_accuracy` is NOT in the list to move. But it depends heavily on validation types. Let me check format_prediction_report_with_accuracy:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1325..1385 ✓ (1ms)
+
+OK. load_past_accuracy uses validation types but stays in `commands_risk.rs. That means validation types need to be pub(crate) so commands_risk.rs` can use them. Let me now plan exactly what moves and what's needed.
+
+Let me now do the extraction. This is a large operation, so let me read the entire file and build the new module carefully:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/commands_risk.rs ✓ (7ms)
+
+Let me read the entire file in segments to build a comprehensive plan:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1447..1547 ✓ (1ms)
+
+Now, let me take a systematic approach. I'll do this in one comprehensive pass using a sub-agent to create the risk_validation.rs file, and then I'll handle the edits to commands_risk.rs.
+
+First, let me get the complete content of lines 1466-2662 (the code to extract):
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1466,2662p' src/commands_risk.rs | wc -l ✓ (3ms)
+
+Let me also check which tests should move. Tests for the validation functions:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Find tests that test validation functions (3 lines) ✓ (5ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

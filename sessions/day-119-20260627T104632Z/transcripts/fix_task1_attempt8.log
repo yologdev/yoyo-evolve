@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current structure of commands_risk.rs to identify exactly what needs to be extracted.
+  ▶ $ wc -l src/commands_risk.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "^pub\|^pub(crate)\|^fn \|^struct \|^enum \|^const \|^type \|^impl \|#\[… ✓ (16ms)
+ ✓ (25ms)
+  ▶ $ grep -n "^pub\|^pub(crate)\|^fn \|^struct \|^enum \|^const \|^type \|^impl \|#\[… ✓ (4ms)
+  ▶ $ grep -n "^    fn \|^    pub" src/commands_risk.rs | tail -80 ✓ (4ms)
+  4 tools completed in 7.8s (4 ✓)
+
+Now let me understand the exact boundaries. Let me read the key sections:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1,20p' src/commands_risk.rs  ▶ $ grep -n "^use \|^#\[" src/commands_risk.rs | head -20 ✓ (3ms)
+ ✓ (3ms)
+  ▶ todo add 'Identify exact line ranges for validation code to …' ✓ (0ms)
+  ▶ todo add 'Identify which tests belong to validation code' ✓ (0ms)
+  ▶ todo add 'Create src/risk_validation.rs with extracted code' ✓ (0ms)
+  ▶ todo add 'Update commands_risk.rs to remove extracted code a…' ✓ (0ms)
+  ▶ todo add 'Add mod risk_validation to main.rs' ✓ (0ms)
+  ▶ todo add 'Update commands_info.rs imports if needed' ✓ (0ms)
+  ▶ todo add 'Update CLAUDE.md architecture section' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  10 tools completed in 11.2s (10 ✓)
+
+Let me read the exact code that needs to be extracted - lines 1466-2662 and the relevant tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1466,1470p' src/commands_risk.rs  ▶ $ sed -n '2658,2670p' src/commands_risk.rs ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Now let me understand all the cross-references. Let me look at what functions in the validation block call from the risk module:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1466,2662p' src/commands_risk.rs ✓ (10ms)
+
+Now let me identify which tests belong to the validation code. Let me check each test function to see which ones test validation functions:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '2663,4897p' src/commands_risk.rs ✓ (21ms)
+
+Now I need to identify which test functions test validation code (should move) vs. risk scoring code (should stay). Let me categorize them:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "    fn test_" src/commands_risk.rs | cat ✓ (3ms)
+
+Now I need to carefully categorize which tests should move. Let me look at the handle_risk function to understand how it dispatches to validation:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1044,1078p' src/commands_risk.rs ✓ (3ms)
+
+Good. Now let me check what the validation functions reference from the risk module and what needs to be public:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what functions from commands_risk are used in other … (2 lines) ✓ (6ms)
+
+Now let me check auto_validate_after_failure references in watch.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what prediction_accuracy_summary is used for (2 lines) ✓ (2ms)
+
+Now I have a clear picture. Let me now do the extraction systematically. I'll delegate to a sub-agent for the heavy lifting of reading and creating the new file:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+Let me read the complete validation section (lines 1466-2662) and identify all the structures and functions to move:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:1466..2663 ✓ (7ms)
+
+Now let me read the functions just before and after the validation block to understand the boundaries:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1440,1470p' src/commands_risk.rs ✓ (3ms)
+
+Now I need to figure out the exact test boundaries. Let me identify which tests are for validation vs non-validation functions:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the file src/commands_risk.rs from line 2663 to the end…' ✓ (1m 35s)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo done #2 ✓ (0ms)
+  3 tools completed in 1m 40s (3 ✓)
+
+Wait - the task says weight learning (`load_learned_weights, compute_adjusted_weights, learn_weights_from_history`) should stay in commands_risk.rs, but their tests are categorized as "moves" by the sub-agent. Let me re-read the task spec carefully.
+
+Looking at the task again:
+• What stays: "Weight learning (load_learned_weights, compute_adjusted_weights, `learn_weights_from_history`)"  
+• What moves: auto_validate_after_failure, validation events, accuracy stats, trend, parse_git_log, classify_broke, compute_validation, format_validation_report, ParsedSnapshot, parse_all_snapshots, HistoryValidation, precision, compute_trend, format_history_report, signal_bar, format_signal_breakdown, format_recent_events, format_learning_status, handle_risk_accuracy, prediction_accuracy_summary, handle_risk_history, handle_risk_validate
+
+But wait - the weight learning functions use validation data (DetailedValidationEvent, etc.), and the weight learning *tests* test learn_weights which uses validation events. Let me check what actually depends on what:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '117,310p' src/commands_risk.rs ✓ (4ms)
+
+The weight learning functions (DetailedValidationEvent, parse_detailed_events, compute_adjusted_weights, learn_weights_from_history, learn_weights_from_history_to, load_learned_weights, load_learned_weights_from) use RISK_VALIDATION_PATH and RISK_SNAPSHOT_PATH and RISK_WEIGHTS. According to the task, weight learning should stay in `commands_risk.rs`. But their tests need access to validation constructs.
+
+Actually, re-reading the task more carefully: weight learning stays but the weight learning tests use validation paths. They'll still work because the tests use temp dirs anyway and the functions they test are still in commands_risk.rs. The weight learning tests should also stay since they test functions that stay.
+
+Now, I noticed that learn_weights_from_history calls things that will stay. And validation functions like `auto_validate_after_failure_to uses parse_all_snapshots` which will move. The handle_risk_validate function calls `compute_file_risk_scores (stays) and parse_git_log_name_only (moves). So handle_risk_validate` moves and imports compute_file_risk_scores from the parent.
+
+Let me now approach this methodically. I'll create the new file and update the old one:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+
+First, let me read the exact functions/structs and understand their visibility and cross-references:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what the validation functions reference from command… (3 lines) ✓ (5ms)
+  ▶ $ # What does handle_risk_history need? (2 lines) ✓ (3ms)
+  ▶ $ # Check what handle_risk_validate uses (2 lines) ✓ (3ms)
+  3 tools completed in 7.3s (3 ✓)
+
+Now I have a complete picture. Let me also look at what handle_risk needs to dispatch to:
+
+The handle_risk function dispatches to handle_risk_history, handle_risk_validate, and handle_risk_accuracy. These three functions will move to `risk_validation.rs, and handle_risk` will call them via the module.
+
+Now let me also check what prediction_accuracy_summary tests and the format_prediction_report_with_accuracy (stays) reference from validation:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "load_past_accuracy\|prediction_accuracy_summary" src/commands_risk.rs |… ✓ (3ms)
+
+`load_past_accuracy` (lines 1264-1323) references validation events and accuracy - it stays because it's used by `format_prediction_report_with_accuracy which stays. But it calls parse_validation_events` and compute_accuracy_stats which will move. Let me check:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1264,1330p' src/commands_risk.rs ✓ (3ms)
+
+So load_past_accuracy calls parse_all_snapshots, parse_git_log_name_only, classify_broke_files, compute_validation, HistoryValidation, `precision, compute_trend - all of which are moving. This means load_past_accuracy` should also move, or commands_risk.rs needs to import these from the new module.
+
+Given the task says weight learning stays, let me keep it simple: the functions at lines 1466-2662 move, plus load_past_accuracy and load_past_accuracy_from (lines 1264-1323) should also move since they're entirely validation logic. But actually load_past_accuracy is used by format_prediction_report which stays... 
+
+The simplest approach: move the functions, and in commands_risk.rs import from `risk_validation. The load_past_accuracy` function is a borderline case. Let me check if it's easier to just have commands_risk call the moved functions directly. Actually, `load_past_accuracy` is only 2 functions (60 lines) and it uses many validation types. It makes more sense to move it too, or to just import the moved types.
+
+Actually, the task spec is clear about what moves and what stays. load_past_accuracy is NOT in the "moves" list. So it stays, and it'll import the needed types from risk_validation.
+
+Let me now execute the extraction. This is a big operation so I'll use a sub-agent:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the file `src/commands_risk.rs` completely and extract …' ✓ (53.7s)
+
+Now let me also identify the tests that need to move. Let me read the test ranges:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Read exact boundaries of test blocks that move (10 lines) ✓ (7ms)
+  ▶ $ # Get exact test line content at boundaries (13 lines) ✓ (8ms)
+  2 tools completed in 9.3s (2 ✓)
+
+Good. Now I have a clear picture. The tests that move are in two non-contiguous blocks:
+1. Lines 2958-3411 (test_parse_git_log through test_format_history_report)
+2. Lines 4058-4712 (test_auto_validate through test_learn_weights_minimum_events)
+
+Wait - the task says weight learning stays. Let me re-check: the weight learning tests (`test_learn_weights_from_validation_events, test_learned_weights_sum_to_one, test_load_learned_weights_fallback`, test_learn_weights_minimum_events) test functions that STAY in commands_risk.rs. But they use validation types that MOVE. So they should stay in commands_risk.rs tests, and they'll reference types via `use crate::risk_validation::;`. But wait - the tests use `use super::;` so they already have access to everything in commands_risk.rs. If those tests use types from risk_validation, they'll need to import them too.
+
+Actually, looking more carefully: learn_weights_from_history_to calls parse_detailed_events which uses DetailedValidationEvent, and DetailedValidationEvent is defined at line 117 in commands_risk.rs (stays). parse_detailed_events is at line 129 (stays). So learn_weights functions don't actually depend on the moving validation types directly.
+
+But the weight learning tests reference `RISK_VALIDATION_PATH`... Let me check:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '4567,4712p' src/commands_risk.rs ✓ (4ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

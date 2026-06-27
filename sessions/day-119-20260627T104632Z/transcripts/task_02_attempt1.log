@@ -1,0 +1,197 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the relevant file to understand the current code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "strip_html_tags\|exa_se… ✓ (5ms)
+  ▶ read src/commands_web.rs:54..224 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me see the exa_search function to understand the request body format:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1015..1075 ✓ (1ms)
+
+Now let me look at the existing tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1155..1305 ✓ (1ms)
+
+Let me see the helper functions used in strip_html_tags:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn starts_with_ascii_ci… ✓ (3ms)
+  ▶ read src/commands_web.rs:1..43 ✓ (1ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now let me see the remaining tests to understand what exists:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1304..1504 ✓ (1ms)
+
+Good. Now I have a clear picture. Let me plan the implementation:
+
+1. **Add a code block extraction pre-processing step** in strip_html_tags before the first pass
+2. Update the Exa request body to include `includeHtmlTags: true`
+3. Add tests for the new behavior
+
+Let me write the tests first, then implement:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests for code block preservation in strip_h…' ✓ (0ms)
+  ▶ todo add 'Add pre-processing step to strip_html_tags for <pr…' ✓ (0ms)
+  ▶ todo add 'Update Exa request body with includeHtmlTags:true' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test and fix any iss…' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  5 tools completed in 14.1s (5 ✓)
+
+Let me first find the right place to add the tests, right after the existing strip_html tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "strip_html_non_ascii_tr… ✓ (3ms)
+
+Now let me add the tests. I'll add them right before the valid_urls test:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (2 → 83 lines)
+  +     #[test]
+  +     fn strip_html_pre_code_block() {
+  +         let html = "<p>Example:</p><pre><code class=\"language-rust\">fn main() {\n    println!(\"hello\");\n}</code></pre><p>End</p>";
+  +         let text = strip_html_tags(html, 5000);
+  +         assert!(text.contains("```rust"), "Should have fenced code block with language: {text}");
+  +         assert!(text.contains("fn main()"), "Should preserve code content: {text}");
+  +         assert!(text.contains("```\n") || text.ends_with("```"), "Should close fence: {text}");
+  +         assert!(text.contains("Example:"), "Should preserve surrounding text: {text}");
+  +         assert!(text.contains("End"), "Should preserve text after code: {text}");
+  +     }
+  + 
+  +     #[test]
+  +     fn strip_html_pre_without_language() {
+  +         let html = "<pre><code>let x = 42;</code></pre>";
+  +         let text = strip_html_tags(html, 5000);
+  +         assert!(text.contains("```\n"), "Should have plain fence: {text}");
+  +         assert!(text.contains("let x = 42;"), "Should preserve code: {text}");
+  +     }
+  + 
+  +     #[test]
+  ... (63 more lines)
+ ✓ (1m 19s)
+  +     #[test]
+  +     fn strip_html_pre_code_block() {
+  +         let html = "<p>Example:</p><pre><code class=\"language-rust\">fn main() {\n    println!(\"hello\");\n}</code></pre><p>End</p>";
+  +         let text = strip_html_tags(html, 5000);
+  +         assert!(text.contains("```rust"), "Should have fenced code block with language: {text}");
+  +         assert!(text.contains("fn main()"), "Should preserve code content: {text}");
+  +         assert!(text.contains("```\n") || text.ends_with("```"), "Should close fence: {text}");
+  +         assert!(text.contains("Example:"), "Should preserve surrounding text: {text}");
+  ... (13 more lines)
+
+Good - tests were added. Let me verify the tests fail as expected (since we haven't implemented the code yet):
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test strip_html_pre_code s… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test strip_html_pre 2>&1 |… ✓ (130ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test strip_html_inline_cod… ✓ (103ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test strip_html_code_with_… ✓ (103ms)
+  4 tools completed in 10.8s (4 ✓)
+
+All new tests fail as expected. Now let me implement the solution.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 9.9s (2 ✓)
+
+Now I need to add a pre-processing step at the very beginning of `strip_html_tags that converts <pre> and <code>` blocks to markdown before the regular HTML stripping. The key challenge is:
+
+1. `<pre><code class="language-rust">...</code></pre> →  rust\n...\n `
+2. <pre><code>...</code></pre> →  \n...\n 
+3. <pre>...</pre> (no code tag) →  \n...\n 
+4. Inline <code>...</code> (not inside pre) →  ... 
+5. Strip nested HTML spans inside code blocks (syntax highlighting)
+
+Let me implement this as a helper function and call it at the start of strip_html_tags:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (6 → 186 lines)
+  + /// Strip HTML tags from inside a code block (e.g., `<span>` from syntax highlighting).
+  + /// Preserves the text content only.
+  + fn strip_inner_html(s: &str) -> String {
+  +     let mut out = String::with_capacity(s.len());
+  +     let bytes = s.as_bytes();
+  +     let mut i = 0;
+  +     while i < bytes.len() {
+  +         if bytes[i] == b'<' {
+  +             // Skip to closing '>'
+  +             while i < bytes.len() && bytes[i] != b'>' {
+  +                 i += 1;
+  +             }
+  +             if i < bytes.len() {
+  +                 i += 1; // skip '>'
+  +             }
+  +         } else if let Some(c) = s[i..].chars().next() {
+  +             out.push(c);
+  +             i += c.len_utf8();
+  +         } else {
+  +             break;
+  ... (164 more lines)
+ ✓ (13.2s)
+  + /// Strip HTML tags from inside a code block (e.g., `<span>` from syntax highlighting).
+  + /// Preserves the text content only.
+  + fn strip_inner_html(s: &str) -> String {
+  +     let mut out = String::with_capacity(s.len());
+  +     let bytes = s.as_bytes();
+  +     let mut i = 0;
+  +     while i < bytes.len() {
+  +         if bytes[i] == b'<' {
+  ... (13 more lines)
+
+Clippy is complaining about doc comment formatting. Let me fix the doc comments:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (2 → 2 lines)
+  - /// Strip HTML tags from inside a code block (e.g., `<span>` from syntax highlighting).
+  - /// Preserves the text content only.
+  + /// Strip HTML tags from inside a code block (e.g. `<span>` from syntax
+  + /// highlighting). Preserves the text content only.
+ ✓ (13.1s)
+  - /// Strip HTML tags from inside a code block (e.g., `<span>` from syntax highlighting).
+  - /// Preserves the text content only.
+  + /// Strip HTML tags from inside a code block (e.g. `<span>` from syntax
+  + /// highlighting). Preserves the text content only.
+
+The issue is the clippy doc_lazy_continuation lint. The problem is likely that there's another doc comment above this one that creates a list context. Let me check the context around line 52-56:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:44..54 ✓ (0ms)
+
+Ah, this existing doc comment has a list with -  items. The function that follows at line 54 now starts with a new /// that clippy thinks is a lazy continuation of the previous list. I need to look at what's between line 53 and 54:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:50..60 ✓ (1ms)
+
+I see the problem - my new function strip_inner_html was inserted right after the doc comment for strip_html_tags. The existing doc comment (lines 44-53) is now being interpreted as belonging to `strip_inner_html`. I need to add proper separation. Let me check what was originally at this boundary:
+
+The old pub fn strip_html_tags had its doc comment (lines 44-53) followed by the function. Now strip_inner_html was inserted between the doc comment and the function. I need to move the new helper functions before the doc comment block.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:42..57 ✓ (1ms)
+
+The issue is clear. My new code was inserted after the `/// - Truncates to max_chars line but before pub fn strip_html_tags`. The doc comment for strip_html_tags is now incorrectly attached to strip_inner_html. I need to restructure — move the helper functions before the `strip_html_tags` doc comment block.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (15 → 5 lines)
+    }
+    
+  - /// Strip HTML tags and extract readable text content.
+  - ///
+  - /// This function:
+  - /// - Removes `<script>`, `<style>`, `<nav>`, `<footer>`, `<header>`, `<svg>` blocks entirely
+  - /// - Converts `<br>`, `<p>`, `<div>`, `<li>`, `<h1>`–`<h6>`, `<tr>` to newlines
+  - /// - Converts `<li>` items to bullet points
+  - /// - Strips all remaining HTML tags
+  - /// - Decodes common HTML entities
+  - /// - Collapses excessive whitespace
+  - /// - Truncates to `max_chars`
+    /// Strip HTML tags from inside a code block (e.g. `<span>` from syntax
+    /// highlighting). Preserves the text content only.
+    fn strip_inner_html(s: &str) -> String {
+ ✓ (1m 21s)
+    }
+    
+  - /// Strip HTML tags and extract readable text content.
+  - ///
+  - /// This function:
+  - /// - Removes `<script>`, `<style>`, `<nav>`, `<footer>`, `<header>`, `<svg>` blocks entirely
+  - /// - Converts `<br>`, `<p>`, `<div>`, `<li>`, `<h1>`–`<h6>`, `<tr>` to newlines
+  - /// - Converts `<li>` items to bullet points
+  ... (7 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

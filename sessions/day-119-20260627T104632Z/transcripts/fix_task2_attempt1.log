@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me look at the current state of the code to understand what needs to be fixed.
+  ▶ search 'includeHtmlTags' in src/commands_web.rs ✓ (2ms)
+  ▶ search 'maxCharacters.*2000' in src/commands_web.rs ✓ (2ms)
+  2 tools completed in 4.0s (2 ✓)
+
+The evaluator is right. Line 1205 (production code) still has the old format without includeHtmlTags, and the test on line 1597 constructs its own string rather than testing the production code. Let me fix both issues.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1200..1215 ✓ (1ms)
+
+Now fix the production code:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (1 → 1 lines)
+  -         r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000}},"highlights":true}}}}"#,
+  +         r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000,"includeHtmlTags":true}},"highlights":true}}}}"#,
+ ✓ (1m 21s)
+  -         r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000}},"highlights":true}}}}"#,
+  +         r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000,"includeHtmlTags":true}},"highlights":true}}}}"#,
+
+Now let me fix the test to verify the production code's format string rather than being a tautology:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1590..1610 ✓ (1ms)
+
+Now I need to find the exa_search function to understand how to reference the format string from the test. Since the format string is inline in the function, the best approach is to make the test construct the body string the same way the production code does — but that would still be a tautology. The proper approach is to actually call or reference the production format string. Let me look at what's accessible from tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn exa_search' in src/commands_web.rs ✓ (2ms)
+
+The format string is embedded in the function. The cleanest fix that actually tests the production code is to extract the body-building into a testable helper function.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_web.rs:1185..1215 ✓ (1ms)
+
+I'll extract the body building into a small helper function that can be tested directly:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (24 → 29 lines)
+  + /// Build the JSON request body for Exa API search.
+  + fn exa_request_body(query: &str, max_results: usize) -> String {
+  +     let max_results = if max_results == 0 {
+  +         8
+  +     } else {
+  +         max_results.min(20)
+  +     };
+  + 
+  +     format!(
+  +         r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000,"includeHtmlTags":true}},"highlights":true}}}}"#,
+  +         query.replace('\\', "\\\\").replace('"', "\\\""),
+  +         max_results
+  +     )
+  + }
+  + 
+    pub(crate) fn exa_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+        let api_key = std::env::var("EXA_API_KEY").map_err(|_| {
+            "Web search requires EXA_API_KEY. Get one at https://exa.ai and set it in your environment."
+  ···
+                    .to_string(),
+  ... (15 more lines)
+ ✓ (1m 21s)
+  + /// Build the JSON request body for Exa API search.
+  + fn exa_request_body(query: &str, max_results: usize) -> String {
+  +     let max_results = if max_results == 0 {
+  +         8
+  +     } else {
+  +         max_results.min(20)
+  +     };
+  + 
+  ... (13 more lines)
+
+Now update the test to call the production helper:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_web.rs (9 → 10 lines)
+        #[test]
+        fn strip_html_exa_request_includes_html_tags() {
+  -         // Verify the Exa request format string includes includeHtmlTags
+  -         let body = format!(
+  -             r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000,"includeHtmlTags":true}},"highlights":true}}}}"#,
+  -             "test query", 5
+  +         // Verify the production Exa request body includes includeHtmlTags
+  +         let body = exa_request_body("test query", 5);
+  +         assert!(
+  +             body.contains("\"includeHtmlTags\":true"),
+  +             "Exa request body must include includeHtmlTags:true for code block preservation, got: {}",
+  +             body
+            );
+  -         assert!(body.contains("\"includeHtmlTags\":true"));
+        }
+ ✓ (1m 21s)
+        #[test]
+        fn strip_html_exa_request_includes_html_tags() {
+  -         // Verify the Exa request format string includes includeHtmlTags
+  -         let body = format!(
+  -             r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000,"includeHtmlTags":true}},"highlights":true}}}}"#,
+  -             "test query", 5
+  +         // Verify the production Exa request body includes includeHtmlTags
+  +         let body = exa_request_body("test query", 5);
+  ... (7 more lines)
+
+Now let me run the build and tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 8s)
+  2 tools completed in 1m 29s (2 ✓)
+
+All 88 tests pass. Let me verify the fix is correct by confirming both the production code and test are properly connected:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test strip_html_exa_reques… ✓ (131ms)
+
+Let me also quickly verify the production code path is correct by checking the actual format string in the built code:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'includeHtmlTags' src/co… ✓ (3ms)
+
+Line 1191 is in the exa_request_body() helper (production code), and the test on line 1612 calls that same helper. No more tautology.
+
+Here's what was fixed:
+
+1. **Production code updated**: The Exa request body format string at line 1191 (formerly 1205) now includes "includeHtmlTags":true in the text object. This was the critical missing piece — without it, Exa continues stripping HTML tags from responses, losing code blocks.
+
+2. Test fixed: The strip_html_exa_request_includes_html_tags test was a tautology — it constructed its own string with the flag and asserted on that, never touching production code. Fixed by extracting the body-building logic into a exa_request_body() helper function that both the production `exa_search()` and the test call, so the test actually validates the production format string.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

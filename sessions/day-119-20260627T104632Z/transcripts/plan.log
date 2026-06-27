@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DREAM.md 2>/dev/null | head … ✓ (5ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/assessment.md 2…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs src/w… ✓ (2ms)
+ ✓ (3ms)
+  4 tools completed in 10.0s (4 ✓)
+
+Now let me check what the dream milestone says more carefully and look at the current state of the risk module to plan the split:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^fn\|^struct\|^en…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^pub\|^fn\|^struct\|^en… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "includeHtmlTags\|includ…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "exa_search\|exa_body\|e… ✓ (3ms)
+ ✓ (3ms)
+  4 tools completed in 6.4s (4 ✓)
+
+Now I have a clear picture. Let me check the risk module structure more carefully for the extraction plan:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests" src/command…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_risk.rs ✓ (3ms)
+ ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1447,1465p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2660,2670p' src/commands… ✓ (3ms)
+ ✓ (2ms)
+  5 tools completed in 5.2s (5 ✓)
+
+Good. Now let me understand the natural split points in commands_risk.rs. The file has these logical regions:
+
+1. Core risk scoring (~lines 1-1040): FileRisk, weights, scoring, compute_file_risk_scores, top_risk_files, `risk_context_for_files, format_risk_report`, handle_risk
+2. Prediction & snapshots (~lines 1040-1465): snapshots, prediction cards, handle_risk_predict, handle_risk_snapshot, auto_risk_snapshot
+3. **Validation & accuracy** (~lines 1466-2662): validation events, accuracy computation, trends, signal breakdown, learning status, `auto_validate_after_failure, prediction_accuracy_summary`, history validation
+4. Tests (~lines 2663-4897)
+
+Now let me plan the session:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (3ms)
+  ▶ write session_plan/task_01.md (59 lines) ✓ (53.3s)
+  ▶ write session_plan/task_02.md (48 lines) ✓ (55.7s)
+  ▶ write session_plan/task_03.md (58 lines) ✓ (53.9s)
+  ▶ write session_plan/issue_responses.md (13 lines) ✓ (52.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (9ms)
+  7 tools completed in 4m 51s (7 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 119 Session Plan — 3 Tasks
+
+### Task 1 (Self-driven / Dream): Extract risk validation module from `commands_risk.rs`
+The risk module hit 4,897 lines — it's the largest file in the codebase and the assessment flagged it as approaching structural stress. This is also dream work: the proprioception system should itself be clean and maintainable (self-regularization through self-modeling). Extracts ~1,200 lines of validation/accuracy code into `src/risk_validation.rs, bringing commands_risk.rs` down to ~3,600 lines. Touches 3 files.
+
+### Task 2 (Issue #529): Add `text.includeHtmlTags` to Exa requests
+One-line API change + enhanced strip_html_tags to convert <pre>/<code> blocks into markdown fenced code blocks. Preserves code examples in research results. Touches 1 file.
+
+### Task 3 (Issue #530): Add selective Exa deep search
+Threading a depth parameter ("auto" default, "deep" for synthesis) through WebSearchTool → exa_search. Touches 2 files.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
