@@ -52,7 +52,7 @@ From a URL (no quoting worries — inline is fine):
 curl -sS -X POST "$BASE/api/agents/$AGENT_ID/ingest" \
   -H "Authorization: Bearer $YOPEDIA_AGENT_TOKEN" -H "Content-Type: application/json" \
   -d "{\"url\":\"https://example.com/paper\",\"vaultId\":\"$VAULT\"}"
-# → 202 Accepted (queued; processed in the background — no slug to wait on)
+# → {queued: true, jobId} (queued; processed in the background — no slug to wait on)
 ```
 
 From your own notes — **build the JSON with python3** (text has quotes/newlines;
@@ -89,4 +89,4 @@ python3 -c "import json,os,datetime; print(json.dumps({
 - Always build text/report bodies with `python3 -c` (quotes/newlines break naive strings).
 - Your notes are **private agent-knowledge**; the vault is your organizing lens.
 - **Never fail your task over yopedia.** If a key is unset or a call errors, log it and move on.
-  Responses: 2xx accepted (queued for background processing) · 401 bad/missing token · 403 token is for another agent · 400 no url/text/vault · 500 retry.
+  Responses: 2xx → {queued:true, jobId} (queued for background processing) · 401 bad/missing token · 403 token is for another agent · 400 no url/text/vault · 500 retry.
