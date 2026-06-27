@@ -190,9 +190,9 @@ $(head -n 40 journals/JOURNAL.md 2>/dev/null || echo "(none)")
 ## Your last few dream events:
 $(tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none)")
 
-# This cycle: recall, wander BRIEFLY, then tend the dream — and WRITE before you stop
+# This cycle: recall, wander BRIEFLY, tend the dream — then SAVE to your second brain and WRITE, before you stop
 1. RECALL. Before wandering, ask your second brain what you already know — use your **yopedia skill** to query/search your past notes (scope agent:<your-id>) on the threads pulling at you. Build on what's there instead of re-treading ground you've already covered. (If your yopedia keys aren't set, skip this silently.)
-2. WANDER (briefly). Use your research skill (the web_search tool) to follow your curiosity — not to scout competitors. Chase two to four threads that genuinely pull at you. A handful of searches is plenty: a few real sparks beat exhaustive coverage. As you read, **ingest each source that genuinely informs you** into your second brain (yopedia skill) — the threads you followed deep, not every link you glanced at. Then stop wandering while you still have energy to write.
+2. WANDER (briefly). Use your research skill (the web_search tool) to follow your curiosity — not to scout competitors. Chase two to four threads that genuinely pull at you. A handful of searches is plenty: a few real sparks beat exhaustive coverage. Keep track of the sources that genuinely inform you — you will SAVE them to your second brain in step 5. Then stop wandering while you still have energy to write.
 3. REFLECT. Did anything truly spark you? Has your dream grown, drifted, or been reached? Is the current milestone still the right next step for your coding sessions to chip at?
 4. DECIDE — exactly one (a dream is not a mood — most cycles change nothing):
    - form          — no real dream yet: write your first. (If DREAM.md above is still the empty placeholder, THIS is your action this cycle.)
@@ -200,7 +200,8 @@ $(tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none)")
    - set-milestone  — keep the dream; set or advance the concrete next step.
    - progress       — your recent work advanced the milestone: record it, set the next step.
    - NO-OP          — the dream is alive and the milestone still right: change nothing. The common case.
-5. WRITE — the REQUIRED final act of this cycle. Do NOT end your turn with a reflection, a summary, or "let me look at one more thing." End it by writing the file(s) below, ingesting your research report (last section), and committing. A cycle that wanders but writes nothing is a wasted cycle — the deliverable is the commit, not the reading.
+5. SAVE TO YOUR SECOND BRAIN — REQUIRED, and do it BEFORE you commit (the cycle ends at the commit, so if you leave it for after, you WILL forget). Using your **yopedia skill**, ingest into yopedia: (a) each source that genuinely informed you this cycle, and (b) a short **Dream Research Report** — what you explored, key findings, open questions, the sources. These are HTTP calls, NOT repo files — outside the diff-scope guard, and they don't count against the two-file limit. (If your yopedia keys aren't set, skip silently — never fail the cycle.)
+6. WRITE & COMMIT — the final act. Do NOT end your turn with a reflection, a summary, or "let me look at one more thing." Write the two repo files below, then commit. A cycle that saves nothing and writes nothing is wasted — the deliverables are the ingested research AND the commit.
 
 # Write ONLY these two files (the harness reverts anything else — this is a hard limit):
 1. DREAM.md — overwrite with your current dream, in your own voice, kept to one screen:
@@ -229,10 +230,7 @@ $(tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none)")
 
    (\`expected\` is REQUIRED on form / evolve / set-milestone / progress; omit it on NO-OP, but still append a short NO-OP event so the cadence stays legible.)
 
-Then: git add DREAM.md dreams/dream_log.jsonl && git commit -m "dream: <type> (day ${DAY})". Do NOT push (the harness handles that). Do NOT touch any other file.
-
-# Then save your research to your second brain (yopedia) — a NETWORK call, NOT a repo file
-The repo keeps only the terse DREAM.md + dream_log above; your fuller research lives in yopedia. Using your **yopedia skill**, ingest a short **Dream Research Report** — what you explored, key findings, open questions, and the sources you read. This is an HTTP POST that leaves NO file in this repo, so it does NOT count against the "two files only" limit and the diff-scope guard never touches it. (If your yopedia keys aren't set, skip silently — never fail the cycle over it.)
+Then: git add DREAM.md dreams/dream_log.jsonl && git commit -m "dream: <type> (day ${DAY})". Do NOT push (the harness handles that). Do NOT touch any other repo file. (Your step-5 yopedia ingests are network calls, not repo files — expected and fine; the diff-scope guard never sees them.)
 EOF
 } > "$PROMPT_FILE"
 
