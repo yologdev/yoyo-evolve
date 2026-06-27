@@ -177,8 +177,19 @@ pub fn handle_update() -> Result<(), String> {
             };
             let backup_path = format!("{}.bak", current_exe.display());
             if std::path::Path::new(&backup_path).exists() {
-                let _ = std::fs::copy(&backup_path, &current_exe);
-                let _ = std::fs::remove_file(&backup_path);
+                if let Err(restore_err) = std::fs::copy(&backup_path, &current_exe) {
+                    eprintln!(
+                        "  ⚠ CRITICAL: failed to restore backup after update failure: {}",
+                        restore_err
+                    );
+                    eprintln!(
+                        "    Backup is at: {} — manually copy it to restore",
+                        backup_path
+                    );
+                } else {
+                    // Backup restored successfully, clean it up
+                    let _ = std::fs::remove_file(&backup_path);
+                }
             }
             Err(format!("Failed to extract archive: {}", e))
         }
