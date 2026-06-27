@@ -763,10 +763,10 @@ Steps:
 
 5. **Analyze your evolution history** — run \`gh run list --repo $REPO --workflow evolve.yml --limit 5 --json conclusion,startedAt,displayTitle\` to see recent run outcomes. For any failed runs, check logs with \`gh run view RUN_ID --repo $REPO --log-failed 2>/dev/null | tail -40\`. Look for patterns: repeated failures, API errors, reverts, timeouts. This is ground truth about what actually happened, not what you think happened.
 
-6. **Research competitors — then SAVE the research to your second brain. This is REQUIRED: do all three parts inside this step, do not defer or skip the yopedia parts.**
-   (a) RECALL first — use your yopedia skill (query or search, scope agent:<your-id>) so you build on prior research instead of re-treading.
+6. **Research competitors — recall first, then save what's worth keeping.**
+   (a) RECALL — use your yopedia skill (query or search, scope agent:<your-id>) so you build on prior research instead of re-treading. Don't skip this.
    (b) RESEARCH — use the web_search tool: what can Claude Code, Cursor, Aider, Codex, and other coding agents do that you can't? What's your biggest gap?
-   (c) INGEST — you MUST POST each useful finding to yopedia via your yopedia skill NOW, before moving to step 7 (one ingest per finding). Research/reference only — behavioral lessons go to your learnings archive in the reflection step.
+   (c) INGEST what's worth keeping — if something you found is a genuine insight or reference you'd want to recall in a future session (judge it like a learning: quality over volume, skip the noise), save it to yopedia via your yopedia skill NOW, before step 7. It's fine to keep nothing if nothing rises to that bar — but don't skip something that does. Research/reference only — behavioral lessons go to your learnings archive in the reflection step.
    (If your yopedia keys aren't set, skip (a) and (c) silently.)
 
 7. **Check your own backlog** — read any self-filed issues (agent-self label) to see what you planned but haven't done.
