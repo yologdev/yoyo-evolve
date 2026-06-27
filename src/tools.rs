@@ -709,7 +709,8 @@ impl AgentTool for WebSearchTool {
     fn description(&self) -> &str {
         "Search the web using DuckDuckGo. Returns a list of search results with titles, \
          URLs, and snippets. Use this when you need to look up documentation, find solutions \
-         to errors, or research unfamiliar topics."
+         to errors, or research unfamiliar topics. Optional 'depth' parameter: 'auto' (default) \
+         for quick lookups, 'deep' for thorough research on complex/comparison queries."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -723,6 +724,11 @@ impl AgentTool for WebSearchTool {
                 "max_results": {
                     "type": "integer",
                     "description": "Maximum number of results to return (default: 5, max: 20)"
+                },
+                "depth": {
+                    "type": "string",
+                    "description": "Search depth: 'auto' (default) for quick lookups, 'deep' for thorough research on complex/comparison queries",
+                    "enum": ["auto", "deep"]
                 }
             },
             "required": ["query"]
@@ -751,7 +757,13 @@ impl AgentTool for WebSearchTool {
             .map(|n| n.min(20) as usize)
             .unwrap_or(5);
 
-        let result = commands_web::web_search_and_read(query, max_results);
+        let depth = params["depth"].as_str().unwrap_or("auto");
+        let search_type = match depth {
+            "deep" => "deep",
+            _ => "auto",
+        };
+
+        let result = commands_web::web_search_and_read(query, max_results, search_type);
         Ok(TR {
             content: vec![Content::Text { text: result }],
             details: serde_json::json!({}),
@@ -2730,6 +2742,34 @@ mod tests {
         assert!(
             names.contains(&"web_search"),
             "web_search should be in build_tools output, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_web_search_tool_schema_has_depth_optional() {
+        let tool = WebSearchTool;
+        let schema = tool.parameters_schema();
+        let props = &schema["properties"];
+        assert!(props["depth"].is_object(), "Should have 'depth' property");
+        assert_eq!(props["depth"]["type"], "string");
+        let required = schema["required"].as_array().unwrap();
+        assert!(
+            !required.contains(&serde_json::json!("depth")),
+            "depth should NOT be required"
+        );
+    }
+
+    #[test]
+    fn test_web_search_tool_description_mentions_depth() {
+        let tool = WebSearchTool;
+        let desc = tool.description();
+        assert!(
+            desc.contains("depth"),
+            "Description should mention 'depth' parameter, got: {desc}"
+        );
+        assert!(
+            desc.contains("deep"),
+            "Description should mention 'deep' option, got: {desc}"
         );
     }
 }

@@ -41,17 +41,184 @@ fn starts_with_ascii_ci(haystack: &str, needle: &str) -> bool {
     true
 }
 
-/// Strip HTML tags and extract readable text content.
-///
-/// This function:
-/// - Removes `<script>`, `<style>`, `<nav>`, `<footer>`, `<header>`, `<svg>` blocks entirely
-/// - Converts `<br>`, `<p>`, `<div>`, `<li>`, `<h1>`–`<h6>`, `<tr>` to newlines
-/// - Converts `<li>` items to bullet points
-/// - Strips all remaining HTML tags
-/// - Decodes common HTML entities
-/// - Collapses excessive whitespace
-/// - Truncates to `max_chars`
+/// Strip HTML tags from inside a code block (e.g. `<span>` from syntax
+/// highlighting). Preserves the text content only.
+fn strip_inner_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            // Skip to closing '>'
+            while i < bytes.len() && bytes[i] != b'>' {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1; // skip '>'
+            }
+        } else if let Some(c) = s[i..].chars().next() {
+            out.push(c);
+            i += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    // Decode HTML entities in the stripped text
+    crate::format::decode_html_entities(&out)
+}
+
+/// Extract a language hint from a tag like `<code class="language-rust">` or
+/// `<code class="python">`. Returns the language string if found.
+fn extract_code_language(tag: &str) -> Option<String> {
+    // Look for class="..." attribute
+    let class_start = find_ascii_ci(tag, "class=\"")?;
+    let after = &tag[class_start + 7..]; // 7 = len("class=\"")
+    let end = after.find('"')?;
+    let class_val = &after[..end];
+    // Try "language-X" pattern first
+    if let Some(idx) = class_val.find("language-") {
+        let lang = &class_val[idx + 9..]; // 9 = len("language-")
+        let lang = lang.split_whitespace().next().unwrap_or(lang);
+        if !lang.is_empty() {
+            return Some(lang.to_string());
+        }
+    }
+    // Try "lang-X" pattern
+    if let Some(idx) = class_val.find("lang-") {
+        let lang = &class_val[idx + 5..];
+        let lang = lang.split_whitespace().next().unwrap_or(lang);
+        if !lang.is_empty() {
+            return Some(lang.to_string());
+        }
+    }
+    // Try bare class name (e.g., class="python") — only if it looks like a lang
+    let first = class_val.split_whitespace().next().unwrap_or("");
+    if !first.is_empty()
+        && first
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '#')
+    {
+        // Exclude common CSS class names that aren't languages
+        let non_lang = [
+            "highlight",
+            "code",
+            "source",
+            "block",
+            "snippet",
+            "codehilite",
+        ];
+        if !non_lang.contains(&first.to_ascii_lowercase().as_str()) {
+            return Some(first.to_string());
+        }
+    }
+    None
+}
+
+/// Pre-process HTML to convert `<pre>` and `<code>` blocks to markdown fences/backticks
+/// before the main HTML stripping pass. This preserves code structure that would
+/// otherwise be lost when tags are stripped.
+fn preserve_code_blocks(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let bytes = html.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            let rest = &html[i..];
+
+            // Check for <pre> blocks (may contain <code>)
+            if starts_with_ascii_ci(rest, "<pre") {
+                let after_tag = &rest[4..]; // len("<pre")
+                if after_tag.is_empty() || after_tag.starts_with('>') || after_tag.starts_with(' ')
+                {
+                    // Find closing </pre>
+                    if let Some(close_pos) = find_ascii_ci(rest, "</pre>") {
+                        // Find the end of the opening <pre...> tag
+                        let open_end = rest.find('>').unwrap_or(0) + 1;
+                        let inner = &rest[open_end..close_pos];
+
+                        // Check if inner content starts with <code>
+                        let trimmed = inner.trim_start();
+                        let (lang, code_content) = if starts_with_ascii_ci(trimmed, "<code") {
+                            // Extract language from <code class="language-X">
+                            let code_tag_end = trimmed.find('>').unwrap_or(0);
+                            let code_tag = &trimmed[..=code_tag_end];
+                            let lang = extract_code_language(code_tag);
+
+                            // Get content between <code...> and </code>
+                            let after_code_tag = &trimmed[code_tag_end + 1..];
+                            let content = if let Some(code_close) =
+                                find_ascii_ci(after_code_tag, "</code>")
+                            {
+                                &after_code_tag[..code_close]
+                            } else {
+                                after_code_tag
+                            };
+                            (lang, content.to_string())
+                        } else {
+                            // Bare <pre> without <code>
+                            (None, inner.to_string())
+                        };
+
+                        // Strip nested HTML tags (syntax highlighting spans etc.)
+                        let clean_code = strip_inner_html(&code_content);
+
+                        // Build markdown fenced code block
+                        let lang_str = lang.as_deref().unwrap_or("");
+                        result.push_str("\n```");
+                        result.push_str(lang_str);
+                        result.push('\n');
+                        result.push_str(&clean_code);
+                        if !clean_code.ends_with('\n') {
+                            result.push('\n');
+                        }
+                        result.push_str("```\n");
+
+                        i += close_pos + 6; // 6 = len("</pre>")
+                        continue;
+                    }
+                }
+            }
+
+            // Check for inline <code> (not inside <pre>, which was handled above)
+            if starts_with_ascii_ci(rest, "<code") {
+                let after_tag = &rest[5..]; // len("<code")
+                if after_tag.is_empty() || after_tag.starts_with('>') || after_tag.starts_with(' ')
+                {
+                    // Find closing </code>
+                    if let Some(close_pos) = find_ascii_ci(rest, "</code>") {
+                        let open_end = rest.find('>').unwrap_or(0) + 1;
+                        let inner = &rest[open_end..close_pos];
+                        let clean = strip_inner_html(inner);
+                        // Use inline backticks for short, single-line code
+                        result.push('`');
+                        result.push_str(clean.trim());
+                        result.push('`');
+                        i += close_pos + 7; // 7 = len("</code>")
+                        continue;
+                    }
+                }
+            }
+
+            // Not a code tag — copy the '<' and continue
+            result.push('<');
+            i += 1;
+        } else if let Some(c) = html[i..].chars().next() {
+            result.push(c);
+            i += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
 pub fn strip_html_tags(html: &str, max_chars: usize) -> String {
+    // Pre-process: convert <pre>/<code> blocks to markdown fences/backticks
+    // BEFORE stripping HTML, so code structure is preserved.
+    let html = &preserve_code_blocks(html);
+
     // First pass: remove blocks we want to skip entirely (script, style, etc.)
     // Uses find_ascii_ci for case-insensitive tag matching without pre-lowering
     // the entire string (which would break byte-position correspondence for
@@ -316,7 +483,7 @@ fn handle_web_search(query: &str) {
 
     println!("{DIM}  Searching for: {query}...{RESET}");
 
-    match web_search(query, 8) {
+    match web_search(query, 8, "auto") {
         Ok(results) if results.is_empty() => {
             let has_exa = std::env::var("EXA_API_KEY")
                 .ok()
@@ -1012,7 +1179,33 @@ fn json_string_byte_len(s: &str) -> usize {
 /// Perform a web search via Exa API and return structured results.
 ///
 /// Requires `EXA_API_KEY` environment variable. Returns a clear error if unset.
-pub(crate) fn exa_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+/// Build the JSON request body for Exa API search.
+fn exa_request_body(query: &str, max_results: usize, search_type: &str) -> String {
+    let max_results = if max_results == 0 {
+        8
+    } else {
+        max_results.min(20)
+    };
+
+    // Validate search_type — only "auto" and "deep" are accepted by Exa.
+    let st = match search_type {
+        "deep" => "deep",
+        _ => "auto",
+    };
+
+    format!(
+        r#"{{"query":"{}","type":"{}","numResults":{},"contents":{{"text":{{"maxCharacters":2000,"includeHtmlTags":true}},"highlights":true}}}}"#,
+        query.replace('\\', "\\\\").replace('"', "\\\""),
+        st,
+        max_results
+    )
+}
+
+pub(crate) fn exa_search(
+    query: &str,
+    max_results: usize,
+    search_type: &str,
+) -> Result<Vec<WebSearchResult>, String> {
     let api_key = std::env::var("EXA_API_KEY").map_err(|_| {
         "Web search requires EXA_API_KEY. Get one at https://exa.ai and set it in your environment."
             .to_string()
@@ -1025,17 +1218,7 @@ pub(crate) fn exa_search(query: &str, max_results: usize) -> Result<Vec<WebSearc
         );
     }
 
-    let max_results = if max_results == 0 {
-        8
-    } else {
-        max_results.min(20)
-    };
-
-    let body = format!(
-        r#"{{"query":"{}","type":"auto","numResults":{},"contents":{{"text":{{"maxCharacters":2000}},"highlights":true}}}}"#,
-        query.replace('\\', "\\\\").replace('"', "\\\""),
-        max_results
-    );
+    let body = exa_request_body(query, max_results, search_type);
 
     let output = std::process::Command::new("curl")
         .args([
@@ -1115,13 +1298,20 @@ pub(crate) fn exa_key_missing_hint() -> String {
 ///
 /// If `EXA_API_KEY` is set, uses the Exa API (richer results with page content).
 /// If unset, falls back to DuckDuckGo HTML scraping (may return empty on captcha).
-pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearchResult>, String> {
+/// The `search_type` parameter controls Exa's search depth: `"auto"` (default)
+/// for quick lookups, `"deep"` for thorough research on complex/comparison queries.
+/// DuckDuckGo fallback ignores `search_type`.
+pub(crate) fn web_search(
+    query: &str,
+    max_results: usize,
+    search_type: &str,
+) -> Result<Vec<WebSearchResult>, String> {
     if std::env::var("EXA_API_KEY")
         .ok()
         .filter(|k| !k.is_empty())
         .is_some()
     {
-        exa_search(query, max_results)
+        exa_search(query, max_results, search_type)
     } else {
         ddg_search(query, max_results)
     }
@@ -1131,15 +1321,16 @@ pub(crate) fn web_search(query: &str, max_results: usize) -> Result<Vec<WebSearc
 ///
 /// Tries Exa API first (if `EXA_API_KEY` is set), falls back to DuckDuckGo.
 /// On Exa network/rate-limit failures, also retries with DuckDuckGo.
+/// The `search_type` parameter controls Exa's search depth (`"auto"` or `"deep"`).
 /// Returns a human-/agent-readable string on both success and failure.
-pub(crate) fn web_search_and_read(query: &str, max_results: usize) -> String {
+pub(crate) fn web_search_and_read(query: &str, max_results: usize, search_type: &str) -> String {
     let has_exa_key = std::env::var("EXA_API_KEY")
         .ok()
         .filter(|k| !k.is_empty())
         .is_some();
 
     if has_exa_key {
-        match exa_search(query, max_results) {
+        match exa_search(query, max_results, search_type) {
             Ok(results) => return format_search_results(&results),
             Err(e) => {
                 // Exa failed for a non-key reason (network, rate limit, etc.)
@@ -1347,6 +1538,103 @@ mod tests {
         let html = "<p>".to_string() + &"café ".repeat(1000) + "</p>";
         let text = strip_html_tags(&html, 100);
         assert!(text.contains("[… truncated at 100 chars]"));
+    }
+
+    #[test]
+    fn strip_html_pre_code_block() {
+        let html = "<p>Example:</p><pre><code class=\"language-rust\">fn main() {\n    println!(\"hello\");\n}</code></pre><p>End</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(
+            text.contains("```rust"),
+            "Should have fenced code block with language: {text}"
+        );
+        assert!(
+            text.contains("fn main()"),
+            "Should preserve code content: {text}"
+        );
+        assert!(
+            text.contains("```\n") || text.ends_with("```"),
+            "Should close fence: {text}"
+        );
+        assert!(
+            text.contains("Example:"),
+            "Should preserve surrounding text: {text}"
+        );
+        assert!(
+            text.contains("End"),
+            "Should preserve text after code: {text}"
+        );
+    }
+
+    #[test]
+    fn strip_html_pre_without_language() {
+        let html = "<pre><code>let x = 42;</code></pre>";
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("```\n"), "Should have plain fence: {text}");
+        assert!(text.contains("let x = 42;"), "Should preserve code: {text}");
+    }
+
+    #[test]
+    fn strip_html_pre_without_code_tag() {
+        let html = "<pre>plain preformatted text</pre>";
+        let text = strip_html_tags(html, 5000);
+        assert!(
+            text.contains("```\n"),
+            "Should have fence for bare <pre>: {text}"
+        );
+        assert!(
+            text.contains("plain preformatted text"),
+            "Should preserve text: {text}"
+        );
+    }
+
+    #[test]
+    fn strip_html_inline_code() {
+        let html = "<p>Use the <code>println!</code> macro.</p>";
+        let text = strip_html_tags(html, 5000);
+        assert!(
+            text.contains("`println!`"),
+            "Inline code should use backticks: {text}"
+        );
+        assert!(
+            !text.contains("```"),
+            "Inline code should not use fences: {text}"
+        );
+    }
+
+    #[test]
+    fn strip_html_code_with_syntax_spans() {
+        let html = r#"<pre><code class="language-python"><span class="kw">def</span> <span class="fn">hello</span>():
+    <span class="kw">print</span>(<span class="st">"hi"</span>)</code></pre>"#;
+        let text = strip_html_tags(html, 5000);
+        assert!(text.contains("```python"), "Should detect language: {text}");
+        assert!(text.contains("def hello():"), "Should strip spans: {text}");
+        assert!(
+            !text.contains("<span"),
+            "Should not contain span tags: {text}"
+        );
+    }
+
+    #[test]
+    fn strip_html_nested_pre_code_no_double_fence() {
+        let html = "<pre><code>x = 1</code></pre>";
+        let text = strip_html_tags(html, 5000);
+        let fence_count = text.matches("```").count();
+        assert_eq!(
+            fence_count, 2,
+            "Should have exactly open + close fences, got {fence_count}: {text}"
+        );
+    }
+
+    #[test]
+    fn strip_html_exa_request_includes_html_tags() {
+        // Verify the production Exa request body includes includeHtmlTags
+        let body = exa_request_body("test query", 5, "auto");
+        assert!(
+            body.contains("\"includeHtmlTags\":true"),
+            "Exa request body must include includeHtmlTags:true for code block preservation, got: {}",
+            body
+        );
     }
 
     #[test]
@@ -1810,7 +2098,7 @@ mod tests {
     fn test_exa_missing_key() {
         // Ensure EXA_API_KEY is not set for this test
         std::env::remove_var("EXA_API_KEY");
-        let result = exa_search("test query", 5);
+        let result = exa_search("test query", 5, "auto");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1895,7 +2183,7 @@ mod tests {
         // about missing API key — it should fall back to DDG (which may fail
         // for network reasons in tests, but shouldn't give an EXA_API_KEY error).
         std::env::remove_var("EXA_API_KEY");
-        let result = web_search("rust programming", 5);
+        let result = web_search("rust programming", 5, "auto");
         // It should either succeed (DDG worked) or fail with a non-EXA error
         match result {
             Ok(_results) => {} // DDG worked, great
@@ -1914,7 +2202,7 @@ mod tests {
         std::env::remove_var("EXA_API_KEY");
 
         // Verify that web_search doesn't panic and doesn't mention EXA
-        let result = web_search("test", 3);
+        let result = web_search("test", 3, "auto");
         if let Err(e) = &result {
             // DDG network error is acceptable, EXA key error is not
             assert!(
@@ -1945,7 +2233,7 @@ mod tests {
     fn test_web_search_and_read_no_exa_key_no_panic() {
         // web_search_and_read should not panic when EXA_API_KEY is unset
         std::env::remove_var("EXA_API_KEY");
-        let result = web_search_and_read("rust programming language", 3);
+        let result = web_search_and_read("rust programming language", 3, "auto");
         // Should return some string (either results or an error/hint message), never panic
         assert!(!result.is_empty());
         // If DDG returned empty (captcha), we expect the helpful hint about EXA_API_KEY.
@@ -1986,5 +2274,32 @@ mod tests {
         assert!(hint.len() > empty_formatted.len());
         assert!(hint.contains("EXA_API_KEY"));
         assert!(hint.contains("export EXA_API_KEY"));
+    }
+
+    #[test]
+    fn test_exa_request_body_default_auto_type() {
+        let body = exa_request_body("test query", 5, "auto");
+        assert!(
+            body.contains(r#""type":"auto""#),
+            "Default search type should be 'auto', got: {body}"
+        );
+    }
+
+    #[test]
+    fn test_exa_request_body_deep_type() {
+        let body = exa_request_body("compare rust vs go", 5, "deep");
+        assert!(
+            body.contains(r#""type":"deep""#),
+            "Deep search type should be 'deep', got: {body}"
+        );
+    }
+
+    #[test]
+    fn test_exa_request_body_invalid_type_falls_back_to_auto() {
+        let body = exa_request_body("test", 5, "invalid");
+        assert!(
+            body.contains(r#""type":"auto""#),
+            "Invalid search type should fall back to 'auto', got: {body}"
+        );
     }
 }
