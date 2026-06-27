@@ -83,6 +83,20 @@ pub fn effort_level() -> EffortLevel {
     }
 }
 
+/// Global flag: safe mode — disable all customizations (MCP, skills, custom commands, config).
+/// Set once during CLI startup via `set_safe_mode(true)`.
+static SAFE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enable or disable safe mode.
+pub fn set_safe_mode(enabled: bool) {
+    SAFE_MODE.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Check if safe mode is active.
+pub fn is_safe_mode() -> bool {
+    SAFE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Global flag: auto-approve file edits but still confirm shell commands.
 /// Set once during CLI startup via `enable_auto_edit()`.
 static AUTO_EDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -186,6 +200,7 @@ pub struct Config {
     pub no_tools: bool,
     pub lite: bool,
     pub auto_edit: bool,
+    pub safe_mode: bool,
 }
 
 #[cfg(test)]
@@ -288,5 +303,11 @@ mod tests {
 
         // Restore
         set_effort_level(original);
+    }
+
+    #[test]
+    fn test_safe_mode_defaults_to_false() {
+        // SAFE_MODE static defaults to false — safe mode must be explicitly opted into
+        assert!(!is_safe_mode());
     }
 }

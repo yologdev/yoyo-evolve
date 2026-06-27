@@ -590,7 +590,11 @@ pub use crate::commands_spawn::{handle_spawn, SpawnTracker};
 /// Discover custom slash commands from `.yoyo/commands/` and `~/.yoyo/commands/`.
 /// Returns `Vec<(name, content)>` — project-local commands override global ones
 /// with the same name. Silently returns an empty vec if directories don't exist.
+/// In safe mode, returns an empty vec to disable all custom commands.
 pub fn discover_custom_commands() -> Vec<(String, String)> {
+    if crate::cli_config::is_safe_mode() {
+        return Vec::new();
+    }
     discover_custom_commands_from(None)
 }
 

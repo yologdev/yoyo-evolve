@@ -201,6 +201,11 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  --safe-mode       Disable all customizations (MCP servers, skills, custom commands,"
+    );
+    let _ = writeln!(s, "                    permissions) for troubleshooting");
+    let _ = writeln!(
+        s,
         "  --context-strategy <s>  Context management: compaction (default) or checkpoint"
     );
     let _ = writeln!(

@@ -1,5 +1,29 @@
 # Common Issues
 
+## Quick fix: Safe mode
+
+If something is broken and you can't start yoyo normally (e.g., an MCP server crashes, a skill
+causes errors, or a config setting is wrong), start yoyo in safe mode:
+
+```bash
+yoyo --safe-mode
+```
+
+This disables all customizations — MCP servers, skills, custom commands, permissions, and
+auto-context — giving you a clean baseline session with only builtin tools. You'll see:
+
+```
+⚠ Safe mode: MCP servers, skills, custom commands, and config disabled
+```
+
+Use safe mode to:
+- **Isolate problems**: determine whether an issue is caused by your config or yoyo itself
+- **Recover from broken MCP servers**: if a server crashes on startup, safe mode skips it
+- **Debug skill issues**: if a skill causes unexpected behavior, safe mode runs without skills
+- **Work around config errors**: if `.yoyo.toml` has a typo or bad permission rule, safe mode ignores it
+
+Once you've identified the problem, fix the offending config/skill/server and restart normally.
+
 ## "No API key found"
 
 ```

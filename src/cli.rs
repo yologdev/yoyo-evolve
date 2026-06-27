@@ -218,6 +218,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--disallowed-tools",
     "--no-tools",
     "--lite",
+    "--safe-mode",
     "--help",
     "-h",
     "--version",
@@ -1029,6 +1030,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         },
         no_tools: args.iter().any(|a| a == "--no-tools"),
         lite,
+        safe_mode: args.iter().any(|a| a == "--safe-mode"),
     });
 
     // Conflict check: --allowed-tools and --disallowed-tools are mutually exclusive
@@ -2994,6 +2996,24 @@ command = "server-two"
         let args = vec!["yoyo".to_string()];
         let config = parse_args(&args).expect("should parse");
         assert!(!config.no_tools);
+    }
+
+    #[test]
+    #[serial]
+    fn test_safe_mode_flag() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args = vec!["yoyo".to_string(), "--safe-mode".to_string()];
+        let config = parse_args(&args).expect("should parse");
+        assert!(config.safe_mode);
+    }
+
+    #[test]
+    #[serial]
+    fn test_safe_mode_default_false() {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        let args = vec!["yoyo".to_string()];
+        let config = parse_args(&args).expect("should parse");
+        assert!(!config.safe_mode);
     }
 
     #[test]

@@ -569,6 +569,10 @@ fn apply_config_flags(config: &Config) -> bool {
         crate::cli_config::enable_auto_edit();
     }
 
+    if config.safe_mode {
+        crate::cli_config::set_safe_mode(true);
+    }
+
     if config.audit {
         enable_audit_log();
     }
@@ -658,11 +662,32 @@ async fn main() {
         );
     }
 
+    if crate::cli_config::is_safe_mode() {
+        eprintln!(
+            "{}⚠ Safe mode:{} MCP servers, skills, custom commands, and config disabled",
+            crate::format::YELLOW,
+            crate::format::RESET,
+        );
+    }
+
     let continue_session = config.continue_session;
     let output_path = config.output_path;
-    let mcp_servers = config.mcp_servers;
-    let mcp_server_configs = config.mcp_server_configs;
-    let openapi_specs = config.openapi_specs;
+    // In safe mode, skip MCP servers, skills, custom commands, and config
+    let mcp_servers = if crate::cli_config::is_safe_mode() {
+        vec![]
+    } else {
+        config.mcp_servers
+    };
+    let mcp_server_configs = if crate::cli_config::is_safe_mode() {
+        vec![]
+    } else {
+        config.mcp_server_configs
+    };
+    let openapi_specs = if crate::cli_config::is_safe_mode() {
+        vec![]
+    } else {
+        config.openapi_specs
+    };
     let image_path = config.image_path;
     let no_update_check = config.no_update_check;
     let json_output = config.json_output;
@@ -676,7 +701,11 @@ async fn main() {
         api_key: config.api_key,
         provider: config.provider,
         base_url: config.base_url,
-        skills: config.skills,
+        skills: if crate::cli_config::is_safe_mode() {
+            yoagent::skills::SkillSet::empty()
+        } else {
+            config.skills
+        },
         system_prompt: config.system_prompt,
         thinking: config.thinking,
         max_tokens: config.max_tokens,
@@ -684,14 +713,30 @@ async fn main() {
         max_turns: config.max_turns,
         auto_approve,
         auto_commit: config.auto_commit,
-        permissions: config.permissions,
-        dir_restrictions: config.dir_restrictions,
+        permissions: if crate::cli_config::is_safe_mode() {
+            cli::PermissionConfig::default()
+        } else {
+            config.permissions
+        },
+        dir_restrictions: if crate::cli_config::is_safe_mode() {
+            cli::DirectoryRestrictions::default()
+        } else {
+            config.dir_restrictions
+        },
         context_strategy: config.context_strategy,
         context_window: config.context_window,
-        shell_hooks: config.shell_hooks,
+        shell_hooks: if crate::cli_config::is_safe_mode() {
+            vec![]
+        } else {
+            config.shell_hooks
+        },
         fallback_provider: config.fallback_provider,
         fallback_model: config.fallback_model,
-        auto_watch: config.auto_watch,
+        auto_watch: if crate::cli_config::is_safe_mode() {
+            false
+        } else {
+            config.auto_watch
+        },
         allowed_tools: config.allowed_tools,
         disallowed_tools: config.disallowed_tools,
         no_tools: config.no_tools,
@@ -1448,6 +1493,7 @@ mod tests {
             disallowed_tools: vec![],
             no_tools: false,
             lite: false,
+            safe_mode: false,
         }
     }
 

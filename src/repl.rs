@@ -889,6 +889,7 @@ pub async fn run_repl(
         // ── Auto-context: inject relevant files when no @mentions are present ──
         let (effective_input, auto_context_files) = if file_results.is_empty()
             && !commands::is_architect_mode()
+            && !crate::cli_config::is_safe_mode()
         {
             // Collect recent message text so we don't re-inject files already seen
             let recent_msgs: Vec<String> = agent
