@@ -44,13 +44,15 @@ curl -sS "$BASE/api/agents/$AGENT_ID/context"
 
 ## Ingest a source (whenever something genuinely informs you)
 
+**Ingest is fire-and-forget**: the POST is queued and processed in the background, so it returns almost immediately. Don't wait for or parse a slug — just fire it and move on. (A non-2xx response means it failed; log it and skip.)
+
 From a URL (no quoting worries — inline is fine):
 
 ```bash
 curl -sS -X POST "$BASE/api/agents/$AGENT_ID/ingest" \
   -H "Authorization: Bearer $YOPEDIA_AGENT_TOKEN" -H "Content-Type: application/json" \
   -d "{\"url\":\"https://example.com/paper\",\"vaultId\":\"$VAULT\"}"
-# → {"slug":"...","deduped":false}
+# → 202 Accepted (queued; processed in the background — no slug to wait on)
 ```
 
 From your own notes — **build the JSON with python3** (text has quotes/newlines;
@@ -82,8 +84,9 @@ python3 -c "import json,os,datetime; print(json.dumps({
 
 - **Recall before you research; ingest after you learn.** That's the loop.
 - Give every note a clear, **dated title** — recall and dedup work better.
-- Re-posting the same URL/text is safe: it **dedups** (`"deduped":true`) instead of duplicating.
+- Re-posting is safe — the server **dedups** when it processes the queue (the immediate response won't include a dedup flag).
+- Ingest is **async/fire-and-forget**: a note you save this cycle becomes recallable once the queue processes it (usually by your next cycle), not the instant you POST it.
 - Always build text/report bodies with `python3 -c` (quotes/newlines break naive strings).
 - Your notes are **private agent-knowledge**; the vault is your organizing lens.
 - **Never fail your task over yopedia.** If a key is unset or a call errors, log it and move on.
-  Responses: 200 ok · 401 bad/missing token · 403 token is for another agent · 400 no url/text/vault · 500 retry.
+  Responses: 2xx accepted (queued for background processing) · 401 bad/missing token · 403 token is for another agent · 400 no url/text/vault · 500 retry.
