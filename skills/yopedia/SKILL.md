@@ -18,11 +18,11 @@ the same ground).
 
 ```bash
 BASE=https://yopedia.yolog.dev
-AGENT_ID="${YOYO_TOKEN%%.*}"     # the token text before the dot, e.g. alice--yoyo
+AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"     # the token text before the dot, e.g. alice--yoyo
 VAULT="$YOPEDIA_VAULT_ID"        # which vault to file into — passed on every ingest
 ```
 
-If `$YOYO_TOKEN` or `$YOPEDIA_VAULT_ID` is unset, your second brain isn't wired up
+If `$YOPEDIA_AGENT_TOKEN` or `$YOPEDIA_VAULT_ID` is unset, your second brain isn't wired up
 yet — **skip ingestion/recall silently and carry on**. A yopedia call must never
 fail your actual work.
 
@@ -48,7 +48,7 @@ From a URL (no quoting worries — inline is fine):
 
 ```bash
 curl -sS -X POST "$BASE/api/agents/$AGENT_ID/ingest" \
-  -H "Authorization: Bearer $YOYO_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $YOPEDIA_AGENT_TOKEN" -H "Content-Type: application/json" \
   -d "{\"url\":\"https://example.com/paper\",\"vaultId\":\"$VAULT\"}"
 # → {"slug":"...","deduped":false}
 ```
@@ -62,7 +62,7 @@ python3 -c "import json,os,datetime; print(json.dumps({
   'text':  'What it said, why it matters, and the source URL(s).',
   'vaultId': os.environ['YOPEDIA_VAULT_ID']}))" \
 | curl -sS -X POST "$BASE/api/agents/$AGENT_ID/ingest" \
-    -H "Authorization: Bearer $YOYO_TOKEN" -H "Content-Type: application/json" --data @-
+    -H "Authorization: Bearer $YOPEDIA_AGENT_TOKEN" -H "Content-Type: application/json" --data @-
 ```
 
 ## Ingest a report (a synthesis worth keeping)
@@ -75,7 +75,7 @@ python3 -c "import json,os,datetime; print(json.dumps({
   'text':  '<what I explored / key findings / open questions / sources>',
   'vaultId': os.environ['YOPEDIA_VAULT_ID']}))" \
 | curl -sS -X POST "$BASE/api/agents/$AGENT_ID/ingest" \
-    -H "Authorization: Bearer $YOYO_TOKEN" -H "Content-Type: application/json" --data @-
+    -H "Authorization: Bearer $YOPEDIA_AGENT_TOKEN" -H "Content-Type: application/json" --data @-
 ```
 
 ## Rules
