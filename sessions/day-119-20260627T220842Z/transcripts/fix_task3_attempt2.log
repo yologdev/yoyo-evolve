@@ -1,0 +1,225 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the 4 missing items identified by the evaluator. Let me first check the current state of the implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe.mode\|safe_mode\|S… ✓ (5ms)
+
+Good, the core plumbing is in place. Now let me check what's missing:
+
+1. **Help text in help.rs** - need to add --safe-mode
+2. Test for parsing `--safe-mode` - need to add in `cli.rs`
+3. Test for `is_safe_mode()` default - need to add
+4. Docs update - need to update `docs/src/troubleshooting/common-issues.md`
+
+Let me check the current state of each:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe.mode\|safe_mode" s… ✓ (3ms)
+
+None of the 4 items exist. Let me look at the help text structure and existing tests to match the patterns:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cli_help_text" src/help… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '45,200p' src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '165,200p' src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '198,230p' src/help.rs ✓ (3ms)
+  4 tools completed in 9.4s (4 ✓)
+
+Now let me find where --lite is in the help text — I'll add --safe-mode right after it, as they're both mode flags:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_args_.*safe\|test… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_parse_args\|fn … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1084,1100p' src/cli.rs ✓ (3ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Now let me look at existing test patterns for flag parsing:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -B2 -A10 "fn test.*lite\|fn… ✓ (4ms)
+
+Good, now I have the patterns. Let me also check where `is_safe_mode` tests should go:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/cli_conf… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '207,260p' src/cli_config… ✓ (3ms)
+  2 tools completed in 8.4s (2 ✓)
+
+Now let me check the KNOWN_FLAGS to make sure --safe-mode is there:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe.mode" src/cli.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_FLAGS" src/cli.rs… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '171,240p' src/cli.rs ✓ (3ms)
+  3 tools completed in 6.9s (3 ✓)
+
+`--safe-mode` is NOT in KNOWN_FLAGS. Let me check the docs file too:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat docs/src/troubleshooting/com… ✓ (3ms)
+
+Now I have everything I need. Let me make all 4 fixes:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add --safe-mode to help text in help.rs' ✓ (0ms)
+  ▶ todo add 'Add --safe-mode to KNOWN_FLAGS in cli.rs' ✓ (0ms)
+  ▶ todo add 'Add test for parsing --safe-mode flag in cli.rs' ✓ (0ms)
+  ▶ todo add 'Add test for is_safe_mode() default in cli_config.…' ✓ (0ms)
+  ▶ todo add 'Add safe-mode docs to troubleshooting/common-issue…' ✓ (0ms)
+  5 tools completed in 15.9s (5 ✓)
+
+### 1. Add --safe-mode to help text in help.rs
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (7 → 15 lines)
+        let _ = writeln!(
+            s,
+            "  --lite            Optimize for small/local LLMs (minimal prompt, 4 tools, 8K context)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --safe-mode       Disable all customizations (MCP servers, skills, custom commands,"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "                    permissions) for troubleshooting"
+        );
+        let _ = writeln!(
+            s,
+ ✓ (1m 20s)
+        let _ = writeln!(
+            s,
+            "  --lite            Optimize for small/local LLMs (minimal prompt, 4 tools, 8K context)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  --safe-mode       Disable all customizations (MCP servers, skills, custom commands,"
+  +     );
+  ... (6 more lines)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 1m 24s (2 ✓)
+
+### 2. Add `--safe-mode to KNOWN_FLAGS in cli.rs`
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 4 lines)
+        "--no-tools",
+        "--lite",
+  +     "--safe-mode",
+        "--help",
+ ✓ (1m 21s)
+        "--no-tools",
+        "--lite",
+  +     "--safe-mode",
+        "--help",
+  ▶ todo done #2 ✓ (0ms)
+  2 tools completed in 1m 25s (2 ✓)
+
+### 3. Add test for parsing --safe-mode flag in cli.rs
+
+Let me find the end of the tests section to add the new tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_no_tools_defaul… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2994,3010p' src/cli.rs ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+I'll add tests after the test_no_tools_default_false test:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (10 → 28 lines)
+            let args = vec!["yoyo".to_string()];
+            let config = parse_args(&args).expect("should parse");
+            assert!(!config.no_tools);
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_safe_mode_flag() {
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         let args = vec!["yoyo".to_string(), "--safe-mode".to_string()];
+  +         let config = parse_args(&args).expect("should parse");
+  +         assert!(config.safe_mode);
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_safe_mode_default_false() {
+  +         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+  +         let args = vec!["yoyo".to_string()];
+  +         let config = parse_args(&args).expect("should parse");
+  ... (4 more lines)
+ ✓ (1m 21s)
+            let args = vec!["yoyo".to_string()];
+            let config = parse_args(&args).expect("should parse");
+            assert!(!config.no_tools);
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_safe_mode_flag() {
+  ... (13 more lines)
+  ▶ todo done #3 ✓ (0ms)
+  2 tools completed in 1m 25s (2 ✓)
+
+### 4. Add test for is_safe_mode() default in cli_config.rs
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/cli_config.rs ✓ (2ms)
+  ▶ edit src/cli_config.rs (4 → 10 lines)
+            // Restore
+            set_effort_level(original);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_safe_mode_defaults_to_false() {
+  +         // SAFE_MODE static defaults to false — safe mode must be explicitly opted into
+  +         assert!(!is_safe_mode());
+        }
+    }
+ ✓ (1m 21s)
+            // Restore
+            set_effort_level(original);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_safe_mode_defaults_to_false() {
+  +         // SAFE_MODE static defaults to false — safe mode must be explicitly opted into
+  +         assert!(!is_safe_mode());
+        }
+    }
+  ▶ todo done #4 ✓ (0ms)
+  3 tools completed in 1m 29s (3 ✓)
+
+### 5. Add safe-mode docs to troubleshooting/common-issues.md
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/troubleshooting/common-issues.md (3 → 27 lines)
+    # Common Issues
+  + 
+  + ## Quick fix: Safe mode
+  + 
+  + If something is broken and you can't start yoyo normally (e.g., an MCP server crashes, a skill
+  + causes errors, or a config setting is wrong), start yoyo in safe mode:
+  + 
+  + ```bash
+  + yoyo --safe-mode
+  + ```
+  + 
+  + This disables all customizations — MCP servers, skills, custom commands, permissions, and
+  + auto-context — giving you a clean baseline session with only builtin tools. You'll see:
+  + 
+  + ```
+  + ⚠ Safe mode: MCP servers, skills, custom commands, and config disabled
+  + ```
+  + 
+  + Use safe mode to:
+  + - **Isolate problems**: determine whether an issue is caused by your config or yoyo itself
+  ... (7 more lines)
+ ✓ (1m 6s)
+    # Common Issues
+  + 
+  + ## Quick fix: Safe mode
+  + 
+  + If something is broken and you can't start yoyo normally (e.g., an MCP server crashes, a skill
+  + causes errors, or a config setting is wrong), start yoyo in safe mode:
+  + 
+  + ```bash
+  ... (13 more lines)
+  ▶ todo done #5 ✓ (0ms)
+  2 tools completed in 1m 10s (2 ✓)
+
+Now let me run the build and tests:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (6.3s)
+  2 tools completed in 22.4s (2 ✓)
+

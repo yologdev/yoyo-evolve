@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the implementation and what needs to be fixed.
+  ▶ search 'safe_mode\|safe-mode\|is_safe_mode\|set_safe_mode\|SAFE_MODE' in src ✓ (10ms)
+
+Good, the basic infrastructure is in place. Now let me check the two specific gaps identified by the evaluator:
+
+1. Custom command loading in src/commands.rs
+2. Auto-context injection in src/repl.rs
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'discover_custom_commands' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:590..610 ✓ (0ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Now let me check where discover_custom_commands is called:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'discover_custom_commands\(\)' in src ✓ (7ms)
+
+Now let me check the auto-context injection in src/repl.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_context' in src/repl.rs ✓ (2ms)
+  ▶ read src/repl.rs:885..950 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now I have a clear picture. I need to:
+
+1. Gate `discover_custom_commands() with is_safe_mode()` check
+2. Gate auto-context injection in src/repl.rs with is_safe_mode() check
+
+Let me also check where discover_custom_commands is used on line 685 (seems like it might be is_custom_command or similar):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:678..693 ✓ (0ms)
+
+The cleanest approach is to gate the discover_custom_commands() function itself - when safe mode is on, it returns an empty vec immediately. This will cascade through all callers (`custom_command_names, is_custom_command`, help text, etc.).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:590..610 ✓ (1ms)
+
+Now let me make the two fixes:
+
+Fix 1: Gate custom command discovery in safe mode
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (6 → 10 lines)
+    /// Discover custom slash commands from `.yoyo/commands/` and `~/.yoyo/commands/`.
+    /// Returns `Vec<(name, content)>` — project-local commands override global ones
+    /// with the same name. Silently returns an empty vec if directories don't exist.
+  + /// In safe mode, returns an empty vec to disable all custom commands.
+    pub fn discover_custom_commands() -> Vec<(String, String)> {
+  +     if crate::cli_config::is_safe_mode() {
+  +         return Vec::new();
+  +     }
+        discover_custom_commands_from(None)
+    }
+ ✓ (1m 22s)
+    /// Discover custom slash commands from `.yoyo/commands/` and `~/.yoyo/commands/`.
+    /// Returns `Vec<(name, content)>` — project-local commands override global ones
+    /// with the same name. Silently returns an empty vec if directories don't exist.
+  + /// In safe mode, returns an empty vec to disable all custom commands.
+    pub fn discover_custom_commands() -> Vec<(String, String)> {
+  +     if crate::cli_config::is_safe_mode() {
+  +         return Vec::new();
+  +     }
+        discover_custom_commands_from(None)
+    }
+
+**Fix 2: Gate auto-context injection in safe mode**
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (4 → 5 lines)
+            // ── Auto-context: inject relevant files when no @mentions are present ──
+            let (effective_input, auto_context_files) = if file_results.is_empty()
+                && !commands::is_architect_mode()
+  +             && !crate::cli_config::is_safe_mode()
+            {
+ ✓ (1m 22s)
+            // ── Auto-context: inject relevant files when no @mentions are present ──
+            let (effective_input, auto_context_files) = if file_results.is_empty()
+                && !commands::is_architect_mode()
+  +             && !crate::cli_config::is_safe_mode()
+            {
+
+Now let me verify the changes compile and pass all checks:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (13.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (120ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (53.2s)
+  3 tools completed in 1m 14s (3 ✓)
+
+All 88 tests pass. Let me verify the two fixes are correct by reviewing the final state:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff ✓ (8ms)
+
+The diff shows both fixes are clean and minimal:
+
+1. **`src/commands.rs**: discover_custom_commands() now returns an empty vec when is_safe_mode()` is true, which gates all custom command loading from `.yoyo/commands/ and ~/.yoyo/commands/`.
+
+2. **`src/repl.rs**: Auto-context injection is now skipped when is_safe_mode() is true, by adding && !crate::cli_config::is_safe_mode()` to the condition guard.
+
+Both were the exact gaps identified by the evaluator. All 88 tests pass, clippy is clean, and formatting is correct.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

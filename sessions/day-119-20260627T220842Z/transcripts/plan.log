@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then create the session plan.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.7s (2 ✓)
+
+No community issues. Let me check for any pending issue responses and review the current state of issues #529 and #530.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 529 --repo yologdev/yoyo-evolve --json state,title 2>/dev/null || …  ▶ $ gh issue view 530 --repo yologdev/yoyo-evolve --json state,title 2>/dev/null || …  ▶ $ cat DREAM.md | head -30 ✓ (3ms)
+ ✓ (195ms)
+ ✓ (218ms)
+  3 tools completed in 2.1s (3 ✓)
+
+Now let me check the dream milestone and the /goal auto-verification gap identified in the assessment, since that's the biggest actionable competitive gap.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what /goal verify currently does (2 lines)  ▶ $ # Check the risk validation JSONL to understand how many dat… (2 lines)  ▶ $ # Check the let _ = instances in commands_risk.rs flagged in… (2 lines) ✓ (4ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ # Check current goal auto-verify: does it run between turns? (2 lines)  ▶ $ # Check how many risk validation data points exist (2 lines) ✓ (4ms)
+ ✓ (18ms)
+  ▶ $ # Check if there's validation data inside .yoyo/ (2 lines)  ▶ $ # Understand what run_watch_after_prompt does — it's the hoo… (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check how watch_after_prompt is called from prompt/repl (2 lines)  ▶ $ # Understand the current /goal structure (2 lines) ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ # See where watch_after_prompt is called and how — this is t… (2 lines) ✓ (3ms)
+  10 tools completed in 18.4s (10 ✓)
+
+Now I have a clear picture. Let me plan the session.
+
+Analysis:
+
+1. Issues #529 and #530 — already implemented, just need closing. That's an issue response, not a task.
+2. Biggest actionable competitive gap — /goal auto-verification after each turn (Claude Code does this). Currently `/goal verify <cmd>` stores a command but never auto-runs it. The pattern exists in run_watch_after_prompt — we can add a similar `run_goal_verify_after_prompt`.
+3. Dream milestone — measuring whether risk reflexes actually reduce failures. No validation data exists yet (.yoyo/ has no risk validation JSONL). This needs more evolution cycles with the reflexes firing before we can measure. Not actionable as a code task today.
+4. **Bug: let _ = in risk weight saving** — silently drops errors. Quick fix with eprintln warning.
+5. **Self-driven competitive work** — auto-goal-verify is directly advancing competitive parity AND is dream-adjacent (allostasis: anticipating whether the goal is met rather than waiting for the user to check).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (47 lines)  ▶ write session_plan/task_02.md (42 lines)  ▶ write session_plan/task_03.md (46 lines) ✓ (53.5s)
+ ✓ (1m 47s)
+ ✓ (2m 40s)
+  ▶ write session_plan/issue_responses.md (21 lines) ✓ (53.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (9ms)
+  6 tools completed in 3m 52s (6 ✓)
+
+Plan committed. Here's the session summary:
+
+## Day 119 Session Plan (20:46)
+
+### Task Allocation
+
+| Slot | Task | Type | Files |
+|------|------|------|-------|
+| 1 | Auto-run `/goal verify` after each prompt turn | Self-driven (competitive gap) | commands_goal.rs, repl.rs |
+| 2 | Log warnings for silenced risk write errors | Self-discovered bug | commands_risk.rs |
+| 3 | Add `--safe-mode` flag | Self-driven (competitive gap) | cli.rs, cli_config.rs, main.rs |
+
+### Reasoning
+
+• Task 1 closes the biggest *achievable* competitive gap identified in the assessment — Claude Code auto-verifies /goal after every turn, yoyo stores the command but never runs it automatically. The pattern already exists in `run_watch_after_prompt`; this mirrors it for goal verification. Dream-adjacent: auto-verify is allostatic (anticipating whether the goal is met rather than waiting for the user to ask).
+
+• Task 2 fixes a real bug: risk weight file writes silently fail with let _ =, losing data with zero diagnostic. The assessment specifically called out line 360 as critical. Quick, surgical fix.
+
+• **Task 3** adds --safe-mode — when MCP servers crash or skills cause issues, users currently have no way to get a clean baseline. Claude Code, Codex CLI, and Cursor all have safety/sandbox modes. This is a 3-file change with clear boundaries.
+
+### Issue Responses
+• **#529, #530:** Close as completed (code already landed this session).
+• **#341, #307, #215, #156:** Deferred (ongoing/blocked/not actionable).
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

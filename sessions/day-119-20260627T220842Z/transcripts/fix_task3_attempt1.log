@@ -1,0 +1,410 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --safe-mode flag. Let me start by understanding the existing code structure.
+  ▶ todo add 'Add SAFE_MODE AtomicBool + getter/setter + Config …' ✓ (0ms)
+  ▶ todo add 'Parse --safe-mode flag in cli.rs parse_args' ✓ (0ms)
+  ▶ todo add 'Add --safe-mode to help text in help.rs' ✓ (0ms)
+  ▶ todo add 'Skip MCP, skills, custom commands, config in main.…' ✓ (0ms)
+  ▶ todo add 'Add tests for safe mode' ✓ (0ms)
+  ▶ todo add 'Add docs for safe mode in troubleshooting' ✓ (0ms)
+  6 tools completed in 16.5s (6 ✓)
+
+Let me read the relevant files to understand the patterns.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the following files and return their key sections:
+
+1. …' ✓ (1m 38s)
+
+Now let me look at specific details I need:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_discover_skills' in src/cli.rs ✓ (2ms)
+  ▶ search 'KNOWN_FLAGS' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:171..231 ✓ (1ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now let me find where safe_mode / no_tools or similar boolean flags are parsed in parse_args:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'no_tools' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:1020..1050 ✓ (1ms)
+  ▶ read src/cli.rs:1025..1045 ✓ (1ms)
+  3 tools completed in 8.1s (3 ✓)
+
+Now let me see what the Config struct construction looks like (the `Some(Config {` part):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Some\(Config \{' in src/cli.rs ✗ (2ms)
+    │ Search error: grep: Unmatched \{
+  ▶ search 'Some.Config' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:963..1038 ✓ (1ms)
+  3 tools completed in 7.5s (2 ✓, 1 ✗)
+
+Now let me see how auto_edit gets its global setter called after Config creation:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'enable_auto_edit' in src/cli.rs ✓ (2ms)
+  ▶ search 'enable_auto_edit\|auto_edit\|safe_mode\|no_tools' in src/main.rs ✓ (2ms)
+  2 tools completed in 5.7s (2 ✓)
+
+Let me see the relevant main.rs sections:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:560..640 ✓ (1ms)
+  ▶ read src/main.rs:639..759 ✓ (1ms)
+  2 tools completed in 6.6s (2 ✓)
+
+Now let me see where auto_context is used, and how custom commands are loaded:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_context' in src/main.rs ✓ (2ms)
+  ▶ search 'auto_context_for_prompt' in src ✓ (8ms)
+  ▶ read src/repl.rs:918..938 ✓ (1ms)
+  3 tools completed in 7.0s (3 ✓)
+
+Good. Now let me check how the auto_context is gated — is there already a guard I should check?
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:890..940 ✓ (1ms)
+
+Now let me also check the Config struct to see the auto_edit field that was recently added, to understand the pattern:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:86..146 ✓ (0ms)
+  ▶ read src/cli_config.rs:145..195 ✓ (0ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Now let me see the help text for flags:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn cli_help_text' in src/help.rs ✓ (2ms)
+  ▶ read src/help.rs:45..145 ✓ (1ms)
+  ▶ read src/help.rs:144..204 ✓ (1ms)
+  ▶ read src/help.rs:200..230 ✓ (1ms)
+  4 tools completed in 11.0s (4 ✓)
+
+Now I have a thorough understanding. Let me also check the docs file:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/troubleshooting/common-issues.md ✓ (1ms)
+
+Now I have full understanding. Let me implement everything.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+### Step 1: Add SAFE_MODE to cli_config.rs
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (3 → 17 lines)
+  + /// Global flag: safe mode — disable all customizations (MCP, skills, custom commands, config).
+  + /// Set once during CLI startup via `set_safe_mode(true)`.
+  + static SAFE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Enable or disable safe mode.
+  + pub fn set_safe_mode(enabled: bool) {
+  +     SAFE_MODE.store(enabled, std::sync::atomic::Ordering::Relaxed);
+  + }
+  + 
+  + /// Check if safe mode is active.
+  + pub fn is_safe_mode() -> bool {
+  +     SAFE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+  + }
+  + 
+    /// Global flag: auto-approve file edits but still confirm shell commands.
+    /// Set once during CLI startup via `enable_auto_edit()`.
+    static AUTO_EDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+ ✓ (13.1s)
+  + /// Global flag: safe mode — disable all customizations (MCP, skills, custom commands, config).
+  + /// Set once during CLI startup via `set_safe_mode(true)`.
+  + static SAFE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+  + 
+  + /// Enable or disable safe mode.
+  + pub fn set_safe_mode(enabled: bool) {
+  +     SAFE_MODE.store(enabled, std::sync::atomic::Ordering::Relaxed);
+  + }
+  ... (9 more lines)
+
+Expected — I need to add the field to Config and use it. Let me continue with all changes.
+
+Now add safe_mode to the Config struct:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (4 → 5 lines)
+        pub no_tools: bool,
+        pub lite: bool,
+        pub auto_edit: bool,
+  +     pub safe_mode: bool,
+    }
+ ✓ (8.3s)
+        pub no_tools: bool,
+        pub lite: bool,
+        pub auto_edit: bool,
+  +     pub safe_mode: bool,
+    }
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0063][0m[1m: missing field `safe_mode` in initializer of `cli_config::Config`[0m
+   [1m[94m--> [0msrc/cli.rs:963:27
+    [1m[94m|[0m
+[1m[94m963[0m [1m[94m|[0m     let mut result = Some(Config {
+    [1m[94m|[0m                           [1m[91m^^^^^^[0m [1m[91mmissing `safe_mode`[0m
+
+[1mFor more information about this error, try `rustc --explain E0063`.[0m
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[E0063][0m[1m: missing field `safe_mode` in initializer of `cli_config::Config`[0m
+    [1m[94m--> [0msrc/main.rs:1411:9
+     [1m[94m|[0m
+[1m[94m1411[0m [1m[94m|[0m         Config {
+     [1m[94m|[0m         [1m[91m^^^^^^[0m [1m[91mmissing `safe_mode`[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me fix the compilation errors by adding safe_mode to all Config initializers and completing the full implementation.
+  ▶ search 'no_tools: args.iter\(\).any\(\|a\| a == \"--no-tools\"\),' in src/cli.rs ✓ (2ms)
+  ▶ search 'no_tools:' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:1028..1034 ✓ (1ms)
+  ▶ edit src/cli.rs (3 → 4 lines)
+            no_tools: args.iter().any(|a| a == "--no-tools"),
+            lite,
+  +         safe_mode: args.iter().any(|a| a == "--safe-mode"),
+        });
+ ✓ (8.3s)
+            no_tools: args.iter().any(|a| a == "--no-tools"),
+            lite,
+  +         safe_mode: args.iter().any(|a| a == "--safe-mode"),
+        });
+  4 tools completed in 20.1s (4 ✓)
+
+Now fix the Config initializer in main.rs (for tests):
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'safe_mode\|auto_edit: false' in src/main.rs ✓ (2ms)
+  ▶ read src/main.rs:1428..1438 ✓ (0ms)
+  ▶ read src/main.rs:1437..1457 ✓ (0ms)
+  ▶ edit src/main.rs (3 → 4 lines)
+                no_tools: false,
+                lite: false,
+  +             safe_mode: false,
+            }
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/main.rs. Include more surrounding context to make the match unique.
+  ▶ search 'no_tools: false' in src/main.rs ✓ (2ms)
+  ▶ read src/main.rs:968..976 ✓ (0ms)
+  ▶ edit src/main.rs (8 → 9 lines)
+                disallowed_tools: vec![],
+                no_tools: false,
+                lite: false,
+  +             safe_mode: false,
+            }
+        }
+    
+ ✗ (0ms)
+    │ old_text matches 2 locations in src/main.rs. Include more surrounding context to make the match unique.
+  ▶ read src/main.rs:963..973 ✓ (0ms)
+  8 tools completed in 25.7s (6 ✓, 2 ✗)
+
+The two locations have different preceding context. Let me use more unique surrounding context:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:956..976 ✓ (0ms)
+  ▶ edit src/main.rs (19 → 20 lines)
+                disallowed_tools: vec![],
+                no_tools: false,
+                lite: false,
+  +             safe_mode: false,
+            }
+        }
+ ✓ (8.3s)
+                disallowed_tools: vec![],
+                no_tools: false,
+                lite: false,
+  +             safe_mode: false,
+            }
+        }
+  2 tools completed in 15.3s (2 ✓)
+
+The second Config initializer is inside a test function that constructs a sub-agent Config — it shouldn't have safe_mode on AgentConfig. Let me check:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:940..970 ✓ (0ms)
+
+This is an AgentConfig, not Config. Let me revert:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (8 → 7 lines)
+                disallowed_tools: vec![],
+                no_tools: false,
+                lite: false,
+  -             safe_mode: false,
+            }
+        }
+ ✓ (8.3s)
+                disallowed_tools: vec![],
+                no_tools: false,
+                lite: false,
+  -             safe_mode: false,
+            }
+        }
+
+Now let me find the other Config initializer in main.rs tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1400..1450 ✓ (0ms)
+  ▶ read src/main.rs:1449..1454 ✓ (0ms)
+  ▶ edit src/main.rs (7 → 5 lines)
+                no_tools: false,
+                lite: false,
+  +             safe_mode: false,
+            }
+        }
+  - 
+  -     #[test]
+  -     fn test_apply_config_flags_default_returns_true
+ ✓ (459ms)
+                no_tools: false,
+                lite: false,
+  +             safe_mode: false,
+            }
+        }
+  - 
+  -     #[test]
+  -     fn test_apply_config_flags_default_returns_true
+  3 tools completed in 9.4s (3 ✓)
+
+I accidentally ate the test function signature. Let me fix that:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:1448..1458 ✓ (0ms)
+  ▶ edit src/main.rs (3 → 6 lines)
+                safe_mode: false,
+            }
+  -     }() {
+  +     }
+  + 
+  +     #[test]
+  +     fn test_apply_config_flags_default_returns_true() {
+ ✓ (13.0s)
+                safe_mode: false,
+            }
+  -     }() {
+  +     }
+  + 
+  +     #[test]
+  +     fn test_apply_config_flags_default_returns_true() {
+  2 tools completed in 20.4s (2 ✓)
+
+Good — the struct errors are fixed, now it's just "never used" warnings. I need to actually use safe_mode in main.rs and add the remaining implementation. Let me now add the safe_mode logic in main.rs, the `--safe-mode to KNOWN_FLAGS, the help text, the set_safe_mode call in apply_config_flags`, and the skip logic. Let me do it all:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+The errors are all "never used" — I need to actually wire safe_mode into the code. Let me add all the usage points: `apply_config_flags` in main.rs, the skip logic for MCP/skills/etc, KNOWN_FLAGS, help text, auto-context guard, and tests.
+
+Let me first see the current state of all files I need to touch:
+  ▶ read src/cli_config.rs:86..106 ✓ (0ms)
+
+Good, the definitions are in place. Now I need to:
+1. Call set_safe_mode from apply_config_flags in main.rs
+2. Read config.safe_mode in main.rs to skip MCP/skills/config
+3. Add --safe-mode to KNOWN_FLAGS in cli.rs
+4. Add to help text
+5. Guard auto-context in repl.rs
+6. Add tests
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:564..584 ✓ (0ms)
+  ▶ edit src/main.rs (9 → 13 lines)
+        if config.auto_edit {
+            crate::cli_config::enable_auto_edit();
+  +     }
+  + 
+  +     if config.safe_mode {
+  +         crate::cli_config::set_safe_mode(true);
+        }
+    
+        if config.audit {
+ ✓ (12.9s)
+        if config.auto_edit {
+            crate::cli_config::enable_auto_edit();
+  +     }
+  + 
+  +     if config.safe_mode {
+  +         crate::cli_config::set_safe_mode(true);
+        }
+    
+        if config.audit {
+  2 tools completed in 19.4s (2 ✓)
+
+Good progress — only is_safe_mode() is unused now. Let me add the skip logic in main.rs and the auto-context guard in repl.rs. First, the main.rs skip logic:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:653..683 ✓ (1ms)
+  ▶ read src/main.rs:682..722 ✓ (1ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now I need to add safe-mode banner and wire up the skips. For safe mode:
+1. Print banner after `no_tools` banner
+2. Clear skills, MCP servers, permissions, shell hooks, auto_watch when safe_mode
+3. Skip MCP connection (already gated by config.no_tools, need to also gate by safe_mode)
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (13 → 34 lines)
+        if config.no_tools {
+            eprintln!(
+                "{}note:{} All tools disabled (--no-tools). Running in chat-only mode.",
+  +             crate::format::YELLOW,
+  +             crate::format::RESET,
+  +         );
+  +     }
+  + 
+  +     if crate::cli_config::is_safe_mode() {
+  +         eprintln!(
+  +             "{}⚠ Safe mode:{} MCP servers, skills, custom commands, and config disabled",
+                crate::format::YELLOW,
+                crate::format::RESET,
+            );
+  ···
+    
+        let continue_session = config.continue_session;
+        let output_path = config.output_path;
+  -     let mcp_servers = config.mcp_servers;
+  -     let mcp_server_configs = config.mcp_server_configs;
+  ... (17 more lines)
+ ✓ (1m 20s)
+        if config.no_tools {
+            eprintln!(
+                "{}note:{} All tools disabled (--no-tools). Running in chat-only mode.",
+  +             crate::format::YELLOW,
+  +             crate::format::RESET,
+  +         );
+  +     }
+  + 
+  ... (13 more lines)
+
+Now clear skills, permissions, shell_hooks, and auto_watch in safe mode:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (26 → 46 lines)
+            api_key: config.api_key,
+            provider: config.provider,
+            base_url: config.base_url,
+  -         skills: config.skills,
+  +         skills: if crate::cli_config::is_safe_mode() {
+  +             yoagent::skills::SkillSet::empty()
+  +         } else {
+  +             config.skills
+  +         },
+            system_prompt: config.system_prompt,
+            thinking: config.thinking,
+            max_tokens: config.max_tokens,
+  ···
+            max_turns: config.max_turns,
+            auto_approve,
+            auto_commit: config.auto_commit,
+  -         permissions: config.permissions,
+  -         dir_restrictions: config.dir_restrictions,
+  +         permissions: if crate::cli_config::is_safe_mode() {
+  +             cli::PermissionConfig::default()
+  ... (27 more lines)
+ ✓ (1m 21s)
+            api_key: config.api_key,
+            provider: config.provider,
+            base_url: config.base_url,
+  -         skills: config.skills,
+  +         skills: if crate::cli_config::is_safe_mode() {
+  +             yoagent::skills::SkillSet::empty()
+  +         } else {
+  +             config.skills
+  ... (13 more lines)

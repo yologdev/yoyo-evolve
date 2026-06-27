@@ -1,0 +1,194 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current goal system and then implement the auto-verify feature.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/commands_goal.rs ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_verify_command\|fn … ✓ (3ms)
+  ▶ read src/commands_goal.rs:95..130 ✓ (1ms)
+  3 tools completed in 9.3s (3 ✓)
+
+Now let me look at the repl.rs where run_watch_after_prompt is called:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_watch_after_prompt"… ✓ (2ms)
+  ▶ read src/repl.rs:570..625 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me look at the imports and the top of that function to understand the context better:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1..31 ✓ (1ms)
+
+Now let me understand the function that contains the watch call:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^async fn\|^pub async f… ✓ (3ms)
+
+Good, the function is handle_post_prompt. Let me see how the test infrastructure works:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_temp_dir\|#\[cfg(t… ✓ (3ms)
+  ▶ read src/commands_goal.rs:290..320 ✓ (0ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me check the existing tests for `run_verify_command`:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:585..615 ✓ (0ms)
+
+Now I have a complete picture. Let me implement this step by step.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add `run_goal_verify_after_prompt()` public functi…' ✓ (0ms)
+  ▶ todo add 'Add tests for run_goal_verify_after_prompt in comm…' ✓ (0ms)
+  ▶ todo add 'Integrate into repl.rs handle_post_prompt after wa…' ✓ (0ms)
+  ▶ todo add 'Update docs and verify cargo build/test/clippy/fmt' ✓ (0ms)
+  4 tools completed in 11.0s (4 ✓)
+
+Let me write the tests first, then the implementation.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+First, let me add the run_goal_verify_after_prompt function. I need to look at the imports at the top:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:1..21 ✓ (0ms)
+
+Now I'll add the `run_goal_verify_after_prompt function right after run_verify_command`:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:115..125 ✓ (1ms)
+  ▶ edit src/commands_goal.rs (4 → 33 lines)
+  + /// Auto-run the goal verification command after a prompt turn.
+  + ///
+  + /// Returns `None` if no verify command is set.
+  + /// Returns `Some((passed, output))` where `passed` is true when exit code == 0.
+  + /// Prints a status line to stderr so the agent (and user) can see the result.
+  + pub fn run_goal_verify_after_prompt() -> Option<(bool, String)> {
+  +     let cmd = load_verify_command()?;
+  +     let (code, output) = run_verify_command(&cmd);
+  +     let passed = code == 0;
+  + 
+  +     if passed {
+  +         eprintln!("{GREEN}  ✓ Goal verify passed{RESET}");
+  +     } else {
+  +         // Show truncated output so the agent knows what failed
+  +         let display = if output.len() > VERIFY_OUTPUT_MAX {
+  +             let truncated = safe_truncate(&output, VERIFY_OUTPUT_MAX);
+  +             format!("{truncated}… (truncated)")
+  +         } else {
+  +             output.clone()
+  +         };
+  ... (12 more lines)
+ ✓ (13.6s)
+  + /// Auto-run the goal verification command after a prompt turn.
+  + ///
+  + /// Returns `None` if no verify command is set.
+  + /// Returns `Some((passed, output))` where `passed` is true when exit code == 0.
+  + /// Prints a status line to stderr so the agent (and user) can see the result.
+  + pub fn run_goal_verify_after_prompt() -> Option<(bool, String)> {
+  +     let cmd = load_verify_command()?;
+  +     let (code, output) = run_verify_command(&cmd);
+  ... (13 more lines)
+  2 tools completed in 24.3s (2 ✓)
+
+Expected — the function isn't called yet. Let me add the call site in repl.rs first, then add tests.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ edit src/repl.rs (1 → 2 lines)
+  + use crate::commands_goal::run_goal_verify_after_prompt;
+    use crate::watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
+ ✓ (13.4s)
+  + use crate::commands_goal::run_goal_verify_after_prompt;
+    use crate::watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
+  2 tools completed in 19.7s (2 ✓)
+
+Now let me add the call in handle_post_prompt. The goal verify should run after the watch block, but _regardless_ of whether files were modified:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (12 → 15 lines)
+                *ctx.last_error = watch_result.last_tool_error;
+            }
+        }
+  + 
+  +     // ── Auto goal-verify: check if the goal is met after each turn ──────
+  +     run_goal_verify_after_prompt();
+ ✓ (1m 9s)
+                *ctx.last_error = watch_result.last_tool_error;
+            }
+        }
+  + 
+  +     // ── Auto goal-verify: check if the goal is met after each turn ──────
+  +     run_goal_verify_after_prompt();
+
+Now let me check if it compiles:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 ✓ (126ms)
+
+Compiles. Now let me add the tests.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo done #3 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now find the end of the test module to add the new tests:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_goal.rs:685..715 ✓ (1ms)
+  ▶ read src/commands_goal.rs:715..725 ✓ (0ms)
+  ▶ edit src/commands_goal.rs (1 → 34 lines)
+  +     #[test]
+  +     #[serial]
+  +     fn test_auto_verify_none_when_no_command() {
+  +         with_temp_dir(|| {
+  +             let result = run_goal_verify_after_prompt();
+  +             assert!(result.is_none());
+  +         });
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_auto_verify_passes_when_command_succeeds() {
+  +         with_temp_dir(|| {
+  +             save_verify_command("echo ok").unwrap();
+  +             let result = run_goal_verify_after_prompt();
+  +             assert!(result.is_some());
+  +             let (passed, output) = result.unwrap();
+  +             assert!(passed);
+  +             assert!(output.contains("ok"));
+  +         });
+  ... (14 more lines)
+ ✗ (0ms)
+    │ old_text matches 237 locations in src/commands_goal.rs. Include more surrounding context to make the match unique.
+  3 tools completed in 12.3s (2 ✓, 1 ✗)
+
+Right, } matches too many places. Let me be more specific:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_goal.rs (17 → 51 lines)
+                    }
+                    other => panic!("Expected SendToAgent, got {other:?}"),
+                }
+  +         });
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_auto_verify_none_when_no_command() {
+  +         with_temp_dir(|| {
+  +             let result = run_goal_verify_after_prompt();
+  +             assert!(result.is_none());
+  +         });
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  +     fn test_auto_verify_passes_when_command_succeeds() {
+  +         with_temp_dir(|| {
+  +             save_verify_command("echo ok").unwrap();
+  ... (20 more lines)
+ ✓ (1m 9s)
+                    }
+                    other => panic!("Expected SendToAgent, got {other:?}"),
+                }
+  +         });
+  +     }
+  + 
+  +     #[test]
+  +     #[serial]
+  ... (13 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

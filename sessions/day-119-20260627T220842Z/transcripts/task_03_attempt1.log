@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll implement the --safe-mode flag. Let me start by understanding the current code structure.
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read and summarize the key parts of these files that I need …' ✓ (1m 39s)
+
+Good, I have a clear picture. Let me now read the specific lines I need to edit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:82..107  ▶ read src/cli_config.rs:145..200 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/cli_config.rs:191..251 ✓ (0ms)
+  ▶ read src/cli_config.rs:250..295 ✓ (1ms)
+  4 tools completed in 18.6s (4 ✓)
+
+Now let me check the cli.rs parse_args and main.rs flows:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:185..230  ▶ read src/cli.rs:524..564 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/cli.rs:563..623 ✓ (1ms)
+  3 tools completed in 5.1s (3 ✓)
+
+Now let me see where parse_args builds the Config and where config file loading happens:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'let \(file_config, raw_config_content\)' in src/cli.rs ✓ (2ms)
+  ▶ search 'load_config_file' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:695..745 ✓ (1ms)
+  3 tools completed in 11.2s (3 ✓)
+
+Now let me find where the Config struct is constructed in parse_args:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'no_tools:' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:960..1010 ✓ (1ms)
+  ▶ read src/cli.rs:1020..1040 ✓ (0ms)
+  3 tools completed in 13.6s (3 ✓)
+
+Now let me check main.rs for the MCP connection and safe-mode-relevant code:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:545..605 ✓ (1ms)
+  ▶ read src/main.rs:635..755 ✓ (1ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Now let me look at the help text for where to add --safe-mode:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ search '--no-tools|--lite' in src/help.rs ✗ (2ms)
+    │ Search error: grep: unrecognized option '--no-tools|--lite'
+  ▶ search 'no-tools' in src/help.rs ✓ (2ms)
+  ▶ read src/help.rs:193..208 ✓ (1ms)
+  3 tools completed in 8.0s (2 ✓, 1 ✗)
+
+Now let me check where skills are loaded and where project context is injected, and where custom commands come from. I need to see how to skip them in safe mode:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_discover_skills\|load_project_context\|auto_context' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:836..861 ✓ (1ms)
+  ▶ read src/cli.rs:860..880 ✓ (1ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now let me see where MCP servers and permissions are parsed:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ search 'parse_mcp_servers\|parse_permission_and_dir_config\|shell_ho…' in src/cli.rs ✓ (3ms)
+
+Now let me see how custom commands are loaded — they use discover_custom_commands:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn discover_custom_commands' in src/commands.rs ✓ (2ms)
+  ▶ read src/commands.rs:593..628 ✓ (0ms)
+  2 tools completed in 4.2s (2 ✓)
+
+Now I have a complete picture. Let me also check where discover_custom_commands is called to see if I can gate it with safe mode:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search 'discover_custom_commands\(\)' (*.rs) ✓ (18ms)
+
+Custom commands are discovered lazily (when help or dispatch runs), not at startup. So I'll gate them with a runtime check. Now let me check the docs file:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/troubleshooting/common-issues.md:105.. ✓ (1ms)
+
+Now I have everything I need. Let me implement this step by step.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add SAFE_MODE AtomicBool + getter/setter to cli_co…' ✓ (0ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
