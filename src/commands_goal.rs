@@ -116,6 +116,35 @@ fn run_verify_command(cmd: &str) -> (i32, String) {
     }
 }
 
+/// Auto-run the goal verification command after a prompt turn.
+///
+/// Returns `None` if no verify command is set.
+/// Returns `Some((passed, output))` where `passed` is true when exit code == 0.
+/// Prints a status line to stderr so the agent (and user) can see the result.
+pub fn run_goal_verify_after_prompt() -> Option<(bool, String)> {
+    let cmd = load_verify_command()?;
+    let (code, output) = run_verify_command(&cmd);
+    let passed = code == 0;
+
+    if passed {
+        eprintln!("{GREEN}  ✓ Goal verify passed{RESET}");
+    } else {
+        // Show truncated output so the agent knows what failed
+        let display = if output.len() > VERIFY_OUTPUT_MAX {
+            let truncated = safe_truncate(&output, VERIFY_OUTPUT_MAX);
+            format!("{truncated}… (truncated)")
+        } else {
+            output.clone()
+        };
+        eprintln!("{YELLOW}  ⚠ Goal verify failed (exit {code}):{RESET}");
+        for line in display.lines().take(10) {
+            eprintln!("{DIM}    {line}{RESET}");
+        }
+    }
+
+    Some((passed, output))
+}
+
 /// Format the current goal for display.
 fn format_goal(goal: &str) -> String {
     format!("{BOLD}Current goal:{RESET}\n\n  {goal}\n\n{DIM}(stored in {GOAL_FILE}){RESET}")
@@ -687,6 +716,40 @@ mod tests {
                 }
                 other => panic!("Expected SendToAgent, got {other:?}"),
             }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_auto_verify_none_when_no_command() {
+        with_temp_dir(|| {
+            let result = run_goal_verify_after_prompt();
+            assert!(result.is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_auto_verify_passes_when_command_succeeds() {
+        with_temp_dir(|| {
+            save_verify_command("echo ok").unwrap();
+            let result = run_goal_verify_after_prompt();
+            assert!(result.is_some());
+            let (passed, output) = result.unwrap();
+            assert!(passed);
+            assert!(output.contains("ok"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_auto_verify_fails_when_command_fails() {
+        with_temp_dir(|| {
+            save_verify_command("exit 1").unwrap();
+            let result = run_goal_verify_after_prompt();
+            assert!(result.is_some());
+            let (passed, _output) = result.unwrap();
+            assert!(!passed);
         });
     }
 }

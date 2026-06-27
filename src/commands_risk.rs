@@ -354,10 +354,15 @@ fn learn_weights_from_history_to(
 
     // Write atomically-ish: write to file directly (best-effort)
     if let Some(parent) = weights_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("  {DIM}(warning: could not create risk weights dir: {e}){RESET}");
+            return;
+        }
     }
     if let Ok(json_str) = serde_json::to_string_pretty(&output) {
-        let _ = std::fs::write(weights_path, json_str);
+        if let Err(e) = std::fs::write(weights_path, json_str) {
+            eprintln!("  {DIM}(warning: could not save risk weights: {e}){RESET}");
+        }
     }
 }
 
@@ -1567,7 +1572,10 @@ fn auto_validate_after_failure_to(
 
     // Append to validation JSONL
     if let Some(parent) = validation_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("  {DIM}(warning: could not create risk validation dir: {e}){RESET}");
+            return;
+        }
     }
     if let Ok(json_str) = serde_json::to_string(&event) {
         use std::io::Write;
@@ -1576,7 +1584,9 @@ fn auto_validate_after_failure_to(
             .append(true)
             .open(validation_path)
         {
-            let _ = writeln!(file, "{json_str}");
+            if let Err(e) = writeln!(file, "{json_str}") {
+                eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
+            }
         }
     }
 

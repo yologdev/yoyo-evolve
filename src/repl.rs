@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::cli::*;
 use crate::commands::{self, auto_compact_if_needed, command_arg_completions, KNOWN_COMMANDS};
+use crate::commands_goal::run_goal_verify_after_prompt;
 use crate::conversations::build_add_content_blocks;
 use crate::dispatch::CommandResult;
 use crate::format::*;
@@ -586,6 +587,9 @@ async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
             *ctx.last_error = watch_result.last_tool_error;
         }
     }
+
+    // ── Auto goal-verify: check if the goal is met after each turn ──────
+    run_goal_verify_after_prompt();
 
     // ── Auto-commit: stage and commit if flag is on and files changed ─────
     if ctx.agent_config.auto_commit && files_modified {
