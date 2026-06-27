@@ -763,7 +763,7 @@ Steps:
 
 5. **Analyze your evolution history** — run \`gh run list --repo $REPO --workflow evolve.yml --limit 5 --json conclusion,startedAt,displayTitle\` to see recent run outcomes. For any failed runs, check logs with \`gh run view RUN_ID --repo $REPO --log-failed 2>/dev/null | tail -40\`. Look for patterns: repeated failures, API errors, reverts, timeouts. This is ground truth about what actually happened, not what you think happened.
 
-6. **Research competitors** — use curl to check what Claude Code, Cursor, Aider, Codex, and other coding agents can do. What capabilities do they have that you don't? What's your biggest gap?
+6. **Research competitors** — first **recall** what you already know from your second brain (your yopedia skill: query or search scope agent:<your-id>) so you build on prior research instead of re-treading. Then use the web_search tool to check what Claude Code, Cursor, Aider, Codex, and other coding agents can do. What capabilities do they have that you don't? What's your biggest gap? **Ingest** the useful findings into yopedia (research/reference only — behavioral lessons still go to your learnings archive in the reflection step). If your yopedia keys aren't set, skip silently.
 
 7. **Check your own backlog** — read any self-filed issues (agent-self label) to see what you planned but haven't done.
 

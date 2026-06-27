@@ -73,7 +73,7 @@ Same python3→curl pattern, with a dated report title:
 
 ```bash
 python3 -c "import json,os,datetime; print(json.dumps({
-  'title': 'Dream research — <topic> (' + datetime.date.today().isoformat() + ')',
+  'title': 'Research — <topic> (' + datetime.date.today().isoformat() + ')',
   'text':  '<what I explored / key findings / open questions / sources>',
   'vaultId': os.environ['YOPEDIA_VAULT_ID']}))" \
 | curl -sS -X POST "$BASE/api/agents/$AGENT_ID/ingest" \
