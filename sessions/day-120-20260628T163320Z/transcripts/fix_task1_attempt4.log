@@ -1,0 +1,285 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the source code to identify the most impactful improvement I can make.
+  ▶ todo add 'Read source code to identify most impactful improv…' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Let me look at the codebase for areas that need improvement — focusing on real, impactful changes.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the yoyo Rust source code in src/ to find the most i…' ✓ (2m 45s)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 2m 50s (2 ✓)
+
+Good analysis. The most impactful improvement is extracting a cmd_arg() helper to deduplicate 46+ instances of input.strip_prefix("/cmd").unwrap_or("").trim() across 25 files. This is a high-value, low-risk mechanical improvement.
+
+Let me also tackle the fragile unwrap() calls in watch.rs and commands_web.rs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add cmd_arg() helper to commands.rs' ✓ (0ms)
+  ▶ todo add 'Replace all strip_prefix("/cmd").unwrap_or("").tri…' ✓ (0ms)
+  ▶ todo add 'Fix fragile unwrap() calls in watch.rs and command…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test' ✓ (0ms)
+  4 tools completed in 11.8s (4 ✓)
+
+First, let me find the exact pattern and all occurrences:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search '\.strip_prefix\("/[a-z].*"\)\.unwrap_or\(""\)\.trim\(\)' in src ✓ (7ms)
+  ▶ search 'strip_prefix\(\"/.*\"\)\.unwrap_or\(\"\"\)\.trim\(\)' in src ✓ (7ms)
+  ▶ search 'strip_prefix.*unwrap_or.*trim' in src ✓ (11ms)
+  3 tools completed in 7.8s (3 ✓)
+
+There are many instances. Let me get a precise count:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'strip_prefix.*unwrap_or.*trim' src/ | wc -l ✓ (9ms)
+  ▶ $ grep -rn '\.strip_prefix("[^"]*")\.unwrap_or("")\.trim()' src/ | wc -l ✓ (7ms)
+  2 tools completed in 5.3s (2 ✓)
+
+57 direct matches of the exact pattern `.strip_prefix("...").unwrap_or("").trim()`. Let me look at the exact variations to understand which ones I can safely convert:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn '\.strip_prefix("[^"]*")\.unwrap_or("")\.trim()' src/ | head -60 ✓ (8ms)
+
+Now let me also look at the variations that use unwrap_or(input) or `unwrap_or("")` followed by other things:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'strip_prefix.*unwrap_or.*trim' src/ | grep -v '\.unwrap_or("")\.trim()… ✓ (7ms)
+
+There are two patterns:
+1. `.strip_prefix("X").unwrap_or("").trim()` — 57 instances (return "" if prefix not found)
+2. .strip_prefix("X").unwrap_or(input).trim() — 11 instances (return full input if prefix not found)
+
+Plus one `.trim_start()` variant. Let me create a helper function that handles both cases cleanly. Now let me look at where to add it:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs (30 lines) ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+Now, let me add the cmd_arg helper function. I'll put it in commands.rs since that's the central command utilities module and it's already imported by all command files:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands.rs:1..16 ✓ (0ms)
+
+Let me find a good spot to add it — after the imports and re-exports, before the first constant or function:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '^pub\|^pub(crate)\|^const\|^fn\|^pub fn\|^pub(crate) fn' src/commands.r… ✓ (4ms)
+  ▶ read src/commands.rs:48..58 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+I'll add the cmd_arg helper right after the imports, before the constants:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (4 → 20 lines)
+    use yoagent::agent::Agent;
+    use yoagent::*;
+  + 
+  + /// Strip a command prefix and trim whitespace from user input.
+  + ///
+  + /// This is the canonical way to extract arguments from a `/command` input string.
+  + /// If `input` starts with `prefix`, the prefix is removed and the remainder is trimmed.
+  + /// Otherwise returns an empty string.
+  + ///
+  + /// # Examples
+  + /// ```ignore
+  + /// cmd_arg("/diff --staged", "/diff")   // => "--staged"
+  + /// cmd_arg("/diff", "/diff")            // => ""
+  + /// cmd_arg("something else", "/diff")   // => ""
+  + /// ```
+  + pub fn cmd_arg<'a>(input: &'a str, prefix: &str) -> &'a str {
+  +     input.strip_prefix(prefix).unwrap_or("").trim()
+  + }
+    
+    /// Known REPL command prefixes. Used to detect unknown slash commands
+ ✓ (17.4s)
+    use yoagent::agent::Agent;
+    use yoagent::*;
+  + 
+  + /// Strip a command prefix and trim whitespace from user input.
+  + ///
+  + /// This is the canonical way to extract arguments from a `/command` input string.
+  + /// If `input` starts with `prefix`, the prefix is removed and the remainder is trimmed.
+  + /// Otherwise returns an empty string.
+  ... (12 more lines)
+
+Good, the function is defined but not used yet. Now I need to replace all instances. Let me do this systematically, file by file. First let me verify which files need the change:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rln '\.strip_prefix("[^"]*")\.unwrap_or("")\.trim()' src/ | sort ✓ (7ms)
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo wip #3 ✓ (0ms)
+  3 tools completed in 7.2s (3 ✓)
+
+Now I need to replace all instances. There are some nuances to handle:
+
+1. Some use `input.strip_prefix(...) → cmd_arg(input, ...)`
+2. Some use arg.strip_prefix(...) (on a different variable, not input) → cmd_arg(arg, ...)
+3. Some append .to_string() after the chain — need to preserve that
+4. Need to import cmd_arg in each file that uses it
+
+Let me do this with a sub-agent for each group of files to keep it organized:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Replace all instances of `.strip_prefix("X").unwrap_or("").t…' ✓ (1m 56s)
+
+Let me check what happened and do it directly:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '\.strip_prefix("[^"]*")\.unwrap_or("")\.trim()' src/commands_ast_grep.r…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (12ms)
+  ▶ $ grep -n '\.strip_prefix("[^"]*")\.unwrap_or("")\.trim()' src/commands_config.rs … ✓ (10ms)
+  2 tools completed in 4.8s (2 ✓)
+
+The sub-agent only processed commands_ast_grep.rs. Let me handle all the remaining files more efficiently. I'll write a script that does the replacement:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Let's see all the exact matches with file:line:code to und… (2 lines) ✓ (8ms)
+
+Let me also check what was already done in `commands_ast_grep.rs`:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'cmd_arg' src/commands_ast_grep.rs ✓ (9ms)
+
+Good, that one file was done correctly. Now let me write a sed-based script to do the bulk replacement, then handle the imports:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Do the pattern replacement with a perl script that handles… (12 lines) ✓ (45ms)
+
+Now let me use perl to do the bulk replacement across all files, then add the imports:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd src (16 lines) ✓ (17ms)
+  ▶ $ # Verify all replacements were made (2 lines) ✓ (7ms)
+  2 tools completed in 6.2s (2 ✓)
+
+All replacements done. Now I need to add imports. Let me check which files already have some form of crate::commands import:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ for f in src/commands_project.rs src/commands_info.rs src/co… (9 lines) ✓ (38ms)
+
+Some files already import cmd_arg. Let me categorize:
+
+**Already have cmd_arg imported**: commands_git.rs, commands_fork.rs, commands_config.rs, `commands_file.rs, commands_git_review.rs, commands_goal.rs`
+
+*Have `use crate::commands::` pattern that I can add to**: commands_info.rs, dispatch.rs, `commands_plan.rs`
+
+Need new import: commands_project.rs, conversations.rs, commands_revisit.rs, `commands_lint.rs, watch.rs, commands_todo.rs, commands_session.rs, commands_spawn.rs, commands_memory.rs, commands_retry.rs, commands_stash.rs, commands_search.rs, commands_map.rs, commands_tree.rs, commands_web.rs`
+
+Let me handle each group:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check commands_info.rs import (2 lines) ✓ (3ms)
+  ▶ edit src/commands_info.rs (1 → 1 lines)
+  - use crate::commands::thinking_level_name;
+  + use crate::commands::{cmd_arg, thinking_level_name};
+ ✓ (11.8s)
+  - use crate::commands::thinking_level_name;
+  + use crate::commands::{cmd_arg, thinking_level_name};
+  2 tools completed in 17.2s (2 ✓)
+
+Good - the remaining files need imports. Let me add them all at once:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check dispatch.rs import pattern (2 lines) ✓ (4ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[E0425][0m[1m: cannot find function `cmd_arg` in this scope[0m
+   [1m[94m--> [0msrc/commands_lint.rs:184:15
+    [1m[94m|[0m
+[1m[94m184[0m [1m[94m|[0m     let arg = cmd_arg(input, "/lint");
+    [1m[94m|[0m               [1m[91m^^^^^^^[0m [1m[91mnot found in this scope[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: consider importing this function
+    [1m[94m|[0m
+[1m[94m  3[0m [92m+ use crate::commands::cmd_arg;[0m
+    [1m[94m|[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `cmd_arg` in this scope[0m
+   [1m[94m--> [0msrc/commands_map.rs:284:16
+    [1m[94m|[0m
+[1m[94m284[0m [1m[94m|[0m     let rest = cmd_arg(input, "/map");
+    [1m[94m|[0m                [1m[91m^^^^^^^[0m [1m[91mnot found in this scope[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: consider importing this function
+    [1m[94m|[0m
+[1m[94m  3[0m [92m+ use crate::commands::cmd_arg;[0m
+    [1m[94m|[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `cmd_arg` in this scope[0m
+  [1m[94m--> [0msrc/commands_memory.rs:72:17
+   [1m[94m|[0m
+[1m[94m72[0m [1m[94m|[0m     let query = cmd_arg(input, "/memories");
+   [1m[94m|[0m                 [1m[91m^^^^^^^[0m [1m[91mnot found in this scope[0m
+   [1m[94m|[0m
+[1m[96mhelp[0m: consider importing this function
+   [1m[94m|[0m
+[1m[94m 9[0m [92m+ use crate::commands::cmd_arg;[0m
+   [1m[94m|[0m
+
+[1m[91merror[E0425][0m[1m: cannot find function `cmd_arg` in this scope[0m
+   [1m[94m--> [0msrc/commands_memory.rs:124:15
+    [1m[94m|[0m
+[1m[94m124[0m [1m[94m|[0m     let arg = cmd_arg(input, "/forget");
+    [1m[94m|[0m               [1m[91m^^^^^^^[0m [1m[91mnot found in this scope[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: consider importing this function
+    [1m[94m|[0m
+[1m[94m  9[0m [92m+ use crate::commands::cmd_arg;[0m
+    [1m[94m|[0m...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me identify all files that need the cmd_arg import and fix them:
+  ▶ $ cargo build 2>&1 | grep "cannot find function \`cmd_arg\`" | sed 's/.*--> //' | … ✓ (4.1s)
+  ▶ $ cargo build 2>&1 | grep "^   --> src/" | sed 's/.*--> //' | cut -d: -f1 | sort -… ✓ (4.2s)
+  ▶ $ cargo build 2>&1 | grep "\-\-> src/" | sed 's/.*--> //' | cut -d: -f1 | sort -u ✓ (4.0s)
+  ▶ $ cargo build 2>&1 ✓ (4.0s)
+  4 tools completed in 28.1s (4 ✓)
+
+I need to add use crate::commands::cmd_arg; to each file. Let me read the first few lines of each to find the right insertion point:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -10 src/commands_lint.rs ✓ (46ms)
+  ▶ $ head -10 src/commands_map.rs ✓ (46ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Let me add the imports to all files at once. I'll look at each file's first use crate:: line and add the import before it:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ head -6 src/commands_memory.rs ✓ (47ms)
+  ▶ $ head -15 src/commands_memory.rs ✓ (46ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now I'll add the imports systematically for each file. Let me do them all:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_lint.rs (1 → 2 lines)
+  + use crate::commands::cmd_arg;
+    use crate::commands_project::{detect_project_type, ProjectType};
+ ✓ (11.9s)
+  + use crate::commands::cmd_arg;
+    use crate::commands_project::{detect_project_type, ProjectType};
+
+Good, one down. Let me do the rest efficiently by adding imports to all remaining files at once:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ head -4 src/commands_map.rs ✓ (47ms)
+  ▶ edit src/commands_map.rs (1 → 2 lines)
+  + use crate::commands::cmd_arg;
+    use crate::commands_ast_grep::is_ast_grep_available;
+ ✓ (11.7s)
+  + use crate::commands::cmd_arg;
+    use crate::commands_ast_grep::is_ast_grep_available;
+  2 tools completed in 18.4s (2 ✓)
+
+Let me do all remaining files at once to speed this up:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Get first use crate:: line for each remaining file (5 lines) ✓ (26ms)
+
+Now I'll add the imports to each file:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_memory.rs (1 → 2 lines)
+  + use crate::commands::cmd_arg;
+    use crate::format::*;
+ ✓ (12.0s)
+  + use crate::commands::cmd_arg;
+    use crate::format::*;
+  ▶ edit src/commands_plan.rs (1 → 1 lines)
+  - use crate::commands::auto_compact_if_needed;
+  + use crate::commands::{auto_compact_if_needed, cmd_arg};
+ ✓ (11.7s)
+  - use crate::commands::auto_compact_if_needed;
+  + use crate::commands::{auto_compact_if_needed, cmd_arg};
+  2 tools completed in 29.1s (2 ✓)
+
+Let
