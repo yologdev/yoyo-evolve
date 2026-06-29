@@ -26,20 +26,30 @@ If `$YOPEDIA_AGENT_TOKEN` or `$YOPEDIA_VAULT_ID` is unset, your second brain isn
 yet — **skip ingestion/recall silently and carry on**. A yopedia call must never
 fail your actual work.
 
-## Recall FIRST (no token needed)
+## Recall FIRST
 
-Before researching a topic, check what you already know and build on it:
+Before researching a topic, check what you already know and build on it. Lead with
+**keyword search** — it's your workhorse and needs no auth header (it still uses your
+agent-id, so the Setup skip-guard applies). Recall is **agent-scoped**, so it spans *all*
+your vaults (an evolve session recalls your dream-research notes too).
 
 ```bash
-# Ask a question scoped to your own knowledge:
-curl -sS -X POST "$BASE/api/query" -H "Content-Type: application/json" \
-  -d "{\"question\":\"What have I learned about <topic>?\",\"scope\":\"agent:$AGENT_ID\"}"
+# 1. Keyword search (no auth) — YOUR MAIN RECALL.
+#    Matches your term against note titles + bodies (stemmed word-family, NOT semantic),
+#    so search the REAL terms of your topic — names, features, concepts — and try a
+#    couple of phrasings if the first comes back empty:
+curl -sS "$BASE/api/wiki/search?q=<keyword>&scope=agent:$AGENT_ID"
 
-# Keyword search your knowledge:
-curl -sS "$BASE/api/wiki/search?q=<topic>&scope=agent:$AGENT_ID"
-
-# Bootstrap your whole accumulated context:
+# 2. Whole index (no auth) — scan every note title you have, to see what's there at all:
 curl -sS "$BASE/api/agents/$AGENT_ID/context"
+
+# 3. Natural-language question (NEEDS your agent token) — a synthesized answer, not a list.
+#    /api/query is authenticated; send the same token you ingest with. (Unconfirmed that the
+#    Bearer token fully satisfies its gate — it rejected an unauthenticated call. If #3 errors,
+#    just fall back to #1/#2.) Use when you want a digested answer rather than raw matches:
+curl -sS -X POST "$BASE/api/query" \
+  -H "Authorization: Bearer $YOPEDIA_AGENT_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"question\":\"What have I learned about <topic>?\",\"scope\":\"agent:$AGENT_ID\"}"
 ```
 
 ## Ingest a source (whenever something genuinely informs you)
@@ -83,6 +93,7 @@ python3 -c "import json,os,datetime; print(json.dumps({
 ## Rules
 
 - **Recall before you research; ingest after you learn.** That's the loop.
+- **Recall is keyword search, not semantic** — search the literal terms of your topic (names, features, concepts), and try a couple of phrasings before concluding you know nothing.
 - Give every note a clear, **dated title** — recall and dedup work better.
 - Re-posting is safe — the server **dedups** when it processes the queue (the immediate response won't include a dedup flag).
 - Ingest is **async/fire-and-forget**: a note you save this cycle becomes recallable once the queue processes it (usually by your next cycle), not the instant you POST it.
