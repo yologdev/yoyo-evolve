@@ -1097,7 +1097,9 @@ pub async fn run_repl(
 
     // Save readline history
     if let Some(history_path) = history_file_path() {
-        let _ = rl.save_history(&history_path);
+        if let Err(e) = rl.save_history(&history_path) {
+            eprintln!("{DIM}  ⚠ could not save history: {e}{RESET}");
+        }
     }
 
     // Auto-save session on exit (always — crash recovery for everyone)

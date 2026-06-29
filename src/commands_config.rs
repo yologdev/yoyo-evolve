@@ -701,7 +701,9 @@ fn apply_config_to_runtime(
             };
             *agent = agent_config.build_agent();
             if let Some(json) = saved {
-                let _ = agent.restore_messages(&json);
+                if let Err(e) = agent.restore_messages(&json) {
+                    eprintln!("{DIM}  ⚠ could not restore conversation: {e}{RESET}");
+                }
             }
         }
         "provider" => {
@@ -719,7 +721,9 @@ fn apply_config_to_runtime(
             };
             *agent = agent_config.build_agent();
             if let Some(json) = saved {
-                let _ = agent.restore_messages(&json);
+                if let Err(e) = agent.restore_messages(&json) {
+                    eprintln!("{DIM}  ⚠ could not restore conversation: {e}{RESET}");
+                }
             }
         }
         "temperature" => {
