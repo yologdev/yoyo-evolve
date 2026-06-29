@@ -1,0 +1,310 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the existing risk code structure, then implement the emerging-risk detection feature.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs ✓ (5ms)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Read the file src/commands_risk.rs in /home/runner/work/yoyo…' ✓ (3m 48s)
+  2 tools completed in 3m 59s (2 ✓)
+
+Now let me look at the specific sections I need to modify:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/commands_risk…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '585,650p' src/commands_r… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '650,850p' src/commands_r… ✓ (5ms)
+  3 tools completed in 7.1s (3 ✓)
+
+Now let me see the format_risk_report and handle_risk functions:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '990,1100p' src/commands_… ✓ (4ms)
+
+Now let me see the revert_history function:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn revert_history' src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '967,997p' src/commands_r… ✓ (3ms)
+  2 tools completed in 6.3s (2 ✓)
+
+Now I have a clear picture. Let me look at where the test module starts:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2673,2690p' src/commands… ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Now I have enough context to plan and implement. Let me create a task list and start coding:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Define EmergingRisk struct' ✓ (0ms)
+  ▶ todo add 'Implement detect_emerging_risks() function' ✓ (0ms)
+  ▶ todo add 'Write unit tests for detect_emerging_risks and mom…' ✓ (0ms)
+  ▶ todo add 'Add ⚡ Emerging section to format_risk_report()' ✓ (0ms)
+  ▶ todo add 'Wire detect_emerging_risks into handle_risk()' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — fix any issue…' ✓ (0ms)
+  ▶ todo add 'Commit the change' ✓ (0ms)
+  7 tools completed in 25.8s (7 ✓)
+
+Let me write tests first (TDD), then implement. First, let me add the `EmergingRisk struct and the detect_emerging_risks` function signature:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '14,16p' src/commands_ris… ✓ (3ms)
+  2 tools completed in 6.7s (2 ✓)
+
+Now let me add the `EmergingRisk struct right after the FileRisk` struct:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '16,22p' src/commands_ris… ✓ (3ms)
+  ▶ edit src/commands_risk.rs (4 → 19 lines)
+        pub test_density: f64,
+  + }
+  + 
+  + /// A file whose risk trajectory is accelerating — not yet in the top-N by
+  + /// absolute score, but changing faster recently than its own baseline.
+  + /// This is an *anticipatory* signal: the file is **about to become** fragile.
+  + pub(crate) struct EmergingRisk {
+  +     /// File path.
+  +     pub path: String,
+  +     /// Momentum: ratio of daily change rate in the last 7 days vs. last 30 days.
+  +     /// Values > 1.0 mean the file is changing faster recently.
+  +     pub momentum: f64,
+  +     /// Current rank in the absolute risk list (0-indexed).
+  +     pub current_rank: usize,
+  +     /// Human-readable signals driving the acceleration.
+  +     pub signals: Vec<String>,
+    }
+    
+    /// Min-max normalize a slice of values to the 0.0–1.0 range.
+ ✓ (16.2s)
+        pub test_density: f64,
+  + }
+  + 
+  + /// A file whose risk trajectory is accelerating — not yet in the top-N by
+  + /// absolute score, but changing faster recently than its own baseline.
+  + /// This is an *anticipatory* signal: the file is **about to become** fragile.
+  + pub(crate) struct EmergingRisk {
+  +     /// File path.
+  ... (11 more lines)
+  2 tools completed in 28.7s (2 ✓)
+
+Expected — the struct isn't used yet. Let me now implement the core function right after top_risk_files. Let me find that exact location:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn top_risk_files' src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '862,880p' src/commands_r… ✓ (3ms)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  4 tools completed in 12.9s (4 ✓)
+
+Now let me implement detect_emerging_risks and a helper compute_momentum, placing them right after top_risk_files:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (1 → 112 lines)
+  + /// Compute momentum for a file: ratio of its daily change rate over the last
+  + /// 7 days vs. the last 30 days. Returns `(7d_count / 7) / (30d_count / 30)`.
+  + ///
+  + /// - If both counts are zero → 0.0 (no activity).
+  + /// - If 30-day count is zero but 7-day count > 0 → 3.0 (new hotspot).
+  + fn compute_momentum(count_7d: u32, count_30d: u32) -> f64 {
+  +     let c7 = count_7d as f64;
+  +     let c30 = count_30d as f64;
+  +     if c30 > 0.0 {
+  +         (c7 / 7.0) / (c30 / 30.0)
+  +     } else if c7 > 0.0 {
+  +         3.0 // Appeared only in the last week — maximally accelerating
+  +     } else {
+  +         0.0
+  +     }
+  + }
+  + 
+  + /// Detect files whose risk trajectory is accelerating — moderate absolute risk
+  + /// but changing faster recently than their own baseline. These are files that
+  + /// are **about to become** fragile, the first genuinely allostatic signal.
+  ... (92 more lines)
+ ✓ (16.2s)
+  + /// Compute momentum for a file: ratio of its daily change rate over the last
+  + /// 7 days vs. the last 30 days. Returns `(7d_count / 7) / (30d_count / 30)`.
+  + ///
+  + /// - If both counts are zero → 0.0 (no activity).
+  + /// - If 30-day count is zero but 7-day count > 0 → 3.0 (new hotspot).
+  + fn compute_momentum(count_7d: u32, count_30d: u32) -> f64 {
+  +     let c7 = count_7d as f64;
+  +     let c30 = count_30d as f64;
+  ... (13 more lines)
+
+Good — clippy complaints about unused items are expected since we haven't wired them in yet. Let me now write the tests (before wiring in), then add the integration points. Let me first write tests, and I'll temporarily add #[allow(dead_code)] to pass clippy during development:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #2 ✓ (0ms)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: struct `EmergingRisk` is never constructed[0m
+  [1m[94m--> [0msrc/commands_risk.rs:22:19
+   [1m[94m|[0m
+[1m[94m22[0m [1m[94m|[0m pub(crate) struct EmergingRisk {
+   [1m[94m|[0m                   [1m[91m^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `compute_momentum` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:876:4
+    [1m[94m|[0m
+[1m[94m876[0m [1m[94m|[0m fn compute_momentum(count_7d: u32, count_30d: u32) -> f64 {
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `detect_emerging_risks_from` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:897:4
+    [1m[94m|[0m
+[1m[94m897[0m [1m[94m|[0m fn detect_emerging_risks_from(
+    [1m[94m|[0m    [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: function `detect_emerging_risks` is never used[0m
+   [1m[94m--> [0msrc/commands_risk.rs:975:15
+    [1m[94m|[0m
+[1m[94m975[0m [1m[94m|[0m pub(crate) fn detect_emerging_risks(risks: &[FileRisk]) -> Vec<EmergingRisk> {
+    [1m[94m|[0m               [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 4 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 4 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Looking at the errors, the new code I added (EmergingRisk, compute_momentum, detect_emerging_risks_from, detect_emerging_risks) is never used from non-test code yet. I need to wire these into format_risk_report and `handle_risk` to complete the feature. Let me do that now.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn format_risk_report' … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1125,1180p' src/commands… ✓ (3ms)
+  2 tools completed in 9.6s (2 ✓)
+
+Now I need to: (1) add a new `format_risk_report_with_emerging or modify format_risk_report` to accept emerging risks, and (2) wire detect_emerging_risks into handle_risk. Let me add an emerging-risk section to format_risk_report and call detect_emerging_risks in handle_risk.
+
+The cleanest approach: add a format_emerging_risks function and append its output in `handle_risk`.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1168,1172p' src/commands… ✓ (3ms)
+
+I'll add format_emerging_risks right before the RISK_SUBCOMMANDS constant:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (4 → 34 lines)
+  + /// Format emerging-risk files into a report section.
+  + /// Returns an empty string if there are no emerging risks.
+  + fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
+  +     if emerging.is_empty() {
+  +         return String::new();
+  +     }
+  + 
+  +     let mut out = String::new();
+  +     out.push_str(&format!(
+  +         "  ⚡ {BOLD}Emerging Risks{RESET} {DIM}(accelerating — not yet top-5){RESET}\n\n"
+  +     ));
+  + 
+  +     for er in emerging.iter().take(10) {
+  +         let path_display = &er.path;
+  +         let padded_path = if path_display.len() < 34 {
+  +             format!("{path_display:<34}")
+  +         } else {
+  +             path_display.to_string()
+  +         };
+  +         out.push_str(&format!(
+  ... (13 more lines)
+ ✓ (16.7s)
+  + /// Format emerging-risk files into a report section.
+  + /// Returns an empty string if there are no emerging risks.
+  + fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
+  +     if emerging.is_empty() {
+  +         return String::new();
+  +     }
+  + 
+  +     let mut out = String::new();
+  ... (13 more lines)
+
+Now wire them into handle_risk. Let me find the default display section:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn handle_risk' src/com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1205,1240p' src/commands… ✓ (3ms)
+  2 tools completed in 6.8s (2 ✓)
+
+Now I'll wire detect_emerging_risks and format_emerging_risks into the default display:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (5 → 12 lines)
+        let risks = compute_file_risk_scores();
+        let report = format_risk_report(&risks, show_all);
+        print!("{report}");
+  + 
+  +     // Emerging-risk detection: anticipatory signal for files about to become fragile
+  +     let emerging = detect_emerging_risks(&risks);
+  +     let emerging_report = format_emerging_risks(&emerging);
+  +     if !emerging_report.is_empty() {
+  +         print!("{emerging_report}");
+  +     }
+    }
+ ✓ (1m 27s)
+        let risks = compute_file_risk_scores();
+        let report = format_risk_report(&risks, show_all);
+        print!("{report}");
+  + 
+  +     // Emerging-risk detection: anticipatory signal for files about to become fragile
+  +     let emerging = detect_emerging_risks(&risks);
+  +     let emerging_report = format_emerging_risks(&emerging);
+  +     if !emerging_report.is_empty() {
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.0s)
+  2 tools completed in 1m 52s (2 ✓)
+
+Clippy passes. Now let me run the full check:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | head… ✓ (872ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt ✓ (858ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (1m 15s)
+  4 tools completed in 1m 45s (4 ✓)
+
+All checks pass. Now let me add the unit tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ todo done #4 ✓ (0ms)
+  ▶ todo done #5 ✓ (0ms)
+  ▶ todo wip #3 ✓ (0ms)
+  3 tools completed in 8.0s (3 ✓)
+
+Now let me find the end of the test module to add tests:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -5 src/commands_risk.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_risk.rs ✓ (3ms)
+  ▶ edit src/commands_risk.rs (5 → 252 lines)
+            // Below-threshold file should return None
+            assert!(file_risk_summary_from("src/medium.rs", &risks).is_none());
+            assert!(file_risk_summary_from("src/low.rs", &risks).is_none());
+  +     }
+  + 
+  +     // ── Emerging-risk detection tests ──────────────────────────────────
+  + 
+  +     #[test]
+  +     fn test_compute_momentum_normal() {
+  +         // 4 changes in 7d, 8 in 30d → (4/7) / (8/30) = 0.571 / 0.267 ≈ 2.14
+  +         let m = compute_momentum(4, 8);
+  +         assert!((m - 2.14).abs() < 0.1, "expected ~2.14, got {m}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_compute_momentum_zero_both() {
+  +         assert_eq!(compute_momentum(0, 0), 0.0);
+  +     }
+  + 
+  +     #[test]
+  ... (232 more lines)
+ ✓ (1m 30s)
+            // Below-threshold file should return None
+            assert!(file_risk_summary_from("src/medium.rs", &risks).is_none());
+            assert!(file_risk_summary_from("src/low.rs", &risks).is_none());
+  +     }
+  + 
+  +     // ── Emerging-risk detection tests ──────────────────────────────────
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -10 ✓ (1m 11s)
+  5 tools completed in 4m 0s (5 ✓)
+
+Wait — 88 tests, same as before? My new tests should have increased the count. Let me check if they're actually being compiled:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (159ms)
+
+  ✓ Watch passed after fix (attempt 1)
+

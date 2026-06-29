@@ -1,0 +1,361 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the codebase and checking if Task 01 (which adds `detect_emerging_risks()`) was completed successfully.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_emerging_risks" … ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 3.0s (2 ✓)
+
+Task 01 completed successfully — detect_emerging_risks exists. Let me now examine the relevant structures and functions I need to work with.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct EmergingRisk…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,990p' src/commands_r… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct EmergingRisk" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '18,35p' src/commands_ris… ✓ (3ms)
+  4 tools completed in 11.5s (4 ✓)
+
+Now let me look at the current auto_context_for_prompt function and the existing risk annotation logic:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_context_for_prompt… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1263,1380p' src/commands… ✓ (4ms)
+  2 tools completed in 6.5s (2 ✓)
+
+Now let me look at the watch.rs fix prompt builder around line 1094:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk_context_for_files\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1024,1115p' src/watch.rs ✓ (4ms)
+  2 tools completed in 7.3s (2 ✓)
+
+Now let me also check what extract_file_paths_from_output and `compute_file_risk_scores` look like to understand imports:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -20 src/watch.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,20p' src/watch.rs ✓ (3ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Let me see all the imports:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '7,18p' src/watch.rs ✓ (3ms)
+  ▶ read src/watch.rs:7..19 ✓ (1ms)
+  2 tools completed in 7.1s (2 ✓)
+
+Good. Now let me also look at the imports in commands_project.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_project.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,12p' src/commands_proj… ✓ (3ms)
+  ▶ read src/commands_project.rs:1..13 ✓ (1ms)
+  3 tools completed in 10.3s (3 ✓)
+
+Now I have a clear picture. Let me plan the work:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add emerging-risk annotations to format_auto_conte…' ✓ (0ms)
+  ▶ todo add 'Add emerging-risk context to build_watch_fix_promp…' ✓ (0ms)
+  ▶ todo add 'Add unit tests for the new annotations' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test — fix any issue…' ✓ (0ms)
+  4 tools completed in 17.1s (4 ✓)
+
+Let me first look at the existing build_risk_annotation_map and `compute_file_risk_scores` to understand how they're used and imported:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compute_file_risk_score… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '10,17p' src/commands_ris… ✓ (3ms)
+  2 tools completed in 18.7s (2 ✓)
+
+Now, let me check how `build_risk_annotation_map currently works in format_auto_context` and understand the flow — the risk scores are computed fresh each time:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1308,1330p' src/commands… ✓ (3ms)
+
+Good. Now I have a complete understanding. Here's my approach:
+
+### Part 1: `format_auto_context` in `commands_project.rs`
+I need to:
+1. Call compute_file_risk_scores() once (already done in build_risk_annotation_map), then call detect_emerging_risks() with that data
+2. Annotate files that are emerging risks with the ⚡ annotation (max 2)
+
+The cleanest approach: modify format_auto_context to also build emerging risk annotations. Since `build_risk_annotation_map already calls compute_file_risk_scores()`, I'll refactor slightly to compute risk scores once and pass them to both the risk map builder and detect_emerging_risks.
+
+### Part 2: `build_watch_fix_prompt` in `watch.rs`
+Add emerging-risk context alongside the existing risk context.
+
+Let me start implementing:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+
+First, let me modify format_auto_context in commands_project.rs. I'll add a helper to build the emerging risk annotation map and integrate it:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (16 → 33 lines)
+            .into_iter()
+            .take(cutoff_index)
+            .map(|r| (r.path, r.score))
+  +         .collect()
+  + }
+  + 
+  + /// Build a map of path → momentum for files with accelerating risk.
+  + ///
+  + /// Used by `format_auto_context` to annotate emerging-risk file headers.
+  + /// Returns at most `max` entries to avoid noisy prompts.
+  + fn build_emerging_risk_map(max: usize) -> std::collections::HashMap<String, f64> {
+  +     let risks = crate::commands_risk::compute_file_risk_scores();
+  +     if risks.is_empty() {
+  +         return std::collections::HashMap::new();
+  +     }
+  +     let emerging = crate::commands_risk::detect_emerging_risks(&risks);
+  +     emerging
+  +         .into_iter()
+  +         .take(max)
+  +         .map(|e| (e.path, e.momentum))
+  ... (2 more lines)
+ ✓ (16.3s)
+            .into_iter()
+            .take(cutoff_index)
+            .map(|r| (r.path, r.score))
+  +         .collect()
+  + }
+  + 
+  + /// Build a map of path → momentum for files with accelerating risk.
+  + ///
+  ... (13 more lines)
+
+Expected — I need to use it now. Let me modify format_auto_context to use the emerging risk map:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_project.rs:1263..1313 ✓ (1ms)
+
+Now I'll modify format_auto_context to also include emerging risk annotations:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (42 → 52 lines)
+        // Build a risk-score map for high-risk file annotations.
+        // Only files in the top 25% of risk scores get annotated.
+        let risk_map = build_risk_annotation_map();
+  + 
+  +     // Build an emerging-risk map for files trending toward fragility.
+  +     // At most 2 annotations to avoid noisy prompts.
+  +     let emerging_map = build_emerging_risk_map(2);
+    
+        let mut parts = Vec::new();
+        parts.push(
+  ···
+                parts.push(format!("--- {path} --- (\u{26a0} risk: {score:.2})"));
+            } else {
+                parts.push(format!("--- {path} ---"));
+  +         }
+  +         // Annotate emerging-risk files with anticipatory warning
+  +         if let Some(&momentum) = emerging_map.get(path.as_str()) {
+  +             parts.push(format!(
+  +                 "\u{26a1} Emerging risk: {path} — changing {momentum:.1}× faster than usual. Extra care advised."
+  +             ));
+  ... (3 more lines)
+ ✓ (1m 39s)
+        // Build a risk-score map for high-risk file annotations.
+        // Only files in the top 25% of risk scores get annotated.
+        let risk_map = build_risk_annotation_map();
+  + 
+  +     // Build an emerging-risk map for files trending toward fragility.
+  +     // At most 2 annotations to avoid noisy prompts.
+  +     let emerging_map = build_emerging_risk_map(2);
+    
+  ... (13 more lines)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  3 tools completed in 1m 48s (3 ✓)
+
+Now let's wire in the emerging risk context to build_watch_fix_prompt in watch.rs. I need to add the import for detect_emerging_risks and modify the risk section:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (1 → 2 lines)
+    use crate::commands_risk::{format_risk_context, risk_context_for_files};
+  + use crate::commands_risk::{compute_file_risk_scores, detect_emerging_risks};
+ ✓ (16.1s)
+    use crate::commands_risk::{format_risk_context, risk_context_for_files};
+  + use crate::commands_risk::{compute_file_risk_scores, detect_emerging_risks};
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: unused imports: `compute_file_risk_scores` and `detect_emerging_risks`[0m
+  [1m[94m--> [0msrc/watch.rs:12:28
+   [1m[94m|[0m
+[1m[94m12[0m [1m[94m|[0m use crate::commands_risk::{compute_file_risk_scores, detect_emerging_risks};
+   [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^[0m  [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `-D unused-imports` implied by `-D warnings`
+   [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_imports)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+
+
+
+I need to actually use those imports in build_watch_fix_prompt before the lint will pass. Let me first wire the emerging risk into the watch fix prompt, then the imports will be used.
+
+Let me see the current state of the risk section in build_watch_fix_prompt:
+  ▶ read src/watch.rs:1090..1120 ✓ (1ms)
+
+Now I'll add the emerging risk context to the watch fix prompt:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (17 → 42 lines)
+        let risk_section = if !error_files.is_empty() {
+            let risk_entries = risk_context_for_files(&error_files);
+            format_risk_context(&risk_entries)
+  +     } else {
+  +         String::new()
+  +     };
+  + 
+  +     // Add emerging-risk annotations for error files whose change rate is
+  +     // accelerating — the anticipatory signal from the allostatic dream.
+  +     let emerging_section = if !error_files.is_empty() {
+  +         let risks = compute_file_risk_scores();
+  +         let emerging = detect_emerging_risks(&risks);
+  +         let mut notes = Vec::new();
+  +         for e in &emerging {
+  +             if error_files.iter().any(|f| f == &e.path) {
+  +                 notes.push(format!(
+  +                     "Note: {} is an emerging risk — its change rate is accelerating \
+  +                      ({:.1}× usual). Test more carefully.",
+  +                     e.path, e.momentum
+  +                 ));
+  ... (20 more lines)
+ ✓ (1m 45s)
+        let risk_section = if !error_files.is_empty() {
+            let risk_entries = risk_context_for_files(&error_files);
+            format_risk_context(&risk_entries)
+  +     } else {
+  +         String::new()
+  +     };
+  + 
+  +     // Add emerging-risk annotations for error files whose change rate is
+  ... (13 more lines)
+
+Now let me run the lint check:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.7s)
+
+Lint passes. Now let me add the tests:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ todo done #2 ✓ (0ms)
+  ▶ todo wip #3 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Let me look at the existing test for risk annotations in `format_auto_context` to understand the test pattern:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2995,3050p' src/commands… ✓ (3ms)
+
+Good. I can see the pattern — the existing tests use live data from the repo. For the emerging risk test, the challenge is that detect_emerging_risks uses live git data, so in a test environment there may or may not be emerging risks. Let me write a test that works with the internal format_auto_context function directly by checking the output format. I also need a test for the watch fix prompt.
+
+Let me first check what test exists for the watch fix prompt:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1640,1680p' src/watch.rs ✓ (3ms)
+
+Now let me write the tests. For format_auto_context, I'll write a test that directly constructs the scenario by using `build_emerging_risk_map (or more directly, by testing format_auto_context` with a known emerging-risk file). Since emerging risks depend on live git data, I'll write a structural test that verifies the annotation format when data is present, and a test that verifies no crash when there's no data.
+
+For the watch test, I'll verify the emerging risk section gets included when there are emerging risks matching error files.
+
+Let me find the end of the test module in commands_project.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/commands_project.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_format_auto_contex… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3046,3065p' src/commands… ✓ (3ms)
+  3 tools completed in 10.9s (3 ✓)
+
+Now I'll add a test for the emerging risk annotation. Since build_emerging_risk_map uses live git data, I'll write a test that verifies:
+1. format_auto_context doesn't crash with emerging risks
+2. If an emerging risk file is present, the ⚡ annotation appears
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    fn test_format_aut… ✓ (3ms)
+
+I'll add the test right after the low_risk_no_annotation test:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_project.rs (14 → 46 lines)
+                result
+            );
+            assert!(result.contains("--- src/nonexistent_file_that_has_no_risk.rs ---"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_auto_context_emerging_risk_annotation() {
+  +         // Use detect_emerging_risks on the live repo to find any emerging-risk files.
+  +         // If one exists, verify that format_auto_context includes the ⚡ annotation.
+  +         let risks = crate::commands_risk::compute_file_risk_scores();
+  +         let emerging = crate::commands_risk::detect_emerging_risks(&risks);
+  +         if emerging.is_empty() {
+  +             // No emerging risks in the current repo — just verify no crash
+  +             let files = vec![("src/main.rs".to_string(), "fn main() {}".to_string())];
+  +             let result = format_auto_context(&files, "test prompt").unwrap();
+  +             assert!(
+  +                 !result.contains("\u{26a1} Emerging risk:"),
+  +                 "should not have emerging risk annotation when none detected"
+  +             );
+  +             return;
+  ... (16 more lines)
+ ✓ (1m 41s)
+                result
+            );
+            assert!(result.contains("--- src/nonexistent_file_that_has_no_risk.rs ---"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_auto_context_emerging_risk_annotation() {
+  +         // Use detect_emerging_risks on the live repo to find any emerging-risk files.
+  ... (13 more lines)
+
+Now add a test for the watch fix prompt emerging risk section. Let me find a good place in the watch.rs tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_build_watch_fix… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1696,1720p' src/watch.rs ✓ (3ms)
+  2 tools completed in 7.0s (2 ✓)
+
+Let me add a test after the truncation test:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (18 → 54 lines)
+            assert!(
+                prompt.contains(&"x".repeat(5000)),
+                "first 5000 chars should appear"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_watch_fix_prompt_emerging_risk() {
+  +         // Build a prompt with a real source file path in the error output.
+  +         // If that file happens to be an emerging risk, the annotation should appear.
+  +         let risks = crate::commands_risk::compute_file_risk_scores();
+  +         let emerging = crate::commands_risk::detect_emerging_risks(&risks);
+  +         if emerging.is_empty() {
+  +             // No emerging risks — verify no crash and no spurious annotation
+  +             let prompt = build_watch_fix_prompt(
+  +                 "cargo test",
+  +                 "error[E0308]: mismatched types\n  --> src/main.rs:5:10",
+  +             );
+  +             assert!(
+  +                 !prompt.contains("emerging risk"),
+  ... (21 more lines)
+ ✓ (1m 41s)
+            assert!(
+                prompt.contains(&"x".repeat(5000)),
+                "first 5000 chars should appear"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_watch_fix_prompt_emerging_risk() {
+  ... (13 more lines)
+  ▶ todo done #3 ✓ (0ms)
+  ▶ todo wip #4 ✓ (0ms)
+  3 tools completed in 1m 59s (3 ✓)
+
+Now let me run the full check suite:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 24s)
+  2 tools completed in 1m 47s (2 ✓)
+
+All 88 tests pass. Let me also specifically run the new tests to make sure they ran:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_format_auto_cont… ✓ (1.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_build_watch_fix_… ✓ (1.4s)
+  2 tools completed in 7.9s (2 ✓)
+
+Both new tests pass. Let me also run the format check:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 ✓ (867ms)
+
+  ✓ Watch passed after fix (attempt 1)
+
