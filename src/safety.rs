@@ -357,6 +357,17 @@ fn check_permission_changes(cmd: &str) -> Option<String> {
         );
     }
 
+    // chmod 777 on system paths (even without -R, making a system dir world-writable is dangerous)
+    if cmd.contains("chmod") && cmd.contains("777") {
+        for dir in CRITICAL_SYSTEM_DIRS {
+            if cmd.contains(dir) {
+                return Some(format!(
+                    "Dangerous permission change: 'chmod 777' on system path '{dir}' makes it world-writable"
+                ));
+            }
+        }
+    }
+
     // chown -R on system directories
     if cmd.contains("chown") && cmd.contains("-R") {
         for dir in CRITICAL_SYSTEM_DIRS {
@@ -851,24 +862,43 @@ fn check_raw_device_write(cmd: &str) -> Option<String> {
 /// Check for firewall flushing/disabling commands.
 fn check_firewall_flush(cmd_lower: &str) -> Option<String> {
     // iptables -F flushes all rules (leaves system unprotected)
+    // Note: -F (flush) is case-sensitive in iptables, but we work on cmd_lower.
+    // We check the original command via token matching to distinguish -F (flush)
+    // from -f (fragment matching), since both map to "-f" after lowercasing.
     if cmd_lower.contains("iptables") {
-        // -F (flush), --flush, -X (delete chain), -Z (zero counters are less dangerous)
-        if cmd_lower.contains(" -f")
-            || cmd_lower.contains("--flush")
-            || cmd_lower.contains(" -x")
-            || cmd_lower.contains("--delete-chain")
-        {
+        // --flush and --delete-chain are unambiguous in lowercase
+        if cmd_lower.contains("--flush") || cmd_lower.contains("--delete-chain") {
             return Some(
-                "Firewall flush: 'iptables -F' removes all firewall rules, leaving the system unprotected".into(),
+                "Firewall flush: 'iptables --flush/--delete-chain' removes firewall rules, leaving the system unprotected".into(),
             );
+        }
+        // For short flags, check that it's a standalone flag token (e.g. "-F" not "-f" for fragments)
+        // We split on whitespace to find exact flag tokens
+        let tokens: Vec<&str> = cmd_lower.split_whitespace().collect();
+        for token in &tokens {
+            if *token == "-f" || *token == "-x" {
+                return Some(
+                    "Firewall flush: 'iptables -F/-X' removes firewall rules, leaving the system unprotected".into(),
+                );
+            }
         }
     }
 
     // ip6tables -F
-    if cmd_lower.contains("ip6tables")
-        && (cmd_lower.contains(" -f") || cmd_lower.contains("--flush"))
-    {
-        return Some("Firewall flush: 'ip6tables -F' removes all IPv6 firewall rules".into());
+    if cmd_lower.contains("ip6tables") {
+        if cmd_lower.contains("--flush") {
+            return Some(
+                "Firewall flush: 'ip6tables --flush' removes all IPv6 firewall rules".into(),
+            );
+        }
+        let tokens: Vec<&str> = cmd_lower.split_whitespace().collect();
+        for token in &tokens {
+            if *token == "-f" {
+                return Some(
+                    "Firewall flush: 'ip6tables -F' removes all IPv6 firewall rules".into(),
+                );
+            }
+        }
     }
 
     // nftables flush
@@ -1027,9 +1057,8 @@ fn check_reverse_shell(cmd_lower: &str) -> Option<String> {
     for tool in &nc_tools {
         if cmd_lower.contains(tool) && (cmd_lower.contains(" -e ") || cmd_lower.contains(" -c ")) {
             return Some(format!(
-                "Reverse shell: {}{} with -e/-c flag can execute commands on a remote connection",
-                &tool[..tool.len() - 1],
-                ""
+                "Reverse shell: {} with -e/-c flag can execute commands on a remote connection",
+                tool.trim_end(),
             ));
         }
     }
