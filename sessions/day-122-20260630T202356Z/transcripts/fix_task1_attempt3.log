@@ -1,0 +1,298 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll analyze the source code to find the most impactful improvement, then implement it.
+  ▶ todo add 'Analyze source code for most impactful improvement' ✓ (0ms)
+  ▶ todo add 'Implement the improvement' ✓ (0ms)
+  ▶ todo add 'Run tests and commit' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  4 tools completed in 11.1s (4 ✓)
+
+Let me look at the source code to identify impactful improvements. I'll focus on areas that could have bugs, missing error handling, or performance issues.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the yoyo Rust source code to find the most impactful…' ✓ (3m 8s)
+  ▶ todo done #1 ✓ (0ms)
+  2 tools completed in 3m 14s (2 ✓)
+
+Good analysis. The most impactful improvement is deduplicating the topic-truncation pattern across files AND the error tail-preview pattern. Let me look at the exact code to implement this properly.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ search 'safe_truncate' (*.rs) ✓ (20ms)
+  ▶ read src/format/mod.rs:230..260 ✓ (1ms)
+  ▶ read src/format/mod.rs:259..279 ✓ (1ms)
+  4 tools completed in 11.7s (4 ✓)
+
+Now let me look at the two duplicated truncation sites:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:265..295 ✓ (1ms)
+  ▶ read src/prompt_utils.rs:294..304 ✓ (0ms)
+  ▶ read src/commands_session.rs:255..290 ✓ (1ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Now let me check the duplicated tail-preview pattern in commands_lint.rs:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Last output:' (*.rs) ✓ (20ms)
+  ▶ read src/commands_lint.rs:82..112 ✓ (1ms)
+  ▶ read src/commands_lint.rs:235..265 ✓ (0ms)
+  3 tools completed in 7.6s (3 ✓)
+
+Now let me search for the third instance in commands_lint.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ search 'lines.len\(\) > 20' (src/commands_lint.rs) ✓ (12ms)
+  ▶ search 'len\(\) > 20' (src/commands_lint.rs) ✓ (12ms)
+  ▶ search 'preview_lines' (src/commands_lint.rs) ✓ (12ms)
+  3 tools completed in 10.4s (3 ✓)
+
+Hmm, looks like the third instance doesn't actually use the same variable name. Let me check if the tail-preview pattern is used elsewhere more broadly:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ search 'lines\[lines\.len\(\) - 20' (*.rs) ✓ (15ms)
+  ▶ search 'len\(\) - 20\.\.' (*.rs) ✓ (16ms)
+  ▶ search '- 20\]' (*.rs) ✗ (2ms)
+    │ Search error: grep: invalid option -- ' '
+  ▶ search 'len\(\) - 20' (*.rs) ✓ (15ms)
+  4 tools completed in 12.4s (3 ✓, 1 ✗)
+
+OK, so the tail-preview pattern only occurs twice, not three times. Let me also look for similar patterns elsewhere:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ search 'Last output:\\n' (*.rs) ✓ (15ms)
+
+Good. So the plan is:
+
+1. **Add `truncate_at_word_boundary** to format/mod.rs` — deduplicates the word-boundary-aware truncation used in prompt_utils.rs and commands_session.rs
+2. Add `append_tail_preview` to format/output.rs — deduplicates the tail-preview pattern used twice in commands_lint.rs
+3. Replace call sites
+
+Let me also check if there's more duplication I should tackle. Let me search for a common "prefer stderr over stdout" error text pattern:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ search 'if !stderr.is_empty.*\{.*stderr.*\} else \{.*stdout' (*.rs) ✗ (2ms)
+    │ Search error: grep: Invalid content of \{\}
+  ▶ search '!stderr.is_empty' (*.rs) ✓ (16ms)
+  2 tools completed in 4.9s (1 ✓, 1 ✗)
+
+Now let me implement the improvements. Let me start with the helper functions:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:256..266 ✓ (1ms)
+  ▶ edit src/format/mod.rs (6 → 44 lines)
+        match s.char_indices().nth(max) {
+            Some((idx, _)) => format!("{}…", &s[..idx]),
+            None => s.to_string(),
+  +     }
+  + }
+  + 
+  + /// Truncate text at a word boundary, appending "…" if truncated.
+  + ///
+  + /// Finds a safe UTF-8 char boundary at `max_bytes`, then backs up to
+  + /// the last space (if one exists past position 10) to avoid splitting words.
+  + pub fn truncate_at_word_boundary(text: &str, max_bytes: usize) -> String {
+  +     if text.len() <= max_bytes {
+  +         return text.to_string();
+  +     }
+  +     let truncated = safe_truncate(text, max_bytes);
+  +     let mut end = truncated.len();
+  +     if let Some(space_pos) = truncated.rfind(' ') {
+  +         if space_pos > 10 {
+  +             end = space_pos;
+  +         }
+  ... (23 more lines)
+ ✓ (13.5s)
+        match s.char_indices().nth(max) {
+            Some((idx, _)) => format!("{}…", &s[..idx]),
+            None => s.to_string(),
+  +     }
+  + }
+  + 
+  + /// Truncate text at a word boundary, appending "…" if truncated.
+  + ///
+  ... (13 more lines)
+  2 tools completed in 31.7s (2 ✓)
+
+Good — the functions are created but not used yet. Now I need to update the call sites to use them.
+
+First, let me check what's exported from format/mod.rs:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ search '^pub (fn|use|mod)"' (src/format/mod.rs) ✓ (12ms)
+  ▶ search 'pub fn safe_truncate_with_suffix' (src/format/mod.rs) ✓ (12ms)
+  ▶ search 'safe_truncate_with_suffix' (src/format/mod.rs) ✓ (12ms)
+  ▶ search 'safe_truncate_with_suffix' (src/format/*.rs) ✓ (12ms)
+  ▶ search 'pub fn safe_truncate_with_suffix' ✓ (5.8s)
+  5 tools completed in 20.8s (5 ✓)
+
+Now let me update the call sites. First, prompt_utils.rs:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ read src/prompt_utils.rs:1..6 ✓ (0ms)
+  ▶ search 'use crate::format' (src/prompt_utils.rs) ✓ (12ms)
+  ▶ search '^use ' (src/prompt_utils.rs) ✓ (12ms)
+  ▶ search 'safe_truncate' (src/prompt_utils.rs) ✓ (12ms)
+  4 tools completed in 10.1s (4 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `truncate_at_word_boundary` is never used[0m
+   [1m[94m--> [0msrc/format/mod.rs:270:8
+    [1m[94m|[0m
+[1m[94m270[0m [1m[94m|[0m pub fn truncate_at_word_boundary(text: &str, max_bytes: usize) -> String {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m[1m: function `append_tail_preview` is never used[0m
+   [1m[94m--> [0msrc/format/mod.rs:290:8
+    [1m[94m|[0m
+[1m[94m290[0m [1m[94m|[0m pub fn append_tail_preview(summary: &mut String, output: &str, max_lines: usize) {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 2 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 2 previous errors
+  → Auto-fixing (attempt 1/3)...
+
+
+
+Let me see the current state of the code and fix this by actually using the new functions at the call sites.
+  ▶ read src/prompt_utils.rs:273..298 ✓ (0ms)
+  ▶ search 'use crate|use super|safe_truncate' (src/prompt_utils.rs) ✓ (12ms)
+  ▶ $ grep -n 'safe_truncate\|use .*format\|crate::format' src/prompt_utils.rs | head … ✓ (5ms)
+  3 tools completed in 8.5s (3 ✓)
+
+Good. Now replace the duplicated pattern in prompt_utils.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_utils.rs (15 → 1 lines)
+  -     // Truncate at a reasonable length, preferring to break at word boundaries
+  -     let max_len = 50;
+  -     if first_line.len() <= max_len {
+  -         return first_line.to_string();
+  -     }
+  -     // Find a safe char boundary and then a word boundary
+  -     let truncated = safe_truncate(first_line, max_len);
+  -     let mut end = truncated.len();
+  -     // Try to break at the last space before the limit
+  -     if let Some(space_pos) = truncated.rfind(' ') {
+  -         if space_pos > 10 {
+  -             end = space_pos;
+  -         }
+  -     }
+  -     format!("{}…", &first_line[..end])
+  +     truncate_at_word_boundary(first_line, 50)
+ ✓ (13.5s)
+  -     // Truncate at a reasonable length, preferring to break at word boundaries
+  -     let max_len = 50;
+  -     if first_line.len() <= max_len {
+  -         return first_line.to_string();
+  -     }
+  -     // Find a safe char boundary and then a word boundary
+  -     let truncated = safe_truncate(first_line, max_len);
+  -     let mut end = truncated.len();
+  ... (8 more lines)
+
+Good, truncate_at_word_boundary is now used. Now fix `commands_session.rs`:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_session.rs:264..284 ✓ (0ms)
+  ▶ edit src/commands_session.rs (17 → 5 lines)
+                    if !text.is_empty() && !text.starts_with('/') && text.len() > 3 {
+  -                     // Take first ~50 chars as topic
+  -                     let topic = if text.len() <= 50 {
+  -                         text.to_string()
+  -                     } else {
+  -                         let truncated = safe_truncate(text, 50);
+  -                         let mut end = truncated.len();
+  -                         if let Some(sp) = truncated.rfind(' ') {
+  -                             if sp > 10 {
+  -                                 end = sp;
+  -                             }
+  -                         }
+  -                         format!("{}…", &text[..end])
+  -                     };
+  +                     let topic = truncate_at_word_boundary(text, 50);
+                        topics.push(topic);
+                        user_topic_count += 1;
+                    }
+ ✓ (13.4s)
+                    if !text.is_empty() && !text.starts_with('/') && text.len() > 3 {
+  -                     // Take first ~50 chars as topic
+  -                     let topic = if text.len() <= 50 {
+  -                         text.to_string()
+  -                     } else {
+  -                         let truncated = safe_truncate(text, 50);
+  -                         let mut end = truncated.len();
+  -                         if let Some(sp) = truncated.rfind(' ') {
+  ... (10 more lines)
+  2 tools completed in 21.1s (2 ✓)
+
+Now fix the two append_tail_preview call sites in commands_lint.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_lint.rs:82..107 ✓ (0ms)
+  ▶ edit src/commands_lint.rs (19 → 9 lines)
+                        stderr.to_string()
+                    } else {
+                        stdout.to_string()
+  -                 };
+  -                 let lines: Vec<&str> = error_text.lines().collect();
+  -                 let preview_lines = if lines.len() > 20 {
+  -                     &lines[lines.len() - 20..]
+  -                 } else {
+  -                     &lines
+                    };
+  -                 summary.push_str("\n\nLast output:\n");
+  -                 for line in preview_lines {
+  -                     summary.push_str(line);
+  -                     summary.push('\n');
+  -                 }
+  +                 append_tail_preview(&mut summary, &error_text, 20);
+                    Some(summary)
+ ✓ (1m 11s)
+                        stderr.to_string()
+                    } else {
+                        stdout.to_string()
+  -                 };
+  -                 let lines: Vec<&str> = error_text.lines().collect();
+  -                 let preview_lines = if lines.len() > 20 {
+  -                     &lines[lines.len() - 20..]
+  -                 } else {
+  ... (9 more lines)
+  2 tools completed in 1m 19s (2 ✓)
+
+Now the second instance:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_lint.rs:228..253 ✓ (0ms)
+  ▶ edit src/commands_lint.rs (18 → 8 lines)
+                        stderr.to_string()
+                    } else {
+                        stdout.to_string()
+  -                 };
+  -                 let lines: Vec<&str> = error_text.lines().collect();
+  -                 let preview_lines = if lines.len() > 20 {
+  -                     &lines[lines.len() - 20..]
+  -                 } else {
+  -                     &lines
+                    };
+  -                 summary.push_str("\n\nLast output:\n");
+  -                 for line in preview_lines {
+  -                     summary.push_str(line);
+  -                     summary.push('\n');
+  -                 }
+  +                 append_tail_preview(&mut summary, &error_text, 20);
+                    Some(summary)
+ ✓ (1m 25s)
+                        stderr.to_string()
+                    } else {
+                        stdout.to_string()
+  -                 };
+  -                 let lines: Vec<&str> = error_text.lines().collect();
+  -                 let preview_lines = if lines.len() > 20 {
+  -                     &lines[lines.len() - 20..]
+  -                 } else {
+  ... (9 more lines)
+  2 tools completed in 1m 32s (2 ✓)
+
+Now make sure commands_lint.rs imports the new function:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use crate::format' src/commands_lint.rs | head -5 ✓ (3ms)
+
+Good — it already uses a glob import. Same for commands_session.rs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'use crate::format' src/commands_session.rs | head -5 ✓ (3ms)
