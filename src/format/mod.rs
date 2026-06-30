@@ -263,6 +263,44 @@ pub fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     }
 }
 
+/// Truncate text at a word boundary, appending "…" if truncated.
+///
+/// Finds a safe UTF-8 char boundary at `max_bytes`, then backs up to
+/// the last space (if one exists past position 10) to avoid splitting words.
+pub fn truncate_at_word_boundary(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let truncated = safe_truncate(text, max_bytes);
+    let mut end = truncated.len();
+    if let Some(space_pos) = truncated.rfind(' ') {
+        if space_pos > 10 {
+            end = space_pos;
+        }
+    }
+    // `end` is either `truncated.len()` (a valid char boundary from safe_truncate)
+    // or a space position (ASCII, always a valid char boundary).
+    format!("{}…", &text[..end])
+}
+
+/// Append the last `max_lines` of `output` to `summary`, preceded by a header.
+///
+/// Useful for including a tail preview of command output (e.g. error logs)
+/// in a summary string for AI context.
+pub fn append_tail_preview(summary: &mut String, output: &str, max_lines: usize) {
+    let lines: Vec<&str> = output.lines().collect();
+    let preview = if lines.len() > max_lines {
+        &lines[lines.len() - max_lines..]
+    } else {
+        &lines[..]
+    };
+    summary.push_str("\n\nLast output:\n");
+    for line in preview {
+        summary.push_str(line);
+        summary.push('\n');
+    }
+}
+
 /// Decode HTML entities in a string.
 ///
 /// Handles named entities (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&#39;`,

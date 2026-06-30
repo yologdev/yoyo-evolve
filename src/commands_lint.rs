@@ -89,17 +89,7 @@ pub fn handle_test() -> Option<String> {
                 } else {
                     stdout.to_string()
                 };
-                let lines: Vec<&str> = error_text.lines().collect();
-                let preview_lines = if lines.len() > 20 {
-                    &lines[lines.len() - 20..]
-                } else {
-                    &lines
-                };
-                summary.push_str("\n\nLast output:\n");
-                for line in preview_lines {
-                    summary.push_str(line);
-                    summary.push('\n');
-                }
+                append_tail_preview(&mut summary, &error_text, 20);
                 Some(summary)
             }
         }
@@ -242,17 +232,7 @@ pub fn handle_lint(input: &str) -> Option<String> {
                 } else {
                     stdout.to_string()
                 };
-                let lines: Vec<&str> = error_text.lines().collect();
-                let preview_lines = if lines.len() > 20 {
-                    &lines[lines.len() - 20..]
-                } else {
-                    &lines
-                };
-                summary.push_str("\n\nLast output:\n");
-                for line in preview_lines {
-                    summary.push_str(line);
-                    summary.push('\n');
-                }
+                append_tail_preview(&mut summary, &error_text, 20);
                 Some(summary)
             }
         }

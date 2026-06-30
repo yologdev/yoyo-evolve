@@ -278,21 +278,7 @@ fn extract_topic_phrase(text: &str) -> String {
     if first_line.is_empty() {
         return String::new();
     }
-    // Truncate at a reasonable length, preferring to break at word boundaries
-    let max_len = 50;
-    if first_line.len() <= max_len {
-        return first_line.to_string();
-    }
-    // Find a safe char boundary and then a word boundary
-    let truncated = safe_truncate(first_line, max_len);
-    let mut end = truncated.len();
-    // Try to break at the last space before the limit
-    if let Some(space_pos) = truncated.rfind(' ') {
-        if space_pos > 10 {
-            end = space_pos;
-        }
-    }
-    format!("{}…", &first_line[..end])
+    truncate_at_word_boundary(first_line, 50)
 }
 
 /// Format the context summary for display after compaction.

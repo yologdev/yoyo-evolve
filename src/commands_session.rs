@@ -263,19 +263,7 @@ fn handle_compact_preview(agent: &Agent) {
                     .join(" ");
                 let text = text.trim();
                 if !text.is_empty() && !text.starts_with('/') && text.len() > 3 {
-                    // Take first ~50 chars as topic
-                    let topic = if text.len() <= 50 {
-                        text.to_string()
-                    } else {
-                        let truncated = safe_truncate(text, 50);
-                        let mut end = truncated.len();
-                        if let Some(sp) = truncated.rfind(' ') {
-                            if sp > 10 {
-                                end = sp;
-                            }
-                        }
-                        format!("{}…", &text[..end])
-                    };
+                    let topic = truncate_at_word_boundary(text, 50);
                     topics.push(topic);
                     user_topic_count += 1;
                 }
