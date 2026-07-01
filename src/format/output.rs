@@ -580,9 +580,17 @@ pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
     let lines: Vec<&str> = compressed.lines().collect();
     let total_lines = lines.len();
 
-    // If not enough lines to meaningfully truncate, return as-is
-    // (edge case: very long single lines or very few lines)
+    // If not enough lines to meaningfully truncate by line count,
+    // still enforce the byte limit as a hard ceiling.
+    // Without this, a few very long lines (minified JSON, base64, etc.)
+    // could blow past max_chars and waste the context window.
     if total_lines <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
+        if compressed.len() > max_chars {
+            let truncated = super::safe_truncate(&compressed, max_chars);
+            return format!(
+                "{truncated}\n\n[... output truncated at {max_chars} chars ({total_lines} lines total) ...]"
+            );
+        }
         return compressed;
     }
 
@@ -791,7 +799,13 @@ fn truncate_compiler_output(lines: &[&str], max_chars: usize) -> Option<String> 
         let result_lines: Vec<&str> = result.lines().collect();
         let total = result_lines.len();
         if total <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
-            // Already short enough in lines, just return as-is
+            // Few lines but still over max_chars — enforce byte limit
+            if result.len() > max_chars {
+                let truncated = super::safe_truncate(&result, max_chars);
+                return Some(format!(
+                    "{truncated}\n\n[... compiler output truncated at {max_chars} chars ({total} lines total) ...]"
+                ));
+            }
             return Some(result);
         }
         let head = &result_lines[..TRUNCATION_HEAD_LINES];
@@ -989,10 +1003,10 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_tool_output_few_long_lines_not_truncated() {
-        // Only 140 lines (< head + tail = 150), even if over char threshold
-        // Should NOT be truncated because there aren't enough lines.
-        // Each line starts with a unique first word to avoid compression collapsing.
+    fn test_truncate_tool_output_few_long_lines_enforces_byte_limit() {
+        // 140 lines (< head + tail = 150) but each line is 500 chars.
+        // Total ~70KB which exceeds the 30K max_chars limit.
+        // Should be byte-truncated even though line count is low.
         let lines: Vec<String> = (0..140)
             .map(|i| format!("L{i} {}", "x".repeat(500)))
             .collect();
@@ -1000,9 +1014,34 @@ mod tests {
         assert!(output.len() > 30_000);
 
         let result = truncate_tool_output(&output, 30_000);
-        assert_eq!(
-            result, output,
-            "Too few lines to truncate, should be unchanged"
+        // Should be truncated to around max_chars, not returned as-is
+        assert!(
+            result.len() < output.len(),
+            "Output should be truncated when over max_chars, even with few lines"
+        );
+        assert!(
+            result.contains("[... output truncated at 30000 chars"),
+            "Should contain byte-level truncation marker, got: {}",
+            &result[result.len().saturating_sub(100)..]
+        );
+    }
+
+    #[test]
+    fn test_truncate_tool_output_few_short_lines_unchanged() {
+        // 50 lines, each unique and short — total well under max_chars.
+        // Should pass through (after compression, which won't collapse unique lines).
+        let lines: Vec<String> = (0..50)
+            .map(|i| format!("L{i} unique content for line number {i}"))
+            .collect();
+        let output = lines.join("\n");
+        assert!(output.len() < 30_000);
+
+        let result = truncate_tool_output(&output, 30_000);
+        // Compression might not change anything for unique lines, so just check
+        // it didn't add a truncation marker
+        assert!(
+            !result.contains("[... output truncated at"),
+            "Short unique output should not be byte-truncated"
         );
     }
 
