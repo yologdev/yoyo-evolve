@@ -10,7 +10,7 @@
 # Environment:
 #   ANTHROPIC_API_KEY  — required
 #   REPO               — GitHub repo (default: yologdev/yoyo-evolve)
-#   MODEL              — LLM model (default: claude-sonnet-4-6)
+#   MODEL              — LLM model (default: claude-opus-4-6)
 #   TIMEOUT            — Session time budget in seconds (default: 600)
 #   BOT_USERNAME       — Bot identity for reply detection (default: yoyo-evolve[bot])
 
