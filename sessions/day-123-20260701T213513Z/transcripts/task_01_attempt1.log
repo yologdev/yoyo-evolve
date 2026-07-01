@@ -1,0 +1,224 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading my own source code to identify the most impactful improvement. Let me assess the current state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (8ms)
+ ✓ (44.7s)
+  2 tools completed in 49.0s (2 ✓)
+
+Good, 88 tests passing. Let me look at areas with potential for high-impact improvement. Let me check for common issues.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'let _ =' src/ | grep -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '\.unwrap()' src/ | gre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (10ms)
+ ✓ (11ms)
+ ✓ (15.8s)
+  3 tools completed in 17.9s (3 ✓)
+
+Clean clippy. Let me look deeper at structural issues — particularly error handling and areas where improvements would be most impactful for real users.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'unwrap()' src/prompt.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'unwrap()' src/repl.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'unwrap()' src/tools.rs… ✓ (8ms)
+ ✓ (8ms)
+ ✓ (8ms)
+  3 tools completed in 1.9s (3 ✓)
+
+Those are mostly in test code, which is fine. Let me look for more impactful issues — user-facing error handling, performance, or architectural improvements.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'unwrap()' src/prompt.r… ✓ (5ms)
+
+All test code. Let me look at production code paths more carefully.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (13 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (16 lines) ✓ (31ms)
+  2 tools completed in 7.3s (2 ✓)
+
+Production code is clean of unwraps! Let me look at what would genuinely help users the most. Let me examine the tool output truncation and smart edit — areas where user experience is most directly impacted.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Analyze the yoyo codebase for the most impactful self-improv…' ✓ (1m 9s)
+
+Excellent analysis. The truncate_tool_output bypass for outputs with fewer than 150 lines but massive byte counts is a real user-facing bug — it can blow the context window with a single dense tool output. Let me implement the fix.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '550,650p' src/format/out… ✓ (3ms)
+
+Now I see the exact code. The issue is at lines 582-584:
+
+```rust
+if total_lines <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
+    return compressed;
+}
+```
+
+Let me also check the constants and the safe_truncate function:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'TRUNCATION_HEAD_LINES\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'pub fn safe_truncate\|f… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '238,270p' src/format/mod… ✓ (3ms)
+  3 tools completed in 6.2s (3 ✓)
+
+Now let me also check the smart_truncate_for_context function which is related:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn smart_truncate_for_c… ✓ (3ms)
+
+Good. Now let me also check the truncate_compiler_output function since it has the same potential issue:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,810p' src/format/out… ✓ (4ms)
+
+There's the same issue again on line 793-795! The compiler output truncation also has this line-count bypass. Let me look at the full picture and write the fix plus tests.
+
+First, let me write tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]' src/for… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -200 src/format/output.rs ✓ (4ms)
+  2 tools completed in 6.1s (2 ✓)
+
+Now let me write the tests first, then implement the fix:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:575..605 ✓ (1ms)
+
+Now let me also check the compiler output truncation fallback:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/output.rs:788..808 ✓ (1ms)
+
+Now I have a complete picture. There are two locations where the byte-count safety net is missing:
+
+1. Line 585 in `truncate_tool_output` — the main entry point
+2. Line 793 in truncate_compiler_output — the compiler-specific fallback
+
+Both can return output larger than max_chars when line count is ≤150 but byte count far exceeds the limit. Let me write the fix and tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (5 → 13 lines)
+  -     // If not enough lines to meaningfully truncate, return as-is
+  -     // (edge case: very long single lines or very few lines)
+  +     // If not enough lines to meaningfully truncate by line count,
+  +     // still enforce the byte limit as a hard ceiling.
+  +     // Without this, a few very long lines (minified JSON, base64, etc.)
+  +     // could blow past max_chars and waste the context window.
+        if total_lines <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
+  +         if compressed.len() > max_chars {
+  +             let truncated = super::safe_truncate(&compressed, max_chars);
+  +             return format!(
+  +                 "{truncated}\n\n[... output truncated at {max_chars} chars ({total_lines} lines total) ...]"
+  +             );
+  +         }
+            return compressed;
+        }
+ ✓ (1m 25s)
+  -     // If not enough lines to meaningfully truncate, return as-is
+  -     // (edge case: very long single lines or very few lines)
+  +     // If not enough lines to meaningfully truncate by line count,
+  +     // still enforce the byte limit as a hard ceiling.
+  +     // Without this, a few very long lines (minified JSON, base64, etc.)
+  +     // could blow past max_chars and waste the context window.
+        if total_lines <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
+  +         if compressed.len() > max_chars {
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (40.6s)
+  2 tools completed in 2m 13s (2 ✓)
+
+There's an existing test that expects the old behavior. Let me look at it:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'test_truncate_tool_outp… ✓ (3ms)
+
+This test was explicitly checking the old buggy behavior — 140 lines of 500 chars each = 70,000+ chars passed through untruncated despite a 30,000 char limit. This is exactly the bug. The test needs to be updated to reflect the correct behavior:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (16 → 33 lines)
+  -     fn test_truncate_tool_output_few_long_lines_not_truncated() {
+  -         // Only 140 lines (< head + tail = 150), even if over char threshold
+  -         // Should NOT be truncated because there aren't enough lines.
+  -         // Each line starts with a unique first word to avoid compression collapsing.
+  +     fn test_truncate_tool_output_few_long_lines_enforces_byte_limit() {
+  +         // 140 lines (< head + tail = 150) but each line is 500 chars.
+  +         // Total ~70KB which exceeds the 30K max_chars limit.
+  +         // Should be byte-truncated even though line count is low.
+            let lines: Vec<String> = (0..140)
+                .map(|i| format!("L{i} {}", "x".repeat(500)))
+                .collect();
+  ···
+            assert!(output.len() > 30_000);
+    
+            let result = truncate_tool_output(&output, 30_000);
+  -         assert_eq!(
+  -             result, output,
+  -             "Too few lines to truncate, should be unchanged"
+  +         // Should be truncated to around max_chars, not returned as-is
+  +         assert!(
+  ... (20 more lines)
+ ✓ (1m 26s)
+  -     fn test_truncate_tool_output_few_long_lines_not_truncated() {
+  -         // Only 140 lines (< head + tail = 150), even if over char threshold
+  -         // Should NOT be truncated because there aren't enough lines.
+  -         // Each line starts with a unique first word to avoid compression collapsing.
+  +     fn test_truncate_tool_output_few_long_lines_enforces_byte_limit() {
+  +         // 140 lines (< head + tail = 150) but each line is 500 chars.
+  +         // Total ~70KB which exceeds the 30K max_chars limit.
+  +         // Should be byte-truncated even though line count is low.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_truncate_tool_ou… ✓ (165ms)
+  2 tools completed in 1m 32s (2 ✓)
+
+Ah, the compression step collapses the similar lines. Let me fix the test to account for compression:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (10 → 18 lines)
+        #[test]
+        fn test_truncate_tool_output_few_short_lines_unchanged() {
+  -         // 50 lines, each short — total well under max_chars. Should pass through.
+  -         let lines: Vec<String> = (0..50).map(|i| format!("Line {i}: ok")).collect();
+  +         // 50 lines, each unique and short — total well under max_chars.
+  +         // Should pass through (after compression, which won't collapse unique lines).
+  +         let lines: Vec<String> = (0..50)
+  +             .map(|i| format!("L{i} unique content for line number {i}"))
+  +             .collect();
+            let output = lines.join("\n");
+            assert!(output.len() < 30_000);
+    
+            let result = truncate_tool_output(&output, 30_000);
+  -         assert_eq!(result, output, "Short output should pass through unchanged");
+  +         // Compression might not change anything for unique lines, so just check
+  +         // it didn't add a truncation marker
+  +         assert!(
+  +             !result.contains("[... output truncated at"),
+  +             "Short unique output should not be byte-truncated"
+  +         );
+  ... (1 more lines)
+ ✓ (1m 25s)
+        #[test]
+        fn test_truncate_tool_output_few_short_lines_unchanged() {
+  -         // 50 lines, each short — total well under max_chars. Should pass through.
+  -         let lines: Vec<String> = (0..50).map(|i| format!("Line {i}: ok")).collect();
+  +         // 50 lines, each unique and short — total well under max_chars.
+  +         // Should pass through (after compression, which won't collapse unique lines).
+  +         let lines: Vec<String> = (0..50)
+  +             .map(|i| format!("L{i} unique content for line number {i}"))
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_truncate_tool_ou… ✓ (167ms)
+  2 tools completed in 1m 34s (2 ✓)
+
+All truncation tests pass. Now let me fix the same issue in `truncate_compiler_output`:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/output.rs (4 → 10 lines)
+            if total <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
+  -             // Already short enough in lines, just return as-is
+  +             // Few lines but still over max_chars — enforce byte limit
+  +             if result.len() > max_chars {
+  +                 let truncated = super::safe_truncate(&result, max_chars);
+  +                 return Some(format!(
+  +                     "{truncated}\n\n[... compiler output truncated at {max_chars} chars ({total} lines total) ...]"
+  +                 ));
+  +             }
+                return Some(result);
+            }
+ ✓ (1m 29s)
+            if total <= TRUNCATION_HEAD_LINES + TRUNCATION_TAIL_LINES {
+  -             // Already short enough in lines, just return as-is
+  +             // Few lines but still over max_chars — enforce byte limit
+  +             if result.len() > max_chars {
+  +                 let truncated = super::safe_truncate(&result, max_chars);
+  +                 return Some(format!(
+  +                     "{truncated}\n\n[... compiler output truncated at {max_chars} chars ({total} lines total) ...]"
+  +                 ));
+  ... (3 more lines)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

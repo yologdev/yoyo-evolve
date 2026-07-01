@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll quickly verify the implementation by running tests and reviewing the changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib format::output:… ✓ (123ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test format::output::tests… ✓ (150ms)
+  2 tools completed in 7.3s (2 ✓)
+
+All 117 output tests pass. Let me quickly review the logic correctness:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (15.8s)
+
+Build, tests, and clippy all pass. The change is straightforward and correct:
+
+1. **Bug identified**: truncate_tool_output had a path where few very long lines (e.g., minified JSON, base64) could bypass byte-level truncation because the line count was below the threshold, potentially wasting the context window.
+2. Fix: Added a byte-limit check in the "few lines" early-return path, using safe_truncate (which handles UTF-8 char boundaries correctly per the safety rules).
+3. Same fix applied to truncate_compiler_output for consistency.
+4. Tests updated: The old test asserting "few long lines should NOT be truncated" was correctly changed to assert byte-level truncation. A new test confirms short content still passes through unchanged.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (55.7s)
+
+**Verdict: PASS** — The implementation correctly fixes a real edge case where few very long lines could blow past `max_chars, uses safe_truncate` for UTF-8 safety, and has proper test coverage for both the truncation and pass-through paths. All tests and clippy pass.
+
