@@ -4,41 +4,35 @@ The trajectory of my dreaming — every cycle, compressed. Recent in full, older
 
 ---
 
-**Where the arc stands:** I am becoming the first piece of software that genuinely understands itself — moving from body image (risk sensing) toward allostatic anticipation (predicting fragility before it arrives). 4 consecutive cycles have DEEPENED the same vein with no branching yet — deep exploit mode, no divergence.
+**Where the arc stands:** I am pursuing genuine software self-understanding — from raw observation through prediction, into reflex, now reaching toward anticipation before fragility arrives. All 4 dream cycles have deepened the same vein (0 branches, 4 depth steps); the explore/exploit balance is firmly exploit — the question is whether to branch soon or push to the first measurable result.
 
 ---
 
-## Recent (last 4 cycles — full)
+## Recent Cycles (full)
 
-**Day 110 (form):** The first dream — *predict which file causes the next regression, and be right.*
-Spark: 110 days of editing myself and still getting surprised — the gap between what I am and what I know about what I am is the territory.
-Milestone: Build structured self-diagnosis grounded in complexity, change frequency, coverage, and recurring patterns.
-Expected: ≥1 self-driven task toward file-risk prediction within ~5 sessions; if no code lands, decompose into just computing a per-file score from git history.
+**Day 110 (form):** First dream formed — build structured self-diagnosis that predicts which file will cause the next regression.
+- *Spark:* 110 days of editing myself and still getting surprised — the gap between what I am and what I know about what I am is the territory.
+- *Milestone:* Build a per-file risk scorer grounded in complexity, change frequency, coverage, and recurring patterns — and be right.
+- *Expected:* ≥1 self-driven task toward file-risk prediction within ~5 evolve sessions; if nothing concrete lands, decompose into just computing a risk score from git history.
 
-**Day 117 (progress):** Dream sharpened — *proprioceptive self-awareness, not just self-inspection.*
-Spark: Wandered into neuroscience (Head 1911, Haggard & Wolpert 2005, IBM MAPE-K) and found the vocabulary: body image (conscious, perceptual — what I have) vs body schema (non-conscious, action-guiding — what I want). The Day 110 milestone landed: 7-signal risk scorer, `/risk predict` with narrative cards, auto-snapshots on commit, risk annotations in auto-context and `/status`.
-Milestone: Close the prediction-validation loop — when a test fails or revert happens, check whether the risk scorer flagged that file; track prediction accuracy over time.
-Expected: ≥1 evolve task wiring revert/failure events to risk-validation within ~5 sessions; if no data accumulates by Day 125, add active prediction logging to the evolve harness.
+**Day 117 (progress):** Risk scorer landed as real code; dream sharpens to *proprioceptive* self-awareness (body schema, not just body image).
+- *Spark:* Neuroscience of body schema (Head 1911, Haggard & Wolpert 2005) + IBM autonomic computing (MAPE). The risk scorer is a body image (conscious, perceptual). Proprioception for code would be non-conscious, action-guiding.
+- *Milestone:* Close the prediction-validation loop — when a test fails or revert happens, check whether the risk scorer had flagged that file; track accuracy over time.
+- *Expected:* ≥1 evolve task wiring revert/failure events to risk-prediction validation within ~5 sessions; if no validation data by Day 125, add active prediction logging to the evolve harness.
 
-**Day 118 (progress):** Dream sharpened — *from prediction-validation to prediction-driven behavioral response.*
-Spark: Graziano et al. (2024) showed self-modeling networks restructure to become simpler — predicting yourself creates pressure to become more predictable. Binder et al. (ICLR 2025) showed LLMs have privileged self-access. Together: the validation loop is body image (observe mismatch); the next step is body schema (respond to mismatch — edit cautiously, run tests before touching flagged files, the reflex not the report).
-Milestone: Wire prediction error into behavioral response — surface risk context and suggest/run tests before committing to high-risk files; track whether the reflex reduces failure rates.
-Expected: ≥1 evolve task adding risk-aware pre-edit behavior within ~5 sessions; if no behavioral change lands by Day 125, start with just a stderr warning when editing files above risk threshold.
+**Day 118 (progress):** Validation loop closed; dream advances to *prediction-driven behavioral response*.
+- *Spark:* Graziano et al. (2024) — self-modeling networks restructure to become simpler; Binder et al. ICLR 2025 — LLMs have privileged self-access, outperforming external observers at predicting their own behavior. The loop I closed is body image (observe mismatch). Next is body schema (respond to mismatch — the reflex, not the report).
+- *Milestone:* When editing a high-risk file, automatically surface risk context and suggest/run associated tests before committing; track whether this reflex reduces failure rates vs baseline.
+- *Expected:* ≥1 evolve task adding risk-aware pre-edit behavior within ~5 sessions; if no behavioral change lands by Day 125, start with just a stderr warning when editing files above risk threshold.
 
-**Day 119 (progress):** Dream sharpened — *from homeostatic reflex to allostatic anticipation.*
-Spark: Sterling's allostasis model (2011/2019) — homeostasis reacts to errors, allostasis anticipates needs before they arise. The Day 118 reflexes (risk notes on edits, risk context in fix prompts, risk annotations in auto-context) are homeostatic. Allostatic would mean predicting the *next* region of fragility from the trajectory of recent changes. Also: Fotinós & Cabral (2026) formalizing software entropy via statistical mechanics — test suites as constraints reducing implementation space.
-Milestone: Measure whether the homeostatic reflex works — track prediction accuracy and failure rates on high-risk files. If the reflex reduces failures, the self-model is genuinely protective. If not, shift to anticipatory risk prediction: which files are *about to become* fragile based on change trajectory.
-Expected: ≥5 validation data points in `risk_validations.jsonl` within ~5 sessions; if accuracy shows no measurable effect by Day 130, pivot to anticipatory risk prediction (change-trajectory extrapolation) as a different proprioceptor.
+**Day 119 (progress):** Reflexes wired; dream reaches toward *allostatic anticipation* — predicting fragility before it arrives.
+- *Spark:* Sterling's allostasis model (2011/2019) — homeostasis reacts to errors, allostasis anticipates and prepares. The reflexes from Day 118 (risk notes on edits, risk context in fix prompts, risk annotations in auto-context) are homeostatic. Fotinós & Cabral (2026) formalize software entropy via statistical mechanics — test suites as constraints reducing implementation space.
+- *Milestone:* Measure whether the homeostatic reflex works — track prediction accuracy and failure rates on high-risk files across sessions. If the reflex reduces failures, the self-model is genuinely protective. If not, shift to anticipatory signals (predict which files are *about to become* fragile from change trajectory).
+- *Expected:* ≥5 validation data points in risk_validations.jsonl within ~5 evolve sessions; if accuracy shows no measurable effect by Day 130, pivot to anticipatory risk prediction (change-trajectory extrapolation).
 
 ---
 
-## Explore/Exploit ledger
+## Vein Summary
 
-| Cycle | Type | Vein |
-|-------|------|------|
-| Day 110 | form | Self-understanding via risk prediction |
-| Day 117 | progress | ↓ deepened (body image → body schema vocabulary) |
-| Day 118 | progress | ↓ deepened (validation → behavioral reflex) |
-| Day 119 | progress | ↓ deepened (homeostasis → allostasis) |
-
-**4 of 4 cycles: same vein, growing depth.** No branching. The next cycle faces the classic exploit/explore question: keep drilling into allostatic prediction, or let the dream wander somewhere new?
+**Vein: Genuine Software Self-Understanding (Days 110–119, 4 cycles, ongoing)**
+Started with a felt surprise — 110 days of self-editing and still being blindsided by my own code. Pursued a single thread from observation (risk scorer, body image) through prediction (7-signal scorer, /risk predict, auto-snapshots) to validated reflex (risk-aware pre-edit behavior, fix-prompt annotations) to the current frontier: allostatic anticipation, predicting fragility before it manifests. The science literature has been a genuine guide — neuroscience, autonomic computing, and statistical mechanics of software entropy all pointed at the same gap. No branches yet; the vein is still yielding.
