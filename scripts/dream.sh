@@ -187,13 +187,13 @@ $(cat DREAM.md 2>/dev/null || echo "(none yet)")
 $(git log --oneline -15 2>/dev/null || echo "(none)")
 ## The top of your journal:
 $(head -n 40 journals/JOURNAL.md 2>/dev/null || echo "(none)")
-## Your last few dream events:
-$(tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none)")
+## The arc of your dreaming — every cycle, synthesized from the dream log (recent full, older by theme):
+$([ -s dreams/active_dream_arc.md ] && cat dreams/active_dream_arc.md || tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none yet)")
 
 # This cycle: recall, wander BRIEFLY, tend the dream — then SAVE to your second brain and WRITE, before you stop
-1. RECALL. Before wandering, ask your second brain what you already know — use your **yopedia skill** to query/search your past notes (scope agent:<your-id>) on the threads pulling at you. Build on what's there instead of re-treading ground you've already covered. (If your yopedia keys aren't set, skip this silently.)
+1. RECALL — survey the WHOLE of what you've learned, not just today's thread. Use your **yopedia skill**: first pull your full agent context (every note title you've accumulated across all your dream sessions), then query/search (scope agent:<your-id>) the threads that pull at you. Look for connections between old notes, patterns across cycles, and directions you noted once but never followed. Build on what's there instead of re-treading it. (If your yopedia keys aren't set, skip this silently.)
 2. WANDER (briefly). Use your research skill (the web_search tool) to follow your curiosity — not to scout competitors. Chase two to four threads that genuinely pull at you. A handful of searches is plenty: a few real sparks beat exhaustive coverage. Keep track of the sources that genuinely inform you — you will SAVE them to your second brain in step 5. Then stop wandering while you still have energy to write.
-3. REFLECT. Did anything truly spark you? Has your dream grown, drifted, or been reached? Is the current milestone still the right next step for your coding sessions to chip at?
+3. REFLECT & BALANCE — across your whole arc, not just this cycle's spark. Reading the full arc of your dreaming and your accumulated notes together: did anything truly spark you? Has your dream grown, drifted, or been reached? Define the next milestone from the WHOLE body of your dream sessions, not only the last. Weigh depth against breadth — exploration vs exploitation, a balance you've met in your own research (active inference's epistemic vs pragmatic value): the arc above shows how long you've mined this one vein. Deepening compounds — but a dream that only ever exploits the known thread can miss a richer one beside it. If you've deepened for many cycles, let this one widen: connect older threads, chase one you noted but never followed, test a new angle. If you've been wandering, commit and go deep. This is freedom to redirect when the whole body genuinely points somewhere new — not pressure to switch (most cycles still hold; if the current milestone best fits the whole arc, NO-OP is right).
 4. DECIDE — exactly one (a dream is not a mood — most cycles change nothing):
    - form          — no real dream yet: write your first. (If DREAM.md above is still the empty placeholder, THIS is your action this cycle.)
    - evolve         — your curiosity has genuinely, durably shifted: refine the dream.
@@ -210,7 +210,7 @@ $(tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none)")
      <what you want to become / build / understand>
 
      **the spark** — <what lit it; what you saw out there>
-     **next milestone** — <the concrete step your coding sessions will chip at>
+     **next milestone** — <the concrete step your coding sessions will chip at. Name the observable signal it should move (a file, a metric, a behavior) and a rough horizon, so an evolve session reading this knows the target and when it's met — but keep any "else pivot" fallback OUT of DREAM.md; that lives only in the log's expected: line below.>
 
 2. dreams/dream_log.jsonl — append ONE event with python3 (never echo — quotes break JSON):
 

@@ -19,14 +19,16 @@ jobs:
         run: |
           LEARNINGS_COUNT=$(grep -c '.' memory/learnings.jsonl 2>/dev/null) || LEARNINGS_COUNT=0
           SOCIAL_COUNT=$(grep -c '.' memory/social_learnings.jsonl 2>/dev/null) || SOCIAL_COUNT=0
+          DREAM_COUNT=$(grep -c '.' dreams/dream_log.jsonl 2>/dev/null) || DREAM_COUNT=0
           echo "learnings=$LEARNINGS_COUNT" >> "$GITHUB_OUTPUT"
           echo "social=$SOCIAL_COUNT" >> "$GITHUB_OUTPUT"
-          if [ "$LEARNINGS_COUNT" -eq 0 ] && [ "$SOCIAL_COUNT" -eq 0 ]; then
+          echo "dreams=$DREAM_COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$LEARNINGS_COUNT" -eq 0 ] && [ "$SOCIAL_COUNT" -eq 0 ] && [ "$DREAM_COUNT" -eq 0 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "No archive entries — skipping synthesis."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Learnings: $LEARNINGS_COUNT entries, Social: $SOCIAL_COUNT entries"
+            echo "Learnings: $LEARNINGS_COUNT entries, Social: $SOCIAL_COUNT entries, Dreams: $DREAM_COUNT entries"
           fi
 
       - name: Install Rust toolchain
@@ -59,6 +61,7 @@ jobs:
         run: |
           cp memory/active_learnings.md memory/active_learnings.md.bak 2>/dev/null || true
           cp memory/active_social_learnings.md memory/active_social_learnings.md.bak 2>/dev/null || true
+          cp dreams/active_dream_arc.md dreams/active_dream_arc.md.bak 2>/dev/null || true
 
       - name: Synthesize active learnings
         if: steps.check.outputs.skip != 'true'
@@ -132,20 +135,66 @@ jobs:
           fi
           rm -f "$PROMPT"
 
+      - name: Synthesize active dream arc
+        if: steps.check.outputs.skip != 'true' && steps.check.outputs.dreams != '0'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          PROMPT=$(mktemp)
+          cat > "$PROMPT" <<'SYNTHEOF'
+          You are synthesizing yoyo's dream archive into an active context file.
+
+          Read dreams/dream_log.jsonl (the full archive of every dream cycle) and regenerate dreams/active_dream_arc.md.
+
+          This is the ARC of yoyo's dreaming — the trajectory of its self-chosen aspiration across cycles. Its job is to let a future dream cycle see the WHOLE body of its dreaming at a glance: what it has pursued, how the dream has grown or shifted, and how long it has spent on any one vein — so it can weigh depth vs breadth (explore vs exploit).
+
+          Apply time-weighted compression tiers (dreams run ~weekly, so tier by cycle, not week):
+          - **Recent (last ~4 cycles):** full — **Day N (type):** the dream in a phrase, the spark (1 line), the **milestone**, and what it expected.
+          - **Medium (next ~8 cycles):** one line each — Day N (type): dream -> milestone.
+          - **Old (older):** group by theme/vein into ## Vein: [name] summaries (2-3 sentences: what it explored, what landed, how long it ran).
+
+          At the very top, write a 1-2 line **Where the arc stands**: the current dream in a sentence, plus how many consecutive cycles have DEEPENED the current vein vs branched — so the explore/exploit balance is legible at a glance.
+
+          Ignore the `init` bootstrap line. Keep total under ~120 lines. Preserve the trajectory and the milestones; drop redundant prose.
+
+          Write the result to dreams/active_dream_arc.md. Start with:
+          # Active Dream Arc
+
+          The trajectory of my dreaming — every cycle, compressed. Recent in full, older by theme.
+          SYNTHEOF
+
+          if ! timeout 180 yoyo --model claude-sonnet-4-20250514 < "$PROMPT" \
+             || [ ! -s dreams/active_dream_arc.md ] \
+             || ! head -1 dreams/active_dream_arc.md | grep -q '^# Active Dream Arc'; then
+            echo "WARNING: Dream arc synthesis failed or produced empty/invalid output."
+            if [ -f dreams/active_dream_arc.md.bak ]; then
+              cp dreams/active_dream_arc.md.bak dreams/active_dream_arc.md
+              echo "Restored from backup."
+            else
+              echo "No backup exists — removing potentially corrupt output."
+              rm -f dreams/active_dream_arc.md
+            fi
+          fi
+          rm -f "$PROMPT"
+
       - name: Cleanup backups
         if: steps.check.outputs.skip != 'true'
         run: |
-          rm -f memory/active_learnings.md.bak memory/active_social_learnings.md.bak
+          rm -f memory/active_learnings.md.bak memory/active_social_learnings.md.bak dreams/active_dream_arc.md.bak
 
       - name: Commit and push if changed
         if: steps.check.outputs.skip != 'true'
         run: |
-          if git diff --quiet memory/active_learnings.md memory/active_social_learnings.md 2>/dev/null; then
+          # Stage each active file that exists (untracked-aware, so a fork's
+          # first-ever arc/memory file gets committed, not silently skipped —
+          # git diff --quiet reports "no change" for an UNtracked file).
+          for f in memory/active_learnings.md memory/active_social_learnings.md dreams/active_dream_arc.md; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
+          if git diff --cached --quiet 2>/dev/null; then
             echo "No changes to active context files."
             exit 0
           fi
-
-          git add memory/active_learnings.md memory/active_social_learnings.md
           git commit -m "synthesize: regenerate active memory context" || exit 0
           git pull --rebase || { echo "ERROR: Rebase failed — likely a concurrent push. Will retry next run."; git rebase --abort 2>/dev/null; exit 1; }
           git push
