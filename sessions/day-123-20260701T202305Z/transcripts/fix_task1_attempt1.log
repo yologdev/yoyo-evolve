@@ -1,0 +1,183 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+Let me start by understanding the current state of the code.
+  ▶ search 'parse_model_config' in src/cli.rs  ▶ search 'known_models_for_provider' in src/providers.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/cli.rs:421..541 ✓ (1ms)
+  3 tools completed in 4.3s (3 ✓)
+
+Good, Fix 1 is already in place (lines 490-494). Now I need to add Fix 2 (the warning) and the tests. Let me check what's imported from providers:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'use crate::providers' in src/cli.rs  ▶ read src/providers.rs:1..81 ✓ (0ms)
+ ✓ (3ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Now let me see what's imported from providers in cli.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:15..25 ✓ (1ms)
+
+Good, known_models_for_provider is already imported. Now let me check the test module in cli.rs:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' in src/cli.rs ✓ (2ms)
+  ▶ search 'mod tests' in src/cli.rs ✓ (2ms)
+  ▶ read src/cli.rs:1078..1178 ✓ (2ms)
+  3 tools completed in 7.9s (3 ✓)
+
+Now I need to understand the structure. parse_model_config is a private function that returns ModelConfig. Let me check the ModelConfig struct:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'struct ModelConfig' in src/cli.rs ✓ (3ms)
+  ▶ read src/cli.rs:411..423 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now I'll implement Fix 2 and the tests. Let me add the warning after line 494:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (7 → 22 lines)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| default_model_for_provider(&provider));
+  + 
+  +     // Warn on potentially unknown model name (typo detection)
+  +     let known_models = known_models_for_provider(&provider);
+  +     if !known_models.is_empty() && !known_models.iter().any(|m| *m == model) {
+  +         eprintln!(
+  +             "{YELLOW}warning:{RESET} Model '{model}' not recognized for provider '{provider}'. \
+  +              Known models: {}. Proceeding anyway (custom models are valid).",
+  +             known_models
+  +                 .iter()
+  +                 .take(5)
+  +                 .copied()
+  +                 .collect::<Vec<_>>()
+  +                 .join(", ")
+  +         );
+  +     }
+    
+        // --fallback <provider>: fallback provider if primary fails
+ ✓ (1m 30s)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| default_model_for_provider(&provider));
+  + 
+  +     // Warn on potentially unknown model name (typo detection)
+  +     let known_models = known_models_for_provider(&provider);
+  +     if !known_models.is_empty() && !known_models.iter().any(|m| *m == model) {
+  +         eprintln!(
+  ... (12 more lines)
+
+Now let me find the end of the test module to add the new tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'test_parse_thinking_level' in src/cli.rs ✓ (2ms)
+
+Let me find what's around the end of the test module by looking for tests near the end of the module:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^    #\[test\]" src/cli.rs | tail -5 ✓ (5ms)
+  ▶ read src/cli.rs:3365..3385 ✓ (1ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me add the tests. I need to understand how parse_model_config is called — it's private, but I can test it through the right helpers. Let me write tests that exercise the logic directly:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn flag_value' in src/cli.rs ✓ (3ms)
+  ▶ search 'fn flag_value' in src ✓ (10ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Good, flag_value is pub(crate). parse_model_config is private to the cli module, so tests in the tests submodule of cli can call it directly. Let me add the tests:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (20 → 79 lines)
+            let config2 = parse_args(&args2).expect("should parse");
+            assert!(config2.auto_edit);
+            assert!(!config2.auto_approve, "--auto-edit should not imply --yes");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_empty_model_falls_through_to_default() {
+  +         let args = vec!["yoyo".to_string(), "--model".to_string(), "".to_string()];
+  +         let file_config = HashMap::new();
+  +         let prompt_arg = None;
+  +         let mc = parse_model_config(&args, &file_config, &prompt_arg);
+  +         // Empty model should fall through to the default for the provider
+  +         let default = default_model_for_provider("anthropic");
+  +         assert_eq!(mc.model, default, "Empty --model should fall through to default");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_whitespace_model_falls_through_to_default() {
+  +         let args = vec!["yoyo".to_string(), "--model".to_string(), "   ".to_string()];
+  +         let file_config = HashMap::new();
+  ... (44 more lines)
+ ✓ (16.8s)
+            let config2 = parse_args(&args2).expect("should parse");
+            assert!(config2.auto_edit);
+            assert!(!config2.auto_approve, "--auto-edit should not imply --yes");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_empty_model_falls_through_to_default() {
+  +         let args = vec!["yoyo".to_string(), "--model".to_string(), "".to_string()];
+  ... (13 more lines)
+
+Fix the clippy issue — but model is a &str, let me check the types:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (4 → 4 lines)
+            assert!(
+  -             !known.iter().any(|m| *m == model),
+  +             !known.contains(&model),
+                "Typo'd model should not be in the known list"
+            );
+ ✓ (1m 30s)
+            assert!(
+  -             !known.iter().any(|m| *m == model),
+  +             !known.contains(&model),
+                "Typo'd model should not be in the known list"
+            );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (1m 13s)
+  3 tools completed in 3m 8s (3 ✓)
+
+All 88 tests pass. Let me verify the specific new tests ran:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_empty_model test… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --test-threads=1 t… ✓ (512ms)
+  2 tools completed in 6.0s (2 ✓)
+
+The test names might have different prefixes. Let me check what the full test names are:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -i "model… ✓ (44.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -- --list 2>&1 | grep… ✓ (153ms)
+  2 tools completed in 52.1s (2 ✓)
+
+All four new tests are there and listed. Let me verify they actually run:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test "cli::tests::test_emp… ✓ (127ms)
+
+The filter syntax is different for cargo test. Let me use the right approach:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test "test_empty_model_fal… ✓ (125ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test "test_whitespace_mode… ✓ (379ms)
+  2 tools completed in 5.0s (2 ✓)
+
+All 4 new tests pass. Let me do a final full check:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 11s)
+
+All checks pass. Let me verify the final state of the changes:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/cli.rs ✓ (6ms)
+
+Here's a summary of what was implemented:
+
+### Fix 1 (already present, confirmed working)
+• In parse_model_config, the model value is now trimmed and filtered for empty strings before `unwrap_or_else, so --model "" and --model "   "` fall through to the default model.
+
+### Fix 2 (newly added)
+• After the model is resolved, a warning is emitted if the model name is not in the known models list for the given provider. This catches typos like `claude-nonexistent-99` while still allowing custom models to proceed (warn-only, not blocking). The warning shows up to 5 known models for the provider.
+
+### Tests (newly added — 4 test cases)
+1. **test_empty_model_falls_through_to_default** — Empty string --model "" falls through to default
+2. `test_whitespace_model_falls_through_to_default` — Whitespace-only --model "   " falls through to default
+3. `test_valid_model_passes_through` — Valid model name passes through unchanged
+4. `test_unknown_model_for_known_provider_triggers_warning_path` — Verifies the warning condition is triggered for unknown models, and confirms the model still passes through (warn-only)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

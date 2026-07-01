@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code, then implement the fixes.
+  ▶ search 'parse_model_config' (*.rs)  ▶ search 'known_models_for_provider' (*.rs) ✓ (20ms)
+ ✓ (22ms)
+  ▶ read src/cli.rs:421..521 ✓ (2ms)
+  3 tools completed in 5.5s (3 ✓)
+
+Now let me see the known_models_for_provider function and the imports in `cli.rs`:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/providers.rs:42..72  ▶ read src/cli.rs:1..21 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I have a clear picture. Let me look at existing tests in cli.rs to understand the test patterns:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' (src/cli.rs) ✓ (14ms)
+  ▶ search '#\[test\]' (src/cli.rs) ✓ (14ms)
+  ▶ search '#\[cfg\(test\)\]' (src/providers.rs) ✓ (14ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Let me check how tests are structured — there are tests in other modules:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[test\]' (src/providers.rs) ✓ (14ms)
+  ▶ $ grep -rn '#\[cfg(test)\]' src/ | head -10 ✓ (8ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Good. Now let me look at the end of providers.rs to see where to add tests, and understand the full file:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/providers.rs:265..315 ✓ (1ms)
+
+Now I understand the code well. The task is clear. Let me also check that parse_model_config is private (not pub) so I'll need to test the logic indirectly or extract testable pieces:
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'pub fn parse_model_config\|fn parse_model_config' src/cli.rs ✓ (8ms)
+
+It's private. I'll need to either make it pub(crate) for testing or add tests in the same file. Since cli.rs has no test module yet and the function is private, I can add a #[cfg(test)] module at the end of cli.rs. But actually, since parse_model_config depends on flag_value and `HashMap configs, I can test it directly if I add a test module in cli.rs`. Let me also check the ModelConfig struct:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'struct ModelConfig' (src/*.rs) ✓ (14ms)
+  ▶ search 'ModelConfig' (src/*.rs) ✓ (14ms)
+  ▶ search 'ModelConfig' (*.rs) ✓ (21ms)
+  ▶ read src/cli.rs:411..423 ✓ (1ms)
+  4 tools completed in 12.9s (4 ✓)
+
+Good. Now let me see the end of cli.rs to know where to add the test module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:3348..3368 ✓ (1ms)
+
+There IS a test module already. Let me find where it starts:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' (src/cli.rs) ✓ (14ms)
+  ▶ search 'mod tests' (src/cli.rs) ✓ (14ms)
+  ▶ search '#\[test\]' (src/cli.rs) ✓ (14ms)
+  3 tools completed in 8.3s (3 ✓)
+
+Hmm, my search didn't find it. Let me look again at those lines:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:3328..3368 ✓ (1ms)
+  ▶ $ grep -n 'mod.*test\|#\[cfg' src/cli.rs | head -20 ✓ (3ms)
+  ▶ read src/cli.rs:1079..1084 ✓ (1ms)
+  3 tools completed in 13.6s (3 ✓)
+
+Great. Now I have the full picture. Let me implement the changes:
+
+1. **Fix 1**: Trim + filter empty in `parse_model_config` 
+2. Fix 2: Warn on unknown model name
+3. Tests: Add tests in the existing test module
+
+Let me start with the code change:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Fix 1: Trim+filter empty/whitespace model in parse…' ✓ (0ms)
+  ▶ todo add 'Fix 2: Warn on unknown model name for known provid…' ✓ (0ms)
+  ▶ todo add 'Add tests for both fixes' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && clippy && build && test' ✓ (0ms)
+  ▶ todo add 'Commit' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  6 tools completed in 18.8s (6 ✓)
+
+Now apply Fix 1 — trim + filter empty model:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (3 → 5 lines)
+        let model = flag_value(args, &["--model"])
+            .or_else(|| file_config.get("model").cloned())
+  +         .map(|s| s.trim().to_string())
+  +         .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| default_model_for_provider(&provider));
+ ✓ (1m 30s)
+        let model = flag_value(args, &["--model"])
+            .or_else(|| file_config.get("model").cloned())
+  +         .map(|s| s.trim().to_string())
+  +         .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| default_model_for_provider(&provider));
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
