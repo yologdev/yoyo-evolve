@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I need to read the source code, identify a high-impact improvement, implement it, and commit. Let me start by understanding the codebase and finding a meaningful improvement.
+  ▶ todo add 'Read source code and identify most impactful impro…' ✓ (0ms)
+  ▶ todo add 'Implement the improvement' ✓ (0ms)
+  ▶ todo add 'Run tests and commit' ✓ (0ms)
+  ▶ todo wip #1 ✓ (0ms)
+  4 tools completed in 14.7s (4 ✓)
+
+Let me look at the codebase for potential improvements, focusing on areas with code duplication, missing error handling, or performance issues.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs |… ✓ (7ms)
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'Search the yoyo Rust codebase for common patterns that indic…' ✓ (1m 22s)
+  2 tools completed in 1m 40s (2 ✓)
+
+Good analysis. The safety.rs dispatch chain refactor is the most impactful — reducing ~170 lines of boilerplate to ~5 lines while standardizing the interface. Let me examine the actual code.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'if let Some(reason) = c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,200p' src/safety.rs ✓ (4ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me see the function signatures of all the check functions to understand the inconsistency:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^fn check_' src/safety.… ✓ (3ms)
+
+Good - I can see the inconsistency clearly. Some functions take cmd, some take cmd_lower, and two take both (cmd, cmd_lower). Let me now refactor to use a unified dispatch table. I need to standardize all check functions to take (cmd, cmd_lower).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c '#\[test\]' src/safety.r… ✓ (3ms)
+
+Good, there are 56 tests. Let me look at the test structure to make sure I don't break anything:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '#\[cfg(test)\]\|mod tes… ✓ (3ms)
+
+Let me see the full current analyze_bash_command function and understand which functions use cmd vs cmd_lower:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn check_.*cmd.*cmd_low… ✓ (3ms)
+
+So 2 functions take both (cmd, cmd_lower). Let me categorize:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep '^fn check_' src/safety.rs … ✓ (4ms)
+  ▶ todo done #1 ✓ (0ms)
+  ▶ todo wip #2 ✓ (0ms)
+  3 tools completed in 26.4s (3 ✓)
+
+Now I have a clear plan. I'll:
+
+1. Standardize all check functions to take (cmd: &str, cmd_lower: &str) — functions that only use one will simply ignore the other parameter
+2. Replace the 170-line dispatch chain with a SAFETY_CHECKS array and `find_map`
+3. The helper function check_command_system_paths is internal (not in the dispatch chain), so it stays as-is
+
+Let me implement this:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:1..201 ✓ (2ms)
+
+Now I need to standardize all check function signatures. The approach:
+• Functions that take only cmd → change to `(cmd: &str, _cmd_lower: &str)` 
+• Functions that take only cmd_lower → change to `(_cmd: &str, cmd_lower: &str)`
+• Functions that take both → keep as (cmd: &str, cmd_lower: &str)
+
+Let me implement this systematically:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (168 → 51 lines)
+  + /// A safety check function: receives `(cmd, cmd_lower)` and returns
+  + /// `Some(reason)` if the command matches a destructive pattern.
+  + type SafetyCheck = fn(&str, &str) -> Option<String>;
+  + 
+  + /// All safety checks, in priority order. Each receives `(cmd, cmd_lower)`.
+  + /// To add a new check: write the function with signature `fn(&str, &str) -> Option<String>`
+  + /// and append it here.
+  + const SAFETY_CHECKS: &[SafetyCheck] = &[
+  +     check_rm_destruction,
+  +     check_git_force,
+  +     check_permission_changes,
+  +     check_file_overwrites,
+  +     check_system_commands,
+  +     check_database_destruction,
+  +     check_pipe_from_internet,
+  +     check_process_killing,
+  +     check_disk_operations,
+  +     check_process_substitution,
+  +     check_fork_bomb,
+  +     check_xargs_destruction,
+  ... (193 more lines)
+ ✓ (10.2s)
+  + /// A safety check function: receives `(cmd, cmd_lower)` and returns
+  + /// `Some(reason)` if the command matches a destructive pattern.
+  + type SafetyCheck = fn(&str, &str) -> Option<String>;
+  + 
+  + /// All safety checks, in priority order. Each receives `(cmd, cmd_lower)`.
+  + /// To add a new check: write the function with signature `fn(&str, &str) -> Option<String>`
+  + /// and append it here.
+  + const SAFETY_CHECKS: &[SafetyCheck] = &[
+  ... (13 more lines)
+
+Right - I need to update all the check function signatures. Let me do this systematically:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+
+  🐙 Delegating to sub-agent...
+  ▶ sub-agent 'In the file `/home/runner/work/yoyo-evolve/yoyo-evolve/src/s…' ✓ (2m 4s)
+
+The sub-agent didn't complete the edits. Let me do them myself directly:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i \ (23 lines) ✓ (10ms)
+
+Now update the functions that take only cmd_lower:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i \ (11 lines) ✓ (7ms)
+
+Now let's try building:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | head -30 ✓ (7.8s)
+
+Builds. Now let's check clippy:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.0s)
+
+Now let's run tests:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 28s)
+
+All 88 tests pass. Let's also run fmt:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (1.7s)
+
+Let me verify the diff looks right:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/safety.rs ✓ (9ms)
+  2 tools completed in 10.2s (2 ✓)
+
+The diff looks clean. Now let me verify the refactored function is correct by looking at it:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '27,70p' src/safety.rs ✓ (4ms)
+
+Now let me run the full verification suite:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-…
