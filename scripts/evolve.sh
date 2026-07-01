@@ -14,7 +14,6 @@
 #                        Split evenly between assessment (A1) and planning (A2) agents
 #   FORCE_RUN          — Set to "true" to bypass the run-frequency gate
 #   FALLBACK_PROVIDER  — Fallback provider on API error (e.g., "zai"); passed as --fallback to yoyo
-#   FALLBACK_MODEL     — (unused, kept for backwards compat; binary auto-derives from provider)
 #   YOYO_EXTERNAL_SKILLS — Optional comma-separated external skill specs:
 #                        name|git-url|ref. Defaults to yoyo-operator-skill.
 #   YOYO_EXTERNAL_SKILLS_DISABLED — Set to "1" to skip external skill fetches.
@@ -27,7 +26,6 @@ source "$(dirname "$0")/common.sh"
 MODEL="${MODEL:-claude-opus-4-6}"
 TIMEOUT="${TIMEOUT:-1200}"
 FALLBACK_PROVIDER="${FALLBACK_PROVIDER:-}"
-FALLBACK_MODEL="${FALLBACK_MODEL:-}"
 DATE=$(date +%Y-%m-%d)
 SESSION_TIME=$(date +%H:%M)
 # Security nonce for content boundary markers (prevents spoofing)

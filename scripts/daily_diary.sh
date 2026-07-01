@@ -162,5 +162,5 @@ fi
 PROMPT_FILE=$(mktemp)
 echo "$PROMPT" > "$PROMPT_FILE"
 
-"$YOYO_BIN" --model claude-opus-4-6 --max-turns 1 < "$PROMPT_FILE"
+"$YOYO_BIN" --model "${MODEL:-claude-opus-4-6}" --max-turns 1 < "$PROMPT_FILE"
 rm -f "$PROMPT_FILE"

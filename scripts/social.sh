@@ -25,7 +25,7 @@ fi
 # Auto-detect REPO, BOT_LOGIN, BIRTH_DATE (fork-friendly)
 source "$(dirname "$0")/common.sh"
 
-MODEL="${MODEL:-claude-sonnet-4-6}"
+MODEL="${MODEL:-claude-opus-4-6}"
 TIMEOUT="${TIMEOUT:-600}"
 BOT_USERNAME="${BOT_USERNAME:-${BOT_LOGIN}}"
 DATE=$(date +%Y-%m-%d)
