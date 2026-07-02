@@ -370,27 +370,33 @@ mod tests {
 
     #[test]
     fn test_load_project_context_includes_recently_changed() {
-        // Check that load_project_context() includes the "Recently Changed Files"
-        // section if and only if get_recently_changed_files() actually finds changed
-        // files. The function uses --diff-filter=AM to catch both added and modified
-        // files, so it works correctly in CI shallow clones where recent commits may
-        // only contain newly added files.
-        //
-        // Guard: check the same function the production code uses to decide whether
-        // to emit the section. No TOCTOU gap because both calls happen in the same
-        // test process with no intervening git mutations.
-        let has_modified_files = get_recently_changed_files(1).is_some();
+        // We're running inside the yoyo git repo, so load_project_context()
+        // must always return Some. Previously this test guarded with
+        // `if let Some`, silently passing without asserting in CI.
         let result = load_project_context();
-        if let Some(context) = &result {
-            if context.contains("## Git Status") && has_modified_files {
-                assert!(
-                    context.contains("## Recently Changed Files"),
-                    "Context should contain Recently Changed Files section when modified files exist"
-                );
-            }
-            // When no modified files exist (shallow clone, all-adds history),
-            // the section is correctly absent — don't assert.
+        let context = result.expect("load_project_context should return Some in a git repo");
+
+        // Git Status section should always be present in a git repo
+        assert!(
+            context.contains("## Git Status"),
+            "Context should always contain Git Status section"
+        );
+
+        // Recently Changed Files depends on git history depth — may be absent
+        // in shallow clones. Assert conditionally, but always assert *something*.
+        let has_modified_files = get_recently_changed_files(1).is_some();
+        if has_modified_files {
+            assert!(
+                context.contains("## Recently Changed Files"),
+                "Context should contain Recently Changed Files when modified files exist"
+            );
         }
+
+        // Unconditional: context is never empty in a git repo
+        assert!(
+            !context.is_empty(),
+            "Context should never be empty in a git repo"
+        );
     }
 
     #[test]
@@ -460,16 +466,18 @@ mod tests {
 
     #[test]
     fn test_load_project_context_includes_git_status() {
-        // In a git repo, load_project_context should include git status
+        // We're running inside the yoyo git repo, so both load_project_context()
+        // and get_git_status_context() must return Some. Previously this test
+        // guarded with `if let Some` on both, silently passing without asserting
+        // in CI shallow clones.
         let result = load_project_context();
-        if let Some(context) = &result {
-            if get_git_status_context().is_some() {
-                assert!(
-                    context.contains("## Git Status"),
-                    "Context should contain Git Status section"
-                );
-            }
-        }
+        let context = result.expect("load_project_context should return Some in a git repo");
+
+        // Git status should always be available when running tests inside a git repo
+        assert!(
+            context.contains("## Git Status"),
+            "Context should contain Git Status section"
+        );
     }
 
     #[test]

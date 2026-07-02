@@ -309,4 +309,26 @@ mod tests {
             "anthropic/claude-sonnet-4-6"
         );
     }
+
+    #[test]
+    fn test_anthropic_known_models_contains_sonnet_4_20250514() {
+        let models = known_models_for_provider("anthropic");
+        assert!(
+            !models.is_empty(),
+            "anthropic should have a non-empty known models list"
+        );
+        assert!(
+            models.contains(&"claude-sonnet-4-20250514"),
+            "anthropic known models should contain claude-sonnet-4-20250514"
+        );
+    }
+
+    #[test]
+    fn test_unknown_provider_returns_empty_known_models() {
+        let models = known_models_for_provider("nonexistent-provider");
+        assert!(
+            models.is_empty(),
+            "unknown provider should return empty known models list"
+        );
+    }
 }

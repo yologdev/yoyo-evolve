@@ -489,7 +489,19 @@ fn parse_model_config(
 
     let model = flag_value(args, &["--model"])
         .or_else(|| file_config.get("model").cloned())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default_model_for_provider(&provider));
+
+    // Warn if model isn't in the known list for first-party providers
+    let known = known_models_for_provider(&provider);
+    if !known.is_empty() && !known.contains(&model.as_str()) {
+        eprintln!(
+            "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+             Known models: {}. Proceeding anyway (custom models are valid).",
+            known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+        );
+    }
 
     // --fallback <provider>: fallback provider if primary fails
     let fallback_provider = flag_value(args, &["--fallback"])
