@@ -135,10 +135,10 @@ pub fn default_editor_model(current_model: &str) -> String {
 
     // Anthropic: opus → sonnet, sonnet → haiku
     if m.contains("opus") {
-        return "claude-sonnet-4-20250514".into();
+        return "claude-sonnet-4-6".into();
     }
     if m.contains("sonnet") {
-        return "claude-haiku-4-5-20250414".into();
+        return "claude-haiku-4-5".into();
     }
 
     // OpenAI: gpt-4o → gpt-4o-mini, gpt-4.1 → gpt-4.1-mini, o3 → o3-mini
@@ -178,7 +178,7 @@ pub fn default_editor_model(current_model: &str) -> String {
     // Bedrock: follows the same anthropic pattern with prefix
     if m.contains("bedrock") || m.starts_with("anthropic.") {
         if m.contains("opus") {
-            return "anthropic.claude-sonnet-4-20250514-v1:0".into();
+            return "anthropic.claude-sonnet-4-6".into();
         }
         if m.contains("sonnet") {
             return "anthropic.claude-haiku-4-5-20250414-v1:0".into();

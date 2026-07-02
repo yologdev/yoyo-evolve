@@ -128,7 +128,7 @@ pub fn default_model_for_provider(provider: &str) -> String {
         "cerebras" => "llama-3.3-70b".into(),
         "zai" => "glm-4-plus".into(),
         "minimax" => "MiniMax-M2.7".into(),
-        "bedrock" => "anthropic.claude-sonnet-4-20250514-v1:0".into(),
+        "bedrock" => "anthropic.claude-sonnet-4-6".into(),
         _ => "claude-opus-4-6".into(),
     }
 }
@@ -209,7 +209,7 @@ mod tests {
     fn test_bedrock_default_model() {
         assert_eq!(
             default_model_for_provider("bedrock"),
-            "anthropic.claude-sonnet-4-20250514-v1:0"
+            "anthropic.claude-sonnet-4-6"
         );
     }
 
