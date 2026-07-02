@@ -1064,7 +1064,7 @@ mod tests {
         let r = result.unwrap();
         assert_eq!(r.provider, "bedrock");
         assert_eq!(r.api_key, "AKIATEST123:wJalrXUtnFEMI/test");
-        assert_eq!(r.model, "anthropic.claude-sonnet-4-20250514-v1:0"); // default
+        assert_eq!(r.model, "anthropic.claude-sonnet-4-6"); // default
         assert_eq!(
             r.base_url.as_deref(),
             Some("https://bedrock-runtime.us-east-1.amazonaws.com")
