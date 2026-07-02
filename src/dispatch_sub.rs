@@ -350,7 +350,8 @@ pub(crate) fn flag_value(args: &[String], flag_names: &[&str]) -> Option<String>
     args.iter()
         .position(|a| flag_names.contains(&a.as_str()))
         .and_then(|i| args.get(i + 1))
-        .cloned()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Outcome of checking whether a flag is followed by a real value.
@@ -366,6 +367,8 @@ pub(crate) enum FlagValueCheck<'a> {
     /// The caller should surface a warning; not fatal because a leading `-` may
     /// also be a negative number (e.g. `--temperature -0.1`).
     FlagLike(&'a str),
+    /// Next token is empty or whitespace-only (e.g. `--model ""` or `--model "  "`).
+    Empty,
     /// There is no next token at all (`--model` at end of args).
     Missing,
 }
@@ -387,6 +390,7 @@ pub(crate) enum FlagValueCheck<'a> {
 pub(crate) fn require_flag_value<'a>(next: Option<&'a String>) -> FlagValueCheck<'a> {
     match next {
         None => FlagValueCheck::Missing,
+        Some(v) if v.trim().is_empty() => FlagValueCheck::Empty,
         Some(v) => {
             if v.starts_with('-') && !v.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
                 FlagValueCheck::FlagLike(v.as_str())
@@ -596,6 +600,62 @@ mod tests {
             flag_value(&args, &["--model"]),
             Some("first".into()),
             "expected the first --model value (matches prior position-based behavior)"
+        );
+    }
+
+    #[test]
+    fn test_flag_value_returns_none_for_empty_string() {
+        // `--model ""` — the shell produces an empty string argument.
+        // flag_value should treat this the same as missing.
+        let args = vec!["yoyo".into(), "--model".into(), "".into()];
+        assert_eq!(
+            flag_value(&args, &["--model"]),
+            None,
+            "empty string should be treated as missing"
+        );
+    }
+
+    #[test]
+    fn test_flag_value_returns_none_for_whitespace_only() {
+        // `--model "  "` — whitespace-only is not a valid model name.
+        let args = vec!["yoyo".into(), "--model".into(), "   ".into()];
+        assert_eq!(
+            flag_value(&args, &["--model"]),
+            None,
+            "whitespace-only string should be treated as missing"
+        );
+    }
+
+    #[test]
+    fn test_flag_value_trims_whitespace() {
+        // `--model " claude-sonnet "` — leading/trailing whitespace should be trimmed.
+        let args = vec!["yoyo".into(), "--model".into(), " claude-sonnet ".into()];
+        assert_eq!(
+            flag_value(&args, &["--model"]),
+            Some("claude-sonnet".into()),
+            "leading/trailing whitespace should be trimmed"
+        );
+    }
+
+    #[test]
+    fn test_require_flag_value_empty_is_empty() {
+        // `--model ""` — the value exists but is empty. Should be classified as Empty.
+        let empty = String::new();
+        assert_eq!(
+            require_flag_value(Some(&empty)),
+            FlagValueCheck::Empty,
+            "empty string should classify as Empty"
+        );
+    }
+
+    #[test]
+    fn test_require_flag_value_whitespace_is_empty() {
+        // `--model "  "` — whitespace-only should also be Empty.
+        let spaces = "   ".to_string();
+        assert_eq!(
+            require_flag_value(Some(&spaces)),
+            FlagValueCheck::Empty,
+            "whitespace-only string should classify as Empty"
         );
     }
 

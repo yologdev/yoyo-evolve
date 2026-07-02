@@ -775,6 +775,11 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                         "{YELLOW}warning:{RESET} {flag} value looks like another flag: '{next}'"
                     );
                 }
+                FlagValueCheck::Empty => {
+                    eprintln!("{RED}error:{RESET} {flag} requires a non-empty value");
+                    eprintln!("Run with --help for usage information.");
+                    std::process::exit(1);
+                }
                 FlagValueCheck::Missing => {
                     eprintln!("{RED}error:{RESET} {flag} requires a value");
                     eprintln!("Run with --help for usage information.");
