@@ -359,6 +359,17 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
                 compat: None,
             }
         }
+        "github" => {
+            // GitHub Models — OpenAI-compatible API at models.github.ai
+            // Uses GITHUB_TOKEN for auth, model names are publisher/model format
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "github".into();
+            config.base_url = base_url
+                .unwrap_or("https://models.github.ai/inference")
+                .to_string();
+            config.compat = Some(OpenAiCompat::openai());
+            config
+        }
         "custom" => {
             let url = base_url.unwrap_or("http://localhost:8080/v1");
             ModelConfig::local(url, model)

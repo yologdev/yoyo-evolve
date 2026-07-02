@@ -26,6 +26,10 @@ pub const WIZARD_PROVIDERS: &[(&str, &str)] = &[
         "bedrock",
         "AWS Bedrock (Claude, Nova — uses AWS credentials)",
     ),
+    (
+        "github",
+        "GitHub Models (GPT-4o, Claude, Llama — uses GITHUB_TOKEN)",
+    ),
     ("custom", "Custom (self-hosted OpenAI-compatible)"),
 ];
 
@@ -561,7 +565,8 @@ mod tests {
         assert_eq!(parse_provider_choice("10"), Some("cerebras"));
         assert_eq!(parse_provider_choice("11"), Some("minimax"));
         assert_eq!(parse_provider_choice("12"), Some("bedrock"));
-        assert_eq!(parse_provider_choice("13"), Some("custom"));
+        assert_eq!(parse_provider_choice("13"), Some("github"));
+        assert_eq!(parse_provider_choice("14"), Some("custom"));
     }
 
     #[test]
@@ -576,6 +581,8 @@ mod tests {
         assert_eq!(parse_provider_choice("MiniMax"), Some("minimax"));
         assert_eq!(parse_provider_choice("bedrock"), Some("bedrock"));
         assert_eq!(parse_provider_choice("Bedrock"), Some("bedrock"));
+        assert_eq!(parse_provider_choice("github"), Some("github"));
+        assert_eq!(parse_provider_choice("GitHub"), Some("github"));
         assert_eq!(parse_provider_choice("custom"), Some("custom"));
         assert_eq!(parse_provider_choice("CUSTOM"), Some("custom"));
     }
@@ -806,8 +813,8 @@ mod tests {
 
     #[test]
     fn test_wizard_custom_provider_flow() {
-        // Choose custom (13), enter API key, enter base URL, accept default model, save=no
-        let input = "13\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
+        // Choose custom (14), enter API key, enter base URL, accept default model, save=no
+        let input = "14\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
 
@@ -825,8 +832,8 @@ mod tests {
 
     #[test]
     fn test_wizard_custom_provider_no_base_url_returns_none() {
-        // Choose custom (13), enter API key, enter empty base URL
-        let input = "13\nmy-custom-key\n\n";
+        // Choose custom (14), enter API key, enter empty base URL
+        let input = "14\nmy-custom-key\n\n";
         let mut reader = io::Cursor::new(input.as_bytes());
         let mut output = Vec::new();
 

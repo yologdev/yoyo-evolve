@@ -15,6 +15,7 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "zai",
     "minimax",
     "bedrock",
+    "github",
     "custom",
 ];
 
@@ -33,6 +34,7 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
         "minimax" => Some("MINIMAX_API_KEY"),
         "bedrock" => Some("AWS_ACCESS_KEY_ID"),
         "anthropic" => Some("ANTHROPIC_API_KEY"),
+        "github" => Some("GITHUB_TOKEN"),
         _ => None,
     }
 }
@@ -110,6 +112,16 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "amazon.nova-lite-v1:0",
         ],
         "ollama" => &["llama3.2", "llama3.1", "codellama", "mistral"],
+        "github" => &[
+            "openai/gpt-4o",
+            "openai/gpt-4o-mini",
+            "openai/o3-mini",
+            "openai/o4-mini",
+            "meta/llama-4-scout-17b-16e-instruct",
+            "mistral/mistral-large-latest",
+            "deepseek/deepseek-r2",
+            "anthropic/claude-sonnet-4-6",
+        ],
         _ => &[],
     }
 }
@@ -129,6 +141,7 @@ pub fn default_model_for_provider(provider: &str) -> String {
         "zai" => "glm-4-plus".into(),
         "minimax" => "MiniMax-M2.7".into(),
         "bedrock" => "anthropic.claude-sonnet-4-6".into(),
+        "github" => "openai/gpt-4o".into(),
         _ => "claude-opus-4-6".into(),
     }
 }
@@ -330,5 +343,31 @@ mod tests {
             models.is_empty(),
             "unknown provider should return empty known models list"
         );
+    }
+
+    #[test]
+    fn test_github_in_known_providers() {
+        assert!(
+            KNOWN_PROVIDERS.contains(&"github"),
+            "github should be in KNOWN_PROVIDERS"
+        );
+    }
+
+    #[test]
+    fn test_github_provider_api_key_env() {
+        assert_eq!(provider_api_key_env("github"), Some("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn test_github_default_model() {
+        assert_eq!(default_model_for_provider("github"), "openai/gpt-4o");
+    }
+
+    #[test]
+    fn test_github_known_models() {
+        let models = known_models_for_provider("github");
+        assert!(!models.is_empty(), "github should have known models");
+        assert!(models.contains(&"openai/gpt-4o"));
+        assert!(models.contains(&"anthropic/claude-sonnet-4-6"));
     }
 }
