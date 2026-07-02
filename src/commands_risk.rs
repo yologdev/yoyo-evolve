@@ -845,11 +845,12 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
         });
     }
 
-    // Sort descending by score
+    // Sort descending by score, with filename tiebreaker for determinism
     risks.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.path.cmp(&b.path))
     });
 
     risks
@@ -960,11 +961,12 @@ fn detect_emerging_risks_from(
         });
     }
 
-    // Sort by momentum descending
+    // Sort by momentum descending, with filename tiebreaker for determinism
     emerging.sort_by(|a, b| {
         b.momentum
             .partial_cmp(&a.momentum)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.path.cmp(&b.path))
     });
 
     emerging
@@ -1004,8 +1006,12 @@ pub(crate) fn risk_context_for_files_from(
             result.push((risk.path.clone(), risk.score, risk.signals.clone()));
         }
     }
-    // Sort descending by score for consistent output
-    result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    // Sort descending by score for consistent output, with filename tiebreaker
+    result.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
     result
 }
 
@@ -5307,5 +5313,61 @@ src/baz.rs
         assert!(result.contains("Emerging Risks"), "should have header");
         assert!(result.contains("src/hot.rs"), "should show file path");
         assert!(result.contains("2.5x"), "should show momentum");
+    }
+
+    #[test]
+    fn test_risk_sort_deterministic_with_equal_scores() {
+        // Two files with identical scores should sort alphabetically by path
+        let mut risks = [
+            FileRisk {
+                path: "src/zebra.rs".into(),
+                score: 5.0,
+                signals: vec!["high churn"],
+                test_density: 0.5,
+            },
+            FileRisk {
+                path: "src/alpha.rs".into(),
+                score: 5.0,
+                signals: vec!["high churn"],
+                test_density: 0.5,
+            },
+        ];
+
+        // Sort with the same logic used in compute_file_risk_scores
+        risks.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.path.cmp(&b.path))
+        });
+
+        assert_eq!(risks[0].path, "src/alpha.rs");
+        assert_eq!(risks[1].path, "src/zebra.rs");
+
+        // Reverse the input order — result should be the same
+        let mut risks_reversed = [
+            FileRisk {
+                path: "src/alpha.rs".into(),
+                score: 5.0,
+                signals: vec!["high churn"],
+                test_density: 0.5,
+            },
+            FileRisk {
+                path: "src/zebra.rs".into(),
+                score: 5.0,
+                signals: vec!["high churn"],
+                test_density: 0.5,
+            },
+        ];
+
+        risks_reversed.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.path.cmp(&b.path))
+        });
+
+        assert_eq!(risks_reversed[0].path, "src/alpha.rs");
+        assert_eq!(risks_reversed[1].path, "src/zebra.rs");
     }
 }
