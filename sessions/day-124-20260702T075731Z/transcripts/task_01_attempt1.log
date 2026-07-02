@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '840,860p' src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sort_by" src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '960,975p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1003,1015p' src/commands… ✓ (3ms)
+  4 tools completed in 25.2s (4 ✓)
+
+Now let me look at the EmergingRisk struct to understand its fields:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct EmergingRisk" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '22,32p' src/commands_ris… ✓ (3ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Now let me look at the EmergingRisk struct field name used in sort_by — the emerging sort uses momentum and I need to add path as tiebreaker. Let me also check the existing test:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_top_risk_files" sr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4161,4200p' src/commands… ✓ (3ms)
+  2 tools completed in 7.3s (2 ✓)
+
+Good. Now I understand the problem and the fix. Let me apply the three sort tiebreakers:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (6 → 7 lines)
+  -     // Sort descending by score
+  +     // Sort descending by score, with filename tiebreaker for determinism
+        risks.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+  +             .then_with(|| a.path.cmp(&b.path))
+        });
+ ✓ (1m 18s)
+  -     // Sort descending by score
+  +     // Sort descending by score, with filename tiebreaker for determinism
+        risks.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+  +             .then_with(|| a.path.cmp(&b.path))
+        });
+  ▶ edit src/commands_risk.rs (6 → 7 lines)
+  -     // Sort by momentum descending
+  +     // Sort by momentum descending, with filename tiebreaker for determinism
+        emerging.sort_by(|a, b| {
+            b.momentum
+                .partial_cmp(&a.momentum)
+                .unwrap_or(std::cmp::Ordering::Equal)
+  +             .then_with(|| a.path.cmp(&b.path))
+        });
+ ✓ (1m 18s)
+  -     // Sort by momentum descending
+  +     // Sort by momentum descending, with filename tiebreaker for determinism
+        emerging.sort_by(|a, b| {
+            b.momentum
+                .partial_cmp(&a.momentum)
+                .unwrap_or(std::cmp::Ordering::Equal)
+  +             .then_with(|| a.path.cmp(&b.path))
+        });
+  ▶ edit src/commands_risk.rs (2 → 6 lines)
+  -     // Sort descending by score for consistent output
+  -     result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+  +     // Sort descending by score for consistent output, with filename tiebreaker
+  +     result.sort_by(|a, b| {
+  +         b.1.partial_cmp(&a.1)
+  +             .unwrap_or(std::cmp::Ordering::Equal)
+  +             .then_with(|| a.0.cmp(&b.0))
+  +     });
+ ✓ (1m 17s)
+  -     // Sort descending by score for consistent output
+  -     result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+  +     // Sort descending by score for consistent output, with filename tiebreaker
+  +     result.sort_by(|a, b| {
+  +         b.1.partial_cmp(&a.1)
+  +             .unwrap_or(std::cmp::Ordering::Equal)
+  +             .then_with(|| a.0.cmp(&b.0))
+  +     });
+  3 tools completed in 4m 11s (3 ✓)
+
+Now let me add the focused unit test. Let me find the test module:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#\[cfg(test)\]" src/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1621,1625p' src/commands… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2842,2850p' src/commands… ✓ (3ms)
+  3 tools completed in 13.5s (3 ✓)
+
+Now let me find the end of the test module to add my test:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_risk.rs ✓ (2ms)
+  ▶ edit src/commands_risk.rs (15 → 71 lines)
+            assert!(result.contains("Emerging Risks"), "should have header");
+            assert!(result.contains("src/hot.rs"), "should show file path");
+            assert!(result.contains("2.5x"), "should show momentum");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_sort_deterministic_with_equal_scores() {
+  +         // Two files with identical scores should sort alphabetically by path
+  +         let mut risks = vec![
+  +             FileRisk {
+  +                 path: "src/zebra.rs".into(),
+  +                 score: 5.0,
+  +                 signals: vec!["high churn"],
+  +                 test_density: 0.5,
+  +             },
+  +             FileRisk {
+  +                 path: "src/alpha.rs".into(),
+  +                 score: 5.0,
+  +                 signals: vec!["high churn"],
+  +                 test_density: 0.5,
+  ... (41 more lines)
+ ✓ (13.9s)
+            assert!(result.contains("Emerging Risks"), "should have header");
+            assert!(result.contains("src/hot.rs"), "should show file path");
+            assert!(result.contains("2.5x"), "should show momentum");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_sort_deterministic_with_equal_scores() {
+  +         // Two files with identical scores should sort alphabetically by path
+  ... (13 more lines)
+  2 tools completed in 31.4s (2 ✓)
+
+Clippy wants arrays instead of vecs. Let me fix the test:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (55 → 55 lines)
+        #[test]
+        fn test_risk_sort_deterministic_with_equal_scores() {
+            // Two files with identical scores should sort alphabetically by path
+  -         let mut risks = vec![
+  +         let mut risks = [
+                FileRisk {
+                    path: "src/zebra.rs".into(),
+                    score: 5.0,
+  ···
+            assert_eq!(risks[1].path, "src/zebra.rs");
+    
+            // Reverse the input order — result should be the same
+  -         let mut risks_reversed = vec![
+  +         let mut risks_reversed = [
+                FileRisk {
+                    path: "src/alpha.rs".into(),
+                    score: 5.0,
+ ✓ (1m 15s)
+        #[test]
+        fn test_risk_sort_deterministic_with_equal_scores() {
+            // Two files with identical scores should sort alphabetically by path
+  -         let mut risks = vec![
+  +         let mut risks = [
+                FileRisk {
+                    path: "src/zebra.rs".into(),
+                    score: 5.0,
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_risk_sort_determ… ✓ (133ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_top_risk_files 2… ✓ (781ms)
+  4 tools completed in 1m 57s (4 ✓)
+
+All target tests pass. Let me run the full test suite to be thorough:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (42.9s)
+
+All 88 tests pass. Now let me commit:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Done. Clean fix — three sort sites in commands_risk.rs now use .then_with(|| a.path.cmp(&b.path)) (or the tuple equivalent) as a deterministic tiebreaker when scores are equal. The root cause was partial_cmp returning Equal for same-scored files, leaving HashMap iteration order to decide — nondeterministic.
+
+Changes:
+1. Line ~849 (compute_file_risk_scores): Added filename tiebreaker to the main risk score sort
+2. Line ~964 (detect_emerging_risks helper): Added filename tiebreaker to the momentum sort
+3. Line ~1008 (`risk_context_for_files_from`): Added filename tiebreaker to the score sort
+4. New test `test_risk_sort_deterministic_with_equal_scores`: Verifies two equal-scored files always sort alphabetically regardless of input order
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

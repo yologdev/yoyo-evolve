@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code structure, then implement the fix.
+  ▶ search 'known_models_for_provider' (*.rs)  ▶ search 'default_model_for_provider' (*.rs)  ▶ search 'flag_value.*--model' (*.rs) ✓ (19ms)
+ ✓ (19ms)
+ ✓ (23ms)
+  ▶ read src/cli.rs:480..520  ▶ read src/providers.rs:40..140 ✓ (1ms)
+ ✓ (2ms)
+  5 tools completed in 9.6s (5 ✓)
+
+Good. Now let me check the existing tests in providers.rs to see the test structure, and also look at how the provider warning works in cli.rs:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/providers.rs:136..  ▶ search 'Unknown provider' (*.rs) ✓ (2ms)
+ ✓ (21ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Now let me see the provider warning code in cli.rs for reference:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:425..495 ✓ (1ms)
+
+Now let me check the dispatch_sub.rs model resolution too since that has a similar pattern:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:90..110  ▶ read src/dispatch_sub.rs:460..475 ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Now I have a clear picture. Let me also check the format imports available in cli.rs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1..21 ✓ (1ms)
+
+Good. Now let me look at the existing tests in cli.rs to understand the test section:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' (src/cli.rs) ✓ (14ms)
+  ▶ search '#\[test\]' (src/cli.rs) ✓ (14ms)
+  2 tools completed in 4.9s (2 ✓)
+
+No tests in cli.rs. Let me check where `parse_model_config` is defined:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn parse_model_config' (src/cli.rs) ✓ (14ms)
+  ▶ search 'ModelConfig' (src/cli.rs) ✓ (14ms)
+  ▶ search 'fn.*model_config\|struct.*Model' (src/cli.rs) ✓ (14ms)
+  ▶ search 'struct ModelConfig' (*.rs) ✓ (22ms)
+  ▶ read src/cli.rs:411..426 ✓ (1ms)
+  5 tools completed in 15.2s (5 ✓)
+
+Now I have everything I need. Let me implement the changes. First, tests in providers.rs (test-first approach), then the implementation.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Write tests in providers.rs for known_models and i…' ✓ (0ms)
+  ▶ todo add 'Part 1: Empty/whitespace filter in cli.rs parse_mo…' ✓ (0ms)
+  ▶ todo add 'Part 2: Unknown model warning in cli.rs parse_mode…' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt && cargo clippy && cargo build && ca…' ✓ (0ms)
+  4 tools completed in 14.2s (4 ✓)
+
+Let me start with the tests. I'll add tests to providers.rs for known_models_for_provider (the issue specifically asks for this), and a test module in cli.rs to test the trim/filter logic.
+
+First, add a test in providers.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/providers.rs:305..315 ✓ (1ms)
+  ▶ edit src/providers.rs (8 → 30 lines)
+            assert_eq!(
+                default_model_for_provider("openrouter"),
+                "anthropic/claude-sonnet-4-6"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_anthropic_known_models_contains_sonnet_4_20250514() {
+  +         let models = known_models_for_provider("anthropic");
+  +         assert!(
+  +             !models.is_empty(),
+  +             "anthropic should have a non-empty known models list"
+  +         );
+  +         assert!(
+  +             models.contains(&"claude-sonnet-4-20250514"),
+  +             "anthropic known models should contain claude-sonnet-4-20250514"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  ... (8 more lines)
+ ✓ (1m 13s)
+            assert_eq!(
+                default_model_for_provider("openrouter"),
+                "anthropic/claude-sonnet-4-6"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_anthropic_known_models_contains_sonnet_4_20250514() {
+  ... (13 more lines)
+  2 tools completed in 1m 26s (2 ✓)
+
+Now let me implement Part 1 and Part 2 together in cli.rs — the trim/filter and the unknown model warning:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ edit src/cli.rs (5 → 17 lines)
+        let model = flag_value(args, &["--model"])
+            .or_else(|| file_config.get("model").cloned())
+  +         .map(|s| s.trim().to_string())
+  +         .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| default_model_for_provider(&provider));
+  + 
+  +     // Warn if model isn't in the known list for first-party providers
+  +     let known = known_models_for_provider(&provider);
+  +     if !known.is_empty() && !known.contains(&model.as_str()) {
+  +         eprintln!(
+  +             "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
+  +              Known models: {}. Proceeding anyway (custom models are valid).",
+  +             known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+  +         );
+  +     }
+    
+        // --fallback <provider>: fallback provider if primary fails
+ ✓ (1m 18s)
+        let model = flag_value(args, &["--model"])
+            .or_else(|| file_config.get("model").cloned())
+  +         .map(|s| s.trim().to_string())
+  +         .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| default_model_for_provider(&provider));
+  + 
+  +     // Warn if model isn't in the known list for first-party providers
+  +     let known = known_models_for_provider(&provider);
+  ... (9 more lines)
+  2 tools completed in 1m 28s (2 ✓)
+
+Now let me add tests at the bottom of cli.rs:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:3370..3380 ✓ (1ms)
+
+There's already a test module. Let me find its beginning:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]' (src/cli.rs) ✓ (14ms)
+  ▶ search 'mod tests' (src/cli.rs) ✓ (14ms)
+  ▶ search '#\[test\]' (src/cli.rs) ✓ (14ms)
+  3 tools completed in 7.1s (3 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

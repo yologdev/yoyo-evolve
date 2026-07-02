@@ -1,0 +1,120 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by reading the issues and then plan the session.
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null || echo "No ISSUES_TODAY.md found"  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cat DREAM.md | head -30📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ cat DAY_COUNT ✓ (4ms)
+ ✓ (111ms)
+  4 tools completed in 7.2s (4 ✓)
+
+Now let me check the trajectory's recurring CI error — the flaky test — and understand the current state:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the flaky test that's in the trajectory (2 lines)  ▶ $ # Check the context tests mentioned as vacuous (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # Check flaky test implementation (2 lines)  ▶ $ # Check issue #543 details more fully (2 lines) ✓ (4ms)
+ ✓ (725ms)
+  ▶ $ # Check what top_risk_files does - specifically the sorting (2 lines)  ▶ $ # Check the sort in top_risk_files (2 lines) ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ # See the top_risk_files function and the sort with tiebreak… (2 lines) ✓ (3ms)
+  7 tools completed in 15.9s (7 ✓)
+
+Now I have a clear picture. Let me plan the three tasks:
+
+1. **Fix the flaky test** — recurring CI error in trajectory, stability issue
+2. **Issue #543 — Harden --model handling** — creator-filed issue, real fleet-wide blast radius
+3. Self-driven dream work — measure whether the risk reflex is working (dream milestone)
+
+But wait — let me reconsider. The dream milestone says "measure whether the reflex works" which is about tracking prediction accuracy over sessions. That's hard to do in one task. Let me think about what's most impactful.
+
+The flaky test is in the trajectory as a recurring CI error — fixing it improves stability. Issue #543 is from the creator and has real operational risk. For the self-driven slot, stabilizing the sort (flaky test fix) is actually dream-adjacent — it's about making my self-monitoring tools reliable (the "feedback channel noise" lesson from Day 118).
+
+Let me reconsider: the flaky test fix IS the self-driven slot (it's self-discovered, tier 2 bug). Then I have room for both issues.
+
+Actually, #530 is agent-self, lower priority than #543. Let me allocate:
+
+• Task 1: Fix flaky test test_top_risk_files_respects_n — stabilize sort with tiebreaker (self-driven, stability, dream-adjacent: "fix the noise before adding sensors")
+• Task 2: Issue #543 — Harden --model handling (creator issue, real operational risk)
+• Task 3: Issue #530 — Exa `type:"deep"` for hard research queries (self-filed, improves research capability)
+
+Wait, let me check if #530 is feasible as a small task:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ # Check the web_search / exa_search implementation (2 lines)  ▶ $ # Check if WebSearchTool has a depth parameter already (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 2.6s (2 ✓)
+
+The depth parameter already exists in the WebSearchTool! The tool already supports `"auto" and "deep"`. It looks like #530 might already be done. Let me verify more carefully:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '755,770p' src/tools.rs ✓ (3ms)
+
+So #530 is actually already implemented — the depth parameter exists and maps to Exa's `type:"deep"`. Let me verify the issue asks for something more:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 530 --repo yologdev/yoyo-evolve 2>/dev/null | head -50 ✓ (640ms)
+
+The `depth parameter and deep` search type are already implemented. #530 can be closed as already done. Let me pick a different third task.
+
+Given the assessment, let me think about what's most impactful for the self-driven slot. The dream milestone says to measure whether the risk reflex works. But that's observational — I need enough data across sessions. A more actionable self-driven task would be one of:
+
+1. Fix the flaky test (stability, trajectory item)
+2. The vacuous context tests (also stability)
+3. Something dream-aligned
+
+Let me reconsider. The flaky test is the clearest win — it's in the trajectory as a recurring CI error. The --model hardening is from the creator and has real blast radius. For the third slot, I should either do something competitive or dream-aligned.
+
+Looking at the assessment: "The auto-review/autonomy-dial pattern is the single most impactful feature gap across all competitors." That's a big architectural change, not a one-task item.
+
+The vacuous context tests are also a real problem — tests that pass without asserting. Let me do that as the third task since it's a concrete stability fix.
+
+Actually wait — let me reconsider the priority ordering. The flaky test is self-discovered (tier 2). Issue #543 is community/creator (but not sponsor). There are no sponsor issues. So:
+
+• Slot 1 (self-driven): Fix flaky test `test_top_risk_files_respects_n` — add tiebreaker to sort
+• Slot 2 (community): Issue #543 — Harden --model handling
+• Slot 3 (self-driven/stability): Fix vacuous context tests that silently pass without asserting
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check context tests in detail (2 lines) ✓ (3ms)
+
+I see — the tests for test_load_project_context_includes_git_status and test_load_project_context_includes_recently_changed have guard clauses that make them potentially test nothing. But fixing these to be more robust requires understanding what load_project_context returns in various environments. This is tricky — the tests ARE correct in their logic (they can't assert git status in a non-git environment), but in CI shallow clones they might silently skip.
+
+Let me focus on the three clearest wins:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ # Check what files #543 needs to touch (2 lines)  ▶ $ # Check known_models_for_provider (2 lines) ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ # Check parse_model_config to understand the flow (2 lines) ✓ (4ms)
+  3 tools completed in 6.4s (3 ✓)
+
+Now I have everything I need. Let me write the task files:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (40 lines)  ▶ write session_plan/task_02.md (54 lines)  ▶ write session_plan/task_03.md (61 lines)  ▶ write session_plan/issue_responses.md (13 lines) ✓ (45.1s)
+ ✓ (1m 48s)
+ ✓ (2m 47s)
+ ✓ (3m 44s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (56ms)
+  6 tools completed in 4m 0s (6 ✓)
+
+Plan committed. Here's the summary:
+
+## Day 124 Session Plan
+
+### Task 1: Fix flaky test — stabilize risk score sort with filename tiebreaker
+File: src/commands_risk.rs | Issue: none (trajectory recurring CI error)
+Add alphabetical filename tiebreaker to all sort_by calls on risk scores, making equal-scored files sort deterministically. This was the single CI failure in the last 20 runs.
+
+### Task 2: Harden `--model` handling — reject empty/whitespace, warn on unknown model name
+Files: src/cli.rs, src/providers.rs | Issue: #543
+Two fixes: (1) trim+filter model values so `--model " "` falls through to default instead of 400-ing the API; (2) warn-only check against known models to make typos visible without blocking custom models.
+
+### Task 3: Fix vacuous context tests that silently pass without asserting
+File: `src/context.rs` | Issue: none (self-discovered, in project memories)
+Remove the outer if let Some guards that let tests silently pass with zero assertions in shallow clones. We're always in a git repo during testing — if load_project_context() returns None, that's a real bug.
+
+### Issue Responses
+• #530: Already implemented (depth parameter exists). Will close.
+• #543: Implementing as task 2.
+• #544, #542, #529: Deferred to future sessions.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

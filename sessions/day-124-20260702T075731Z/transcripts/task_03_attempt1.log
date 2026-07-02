@@ -1,0 +1,112 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll fix the vacuous context tests. Let me start by reading the current test code.
+  ▶ search 'test_load_project_context_includes_git_status' in src/context.rs  ▶ search 'test_load_project_context_includes_recently_changed' in src/context.rs ✓ (4ms)
+ ✓ (2ms)
+  ▶ read src/context.rs:370..420  ▶ read src/context.rs:460..500 ✓ (0ms)
+ ✓ (1ms)
+  4 tools completed in 6.1s (4 ✓)
+
+Now let me also check get_git_status_context to understand what it returns:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn get_git_status_context' in src/context.rs ✓ (2ms)
+  ▶ read src/context.rs:60..90 ✓ (0ms)
+  2 tools completed in 12.7s (2 ✓)
+
+Good — get_git_status_context() returns None only if `git_branch() returns None`, which would only happen if we're not in a git repo. Since tests run inside the yoyo repo, both `load_project_context() and get_git_status_context() should always return Some`.
+
+Now let me apply the fixes:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (24 → 27 lines)
+        #[test]
+        fn test_load_project_context_includes_recently_changed() {
+  -         // Check that load_project_context() includes the "Recently Changed Files"
+  -         // section if and only if get_recently_changed_files() actually finds changed
+  -         // files. The function uses --diff-filter=AM to catch both added and modified
+  -         // files, so it works correctly in CI shallow clones where recent commits may
+  -         // only contain newly added files.
+  -         //
+  -         // Guard: check the same function the production code uses to decide whether
+  -         // to emit the section. No TOCTOU gap because both calls happen in the same
+  -         // test process with no intervening git mutations.
+  -         let has_modified_files = get_recently_changed_files(1).is_some();
+  +         // We're running inside the yoyo git repo, so load_project_context()
+  +         // must always return Some. Previously this test guarded with
+  +         // `if let Some`, silently passing without asserting in CI.
+            let result = load_project_context();
+  -         if let Some(context) = &result {
+  -             if context.contains("## Git Status") && has_modified_files {
+  -                 assert!(
+  -                     context.contains("## Recently Changed Files"),
+  ... (26 more lines)
+ ✓ (1m 13s)
+        #[test]
+        fn test_load_project_context_includes_recently_changed() {
+  -         // Check that load_project_context() includes the "Recently Changed Files"
+  -         // section if and only if get_recently_changed_files() actually finds changed
+  -         // files. The function uses --diff-filter=AM to catch both added and modified
+  -         // files, so it works correctly in CI shallow clones where recent commits may
+  -         // only contain newly added files.
+  -         //
+  ... (13 more lines)
+  ▶ edit src/context.rs (13 → 15 lines)
+        #[test]
+        fn test_load_project_context_includes_git_status() {
+  -         // In a git repo, load_project_context should include git status
+  +         // We're running inside the yoyo git repo, so both load_project_context()
+  +         // and get_git_status_context() must return Some. Previously this test
+  +         // guarded with `if let Some` on both, silently passing without asserting
+  +         // in CI shallow clones.
+            let result = load_project_context();
+  -         if let Some(context) = &result {
+  -             if get_git_status_context().is_some() {
+  -                 assert!(
+  -                     context.contains("## Git Status"),
+  -                     "Context should contain Git Status section"
+  -                 );
+  -             }
+  -         }
+  +         let context = result.expect("load_project_context should return Some in a git repo");
+  + 
+  +         // Git status should always be available when running tests inside a git repo
+  +         assert!(
+  ... (4 more lines)
+ ✓ (1m 19s)
+        #[test]
+        fn test_load_project_context_includes_git_status() {
+  -         // In a git repo, load_project_context should include git status
+  +         // We're running inside the yoyo git repo, so both load_project_context()
+  +         // and get_git_status_context() must return Some. Previously this test
+  +         // guarded with `if let Some` on both, silently passing without asserting
+  +         // in CI shallow clones.
+            let result = load_project_context();
+  ... (13 more lines)
+  2 tools completed in 2m 42s (2 ✓)
+
+Now let me run the checks:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (59.9s)
+  2 tools completed in 1m 31s (2 ✓)
+
+All 88 tests pass. Let me also specifically verify the two fixed tests actually run their assertions:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_load_project_con… ✓ (156ms)
+
+All three context tests pass. The tests now use `.expect() instead of if let Some, so if load_project_context()` ever returns None in a git repo, they'll panic with a clear message instead of silently skipping.
+
+Now let me commit:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (16 lines) ✓ (660ms)
+
+Done. The fix is clean and focused:
+
+**What was wrong:** Both tests wrapped their assertions in if let Some guards, so when load_project_context() returned None (possible in shallow CI clones), zero assertions ran — the tests passed vacuously.
+
+**What changed:** Replaced the if let Some guards with .expect() calls. We're always in a git repo during testing, so load_project_context() returning None is a real bug, not something to silently skip. The recently-changed assertion stays conditional (shallow clones may lack history), but the test now always asserts something — context loads, contains Git Status, and isn't empty.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
