@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current code, then write tests, implement the fix, and verify.
+  ▶ search 'flag_value' (*.rs)  ▶ search 'parse_model_config\|--model' (*.rs) ✓ (17ms)
+ ✓ (19ms)
+  ▶ read src/cli.rs:421..531  ▶ read src/dispatch_sub.rs:1..51 ✓ (2ms)
+ ✓ (3ms)
+  4 tools completed in 7.1s (4 ✓)
+
+Now let me look at the `flag_value function and require_flag_value`:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search '^pub fn flag_value|^fn flag_value|^pub fn require_flag_value…' in src/dispatch_sub.rs ✓ (2ms)
+  ▶ search 'fn flag_value|fn require_flag_value|FlagValueCheck' in src/dispatch_sub.rs ✓ (2ms)
+  ▶ search 'flag_value' in src/dispatch_sub.rs ✓ (3ms)
+  ▶ read src/dispatch_sub.rs:349..419 ✓ (1ms)
+  4 tools completed in 12.9s (4 ✓)
+
+Good. Now I understand the flow:
+
+1. flag_value returns Option<String> — it can return `Some("") if --model ""` is passed
+2. `parse_model_config already handles the .trim().to_string() and .filter(|s| !s.is_empty())` chain on line 492-493
+3. But flag_value itself doesn't guard against empty strings
+
+Let me also check how --model is used in dispatch_sub.rs:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:85..135 ✓ (1ms)
+
+I see the pattern now. There are multiple call sites for flag_value(args, &["--model"]) — some go through parse_model_config (which has the trim+filter guard), but others in dispatch_sub.rs lines 97 and 121 don't have the guard. Let me also look at commands_spawn.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:455..485 ✓ (1ms)
+
+Now let me also check the commands_spawn.rs usage:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'flag_value.*model' in src/commands_spawn.rs ✓ (2ms)
+  ▶ search 'model' in src/commands_spawn.rs ✓ (3ms)
+  2 tools completed in 4.5s (2 ✓)
+
+Good. Now I understand the full picture. The fix needs to:
+
+1. Make `flag_value` trim whitespace and filter empty strings (so all call sites benefit)
+2. Add trim+filter guards to the `dispatch_sub.rs call sites that bypass parse_model_config`
+3. Write tests
+
+The cleanest approach: harden flag_value itself to trim and reject empty/whitespace values, since no caller ever wants an empty string from a flag. Let me verify that wouldn't break anything:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'flag_value\(' (*.rs) ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'flag_value\(args' (*.rs) ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ $ grep -rn 'flag_value(' src/ | head -40 ✓ (9ms)
+  3 tools completed in 9.1s (1 ✓, 2 ✗)
+
+OK. Changing flag_value to trim+filter empty is the right approach — every call site follows with .or_else(...) fallback chains, so returning None for whitespace-only values is always correct. But wait — parse_model_config already does `.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) on the model value. If I harden flag_value`, that code becomes redundant (harmless, but redundant). Better to keep it idempotent.
+
+Actually, let me reconsider. Changing flag_value globally would affect --api-key, --base-url, `--system, --prompt, --image, --output`, etc. All those should also reject whitespace-only values, so it's a good change. But let me be more careful — for --prompt, someone might pass --prompt " " and that's... still silly. The right thing: trim and filter in flag_value.
+
+Let me also check: does require_flag_value need updating? It classifies values but doesn't reject empty ones:
+
+Looking at require_flag_value — it takes Option<&String> (the next arg after a flag) and classifies it. An empty string "" would pass as `FlagValueCheck::Ok(""). The flags_needing_values loop in parse_args` uses this:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:1485..1525 ✓ (1ms)
+
+Let me look at the flags_needing_values check in parse_args:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:740..790 ✓ (1ms)
+
+Now I have a clear plan. Here's my approach:
+
+1. **Harden `flag_value`** to trim and reject empty/whitespace-only values (returns None instead of Some(""))
+2. **Add `FlagValueCheck::Empty variant** to require_flag_value` to catch empty strings in the validation loop
+3. **Add trim+filter to dispatch_sub.rs model lookups** that bypass `parse_model_config`
+4. Write tests first
+
+Let me start with the tests, then implement:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:540..600 ✓ (1ms)
+  ▶ read src/dispatch_sub.rs:600..680 ✓ (2ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now let me write the tests and implement the changes. I'll start with tests:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch_sub.rs:597..607 ✓ (1ms)
+
+Now let me add the tests for empty/whitespace handling in both `flag_value and require_flag_value`:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (2 → 58 lines)
+  +     #[test]
+  +     fn test_flag_value_returns_none_for_empty_string() {
+  +         // `--model ""` — the shell produces an empty string argument.
+  +         // flag_value should treat this the same as missing.
+  +         let args = vec!["yoyo".into(), "--model".into(), "".into()];
+  +         assert_eq!(
+  +             flag_value(&args, &["--model"]),
+  +             None,
+  +             "empty string should be treated as missing"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_flag_value_returns_none_for_whitespace_only() {
+  +         // `--model "  "` — whitespace-only is not a valid model name.
+  +         let args = vec!["yoyo".into(), "--model".into(), "   ".into()];
+  +         assert_eq!(
+  +             flag_value(&args, &["--model"]),
+  +             None,
+  +             "whitespace-only string should be treated as missing"
+  ... (38 more lines)
+ ✓ (9.8s)
+  +     #[test]
+  +     fn test_flag_value_returns_none_for_empty_string() {
+  +         // `--model ""` — the shell produces an empty string argument.
+  +         // flag_value should treat this the same as missing.
+  +         let args = vec!["yoyo".into(), "--model".into(), "".into()];
+  +         assert_eq!(
+  +             flag_value(&args, &["--model"]),
+  +             None,
+  ... (13 more lines)
+
+Good — tests fail as expected because the implementation isn't there yet. Now let me implement the changes:
+
+Step 1: Add `Empty` variant to `FlagValueCheck` and update `require_flag_value`:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (11 → 13 lines)
+        /// The caller should surface a warning; not fatal because a leading `-` may
+        /// also be a negative number (e.g. `--temperature -0.1`).
+        FlagLike(&'a str),
+  +     /// Next token is empty or whitespace-only (e.g. `--model ""` or `--model "  "`).
+  +     Empty,
+        /// There is no next token at all (`--model` at end of args).
+        Missing,
+    }
+ ✓ (10.0s)
+        /// The caller should surface a warning; not fatal because a leading `-` may
+        /// also be a negative number (e.g. `--temperature -0.1`).
+        FlagLike(&'a str),
+  +     /// Next token is empty or whitespace-only (e.g. `--model ""` or `--model "  "`).
+  +     Empty,
+        /// There is no next token at all (`--model` at end of args).
+        Missing,
+    }
+
+Good — now I need to update the match arm in cli.rs to handle Empty, and update require_flag_value to detect empty/whitespace:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (12 → 13 lines)
+    pub(crate) fn require_flag_value<'a>(next: Option<&'a String>) -> FlagValueCheck<'a> {
+        match next {
+            None => FlagValueCheck::Missing,
+  +         Some(v) if v.trim().is_empty() => FlagValueCheck::Empty,
+            Some(v) => {
+                if v.starts_with('-') && !v.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
+                    FlagValueCheck::FlagLike(v.as_str())
+ ✓ (10.0s)
+    pub(crate) fn require_flag_value<'a>(next: Option<&'a String>) -> FlagValueCheck<'a> {
+        match next {
+            None => FlagValueCheck::Missing,
+  +         Some(v) if v.trim().is_empty() => FlagValueCheck::Empty,
+            Some(v) => {
+                if v.starts_with('-') && !v.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
+                    FlagValueCheck::FlagLike(v.as_str())
+
+**Step 2: Update cli.rs match to handle Empty:**
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (12 → 17 lines)
+                        eprintln!(
+                            "{YELLOW}warning:{RESET} {flag} value looks like another flag: '{next}'"
+                        );
+  +                 }
+  +                 FlagValueCheck::Empty => {
+  +                     eprintln!("{RED}error:{RESET} {flag} requires a non-empty value");
+  +                     eprintln!("Run with --help for usage information.");
+  +                     std::process::exit(1);
+                    }
+                    FlagValueCheck::Missing => {
+                        eprintln!("{RED}error:{RESET} {flag} requires a value");
+ ✓ (1m 21s)
+                        eprintln!(
+                            "{YELLOW}warning:{RESET} {flag} value looks like another flag: '{next}'"
+                        );
+  +                 }
+  +                 FlagValueCheck::Empty => {
+  +                     eprintln!("{RED}error:{RESET} {flag} requires a non-empty value");
+  +                     eprintln!("Run with --help for usage information.");
+  +                     std::process::exit(1);
+  ... (3 more lines)
+
+**Step 3: Harden flag_value to trim and reject empty/whitespace:**
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch_sub.rs (6 → 7 lines)
+        args.iter()
+            .position(|a| flag_names.contains(&a.as_str()))
+            .and_then(|i| args.get(i + 1))
+  -         .cloned()
+  +         .map(|v| v.trim().to_string())
+  +         .filter(|v| !v.is_empty())
+    }
+ ✓ (1m 23s)
+        args.iter()
+            .position(|a| flag_names.contains(&a.as_str()))
+            .and_then(|i| args.get(i + 1))
+  -         .cloned()
+  +         .map(|v| v.trim().to_string())
+  +         .filter(|v| !v.is_empty())
+    }
+
+Now let's run the full check:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (15.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (51.0s)
+  2 tools completed in 1m 9s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

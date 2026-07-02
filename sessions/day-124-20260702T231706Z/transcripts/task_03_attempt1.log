@@ -1,0 +1,320 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current provider system, then add GitHub Copilot support.
+  ▶ read src/providers.rs  ▶ search 'KNOWN_PROVIDERS' in src ✓ (4ms)
+ ✓ (9ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Now let me understand how yoagent handles providers to see how Copilot should be wired:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'provider|base_url|api_key' in src/agent_builder.rs  ▶ read src/setup.rs:1..31 ✓ (1ms)
+ ✓ (3ms)
+  ▶ search 'AnthropicProvider|OpenAI|build_agent|provider_url|base_url' in src/agent_builder.rs ✓ (2ms)
+  ▶ search 'fn build_agent' in src/agent_builder.rs ✓ (2ms)
+  ▶ read src/agent_builder.rs:540..640 ✓ (1ms)
+  5 tools completed in 13.9s (5 ✓)
+
+Now I understand the architecture. GitHub Copilot uses an OpenAI-compatible API endpoint (https://api.githubcopilot.com). Let me look at how create_model_config maps providers to base URLs:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn create_model_config' in src/agent_builder.rs ✓ (2ms)
+  ▶ read src/agent_builder.rs:264..364 ✓ (1ms)
+  ▶ read src/agent_builder.rs:363..403 ✓ (1ms)
+  3 tools completed in 8.8s (3 ✓)
+
+Now let me check what OpenAiCompat methods are available — I need to see if there's a generic one or if I need a specific compat config:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src -name "*.rs" -path "*/yoagent-*" | head -5 2>/dev/nul… ✓ (139ms)
+  ▶ $ grep -n "pub fn " ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent… ✓ (3ms)
+  2 tools completed in 5.9s (2 ✓)
+
+Good. Now let me check if there's a copilot-specific compat or if I can use OpenAiCompat::openai() since GitHub Copilot uses an OpenAI-compatible API:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -A 15 "pub fn openai_compat" ~/.cargo/registry/src/index.crates.io-1949cf8c…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ $ grep -A 15 "pub fn openai()" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (7ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Now I have a good picture. GitHub Copilot uses an OpenAI-compatible chat completions API at https://api.githubcopilot.com. The API key is a GitHub token (often GITHUB_TOKEN). Let me research the Copilot API endpoint specifics:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ web search 'GitHub Copilot API endpoint chat completions models API key …' ✓ (1.0s)
+  ▶ web search 'GitHub Models API base URL "models.github.ai" OR "models.inf…' ✓ (1.4s)
+  2 tools completed in 8.5s (2 ✓)
+
+Now I have the full picture. GitHub Models (the current name for what was asked as "GitHub Copilot" provider) uses:
+• Base URL: https://models.github.ai/inference
+• Auth: GITHUB_TOKEN (GitHub PAT with models:read scope)
+• OpenAI-compatible chat completions API
+• Model format: publisher/model-name (e.g., openai/gpt-4o, anthropic/claude-sonnet-4-6)
+
+Note: The issue says "Copilot" but the actual API service is "GitHub Models" — GitHub's model inference platform. This is the right thing to add. Let me now implement it.
+
+Let me first write a test, then add the provider:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add "github" to KNOWN_PROVIDERS in providers.rs' ✓ (0ms)
+  ▶ todo add 'Add provider_api_key_env, known_models, default_mo…' ✓ (0ms)
+  ▶ todo add 'Add "github" to create_model_config in agent_build…' ✓ (0ms)
+  ▶ todo add 'Add "github" to WIZARD_PROVIDERS in setup.rs' ✓ (0ms)
+  ▶ todo add 'Write tests for the new provider' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test' ✓ (0ms)
+  6 tools completed in 19.3s (6 ✓)
+
+Let me start with the tests and implementation in providers.rs:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/providers.rs (3 → 4 lines)
+        "bedrock",
+  +     "github",
+        "custom",
+    ];
+ ✓ (1m 33s)
+        "bedrock",
+  +     "github",
+        "custom",
+    ];
+  ▶ todo done #1 ✓ (0ms)
+  3 tools completed in 1m 39s (3 ✓)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
+running 4070 tests
+test agent_builder::tests::builtin_tool_names_includes_shared_state ... ok
+test agent_builder::tests::mcp_collision_detection_empty_inputs ... ok
+test agent_builder::tests::mcp_builtin_collision_detection ... ok
+test agent_builder::tests::mcp_collision_detection_against_real_builtins ... ok
+test agent_builder::tests::mcp_collision_detection_multiple_collisions_preserves_order ... ok
+test agent_builder::tests::mcp_collision_detection_no_collisions ... ok
+test agent_builder::tests::test_agent_config_build_agent_minimax ... ok
+test agent_builder::tests::test_agent_config_build_agent_google ... ok
+test agent_builder::tests::test_agent_config_build_agent_openai ... ok
+test agent_builder::tests::test_agent_config_build_agent_anthropic ... ok
+test agent_builder::tests::test_agent_config_build_agent_with_base_url ... ok
+test agent_builder::tests::test_agent_config_build_agent_zai ... ok
+test agent_builder::tests::test_agent_config_mutable_model_switch ... ok
+test agent_builder::tests::test_agent_config_mutable_thinking_switch ... ok
+test agent_builder::tests::test_agent_config_struct_fields ... ok
+test agent_builder::tests::test_agent_config_rebuild_produces_fresh_agent ... ok
+test agent_builder::tests::test_allowed_tools_filters_to_whitelist ... ok
+test agent_builder::tests::test_bedrock_model_config ... ok
+test agent_builder::tests::test_bedrock_model_config_custom_url ... ok
+test agent_builder::tests::test_build_agent_bedrock ... ok
+test agent_builder::tests::test_build_agent_anthropic_with_base_url_uses_openai_compat ... ok
+test agent_builder::tests::test_build_agent_all_providers_build_cleanly ... ok
+test agent_builder::tests::test_cache_config_enabled_on_all_agents ... ok
+test agent_builder::tests::test_cache_config_openai_provider ... ok
+test agent_builder::tests::test_cache_config_values_match_expected ... ok
+test agent_builder::tests::test_client_headers_google ... ok
+test agent_builder::tests::test_client_headers_anthropic ... ok
+test agent_bui...
+(truncated)
+  → Auto-fixing (attempt 1/3)...
+
+
+
+The test test_every_non_custom_provider_has_known_models is failing because I added "github" to `KNOWN_PROVIDERS but haven't yet added the corresponding known_models_for_provider, provider_api_key_env, and default_model_for_provider` entries. Let me complete the full implementation.
+  ▶ read src/providers.rs ✓ (3ms)
+
+Good, I can see the full file. The test at line 163 iterates all providers except "custom" and "openrouter" and asserts they have known models. I need to add all three function entries for "github". Let me make all the changes:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (3 → 4 lines)
+            "bedrock" => Some("AWS_ACCESS_KEY_ID"),
+            "anthropic" => Some("ANTHROPIC_API_KEY"),
+  +         "github" => Some("GITHUB_TOKEN"),
+            _ => None,
+ ✓ (1m 32s)
+            "bedrock" => Some("AWS_ACCESS_KEY_ID"),
+            "anthropic" => Some("ANTHROPIC_API_KEY"),
+  +         "github" => Some("GITHUB_TOKEN"),
+            _ => None,
+
+Now add known models for github — these use the `publisher/model-name` format:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (1 → 11 lines)
+            "ollama" => &["llama3.2", "llama3.1", "codellama", "mistral"],
+  +         "github" => &[
+  +             "openai/gpt-4o",
+  +             "openai/gpt-4o-mini",
+  +             "openai/o3-mini",
+  +             "openai/o4-mini",
+  +             "meta/llama-4-scout-17b-16e-instruct",
+  +             "mistral/mistral-large-latest",
+  +             "deepseek/deepseek-r2",
+  +             "anthropic/claude-sonnet-4-6",
+  +         ],
+ ✓ (1m 35s)
+            "ollama" => &["llama3.2", "llama3.1", "codellama", "mistral"],
+  +         "github" => &[
+  +             "openai/gpt-4o",
+  +             "openai/gpt-4o-mini",
+  +             "openai/o3-mini",
+  +             "openai/o4-mini",
+  +             "meta/llama-4-scout-17b-16e-instruct",
+  +             "mistral/mistral-large-latest",
+  ... (3 more lines)
+
+Now add the default model:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (1 → 2 lines)
+            "bedrock" => "anthropic.claude-sonnet-4-6".into(),
+  +         "github" => "openai/gpt-4o".into(),
+ ✓ (1m 35s)
+            "bedrock" => "anthropic.claude-sonnet-4-6".into(),
+  +         "github" => "openai/gpt-4o".into(),
+
+Now add tests for the new provider:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (9 → 35 lines)
+            assert!(
+                models.is_empty(),
+                "unknown provider should return empty known models list"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_github_in_known_providers() {
+  +         assert!(
+  +             KNOWN_PROVIDERS.contains(&"github"),
+  +             "github should be in KNOWN_PROVIDERS"
+            );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_github_provider_api_key_env() {
+  +         assert_eq!(provider_api_key_env("github"), Some("GITHUB_TOKEN"));
+  +     }
+  + 
+  +     #[test]
+  ... (12 more lines)
+ ✓ (1m 34s)
+            assert!(
+                models.is_empty(),
+                "unknown provider should return empty known models list"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_github_in_known_providers() {
+  ... (13 more lines)
+
+Now add the model config in agent_builder.rs. GitHub Models uses OpenAI-compatible API at `https://models.github.ai/inference`:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:346..376 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (16 → 27 lines)
+                    headers: std::collections::HashMap::new(),
+                    compat: None,
+                }
+  +         }
+  +         "github" => {
+  +             // GitHub Models — OpenAI-compatible API at models.github.ai
+  +             // Uses GITHUB_TOKEN for auth, model names are publisher/model format
+  +             let mut config = ModelConfig::openai(model, model);
+  +             config.provider = "github".into();
+  +             config.base_url = base_url
+  +                 .unwrap_or("https://models.github.ai/inference")
+  +                 .to_string();
+  +             config.compat = Some(OpenAiCompat::openai());
+  +             config
+            }
+ ✓ (1m 35s)
+                    headers: std::collections::HashMap::new(),
+                    compat: None,
+                }
+  +         }
+  +         "github" => {
+  +             // GitHub Models — OpenAI-compatible API at models.github.ai
+  +             // Uses GITHUB_TOKEN for auth, model names are publisher/model format
+  +             let mut config = ModelConfig::openai(model, model);
+  ... (7 more lines)
+  2 tools completed in 1m 45s (2 ✓)
+
+Now add "github" to the setup wizard:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/setup.rs (5 → 9 lines)
+        (
+            "bedrock",
+            "AWS Bedrock (Claude, Nova — uses AWS credentials)",
+  +     ),
+  +     (
+  +         "github",
+  +         "GitHub Models (GPT-4o, Claude, Llama — uses GITHUB_TOKEN)",
+        ),
+        ("custom", "Custom (self-hosted OpenAI-compatible)"),
+ ✓ (1m 32s)
+        (
+            "bedrock",
+            "AWS Bedrock (Claude, Nova — uses AWS credentials)",
+  +     ),
+  +     (
+  +         "github",
+  +         "GitHub Models (GPT-4o, Claude, Llama — uses GITHUB_TOKEN)",
+        ),
+        ("custom", "Custom (self-hosted OpenAI-compatible)"),
+
+  ✗ Attempt 1 failed, retrying...
+  → Auto-fixing (attempt 2/3)...
+
+
+
+Let me look at the failing tests to understand what they expect:
+  ▶ read src/setup.rs:540..660 ✓ (1ms)
+
+I see — the test at line 568 expects parse_provider_choice("13") to return `"custom"`, but now "github" is at position 13 and "custom" is at 14. Let me also check the other two failing tests:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/setup.rs:800..880 ✓ (1ms)
+
+Clear — three tests hardcode number "13" for "custom", but now "github" is at position 13 and "custom" moved to 14. I need to update these tests:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/setup.rs (2 → 3 lines)
+            assert_eq!(parse_provider_choice("12"), Some("bedrock"));
+  -         assert_eq!(parse_provider_choice("13"), Some("custom"));
+  +         assert_eq!(parse_provider_choice("13"), Some("github"));
+  +         assert_eq!(parse_provider_choice("14"), Some("custom"));
+ ✓ (1m 32s)
+            assert_eq!(parse_provider_choice("12"), Some("bedrock"));
+  -         assert_eq!(parse_provider_choice("13"), Some("custom"));
+  +         assert_eq!(parse_provider_choice("13"), Some("github"));
+  +         assert_eq!(parse_provider_choice("14"), Some("custom"));
+  ▶ edit src/setup.rs (32 → 32 lines)
+        #[test]
+        fn test_wizard_custom_provider_flow() {
+  -         // Choose custom (13), enter API key, enter base URL, accept default model, save=no
+  -         let input = "13\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
+  +         // Choose custom (14), enter API key, enter base URL, accept default model, save=no
+  +         let input = "14\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
+            let mut reader = io::Cursor::new(input.as_bytes());
+            let mut output = Vec::new();
+    
+  ···
+    
+        #[test]
+        fn test_wizard_custom_provider_no_base_url_returns_none() {
+  -         // Choose custom (13), enter API key, enter empty base URL
+  -         let input = "13\nmy-custom-key\n\n";
+  +         // Choose custom (14), enter API key, enter empty base URL
+  +         let input = "14\nmy-custom-key\n\n";
+            let mut reader = io::Cursor::new(input.as_bytes());
+            let mut output = Vec::new();
+    
+ ✓ (1m 35s)
+        #[test]
+        fn test_wizard_custom_provider_flow() {
+  -         // Choose custom (13), enter API key, enter base URL, accept default model, save=no
+  -         let input = "13\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
+  +         // Choose custom (14), enter API key, enter base URL, accept default model, save=no
+  +         let input = "14\nmy-custom-key\nhttp://localhost:8080/v1\n\nn\n";
+            let mut reader = io::Cursor::new(input.as_bytes());
+            let mut output = Vec::new();
+  ... (12 more lines)
+  2 tools completed in 3m 22s (2 ✓)
+
+Now let me also add the "github" name to the by-name test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/setup.rs (4 → 6 lines)
+            assert_eq!(parse_provider_choice("bedrock"), Some("bedrock"));
+            assert_eq!(parse_provider_choice("Bedrock"), Some("bedrock"));
+  +         assert_eq!(parse_provider_choice("github"), Some("github"));
+  +         assert_eq!(parse_provider_choice("GitHub"), Some("github"));
+            assert_eq!(parse_provider_choice("custom"), Some("custom"));
+            assert_eq!(parse_provider_choice("CUSTOM"), Some("custom"));

@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-opus-4-6
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+
+
+I'll start by understanding the current state of the code, then implement the fix.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/providers.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "editor_model\|default_e… ✓ (7ms)
+ ✓ (5ms)
+  2 tools completed in 3.1s (2 ✓)
+
+Now let me look at the full default_editor_model function:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '100,200p' src/commands_c… ✓ (4ms)
+
+Now I see the problem clearly. The default_editor_model function uses stale model IDs:
+
+1. Line 138: "claude-sonnet-4-20250514" — this is the old Sonnet model. Should be "claude-sonnet-4-6" (the current one).
+2. Line 181: "anthropic.claude-sonnet-4-20250514-v1:0" — same stale ID for Bedrock.
+
+Also the Bedrock default in `providers.rs line uses "anthropic.claude-sonnet-4-20250514-v1:0"` which should be updated.
+
+Let me check which model IDs are current:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claude-sonnet-4-2025051…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claude-sonnet-4-2025051… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Now let me look at the full test section for architect mode:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1537,1600p' src/commands… ✓ (4ms)
+
+Now I have a clear picture. Let me also check where default_editor_model is called to understand usage:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "default_editor_model" … ✓ (7ms)
+
+Let me also check how build_editor_agent works:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_editor_agent\|edi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_editor_agent\|edi… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.2s (2 ✓)
+
+Good, now I understand the full picture. Here's the plan:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Update default_editor_model() to use current model…' ✓ (0ms)
+  ▶ todo add 'Update bedrock default model in providers.rs' ✓ (0ms)
+  ▶ todo add 'Update tests in both files' ✓ (0ms)
+  ▶ todo add 'Run cargo fmt, clippy, build, test' ✓ (0ms)
+  4 tools completed in 10.4s (4 ✓)
+
+Let me also add tests that verify the new model IDs specifically:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add tests for new model variants (opus-4-6, opus-4…' ✓ (0ms)
+
+Let me start by writing a test first (test-first approach), then fix the code.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #5 ✓ (0ms)
+
+Let me find the exact end of the architect mode tests to add new ones:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1598,1620p' src/commands… ✓ (3ms)
+
+Now I'll add tests for the current model IDs and also update default_editor_model to use them. Let me do the code fix first:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #1 ✓ (0ms)
+  ▶ edit src/commands_config.rs (7 → 7 lines)
+        // Anthropic: opus → sonnet, sonnet → haiku
+        if m.contains("opus") {
+  -         return "claude-sonnet-4-20250514".into();
+  +         return "claude-sonnet-4-6".into();
+        }
+        if m.contains("sonnet") {
+  -         return "claude-haiku-4-5-20250414".into();
+  +         return "claude-haiku-4-5".into();
+        }
+ ✓ (1m 23s)
+        // Anthropic: opus → sonnet, sonnet → haiku
+        if m.contains("opus") {
+  -         return "claude-sonnet-4-20250514".into();
+  +         return "claude-sonnet-4-6".into();
+        }
+        if m.contains("sonnet") {
+  -         return "claude-haiku-4-5-20250414".into();
+  +         return "claude-haiku-4-5".into();
+        }
+  ▶ edit src/commands_config.rs (9 → 9 lines)
+        // Bedrock: follows the same anthropic pattern with prefix
+        if m.contains("bedrock") || m.starts_with("anthropic.") {
+            if m.contains("opus") {
+  -             return "anthropic.claude-sonnet-4-20250514-v1:0".into();
+  +             return "anthropic.claude-sonnet-4-6".into();
+            }
+            if m.contains("sonnet") {
+                return "anthropic.claude-haiku-4-5-20250414-v1:0".into();
+ ✓ (1m 24s)
+        // Bedrock: follows the same anthropic pattern with prefix
+        if m.contains("bedrock") || m.starts_with("anthropic.") {
+            if m.contains("opus") {
+  -             return "anthropic.claude-sonnet-4-20250514-v1:0".into();
+  +             return "anthropic.claude-sonnet-4-6".into();
+            }
+            if m.contains("sonnet") {
+                return "anthropic.claude-haiku-4-5-20250414-v1:0".into();
+  ▶ todo done #1 ✓ (0ms)
+  4 tools completed in 3m 4s (4 ✓)
+
+Now update the bedrock default in providers.rs:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #2 ✓ (0ms)
+  ▶ edit src/providers.rs (1 → 1 lines)
+  -         "bedrock" => "anthropic.claude-sonnet-4-20250514-v1:0".into(),
+  +         "bedrock" => "anthropic.claude-sonnet-4-6".into(),
+ ✓ (1m 21s)
+  -         "bedrock" => "anthropic.claude-sonnet-4-20250514-v1:0".into(),
+  +         "bedrock" => "anthropic.claude-sonnet-4-6".into(),
+  2 tools completed in 1m 28s (2 ✓)
+
+Let me check the test failures:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (38.5s)
+
+Two test failures — the bedrock default model test and the wizard test. Let me update the tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ todo wip #3 ✓ (0ms)
+  ▶ edit src/providers.rs (7 → 7 lines)
+        fn test_bedrock_default_model() {
+            assert_eq!(
+                default_model_for_provider("bedrock"),
+  -             "anthropic.claude-sonnet-4-20250514-v1:0"
+  +             "anthropic.claude-sonnet-4-6"
+            );
+        }
+ ✓ (1m 20s)
+        fn test_bedrock_default_model() {
+            assert_eq!(
+                default_model_for_provider("bedrock"),
+  -             "anthropic.claude-sonnet-4-20250514-v1:0"
+  +             "anthropic.claude-sonnet-4-6"
+            );
+        }
+  2 tools completed in 1m 27s (2 ✓)
+
+Now let me fix the wizard test:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_wizard_bedrock" sr… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1056,1080p' src/setup.rs ✓ (3ms)
+  ▶ edit src/setup.rs (1 → 1 lines)
+  -         assert_eq!(r.model, "anthropic.claude-sonnet-4-20250514-v1:0"); // default
+  +         assert_eq!(r.model, "anthropic.claude-sonnet-4-6"); // default
+ ✓ (1m 24s)
+  -         assert_eq!(r.model, "anthropic.claude-sonnet-4-20250514-v1:0"); // default
+  +         assert_eq!(r.model, "anthropic.claude-sonnet-4-6"); // default
+  3 tools completed in 1m 36s (3 ✓)
+
+Now let me check if there are more references to update in setup.rs:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1079,1110p' src/setup.rs ✓ (3ms)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+
