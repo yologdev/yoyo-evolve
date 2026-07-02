@@ -1028,11 +1028,26 @@ if [ "$TASK_COUNT" -eq 0 ]; then
     echo "  Planning agent produced 0 tasks — falling back to single task."
     mkdir -p session_plan
     cat > session_plan/task_01.md <<FALLBACK
-Title: Self-improvement
+Title: Self-improvement (small, committed)
 Files: src/
 Issue: none
 
-Read your own source code, identify the most impactful improvement you can make, implement it, and commit. Follow evolve skill rules.
+Make ONE small, concrete improvement and COMMIT it. This is a fallback task (the
+planner produced no tasks this session), so bias toward FINISHING, not searching.
+
+Rules:
+- Do NOT hunt for the "best" or "most impactful" improvement — that search never
+  terminates and past sessions died wandering. Pick the FIRST real improvement you
+  find and implement its SMALLEST correct version.
+- Timebox the choice: if you are still exploring after ~5 tool calls, take the best
+  candidate you have seen so far and BUILD it.
+- The moment cargo fmt && cargo clippy --all-targets -- -D warnings && cargo build
+  && cargo test all pass: COMMIT immediately (git add -A && git commit). A small
+  committed improvement beats a big uncommitted one.
+- Then STOP. One committed improvement is the whole task.
+${SELF_ISSUES:+
+Start with your own backlog — pick ONE small actionable item from here if any fits:
+$SELF_ISSUES}
 FALLBACK
     echo "  Fallback task written to session_plan/task_01.md"
 fi
@@ -1369,6 +1384,19 @@ BFIXEOF
         # Loop back to re-check build + tests
     done
 
+    # ── Safety commit: never lose green work to a missing `git commit` ──
+    # Agents sometimes finish valid work (or get cut off mid-search) without
+    # committing. The evaluator only sees COMMITTED changes (git diff
+    # PRE_TASK_SHA..HEAD), so green-but-uncommitted work reads as an empty
+    # diff → FAIL → revert (this silently ate multiple sessions, Days 122-124).
+    # Protected-file and build+test checks have already passed at this point;
+    # commit on the agent's behalf with the same message it was instructed to
+    # use. The evaluator still judges the committed diff on its merits.
+    if [ "$TASK_OK" = true ] && [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        echo "    Safety commit: uncommitted green changes found — committing on agent's behalf..."
+        git add -A && git commit -m "Day $DAY ($SESSION_TIME): $task_title (Task $TASK_NUM)" 2>/dev/null || true
+    fi
+
     # ── Phase B-eval: Evaluator agent with fix loop (runs only if mechanical checks passed) ──
     # On FAIL: give the agent up to 9 chances to fix, then re-evaluate. Revert only after all attempts fail.
     EVAL_ATTEMPT=0
@@ -1512,6 +1540,13 @@ $(echo "$TEST_OUT" | tail -30)
                 # Loop continues → re-runs evaluator on the fixed code
                 rm -f "$EVAL_LOG"
                 rm -f "session_plan/eval_task_${TASK_NUM}.md"
+                # Safety commit after the fix attempt too — fix agents also leave
+                # green work uncommitted, and the next eval attempt would burn on
+                # the same empty diff (protected/build/test re-checks passed above).
+                if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+                    echo "    Safety commit: fix attempt left green changes uncommitted — committing..."
+                    git add -A && git commit -m "Day $DAY ($SESSION_TIME): $task_title (Task $TASK_NUM, eval-fix $EVAL_ATTEMPT)" 2>/dev/null || true
+                fi
                 continue
             else
                 # All fix attempts exhausted → give up
