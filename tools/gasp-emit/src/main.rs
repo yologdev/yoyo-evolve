@@ -69,7 +69,11 @@ async fn ensure_goal<S: yoagent_state::EventStore>(
                 } else {
                     goal
                 },
-                "standing goal (created on first reference)",
+                if goal == "goal_product_value" {
+                    "value shipped to yoyo's product users — features, UX, and fixes they experience directly, independent of any single session"
+                } else {
+                    "standing goal (created on first reference)"
+                },
                 actor.clone(),
             ))
             .await?;
@@ -160,7 +164,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         "task-result" => {
-            ensure_goal(&state, &goal, &yoyo).await?;
             let num = req(&flags, "num");
             let title = req(&flags, "title");
             let verdict = req(&flags, "verdict");
@@ -170,6 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let reason = flags.get("reason").cloned().unwrap_or_default();
             let promoted = verdict == "promoted";
             let suffix = format!("{}_{num}", run_id.as_str());
+            ensure_goal(&state, &goal, &yoyo).await?;
 
             let mut patch = StatePatch::new(
                 PatchId::new(format!("patch_{suffix}")),

@@ -103,6 +103,19 @@ cleanup() {
 
     exit "$rc"
 }
+# GASP: dream cycles are runs too — the arc/log changes ride the state
+# repo's boundary commit via the session-end memory mirror.
+export GASP_GOAL_ID="goal_dreaming"
+export GASP_GOAL_TITLE="Dream: keep a long-horizon arc worth chasing"
+export GASP_GOAL_SUMMARY="the standing goal dream cycles serve; DREAM.md and the dream log are the agent's self-narrative"
+if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; then
+    :
+else
+    echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
+    gasp_session_start() { :; }; gasp_session_end() { :; }
+fi
+GASP_OUTCOME=""
+
 trap cleanup EXIT
 
 configure_ci_git_auth
@@ -248,18 +261,6 @@ if [ "$DRY_RUN" = "true" ]; then
 fi
 
 # ── Snapshot HEAD (for revert on out-of-scope writes) ──────────────────
-# GASP: dream cycles are runs too — the arc/log changes ride the state
-# repo's boundary commit via the session-end memory mirror.
-export GASP_GOAL_ID="goal_dreaming"
-export GASP_GOAL_TITLE="Dream: keep a long-horizon arc worth chasing"
-export GASP_GOAL_SUMMARY="the standing goal dream cycles serve; DREAM.md and the dream log are the agent's self-narrative"
-if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; then
-    :
-else
-    echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
-    gasp_session_start() { :; }; gasp_session_end() { :; }
-fi
-GASP_OUTCOME=""
 GASP_DAY=$(cat DAY_COUNT 2>/dev/null || echo 0); GASP_DAY=${GASP_DAY//[^0-9]/}
 gasp_session_start "${GASP_DAY:-0}" "dream_day" "dream cycle (reflect on the long-horizon arc)"
 
