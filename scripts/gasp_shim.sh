@@ -55,9 +55,9 @@ _gasp_note_failure() {
     n=$(( ${n:-0} + 1 ))
     echo "$n" > "$GASP_FAIL_COUNTER" 2>/dev/null || true
     if [ "$n" -ge 3 ]; then
-        echo "  [gasp] ⚠⚠⚠ GASP has failed $n consecutive sessions — the state stream is dead" >&2
+        echo "  [gasp] ⚠⚠⚠ GASP has failed $n recorded sessions — the state stream may be dead" >&2
         echo "  [gasp]     check: GH_PAT validity/push access to ${GASP_STATE_REPO}, gasp-emit build" >&2
-        echo "  [gasp]     reset the counter with: echo 0 > $GASP_FAIL_COUNTER" >&2
+        echo "  [gasp]     reset with: echo 0 > $GASP_FAIL_COUNTER (gitignored — counts persist only on non-ephemeral runners)" >&2
     fi
     return 0
 }
@@ -143,57 +143,64 @@ gasp_task_planned() {
 }
 
 # gasp_task_result <num> <title> <promoted|rejected> <pre-sha> <post-sha> [reason]
+# GASP_EVAL_COMMAND names the oracle recorded on the eval fact — callers with
+# a different gate (skill_evolve.sh) override it so the record never claims a
+# stronger oracle than actually ran.
 gasp_task_result() {
     _gasp_emit task-result --state-dir "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" \
         --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" \
         --num "$1" --title "$2" --verdict "$3" --pre-sha "$4" --post-sha "$5" \
         --repo "${REPO:-yologdev/yoyo-evolve}" --branch "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)" \
+        --eval-command "${GASP_EVAL_COMMAND:-}" \
         --reason "${6:-}"
 }
 
-# gasp_mirror_skills <pre-sha> <post-sha>
-# Mirror-on-change (GASP conformance rule 3): copy the cycle's changed
-# skills/ + skills_attic/ files into the state clone, rebinding executor-
-# layout paths to the state layout (learnings.jsonl -> facts.jsonl,
-# journals/ -> journal/, ...) exactly as the original seed did. Deletions
-# (retire = git mv into the attic) are mirrored as deletions. The mirrored
-# tree rides the same boundary commit as the events (session-end extra
-# paths), so a skill version and its lineage ship together.
+# gasp_mirror_skills — idempotent full-tree sync of skills/ + skills_attic/
+# into the state clone (GASP conformance rule 3), rebinding executor-layout
+# paths to the state layout (learnings.jsonl -> facts.jsonl, journals/ ->
+# journal/, ...) exactly as the original seed did. Full sync rather than a
+# cycle diff, so one lost session never diverges the trees permanently —
+# it stays "mirror-on-change" at the commit level because commit_run no-ops
+# when nothing changed. The mirrored tree rides the same boundary commit as
+# the events (session-end extra paths), so a skill version and its lineage
+# ship together. Files present only in the state clone are removed
+# (retire = the attic move mirrors as delete + add).
 gasp_mirror_skills() {
     [ "$GASP_ENABLED" = true ] || return 0
-    local pre="$1" post="$2" f mirrored=0 touched_skills=0 touched_attic=0
-    while IFS= read -r f; do
-        [ -z "$f" ] && continue
-        case "$f" in
-            skills/*) touched_skills=1 ;;
-            skills_attic/*) touched_attic=1 ;;
-            *) continue ;;
-        esac
-        if [ -f "$f" ]; then
+    local dir f rel err
+    for dir in skills skills_attic; do
+        [ -d "$dir" ] || continue
+        while IFS= read -r -d '' f; do
             mkdir -p "$GASP_STATE_DIR/$(dirname "$f")" 2>/dev/null || true
-            if ! perl -pe '
+            # the shell owns the open/redirect so unreadable inputs and
+            # write failures are non-zero and caught, with stderr surfaced
+            if ! err=$(perl -pe '
                 s/active_social_learnings\.md/active_social_memory.md/g;
                 s/social_learnings\.jsonl/social_facts.jsonl/g;
                 s/active_learnings\.md/active_memory.md/g;
                 s/learnings\.jsonl/facts.jsonl/g;
                 s/journals\//journal\//g;
-            ' "$f" > "$GASP_STATE_DIR/$f" 2>/dev/null; then
-                _gasp_off "skill mirror failed for $f"
+            ' 2>&1 < "$f" > "$GASP_STATE_DIR/$f"); then
+                _gasp_off "skill mirror failed for $f: $(printf '%s' "$err" | head -n 1)"
                 return 0
             fi
-        else
-            rm -f "$GASP_STATE_DIR/$f" 2>/dev/null || true
+            if [ -s "$f" ] && [ ! -s "$GASP_STATE_DIR/$f" ]; then
+                _gasp_off "skill mirror produced empty output for non-empty $f"
+                return 0
+            fi
+        done < <(find "$dir" -type f -print0 2>/dev/null)
+        if [ -d "$GASP_STATE_DIR/$dir" ]; then
+            while IFS= read -r -d '' f; do
+                rel="${f#"$GASP_STATE_DIR/"}"
+                [ -f "$rel" ] || rm -f "$f" 2>/dev/null || true
+            done < <(find "$GASP_STATE_DIR/$dir" -type f -print0 2>/dev/null)
         fi
-        mirrored=$((mirrored + 1))
-    done < <(git diff --name-only "$pre".."$post" -- skills/ skills_attic/ 2>/dev/null || true)
-    if [ "$mirrored" -gt 0 ]; then
-        # only name directories that actually received changes — git add
-        # fatals on pathspecs matching nothing in the state clone
-        GASP_EXTRA_PATHS=""
-        [ "$touched_skills" = 1 ] && GASP_EXTRA_PATHS="skills"
-        [ "$touched_attic" = 1 ] && GASP_EXTRA_PATHS="${GASP_EXTRA_PATHS:+$GASP_EXTRA_PATHS,}skills_attic"
-        echo "  [gasp] mirrored $mirrored skill file(s) into the state repo"
-    fi
+    done
+    # name only directories that actually changed — git add fatals on
+    # pathspecs matching nothing in the state clone
+    GASP_EXTRA_PATHS=$(git -C "$GASP_STATE_DIR" status --porcelain -- skills skills_attic 2>/dev/null \
+        | awk '{print $NF}' | cut -d/ -f1 | sort -u | paste -sd, - || true)
+    [ -n "$GASP_EXTRA_PATHS" ] && echo "  [gasp] skills synced into the state repo"
     return 0
 }
 

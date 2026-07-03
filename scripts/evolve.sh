@@ -54,7 +54,7 @@ if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; th
 else
     echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
     gasp_session_start() { :; }; gasp_task_planned() { :; }
-    gasp_task_result()  { :; }; gasp_session_end()  { :; }
+    gasp_task_result()  { :; }; gasp_mirror_skills() { :; }; gasp_session_end() { :; }
 fi
 
 # Non-main branches run in quiet mode: no issue-tracker writes, no tags, no
@@ -1689,6 +1689,9 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
         echo "    Task $TASK_NUM: verified OK"
         gasp_task_result "$TASK_NUM" "$task_title" promoted "$PRE_TASK_SHA" \
             "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        # evolve tasks can legitimately touch skills/ too — keep the state
+        # repo's skill tree in sync (full-tree sync; no-op when unchanged)
+        gasp_mirror_skills
     fi
 
 done

@@ -33,6 +33,9 @@ source "$(dirname "$0")/common.sh"
 export GASP_GOAL_ID="goal_skill_quality"
 export GASP_GOAL_TITLE="Keep yoyo's skills sharp: refine, create, retire"
 export GASP_GOAL_SUMMARY="the standing goal skill-evolve cycles serve; each skill change is a patch pinning the skill commit"
+# the eval fact must name THIS harness's actual oracle (no clippy, no
+# evaluator agent here) — the record never claims a stronger gate than ran
+export GASP_EVAL_COMMAND="diff-scope hard rules; cargo build+test"
 if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; then
     :
 else
@@ -111,6 +114,13 @@ cleanup() {
 
         # GASP: close the run and push state AFTER the code push (code first,
         # state second). Fail-soft; no-ops when the session never opened.
+        # If the pre-push rebase rewrote the agent's commit, the recorded
+        # patch artifact pins a SHA that never becomes public — say so.
+        if [ -n "${HEAD_AFTER:-}" ] && [ "${HEAD_BEFORE:-}" != "${HEAD_AFTER:-}" ] \
+           && ! git merge-base --is-ancestor "$HEAD_AFTER" HEAD 2>/dev/null; then
+            echo "  WARNING: rebase rewrote ${HEAD_AFTER:0:7}; GASP patch artifact pins a non-pushed SHA" >&2
+            GASP_OUTCOME="${GASP_OUTCOME:-done} (artifact sha rewritten by rebase; now $(git rev-parse --short HEAD 2>/dev/null || echo unknown))"
+        fi
         gasp_session_end "${GASP_OUTCOME:-aborted rc=$rc}"
     fi
 
@@ -257,7 +267,11 @@ fi
 # ── Snapshot HEAD (for revert on build break) ──────────────────────────
 HEAD_BEFORE=$(git rev-parse HEAD)
 
-gasp_session_start "$(cat DAY_COUNT 2>/dev/null || echo 0)" "skill_day" \
+# Skill cycles intentionally emit no task node — the chain is
+# run -> patch -> eval -> decision under goal_skill_quality (the spec's
+# spine is "a backbone, not a forced linear workflow").
+GASP_DAY=$(cat DAY_COUNT 2>/dev/null || echo 0); GASP_DAY=${GASP_DAY//[^0-9]/}
+gasp_session_start "${GASP_DAY:-0}" "skill_day" \
     "skill-evolve cycle (refine|create|retire one skill)"
 
 # ── Invoke yoyo ────────────────────────────────────────────────────────
@@ -362,12 +376,23 @@ if [ "$HEAD_BEFORE" != "$HEAD_AFTER" ]; then
     fi
     echo "skill-evolve: build/test still green"
 
-    # GASP: record the promoted skill patch (pins the skill commit) and
-    # mirror the changed skill files into the state repo (conformance rule 3)
-    gasp_task_result 1 "skill cycle: $(echo "$CHANGED_FILES" | paste -sd ', ' - | cut -c1-160)" \
-        promoted "$HEAD_BEFORE" "$HEAD_AFTER"
-    gasp_mirror_skills "$HEAD_BEFORE" "$HEAD_AFTER"
-    GASP_OUTCOME="promoted skill change"
+    # GASP: a journal-only commit (refused / NO-OP / meta-suggestion — the
+    # meta-skill journals every cycle) is NOT a skill change: no patch is
+    # recorded. A real change records the promoted patch pinning the skill
+    # commit; the state repo's skill tree is synced either way.
+    NON_JOURNAL=$(echo "$CHANGED_FILES" | grep -v -e '^skills/_journal\.md$' -e '^memory/learnings\.jsonl$' || true)
+    if [ -n "$NON_JOURNAL" ]; then
+        gasp_task_result 1 "skill cycle: $(echo "$NON_JOURNAL" | paste -sd ', ' - | cut -c1-160)" \
+            promoted "$HEAD_BEFORE" "$HEAD_AFTER"
+        GASP_OUTCOME="promoted skill change"
+    else
+        GASP_OUTCOME="journal-only cycle (refused, no-op, or meta-suggestion — no skill change)"
+    fi
+    gasp_mirror_skills
+fi
+if [ -z "$GASP_OUTCOME" ] && [ "${exit_code:-0}" -ne 0 ]; then
+    # agent timeout / API error with no commit is an abort, not a verdict
+    GASP_OUTCOME="aborted: agent exit=$exit_code (no commit)"
 fi
 [ -z "$GASP_OUTCOME" ] && GASP_OUTCOME="no-op (no skill change this cycle)"
 

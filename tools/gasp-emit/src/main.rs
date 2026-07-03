@@ -165,13 +165,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await?;
 
-            // the mechanical gate + evaluator agent, folded into one eval fact
+            // the session's mechanical gate, folded into one eval fact — the
+            // caller names its actual oracle so the record never overclaims
+            let eval_command = flags
+                .get("eval-command")
+                .map(String::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("cargo fmt+clippy+build+test; evaluator agent");
             state
                 .record_eval(
                     yoyo.clone(),
                     EvalResult {
                         id: EvalId::new(format!("eval_{suffix}")),
-                        command: "cargo fmt+clippy+build+test; evaluator agent".into(),
+                        command: eval_command.into(),
                         status: if promoted { EvalStatus::Passed } else { EvalStatus::Failed },
                         score: Some(if promoted { 1.0 } else { 0.0 }),
                         metadata: serde_json::json!({ "reason": reason }),
@@ -187,7 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         id: DecisionId::new(format!("decision_{suffix}")),
                         status: if promoted { DecisionStatus::Approved } else { DecisionStatus::Rejected },
                         reason: if promoted {
-                            "gate + evaluator passed; kept".into()
+                            format!("oracle passed ({eval_command}); kept")
                         } else {
                             format!("reverted to {pre_sha}: {reason}")
                         },
