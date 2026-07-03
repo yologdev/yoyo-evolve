@@ -4907,8 +4907,14 @@ src/baz.rs
         let report = effectiveness_report_from(&path);
         assert_ne!(report.verdict, EffectivenessVerdict::Insufficient);
         assert_eq!(report.total_events, 6);
-        let early = report.early.as_ref().expect("early window present at 6 events");
-        let recent = report.recent.as_ref().expect("recent window present at 6 events");
+        let early = report
+            .early
+            .as_ref()
+            .expect("early window present at 6 events");
+        let recent = report
+            .recent
+            .as_ref()
+            .expect("recent window present at 6 events");
         assert_eq!(early.event_count, 3);
         assert_eq!(recent.event_count, 3);
     }

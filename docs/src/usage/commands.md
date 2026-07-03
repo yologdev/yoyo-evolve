@@ -524,6 +524,55 @@ The review streams to stderr for visual feedback; the final review text goes to 
 
 This is one of the most common workflows for developers using coding agents — getting a second pair of eyes on your changes before committing.
 
+## Risk Analysis
+
+| Command | Description |
+|---------|-------------|
+| `/risk` | Show the top 15 riskiest files, ranked by predicted regression risk |
+| `/risk --all` | Show all scored files, not just the top 15 |
+| `/risk snapshot` | Save the current risk ranking for later validation |
+| `/risk validate` | Check the last snapshot against files that actually changed since |
+| `/risk history` | Show past snapshots and validation results |
+| `/risk predict` | Predict which files are most likely to break next |
+| `/risk accuracy` | Show prediction accuracy, per-signal breakdown, and learned weights |
+| `/risk effectiveness` | Measure whether the risk reflex is actually improving over time |
+
+The `/risk` command analyzes source files and ranks them by predicted
+regression risk using weighted signals from git history: change frequency
+(30-day churn), recent fix/bugfix commits, co-change coupling, file size,
+author churn, test coverage mapping, and revert involvement.
+
+The snapshot → validate loop measures prediction accuracy: run
+`/risk snapshot`, keep coding, then `/risk validate` to see which predictions
+were right (Precision@10) and what surprised you.
+
+### `/risk effectiveness` — Is the reflex learning?
+
+`/risk effectiveness` answers a harder question than `/risk accuracy`: not
+"how accurate are the predictions?" but "is the prediction loop *getting
+better* as validation history accumulates?"
+
+It splits your validation history chronologically into an early window (first
+half) and a recent window (second half), reports the event count and hit rate
+for each, and emits a verdict based on the delta:
+
+- Recent hit rate ≥5 points better than early → `reflex appears to be learning ↑`
+- Within ±5 points → `no measurable improvement yet — need more cycles`
+- ≥5 points worse → `reflex may be decorative ↓ — consider anticipatory signals`
+- Fewer than 6 total validation events → `insufficient data` (the split is
+  skipped until enough history accumulates)
+
+The report also surfaces the overall accuracy trend (the same signal shown by
+`/status`), so the two views always agree.
+
+```
+/risk effectiveness    # early vs recent hit rate + verdict
+```
+
+This is a read-only report over the local validation history in
+`.yoyo/risk_validations.jsonl`. On a repo with no validation history it
+degrades gracefully to the "insufficient data" verdict — no setup required.
+
 ## Issue Revisiting
 
 | Command | Description |
