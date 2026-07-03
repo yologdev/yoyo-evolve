@@ -1,0 +1,36 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "editor-model\|editor_mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+ ✓ (6ms)
+  2 tools completed in 8.6s (2 ✓)
+
+The --editor-model flag appears only in `KNOWN_FLAGS` — let me verify it's actually parsed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--model"' src/cli.rs |…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_editor_model" src/… ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 480..500p src/cli.rs 2>/d… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn collect_positional_a… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '278,330p' src/cli.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show e35b0fa --stat && grep … ✓ (8ms)
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 24s)
+  7 tools completed in 2m 14s (7 ✓)
+
+**Verdict: FAIL**
+
+Summary of evaluation:
+
+What was done correctly (src/commands_config.rs):
+• ✅ Downgrade map fully deleted; default_editor_model now returns override-or-current-model
+• ✅ `EDITOR_MODEL static with set_editor_model/editor_model, mirroring ARCHITECT_MODEL`
+• ✅ `/architect <arch> [editor]` two-token parsing, with editor cleared on one-token form
+• ✅ architect_status shows explicit editor or "same as architect model"
+• ✅ Old map tests replaced (not deleted) with serial tests of the new contract, with global-state cleanup
+
+What fails the task (src/cli.rs — task item 4):
+• ❌ `--editor-model was only added to KNOWN_FLAGS. It is never parsed: no flag_value call, no set_editor_model` invocation anywhere in cli.rs, and it's not in flags_needing_values. Result: `yoyo --editor-model haiku "fix X"` sets nothing and "haiku" leaks into the positional prompt — and because the flag is in KNOWN_FLAGS, the unknown-flag warning is suppressed, making the breakage silent.
+• ❌ The required test (--editor-model "  " rejected like --model) is absent.
+• ❌ Docs update (docs/src/usage/commands.md `/architect` section) was skipped — commit touched only the two src files.
+
+The feature the task explicitly required "clearly doesn't work," which meets the FAIL criteria. Verdict written to session_plan/eval_task_2.md.
+

@@ -1,0 +1,224 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,260p src/commands_con…  ▶ search 'default_editor_model|set_architect_mode|architect_model|EDIT…' in src ✓ (7ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "default_editor_model\|… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "default_editor_model\|a… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/commands_co… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 460,560p src/cli.rs && se… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_args" src/cli.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 693,740p src/cli.rs && gr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_config::\|comm… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn require_flag_value\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 315,335p src/repl.rs; gre… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 25,60p src/help_data.rs; … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 26,45p src/help_data.rs |… ✓ (7ms)
+  ▶ read src/help_data.rs:26..46  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 55,70p src/help.rs && gre… ✓ (1ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "/architect\|editor mod… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 235,250p docs/src/usage/c… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 240,300p docs/src/usage/c… ✓ (4ms)
+  ▶ read docs/src/usage/commands.md:240..248 ✓ (1ms)
+  19 tools completed in 2m 30s (19 ✓)
+
+Now I have the full picture. Making the edits — starting with `src/commands_config.rs`:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (66 → 34 lines)
+    pub fn architect_model() -> Option<String> {
+        ARCHITECT_MODEL.lock().ok().and_then(|m| m.clone())
+    }
+  - 
+  - /// Choose a default editor model given the current (architect) model.
+  - /// Maps strong/expensive models to their cheaper counterparts from the same provider.
+  - pub fn default_editor_model(current_model: &str) -> String {
+  -     let m = current_model.to_lowercase();
+  - 
+  -     // Anthropic: opus → sonnet, sonnet → haiku
+  -     if m.contains("opus") {
+  -         return "claude-sonnet-4-6".into();
+  -     }
+  -     if m.contains("sonnet") {
+  -         return "claude-haiku-4-5".into();
+  -     }
+  - 
+  -     // OpenAI: gpt-4o → gpt-4o-mini, gpt-4.1 → gpt-4.1-mini, o3 → o3-mini
+  -     if m.contains("gpt-4o") && !m.contains("mini") {
+  -         return "gpt-4o-mini".into();
+  ... (67 more lines)
+ ✓ (16.5s)
+    pub fn architect_model() -> Option<String> {
+        ARCHITECT_MODEL.lock().ok().and_then(|m| m.clone())
+    }
+  - 
+  - /// Choose a default editor model given the current (architect) model.
+  - /// Maps strong/expensive models to their cheaper counterparts from the same provider.
+  - pub fn default_editor_model(current_model: &str) -> String {
+  -     let m = current_model.to_lowercase();
+  ... (13 more lines)
+
+  ✗ Watch failed: `cargo clippy --all-targets -- -D warnings && cargo test`
+[1m[92m    Checking[0m yoyo-agent v0.1.14 (/home/runner/work/yoyo-evolve/yoyo-evolve)
+[1m[91merror[0m[1m: function `set_editor_model` is never used[0m
+   [1m[94m--> [0msrc/commands_config.rs:136:8
+    [1m[94m|[0m
+[1m[94m136[0m [1m[94m|[0m pub fn set_editor_model(model: Option<String>) {
+    [1m[94m|[0m        [1m[91m^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `-D dead-code` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo") due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `yoyo-agent` (bin "yoyo" test) due to 1 previous error
+  → Auto-fixing (attempt 1/3)...
+  ▶ edit src/commands_config.rs (9 → 17 lines)
+            model => {
+  -             // Enable with a specific architect model
+  -             set_architect_mode(true, Some(model.to_string()));
+  +             // Enable with a specific architect model, and optionally an
+  +             // explicit editor model as a second token (issue #542):
+  +             //   /architect <arch-model> [editor-model]
+  +             let mut tokens = model.split_whitespace();
+  +             let arch = tokens.next().unwrap_or(model).to_string();
+  +             let editor = tokens.next().map(|t| t.to_string());
+  +             set_architect_mode(true, Some(arch.clone()));
+  +             set_editor_model(editor.clone());
+  +             let editor_desc =
+  +                 editor.unwrap_or_else(|| "same as architect model".to_string());
+                eprintln!(
+                    "{GREEN}  ✓ architect mode: ON{RESET}\n\
+  -                  {DIM}    architect: {model}\n\
+  -                  {DIM}    editor: auto-selected{RESET}\n"
+  +                  {DIM}    architect: {arch}\n\
+  +                  {DIM}    editor: {editor_desc}{RESET}\n"
+                );
+  ... (1 more lines)
+ ✓ (1m 31s)
+            model => {
+  -             // Enable with a specific architect model
+  -             set_architect_mode(true, Some(model.to_string()));
+  +             // Enable with a specific architect model, and optionally an
+  +             // explicit editor model as a second token (issue #542):
+  +             //   /architect <arch-model> [editor-model]
+  +             let mut tokens = model.split_whitespace();
+  +             let arch = tokens.next().unwrap_or(model).to_string();
+  ... (13 more lines)
+  ▶ edit src/commands_config.rs (10 → 10 lines)
+            "on" => {
+                set_architect_mode(true, None);
+                let current = "current model";
+  -             let editor = "(auto-selected)";
+  +             let editor = editor_model().unwrap_or_else(|| "same as architect model".to_string());
+                eprintln!(
+                    "{GREEN}  ✓ architect mode: ON{RESET}\n\
+                     {DIM}    architect: {current}\n\
+ ✓ (1m 28s)
+            "on" => {
+                set_architect_mode(true, None);
+                let current = "current model";
+  -             let editor = "(auto-selected)";
+  +             let editor = editor_model().unwrap_or_else(|| "same as architect model".to_string());
+                eprintln!(
+                    "{GREEN}  ✓ architect mode: ON{RESET}\n\
+                     {DIM}    architect: {current}\n\
+  ▶ edit src/commands_config.rs (8 → 10 lines)
+                } else {
+                    set_architect_mode(true, None);
+  +                 let editor =
+  +                     editor_model().unwrap_or_else(|| "same as architect model".to_string());
+                    eprintln!(
+                        "{GREEN}  ✓ architect mode: ON{RESET}\n\
+                         {DIM}    architect: current model\n\
+  -                      {DIM}    editor: auto-selected{RESET}\n"
+  +                      {DIM}    editor: {editor}{RESET}\n"
+                    );
+                }
+ ✓ (1m 29s)
+                } else {
+                    set_architect_mode(true, None);
+  +                 let editor =
+  +                     editor_model().unwrap_or_else(|| "same as architect model".to_string());
+                    eprintln!(
+                        "{GREEN}  ✓ architect mode: ON{RESET}\n\
+                         {DIM}    architect: current model\n\
+  -                      {DIM}    editor: auto-selected{RESET}\n"
+  ... (3 more lines)
+  ▶ edit src/commands_config.rs (3 → 3 lines)
+        let arch_model = architect_model().unwrap_or_else(|| current_model.to_string());
+  -     let editor = default_editor_model(&arch_model);
+  +     let editor = editor_model().unwrap_or_else(|| "same as architect model".to_string());
+        Some(format!("architect: {arch_model} → editor: {editor}"))
+ ✓ (1m 27s)
+        let arch_model = architect_model().unwrap_or_else(|| current_model.to_string());
+  -     let editor = default_editor_model(&arch_model);
+  +     let editor = editor_model().unwrap_or_else(|| "same as architect model".to_string());
+        Some(format!("architect: {arch_model} → editor: {editor}"))
+  4 tools completed in 6m 21s (4 ✓)
+
+Now replace the old map tests with tests of the new contract:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (25 → 57 lines)
+  -     fn test_default_editor_model_sonnet_maps_to_haiku() {
+  -         let editor = default_editor_model("claude-sonnet-4-20250514");
+  -         assert!(
+  -             editor.to_lowercase().contains("haiku"),
+  -             "expected haiku for sonnet, got: {editor}"
+  +     #[test]
+  +     #[serial]
+  +     fn test_default_editor_model_defaults_to_main_model() {
+  +         // No explicit override → editor is the main model, never inferred (#542)
+  +         set_editor_model(None);
+  +         assert_eq!(default_editor_model("claude-opus-4-6"), "claude-opus-4-6");
+  +         assert_eq!(default_editor_model("gpt-4o"), "gpt-4o");
+  +         assert_eq!(
+  +             default_editor_model("anthropic.claude-sonnet-4-6"),
+  +             "anthropic.claude-sonnet-4-6"
+            );
+        }
+    
+        #[test]
+  -     fn test_default_editor_model_opus_maps_to_sonnet() {
+  ... (54 more lines)
+ ✓ (16.5s)
+  -     fn test_default_editor_model_sonnet_maps_to_haiku() {
+  -         let editor = default_editor_model("claude-sonnet-4-20250514");
+  -         assert!(
+  -             editor.to_lowercase().contains("haiku"),
+  -             "expected haiku for sonnet, got: {editor}"
+  +     #[test]
+  +     #[serial]
+  +     fn test_default_editor_model_defaults_to_main_model() {
+  ... (13 more lines)
+  ▶ read src/commands_config.rs:1510..1524 ✓ (1ms)
+  ▶ edit src/commands_config.rs (6 → 5 lines)
+        // --- architect mode tests ---
+    
+  -     #[test]
+        #[test]
+        #[serial]
+        fn test_default_editor_model_defaults_to_main_model() {
+ ✓ (1m 28s)
+        // --- architect mode tests ---
+    
+  -     #[test]
+        #[test]
+        #[serial]
+        fn test_default_editor_model_defaults_to_main_model() {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (55.9s)
+  5 tools completed in 3m 20s (5 ✓)
+
+Clippy and tests green. Now the --editor-model CLI flag in src/cli.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 3 lines)
+    const KNOWN_FLAGS: &[&str] = &[
+        "--model",
+  +     "--editor-model",
+ ✓ (1m 31s)
+    const KNOWN_FLAGS: &[&str] = &[
+        "--model",
+  +     "--editor-model",
+
+  ✓ Watch passed after fix (attempt 1)
+

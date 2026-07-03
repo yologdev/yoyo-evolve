@@ -1,0 +1,175 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "save_config_to_file\|sa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+ ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:40..110 ✓ (1ms)
+  3 tools completed in 10.5s (3 ✓)
+
+Now let me look at the wizard interactive section where save results are printed:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:435..495 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:740..810  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:875..945 ✓ (1ms)
+ ✓ (2ms)
+  3 tools completed in 31.8s (3 ✓)
+
+Clear picture. Writing tests first, then the implementation. First the tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (2 → 190 lines)
+  +     #[test]
+  +     fn test_save_over_existing_creates_bak_with_original_contents() {
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_wizard_bak")
+  +             .tempdir()
+  +             .unwrap();
+  +         let path = tmp_dir.path().join(".yoyo.toml");
+  +         let original = "provider = \"anthropic\"\nmodel = \"old-model\"\nauto_watch = true\n";
+  +         std::fs::write(&path, original).unwrap();
+  + 
+  +         let result = save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None);
+  +         assert!(result.is_ok());
+  + 
+  +         let bak_path = tmp_dir.path().join(".yoyo.toml.bak");
+  +         assert!(bak_path.exists(), ".bak should exist after overwrite");
+  +         let bak_contents = std::fs::read_to_string(&bak_path).unwrap();
+  +         assert_eq!(
+  +             bak_contents, original,
+  +             ".bak should hold the ORIGINAL contents"
+  +         );
+  ... (170 more lines)
+ ✓ (9.8s)
+  +     #[test]
+  +     fn test_save_over_existing_creates_bak_with_original_contents() {
+  +         let tmp_dir = tempfile::Builder::new()
+  +             .prefix("yoyo_test_wizard_bak")
+  +             .tempdir()
+  +             .unwrap();
+  +         let path = tmp_dir.path().join(".yoyo.toml");
+  +         let original = "provider = \"anthropic\"\nmodel = \"old-model\"\nauto_watch = true\n";
+  ... (13 more lines)
+
+Tests fail as expected (function doesn't exist yet). Now the implementation:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (35 → 93 lines)
+    /// Save a `.yoyo.toml` config file in the given directory.
+  + /// If the file already exists, it is backed up to `.yoyo.toml.bak` first and
+  + /// unmanaged top-level keys are preserved into the new contents.
+    /// Returns Ok(path) on success.
+    pub fn save_config_to_file(
+        dir: &std::path::Path,
+  ···
+    ) -> io::Result<String> {
+        let path = dir.join(".yoyo.toml");
+        let contents = generate_config_contents(provider, model, base_url);
+  -     std::fs::write(&path, contents)?;
+  +     write_config_with_backup(&path, contents)?;
+        Ok(path.display().to_string())
+  + }
+  + 
+  + /// Top-level keys the setup wizard manages in `generate_config_contents`.
+  + /// Anything else found at the top level of an existing config is preserved.
+  + const MANAGED_CONFIG_KEYS: &[&str] = &["provider", "model", "base_url"];
+  + 
+  + /// Scan an existing config's top-level `key = value` lines and return those
+  ... (65 more lines)
+ ✓ (1m 34s)
+    /// Save a `.yoyo.toml` config file in the given directory.
+  + /// If the file already exists, it is backed up to `.yoyo.toml.bak` first and
+  + /// unmanaged top-level keys are preserved into the new contents.
+    /// Returns Ok(path) on success.
+    pub fn save_config_to_file(
+        dir: &std::path::Path,
+  ···
+    ) -> io::Result<String> {
+  ... (13 more lines)
+
+Now the wizard output — mention the backup when overwriting:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (24 → 38 lines)
+        match save_location {
+  -         SaveLocation::Project => match save_config_to_file(
+  -             &std::env::current_dir().unwrap_or_default(),
+  -             provider,
+  -             &model,
+  -             base_url.as_deref(),
+  -         ) {
+  -             Ok(path) => {
+  -                 writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
+  -             }
+  -             Err(e) => {
+  -                 writeln!(writer, "  {YELLOW}Could not save config: {e}{RESET}").ok();
+  +         SaveLocation::Project => {
+  +             let target = std::env::current_dir().unwrap_or_default();
+  +             let existed = target.join(".yoyo.toml").exists();
+  +             match save_config_to_file(&target, provider, &model, base_url.as_deref()) {
+  +                 Ok(path) => {
+  +                     writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
+  +                     if existed {
+  +                         writeln!(
+  ... (27 more lines)
+ ✓ (1m 27s)
+        match save_location {
+  -         SaveLocation::Project => match save_config_to_file(
+  -             &std::env::current_dir().unwrap_or_default(),
+  -             provider,
+  -             &model,
+  -             base_url.as_deref(),
+  -         ) {
+  -             Ok(path) => {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test setup:: 2>&1 | tail -… ✓ (152ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 && car… ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (44.5s)
+  5 tools completed in 3m 55s (5 ✓)
+
+All green. Now check if quick-start documents the wizard:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "wizard\|setup" docs/… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/getting-started/quick-start.md:14..26 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/getting-started/quick-start.md (2 → 4 lines)
+    > anytime with `yoyo setup`. If you prefer to skip it, set your API key
+  - > environment variable first or press Ctrl+C to cancel.
+  + > environment variable first or press Ctrl+C to cancel. Re-running setup over
+  + > an existing config backs it up to `.yoyo.toml.bak` and preserves any settings
+  + > the wizard doesn't manage (e.g. `auto_watch`).
+ ✓ (1m 11s)
+    > anytime with `yoyo setup`. If you prefer to skip it, set your API key
+  - > environment variable first or press Ctrl+C to cancel.
+  + > environment variable first or press Ctrl+C to cancel. Re-running setup over
+  + > an existing config backs it up to `.yoyo.toml.bak` and preserves any settings
+  + > the wizard doesn't manage (e.g. `auto_watch`).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (17 lines) ✓ (15ms)
+  5 tools completed in 1m 55s (5 ✓)
+
+Task complete and committed as 7e046fc. ✓
+
+What I did (all in `src/setup.rs` + one doc line):
+
+1. Tests first — 8 new tests covering:
+   • Overwrite creates <path>.bak with the original contents
+   • Unmanaged key (auto_watch = true) survives into the new file
+   • Managed keys not duplicated — new value wins, exactly one model = line, old base_url dropped too
+   • Fresh save: no .bak, no preserved comment (existing behavior untouched)
+   • Paired negative (Day 122 lesson): old file with only managed keys → nothing appended
+   • Section boundary: [permissions] keys don't get mis-appended as top-level
+   • Unit test for preserved_unmanaged_lines skipping comments/blanks
+   • User-config path (config.toml.bak via XDG override, #[serial])
+
+2. Implementation — extracted the shared logic into write_config_with_backup:
+   • MANAGED_CONFIG_KEYS = ["provider", "model", "base_url"] (matches `generate_config_contents` exactly)
+   • preserved_unmanaged_lines does the simple line-based top-level scan, stopping at the first [ line
+   • backup_path appends .bak (avoiding with_extension, which would have replaced .toml)
+   • Both save_config_to_file and save_config_to_user_file route through it — public signatures unchanged
+
+3. Wizard feedback — the interactive wizard checks existence before saving and prints "Previous config backed up to <path>.bak (unmanaged settings preserved)" when it overwrote something.
+
+4. Docs — quick-start.md's wizard note now mentions the backup + preservation behavior.
+
+Verified: 4081 + 88 tests pass, clippy -D warnings clean, fmt clean.
+
+The satisfying part: this is exactly the class of bug from my Day 124 lesson — the wizard's fs::write was a guard-free destructive path that had been trusted since it was written. The fix makes the mistake structurally impossible rather than relying on agents remembering not to run setup in the repo.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

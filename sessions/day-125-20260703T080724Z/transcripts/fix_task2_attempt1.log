@@ -1,0 +1,125 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "editor-model\|editor_mo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "flags_needing_values\|\… ✓ (6ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:480..560  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:735..815 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_editor_model\|edito…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,200p src/cli.rs && gi… ✓ (6ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "require_flag_value\|Fla…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "whitespace\|trim" src/c… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn parse_args" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "editor-model\|--model" … ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "architect" docs/src/us…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 50,75p src/help.rs ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "architect" docs/src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn -i "/architect\b" docs/… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs:20..50  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,250p src/commands_con… ✓ (1ms)
+ ✓ (4ms)
+  16 tools completed in 1m 21s (16 ✓)
+
+The cli.rs half is missing. Let me check the docs commands table and then make all the edits.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 230,270p docs/src/usage/c… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "architect" docs/src/ |… ✓ (4ms)
+  2 tools completed in 15.8s (2 ✓)
+
+No /architect section exists yet — I'll add one. Now making the edits. First, cli.rs: add to flags_needing_values and actually parse the flag.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 4 lines)
+        let flags_needing_values = [
+            "--model",
+  +         "--editor-model",
+            "--provider",
+ ✓ (1m 43s)
+        let flags_needing_values = [
+            "--model",
+  +         "--editor-model",
+            "--provider",
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 8 lines)
+        // Parse model/provider/API-key/fallback configuration
+        let mc = parse_model_config(args, &file_config, &prompt_arg);
+  + 
+  +     // --editor-model <name>: explicit editor model for architect mode (issue #542).
+  +     // Editor defaults to the main model; this flag overrides it.
+  +     if let Some(editor) = parse_editor_model_flag(args) {
+  +         crate::commands_config::set_editor_model(Some(editor));
+  +     }
+ ✓ (10.6s)
+        // Parse model/provider/API-key/fallback configuration
+        let mc = parse_model_config(args, &file_config, &prompt_arg);
+  + 
+  +     // --editor-model <name>: explicit editor model for architect mode (issue #542).
+  +     // Editor defaults to the main model; this flag overrides it.
+  +     if let Some(editor) = parse_editor_model_flag(args) {
+  +         crate::commands_config::set_editor_model(Some(editor));
+  +     }
+  2 tools completed in 2m 8s (2 ✓)
+
+Now add the helper function. Let me place it near parse_model_config:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (1 → 10 lines)
+  + /// Parse the `--editor-model` flag value, trimming whitespace and rejecting
+  + /// empty/whitespace-only values — same hardening as `--model` (see 1bc346c).
+  + /// Returns `None` when the flag is absent or its value is empty after trim.
+  + fn parse_editor_model_flag(args: &[String]) -> Option<String> {
+  +     flag_value(args, &["--editor-model"])
+  +         .map(|s| s.trim().to_string())
+  +         .filter(|s| !s.is_empty())
+  + }
+  + 
+    /// Parsed boolean/simple output flags.
+ ✓ (1m 49s)
+  + /// Parse the `--editor-model` flag value, trimming whitespace and rejecting
+  + /// empty/whitespace-only values — same hardening as `--model` (see 1bc346c).
+  + /// Returns `None` when the flag is absent or its value is empty after trim.
+  + fn parse_editor_model_flag(args: &[String]) -> Option<String> {
+  +     flag_value(args, &["--editor-model"])
+  +         .map(|s| s.trim().to_string())
+  +         .filter(|s| !s.is_empty())
+  + }
+  + 
+    /// Parsed boolean/simple output flags.
+
+Now add tests in cli.rs. Let me find the test module and existing --model tests:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/cli.rs &… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 2 lines) ✓ (1m 44s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (2 → 46 lines)
+  +     #[test]
+  +     fn test_parse_editor_model_flag_value() {
+  +         let args: Vec<String> = ["yoyo", "--editor-model", "claude-sonnet-4-6", "-p", "hi"]
+  +             .iter()
+  +             .map(|s| s.to_string())
+  +             .collect();
+  +         assert_eq!(
+  +             parse_editor_model_flag(&args),
+  +             Some("claude-sonnet-4-6".to_string())
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_editor_model_flag_trims_whitespace() {
+  +         let args: Vec<String> = ["yoyo", "--editor-model", "  gpt-4o-mini  "]
+  +             .iter()
+  +             .map(|s| s.to_string())
+  +             .collect();
+  +         assert_eq!(
+  +             parse_editor_model_flag(&args),
+  ... (26 more lines)
+ ✓ (1m 41s)
+  +     #[test]
+  +     fn test_parse_editor_model_flag_value() {
+  +         let args: Vec<String> = ["yoyo", "--editor-model", "claude-sonnet-4-6", "-p", "hi"]
+  +             .iter()
+  +             .map(|s| s.to_string())
+  +             .collect();
+  +         assert_eq!(
+  +             parse_editor_model_flag(&args),
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 4 lines)
+            let flags_with_values = [
+                "--model",
+  +             "--editor-model",
+                "--thinking",
