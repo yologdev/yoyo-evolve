@@ -1,0 +1,134 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'fn create_spawn_worktree|struct WorktreeInfo|fn complete|fn …' in src/commands_spawn.rs ✓ (2ms)
+ ✓ (8ms)
+  ▶ search 'fn (create_spawn_worktree|complete|format_spawn_result|handl…' in src/commands_spawn.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|struct \|enum " sr… ✓ (4ms)
+  ▶ read src/commands_spawn.rs:1..201 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:400..680 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:680..940 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:937..1127 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/git.rs && gr… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1404,1560p' src/commands… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '316,400p' docs/src/usage… ✓ (6ms)
+  11 tools completed in 1m 57s (11 ✓)
+
+CLAUDE.md has no commands_spawn.rs bullet yet — I'll add one. Let me check existing try_collect test usage before changing its signature:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "try_collect\|complete("… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1620,1680p' src/commands… ✓ (3ms)
+  2 tools completed in 16.7s (2 ✓)
+
+I have the full picture. Now implementing. First, the SpawnHandoff type and helpers plus the tracker plumbing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (16 → 47 lines)
+  + /// A completed spawn worker's committed work, ready for review.
+  + ///
+  + /// When a spawn worker finishes in an isolated worktree and left file changes
+  + /// behind, those changes are committed to a named branch that survives
+  + /// worktree cleanup. This record carries the branch name and a one-line
+  + /// diffstat so the user (and the main agent) know where to look.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub struct SpawnHandoff {
+  +     /// The branch the worker's commit lives on (e.g. `spawn/3-1719...`).
+  +     pub branch: String,
+  +     /// One-line diffstat summary (e.g. `3 files changed (+42/-7)`).
+  +     pub diffstat: String,
+  + }
+  + 
+  + impl SpawnHandoff {
+  +     /// One-line human summary: `ready to review: branch <b> — <diffstat>`.
+  +     pub fn summary_line(&self) -> String {
+  +         format!(
+  +             "ready to review: branch {} — {}",
+  +             self.branch, self.diffstat
+  ... (19 more lines)
+ ✓ (10.8s)
+  + /// A completed spawn worker's committed work, ready for review.
+  + ///
+  + /// When a spawn worker finishes in an isolated worktree and left file changes
+  + /// behind, those changes are committed to a named branch that survives
+  + /// worktree cleanup. This record carries the branch name and a one-line
+  + /// diffstat so the user (and the main agent) know where to look.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub struct SpawnHandoff {
+  ... (13 more lines)
+  ▶ edit src/commands_spawn.rs (3 → 4 lines)
+                output_path,
+                background,
+  +             handoff: None,
+            });
+ ✓ (15.2s)
+                output_path,
+                background,
+  +             handoff: None,
+            });
+  2 tools completed in 39.0s (2 ✓)
+
+Expected mid-refactor — the auto-check will pass once everything is wired. Now the tracker methods:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (8 → 15 lines)
+        /// Mark a task as completed with its result.
+        pub fn complete(&self, id: usize, result: String) {
+  +         self.complete_with_handoff(id, result, None);
+  +     }
+  + 
+  +     /// Mark a task as completed with its result and an optional handoff
+  +     /// (committed worktree changes ready for review).
+  +     pub fn complete_with_handoff(&self, id: usize, result: String, handoff: Option<SpawnHandoff>) {
+            let mut tasks = lock_or_recover(&self.inner);
+            if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
+                task.status = SpawnStatus::Completed;
+                task.result = Some(result);
+  +             task.handoff = handoff;
+            }
+        }
+ ✓ (15.5s)
+        /// Mark a task as completed with its result.
+        pub fn complete(&self, id: usize, result: String) {
+  +         self.complete_with_handoff(id, result, None);
+  +     }
+  + 
+  +     /// Mark a task as completed with its result and an optional handoff
+  +     /// (committed worktree changes ready for review).
+  +     pub fn complete_with_handoff(&self, id: usize, result: String, handoff: Option<SpawnHandoff>) {
+  ... (7 more lines)
+
+Now try_collect to carry the handoff through:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (18 → 26 lines)
+        /// Try to collect a background spawn's result.
+  -     /// Returns `Ok(Some(result))` if finished, `Ok(None)` if still running.
+  -     /// Returns `Err` if the spawn doesn't exist or wasn't a background spawn.
+  -     pub fn try_collect(&self, id: usize) -> Result<Option<(String, String)>, String> {
+  +     /// Returns `Ok(Some((task, result, handoff)))` if finished, `Ok(None)` if
+  +     /// still running. Returns `Err` if the spawn doesn't exist or wasn't a
+  +     /// background spawn.
+  +     #[allow(clippy::type_complexity)]
+  +     pub fn try_collect(
+  +         &self,
+  +         id: usize,
+  +     ) -> Result<Option<(String, String, Option<SpawnHandoff>)>, String> {
+            let tasks = lock_or_recover(&self.inner);
+            let task = tasks.iter().find(|t| t.id == id);
+            match task {
+                None => Err(format!("no spawn #{id} found")),
+                Some(t) if !t.background => {
+                    if t.status == SpawnStatus::Completed {
+  -                     Ok(t.result.clone().map(|r| (t.task.clone(), r)))
+  +                     Ok(t.result
+  ... (13 more lines)
+ ✓ (10.7s)
+        /// Try to collect a background spawn's result.
+  -     /// Returns `Ok(Some(result))` if finished, `Ok(None)` if still running.
+  -     /// Returns `Err` if the spawn doesn't exist or wasn't a background spawn.
+  -     pub fn try_collect(&self, id: usize) -> Result<Option<(String, String)>, String> {
+  +     /// Returns `Ok(Some((task, result, handoff)))` if finished, `Ok(None)` if
+  +     /// still running. Returns `Err` if the spawn doesn't exist or wasn't a
+  +     /// background spawn.
+  +     #[allow(clippy::type_complexity)]
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

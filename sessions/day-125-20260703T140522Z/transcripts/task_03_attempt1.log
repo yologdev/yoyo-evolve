@@ -1,0 +1,195 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_load_project_conte…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs ✓ (5ms)
+ ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:100..400 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:399..529 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/git.rs && gr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn load_memories\|p… ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '130,150p' src/git.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '4100,4220p' src/commands… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "top_risk_files" src/com… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '850,900p' src/commands_r… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (8 → 17 lines)
+    pub(crate) fn top_risk_files(n: usize) -> Vec<(String, f64)> {
+  -     let risks = compute_file_risk_scores();
+  +     top_n_from(&compute_file_risk_scores(), n)
+  + }
+  + 
+  + /// Pure helper: take the top `n` entries from an already-computed (sorted)
+  + /// score list as `(path, score)` pairs.
+  + ///
+  + /// Extracted so tests can exercise the prefix logic against a fixed synthetic
+  + /// list instead of computing live repo scores twice (which flaked when repo
+  + /// state shifted between the two computations mid-test).
+  + pub(crate) fn top_n_from(risks: &[FileRisk], n: usize) -> Vec<(String, f64)> {
+        risks
+  -         .into_iter()
+  +         .iter()
+            .take(n)
+  -         .map(|r| (r.path, r.score))
+  +         .map(|r| (r.path.clone(), r.score))
+            .collect()
+    }
+ ✓ (1m 41s)
+    pub(crate) fn top_risk_files(n: usize) -> Vec<(String, f64)> {
+  -     let risks = compute_file_risk_scores();
+  +     top_n_from(&compute_file_risk_scores(), n)
+  + }
+  + 
+  + /// Pure helper: take the top `n` entries from an already-computed (sorted)
+  + /// score list as `(path, score)` pairs.
+  + ///
+  ... (12 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (24 → 54 lines)
+        #[test]
+        fn test_top_risk_files_respects_n() {
+  -         let top1 = top_risk_files(1);
+  -         assert!(
+  -             top1.len() <= 1,
+  -             "expected at most 1 entry, got {}",
+  -             top1.len()
+  +         // Pure, deterministic check of the prefix logic: build a fixed synthetic
+  +         // score list and derive both prefixes from the SAME snapshot. The old
+  +         // version computed live repo scores twice (top-1 and top-5 calls) and
+  +         // flaked when repo state shifted between the two computations mid-test.
+  +         let risks = vec![
+  +             FileRisk {
+  +                 path: "src/a.rs".to_string(),
+  +                 score: 0.9,
+  +                 signals: vec!["▲churn"],
+  +                 test_density: 0.5,
+  +             },
+  +             FileRisk {
+  +                 path: "src/b.rs".to_string(),
+  ... (51 more lines)
+ ✓ (1m 42s)
+        #[test]
+        fn test_top_risk_files_respects_n() {
+  -         let top1 = top_risk_files(1);
+  -         assert!(
+  -             top1.len() <= 1,
+  -             "expected at most 1 entry, got {}",
+  -             top1.len()
+  +         // Pure, deterministic check of the prefix logic: build a fixed synthetic
+  ... (13 more lines)
+  12 tools completed in 5m 23s (12 ✓)
+
+Now Part A — the _from variants in src/context.rs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (5 → 11 lines)
+    /// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
+    /// Returns None if git is not available or the directory is not a git repo.
+    pub fn get_project_file_listing() -> Option<String> {
+  -     let stdout = crate::git::run_git(&["ls-files"]).ok()?;
+  +     get_project_file_listing_from(std::path::Path::new("."))
+  + }
+  + 
+  + /// Directory-parameterized variant of [`get_project_file_listing`].
+  + /// Lets tests point at a hermetic temp git repo instead of the live CWD.
+  + pub fn get_project_file_listing_from(dir: &std::path::Path) -> Option<String> {
+  +     let stdout = crate::git::run_git_in_dir(dir, &["ls-files"]).ok()?;
+ ✓ (1m 35s)
+    /// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
+    /// Returns None if git is not available or the directory is not a git repo.
+    pub fn get_project_file_listing() -> Option<String> {
+  -     let stdout = crate::git::run_git(&["ls-files"]).ok()?;
+  +     get_project_file_listing_from(std::path::Path::new("."))
+  + }
+  + 
+  + /// Directory-parameterized variant of [`get_project_file_listing`].
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (14 → 20 lines)
+    /// Get a brief git status summary for system prompt injection.
+    /// Returns None if not in a git repo or git is unavailable.
+    pub fn get_git_status_context() -> Option<String> {
+  -     let branch = crate::git::git_branch()?;
+  +     get_git_status_context_from(std::path::Path::new("."))
+  + }
+    
+  -     let uncommitted = crate::git::run_git(&["status", "--porcelain"])
+  + /// Directory-parameterized variant of [`get_git_status_context`].
+  + /// Lets tests point at a hermetic temp git repo instead of the live CWD.
+  + pub fn get_git_status_context_from(dir: &std::path::Path) -> Option<String> {
+  +     let branch = git_branch_in(dir)?;
+  + 
+  +     let uncommitted = crate::git::run_git_in_dir(dir, &["status", "--porcelain"])
+            .ok()
+            .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+            .unwrap_or(0);
+    
+  -     let staged = crate::git::run_git(&["diff", "--cached", "--name-only"])
+  +     let staged = crate::git::run_git_in_dir(dir, &["diff", "--cached", "--name-only"])
+  ... (3 more lines)
+ ✓ (11.1s)
+    /// Get a brief git status summary for system prompt injection.
+    /// Returns None if not in a git repo or git is unavailable.
+    pub fn get_git_status_context() -> Option<String> {
+  -     let branch = crate::git::git_branch()?;
+  +     get_git_status_context_from(std::path::Path::new("."))
+  + }
+    
+  -     let uncommitted = crate::git::run_git(&["status", "--porcelain"])
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (7 → 24 lines)
+  + /// Get the current branch name for a specific directory.
+  + /// Directory-parameterized sibling of `crate::git::git_branch()`.
+  + fn git_branch_in(dir: &std::path::Path) -> Option<String> {
+  +     crate::git::run_git_in_dir(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()
+  + }
+  + 
+    /// Get the most recently changed files from git log, deduplicated.
+    /// Returns up to `max_files` unique file paths that were modified in recent commits.
+    /// Returns None if not in a git repo or git is unavailable.
+    pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
+  -     let stdout = crate::git::run_git(&[
+  -         "log",
+  -         "--diff-filter=AM",
+  +     get_recently_changed_files_from(std::path::Path::new("."), max_files)
+  + }
+  + 
+  + /// Directory-parameterized variant of [`get_recently_changed_files`].
+  + /// Lets tests point at a hermetic temp git repo instead of the live CWD.
+  + pub fn get_recently_changed_files_from(
+  +     dir: &std::path::Path,
+  ... (7 more lines)
+ ✓ (1m 35s)
+  + /// Get the current branch name for a specific directory.
+  + /// Directory-parameterized sibling of `crate::git::git_branch()`.
+  + fn git_branch_in(dir: &std::path::Path) -> Option<String> {
+  +     crate::git::run_git_in_dir(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()
+  + }
+  + 
+    /// Get the most recently changed files from git log, deduplicated.
+    /// Returns up to `max_files` unique file paths that were modified in recent commits.
+  ... (13 more lines)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:128..158 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (7 → 8 lines)
+                "--diff-filter=AM",
+  -         "--name-only",
+  -         "--pretty=format:",
+  -         "-n",
+  -         "20",
+  -     ])
+  +             "--name-only",
+  +             "--pretty=format:",
+  +             "-n",
+  +             "20",
+  +         ],
+  +     )
+        .ok()?;
+ ✓ (1m 30s)
+                "--diff-filter=AM",
+  -         "--name-only",
+  -         "--pretty=format:",
+  -         "-n",
+  -         "20",
+  -     ])
+  +             "--name-only",
+  +             "--pretty=format:",
+  ... (5 more lines)
+  5 tools completed in 5m 31s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

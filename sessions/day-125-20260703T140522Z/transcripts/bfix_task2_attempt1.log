@@ -1,0 +1,218 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '890,960p' src/commands_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_spawn_result\… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SpawnHandoff\|handoff\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,70p' src/commands_spa… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_spawn_result" s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handoff\|commit_and_sum… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handoff\|commit_and_sum… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "complete_with_handoff\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '600,720p' src/commands_s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '740,870p' src/commands_s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn safe_truncate\b\… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/commands_spaw… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn" CLAUDE.md | head… ✓ (8ms)
+  ▶ todo add 'Add commit_worktree_handoff helper + diffstat pars…' ✓ (0ms)
+  ▶ todo add 'Extend format_spawn_result with handoff param, fix…' ✓ (0ms)
+  ▶ todo add 'Tests: handoff formatting, tempdir commit, multi-b…' ✓ (0ms)
+  ▶ todo add 'Docs: CLAUDE.md + docs/src/usage/commands.md; carg…' ✓ (0ms)
+  ▶ edit src/commands_spawn.rs (1 → 121 lines)
+  + /// Maximum characters of the task description used in the handoff commit message.
+  + const HANDOFF_COMMIT_DESC_CHARS: usize = 60;
+  + 
+  + /// Derive the handoff branch name for a worktree.
+  + /// The worktree dir is named `spawn-<id>-<ts>`; the branch becomes
+  + /// `spawn/<id>-<ts>` so the commit survives worktree cleanup under a
+  + /// discoverable ref.
+  + fn spawn_branch_name(info: &WorktreeInfo) -> String {
+  +     let dir_name = info
+  +         .path
+  +         .file_name()
+  +         .map(|n| n.to_string_lossy().to_string())
+  +         .unwrap_or_else(|| "spawn-unknown".to_string());
+  +     format!(
+  +         "spawn/{}",
+  +         dir_name.strip_prefix("spawn-").unwrap_or(&dir_name)
+  +     )
+  + }
+  + 
+  + /// Condense a `git diff --shortstat` line into a compact summary like
+  ... (101 more lines)
+ ✓ (10.5s)
+  + /// Maximum characters of the task description used in the handoff commit message.
+  + const HANDOFF_COMMIT_DESC_CHARS: usize = 60;
+  + 
+  + /// Derive the handoff branch name for a worktree.
+  + /// The worktree dir is named `spawn-<id>-<ts>`; the branch becomes
+  + /// `spawn/<id>-<ts>` so the commit survives worktree cleanup under a
+  + /// discoverable ref.
+  + fn spawn_branch_name(info: &WorktreeInfo) -> String {
+  ... (13 more lines)
+  18 tools completed in 2m 49s (18 ✓)
+
+Now update format_spawn_result and all call sites:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (13 → 27 lines)
+  - pub fn format_spawn_result(task: &str, result: &str, spawn_id: usize) -> String {
+  + pub fn format_spawn_result(
+  +     task: &str,
+  +     result: &str,
+  +     spawn_id: usize,
+  +     handoff: Option<&SpawnHandoff>,
+  + ) -> String {
+        let result_text = if result.trim().is_empty() {
+            "(no output)".to_string()
+        } else {
+            result.trim().to_string()
+  +     };
+  + 
+  +     let handoff_text = match handoff {
+  +         Some(h) => format!(
+  +             "\n\n**Handoff:** {}\nInspect with: `{}`",
+  +             h.summary_line(),
+  +             h.review_hint()
+  +         ),
+  +         None => String::new(),
+  ... (9 more lines)
+ ✓ (10.8s)
+  - pub fn format_spawn_result(task: &str, result: &str, spawn_id: usize) -> String {
+  + pub fn format_spawn_result(
+  +     task: &str,
+  +     result: &str,
+  +     spawn_id: usize,
+  +     handoff: Option<&SpawnHandoff>,
+  + ) -> String {
+        let result_text = if result.trim().is_empty() {
+  ... (13 more lines)
+
+Now the sync completion path:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (17 → 21 lines)
+  -     // Mark completed in tracker
+  -     tracker.complete(spawn_id, response.clone());
+  +     // Mark completed in tracker — commit worktree changes first so the
+  +     // handoff (if any) is recorded alongside the result.
+  +     let handoff = worktree
+  +         .as_ref()
+  +         .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id));
+  +     tracker.complete_with_handoff(spawn_id, response.clone(), handoff.clone());
+    
+        // Clean up the worktree
+        if let Some(ref wt) = worktree {
+  ···
+        println!("\n{GREEN}  ✓ subagent #{spawn_id} completed{RESET}");
+        println!("{DIM}  injecting result into main conversation...{RESET}\n");
+    
+  -     let context_msg = format_spawn_result(&args.task, &response, spawn_id);
+  +     let context_msg = format_spawn_result(&args.task, &response, spawn_id, handoff.as_ref());
+ ✓ (10.7s)
+  -     // Mark completed in tracker
+  -     tracker.complete(spawn_id, response.clone());
+  +     // Mark completed in tracker — commit worktree changes first so the
+  +     // handoff (if any) is recorded alongside the result.
+  +     let handoff = worktree
+  +         .as_ref()
+  +         .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id));
+  +     tracker.complete_with_handoff(spawn_id, response.clone(), handoff.clone());
+  ... (9 more lines)
+
+Now the bg path and the collect path:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (2 → 6 lines)
+  -         // Mark completed in tracker
+  -         tracker_clone.complete(spawn_id, response);
+  +         // Mark completed in tracker — commit worktree changes first so the
+  +         // handoff (if any) travels with the result.
+  +         let handoff = worktree
+  +             .as_ref()
+  +             .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id));
+  +         tracker_clone.complete_with_handoff(spawn_id, response, handoff);
+ ✓ (10.7s)
+  -         // Mark completed in tracker
+  -         tracker_clone.complete(spawn_id, response);
+  +         // Mark completed in tracker — commit worktree changes first so the
+  +         // handoff (if any) travels with the result.
+  +         let handoff = worktree
+  +             .as_ref()
+  +             .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id));
+  +         tracker_clone.complete_with_handoff(spawn_id, response, handoff);
+  ▶ edit src/commands_spawn.rs (5 → 9 lines)
+  -         Ok(Some((task, result))) => {
+  +         Ok(Some((task, result, handoff))) => {
+                println!("{GREEN}  ✓ subagent #{id} completed{RESET}");
+  +             if let Some(ref h) = handoff {
+  +                 println!("{GREEN}  {}{RESET}", h.summary_line());
+  +                 println!("{DIM}  review with: {}{RESET}", h.review_hint());
+  +             }
+                println!("{DIM}  injecting result into main conversation...{RESET}\n");
+  -             Some(format_spawn_result(&task, &result, id))
+  +             Some(format_spawn_result(&task, &result, id, handoff.as_ref()))
+            }
+ ✓ (10.9s)
+  -         Ok(Some((task, result))) => {
+  +         Ok(Some((task, result, handoff))) => {
+                println!("{GREEN}  ✓ subagent #{id} completed{RESET}");
+  +             if let Some(ref h) = handoff {
+  +                 println!("{GREEN}  {}{RESET}", h.summary_line());
+  +                 println!("{DIM}  review with: {}{RESET}", h.review_hint());
+  +             }
+                println!("{DIM}  injecting result into main conversation...{RESET}\n");
+  ... (3 more lines)
+  2 tools completed in 42.8s (2 ✓)
+
+Fix the now-unused complete (tests still use it) and update the status display + existing tests:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '126,135p' src/commands_s… ✓ (4ms)
+  ▶ edit src/commands_spawn.rs (2 → 6 lines)
+        /// Mark a task as completed with its result.
+  +     /// Convenience wrapper over `complete_with_handoff` (production paths now
+  +     /// always go through the handoff-aware variant; this remains for tests
+  +     /// and future callers that have no worktree).
+  +     #[cfg_attr(not(test), allow(dead_code))]
+        pub fn complete(&self, id: usize, result: String) {
+ ✓ (10.8s)
+        /// Mark a task as completed with its result.
+  +     /// Convenience wrapper over `complete_with_handoff` (production paths now
+  +     /// always go through the handoff-aware variant; this remains for tests
+  +     /// and future callers that have no worktree).
+  +     #[cfg_attr(not(test), allow(dead_code))]
+        pub fn complete(&self, id: usize, result: String) {
+  ▶ edit src/commands_spawn.rs (13 → 73 lines)
+        #[test]
+        fn test_format_spawn_result_includes_id() {
+  -         let result = format_spawn_result("read file", "contents here", 3);
+  +         let result = format_spawn_result("read file", "contents here", 3, None);
+            assert!(result.contains("#3"));
+            assert!(result.contains("read file"));
+            assert!(result.contains("contents here"));
+  +         assert!(
+  +             !result.contains("Handoff"),
+  +             "no handoff line without a handoff"
+  +         );
+        }
+    
+        #[test]
+        fn test_format_spawn_result_empty_output() {
+  -         let result = format_spawn_result("task", "   ", 1);
+  +         let result = format_spawn_result("task", "   ", 1, None);
+            assert!(result.contains("(no output)"));
+  +     }
+  + 
+  ... (55 more lines)
+ ✓ (10.7s)
+        #[test]
+        fn test_format_spawn_result_includes_id() {
+  -         let result = format_spawn_result("read file", "contents here", 3);
+  +         let result = format_spawn_result("read file", "contents here", 3, None);
+            assert!(result.contains("#3"));
+            assert!(result.contains("read file"));
+            assert!(result.contains("contents here"));
+  +         assert!(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1895,1915p' src/commands… ✓ (3ms)
+  4 tools completed in 53.2s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

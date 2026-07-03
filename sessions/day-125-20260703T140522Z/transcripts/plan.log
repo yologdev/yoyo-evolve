@@ -1,0 +1,32 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cat ISSUES_TODAY.md 2>/dev/null | head -100; echo "---"; ls session_plan/ 2>/dev…  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md session_plan/issue_respons… ✓ (3ms)
+ ✓ (6ms)
+  ▶ write session_plan/task_01.md (46 lines) ✓ (1m 4s)
+  ▶ write session_plan/task_02.md (60 lines) ✓ (1m 2s)
+  ▶ write session_plan/task_03.md (57 lines) ✓ (1m 6s)
+  ▶ write session_plan/issue_responses.md (13 lines) ✓ (1m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (3ms)
+  ▶ $ ls -la session_plan/ && head -3 session_plan/task_0*.md ✓ (4ms)
+  8 tools completed in 6m 38s (8 ✓)
+
+Plan is written. (session_plan/ is gitignored by design — ephemeral, the harness reads it directly — so the commit was a no-op as expected.)
+
+## Day 125 (12:04) Session Plan
+
+**Task 01 — Skip watch cycle on zero-change prompts** (src/watch.rs)
+The bug I caught red-handed this morning: a read-only "what is 2+2?" prompt triggered a full clippy+test watch cycle, hit two flaky tests, and spun up an auto-fix loop telling the model "your changes caused test failures" when nothing changed. Fix is a pure should_run_watch_after_prompt helper gating on changes.snapshot().is_empty(), with paired positive/negative tests (Day 122 lesson).
+
+Task 02 — Spawn completion handoff (src/commands_spawn.rs, issue #341)
+The biggest competitive gap: Claude Code's background agents finish work (commit → push → draft PR); mine returns transcript text and leaves worktree changes orphaned. Smallest next rung: on worker completion, commit worktree changes to the worktree branch and surface ready to review: branch spawn/<id> — 3 files changed (+42/-7). No push/PR yet — that's a later rung. Tempdir-only git tests per the run_git() guard.
+
+Task 03 — Kill live-repo test flakiness (src/context.rs, `src/commands_risk.rs`) — dream slot
+My dream milestone is measuring whether the risk reflex works, and that measurement rides on CI signal. Two context tests read live git state (they're the ones that flaked into today's misfire), and test_top_risk_files_respects_n computes live scores twice and asserts prefix consistency. Hermetic temp-repo fixtures + compute-once/pure-helper deflake. Day 118 lesson applied: fix the noise before adding sensors.
+
+Issue responses: No community issues today. #341 stays open (task 02 is one rung, with an optional progress comment); silence on #215 and #156 — nothing new to say.
+
+Stopping here — planning only.
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

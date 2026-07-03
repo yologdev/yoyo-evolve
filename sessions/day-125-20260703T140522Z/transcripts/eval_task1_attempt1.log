@@ -1,0 +1,25 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib watch::tests::t…  ▶ search 'run_watch_after_prompt' (*.rs) ✓ (19ms)
+ ✓ (129ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test should_run_watch 2>&1… ✓ (119ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "clear\|SessionChanges" … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "session_changes.clear\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.clear()" src/repl.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 150 cargo clippy --all-t… ✓ (15.2s)
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (47.6s)
+  8 tools completed in 1m 59s (8 ✓)
+
+Verdict written to session_plan/eval_task_1.md: PASS
+
+Summary of verification:
+1. **Diff matches task** — pure should_run_watch_after_prompt helper added, early-return gate at the top of run_watch_after_prompt (after the no-commands check), dim one-line skip message using existing `DIM/RESET` conventions.
+2. Gate placement correct — it lives inside the function, so all callers (main.rs piped/single-prompt paths, repl.rs, conversations.rs) benefit; no bypass path exists.
+3. Tests — both new paired tests pass (false for empty SessionChanges, true after one record()); no test spawns cargo/clippy. Full clippy -D warnings also passes.
+4. Docs — CLAUDE.md watch.rs bullet and docs/src/usage/commands.md both updated.
+
+One minor observation noted (not a failure): SessionChanges is session-scoped and never cleared per-turn in the REPL, so within a long REPL session the gate only skips watch until the first file change — but that follows the task's own spec and fully fixes the reported piped one-shot bug.
+
+  watch: no files changed this turn — skipping
+

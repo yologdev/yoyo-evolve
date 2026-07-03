@@ -1,0 +1,228 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "_from\|fn test_" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (6ms)
+ ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:30..210 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:209..349 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:348..538 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn load_memories\|p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '537,796p' src/context.rs ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,70p src/memory.rs && g… ✓ (10ms)
+  8 tools completed in 1m 29s (8 ✓)
+
+Now I'll implement. First, add load_project_context_from by parameterizing the existing function:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (5 → 11 lines)
+    pub fn load_project_context() -> Option<String> {
+  +     load_project_context_from(std::path::Path::new("."))
+  + }
+  + 
+  + /// Directory-parameterized variant of [`load_project_context`].
+  + /// Lets tests point at a hermetic temp git repo instead of the live CWD.
+  + pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
+        let mut context = String::new();
+        let mut found = Vec::new();
+        for name in PROJECT_CONTEXT_FILES {
+  -         if let Ok(content) = std::fs::read_to_string(name) {
+  +         if let Ok(content) = std::fs::read_to_string(dir.join(name)) {
+ ✓ (1m 35s)
+    pub fn load_project_context() -> Option<String> {
+  +     load_project_context_from(std::path::Path::new("."))
+  + }
+  + 
+  + /// Directory-parameterized variant of [`load_project_context`].
+  + /// Lets tests point at a hermetic temp git repo instead of the live CWD.
+  + pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
+        let mut context = String::new();
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 2 lines)
+        // Append project file listing if available
+  -     if let Some(file_listing) = get_project_file_listing() {
+  +     if let Some(file_listing) = get_project_file_listing_from(dir) {
+ ✓ (16.0s)
+        // Append project file listing if available
+  -     if let Some(file_listing) = get_project_file_listing() {
+  +     if let Some(file_listing) = get_project_file_listing_from(dir) {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "get_project_file_listi… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "allow(dead_code)" src/… ✓ (8ms)
+  4 tools completed in 2m 33s (4 ✓)
+
+There's a codebase precedent for test-only-used functions. Let me finish parameterizing load_project_context_from and mark the CWD wrappers:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 2 lines)
+        // Append recently changed files if available
+  -     if let Some(recent_files) = get_recently_changed_files(MAX_RECENT_FILES) {
+  +     if let Some(recent_files) = get_recently_changed_files_from(dir, MAX_RECENT_FILES) {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (8 → 8 lines)
+        // Append git status if available
+  -     let git_branch_name = if let Some(git_status) = get_git_status_context() {
+  +     let git_branch_name = if let Some(git_status) = get_git_status_context_from(dir) {
+            if !context.is_empty() {
+                context.push_str("\n\n");
+            }
+  -         let branch = crate::git::git_branch();
+  +         let branch = git_branch_in(dir);
+            context.push_str(&git_status);
+            branch
+ ✓ (15.3s)
+        // Append recently changed files if available
+  -     if let Some(recent_files) = get_recently_changed_files(MAX_RECENT_FILES) {
+  +     if let Some(recent_files) = get_recently_changed_files_from(dir, MAX_RECENT_FILES) {
+ ✓ (30.3s)
+        // Append git status if available
+  -     let git_branch_name = if let Some(git_status) = get_git_status_context() {
+  +     let git_branch_name = if let Some(git_status) = get_git_status_context_from(dir) {
+            if !context.is_empty() {
+                context.push_str("\n\n");
+            }
+  -         let branch = crate::git::git_branch();
+  +         let branch = git_branch_in(dir);
+            context.push_str(&git_status);
+            branch
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (4 → 6 lines)
+    /// Get a listing of project files using `git ls-files`.
+    /// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
+    /// Returns None if git is not available or the directory is not a git repo.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_project_file_listing() -> Option<String> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (3 → 5 lines)
+    /// Get a brief git status summary for system prompt injection.
+    /// Returns None if not in a git repo or git is unavailable.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_git_status_context() -> Option<String> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (4 → 6 lines)
+    /// Get the most recently changed files from git log, deduplicated.
+    /// Returns up to `max_files` unique file paths that were modified in recent commits.
+    /// Returns None if not in a git repo or git is unavailable.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
+ ✓ (15.1s)
+    /// Get a listing of project files using `git ls-files`.
+    /// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
+    /// Returns None if git is not available or the directory is not a git repo.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_project_file_listing() -> Option<String> {
+ ✓ (20.8s)
+    /// Get a brief git status summary for system prompt injection.
+    /// Returns None if not in a git repo or git is unavailable.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_git_status_context() -> Option<String> {
+ ✓ (26.4s)
+    /// Get the most recently changed files from git log, deduplicated.
+    /// Returns up to `max_files` unique file paths that were modified in recent commits.
+    /// Returns None if not in a git repo or git is unavailable.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
+  5 tools completed in 1m 21s (5 ✓)
+
+The auto-checks ran mid-edit sequence; let me verify the current state compiles:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (8.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '36,48p;66,76p' src/conte… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg_attr\|smoke tests t… ✓ (6ms)
+  3 tools completed in 32.6s (3 ✓)
+
+Two of the three attribute edits were rolled back. Re-applying:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 4 lines)
+    /// Returns None if git is not available or the directory is not a git repo.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_project_file_listing() -> Option<String> {
+ ✓ (15.1s)
+    /// Returns None if git is not available or the directory is not a git repo.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_project_file_listing() -> Option<String> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 4 lines)
+    /// Returns None if not in a git repo or git is unavailable.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_git_status_context() -> Option<String> {
+ ✓ (1m 33s)
+    /// Returns None if not in a git repo or git is unavailable.
+  + /// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn get_git_status_context() -> Option<String> {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 ✓ (142ms)
+  3 tools completed in 2m 11s (3 ✓)
+
+Now convert the tests. First, add the fixture helper at the top of the tests module:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (4 → 45 lines)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     /// Run a git command inside the fixture repo, panicking on failure so
+  +     /// broken fixtures surface as loud test errors instead of vacuous passes.
+  +     fn fixture_git(dir: &std::path::Path, args: &[&str]) {
+  +         let out = std::process::Command::new("git")
+  +             .args(args)
+  +             .current_dir(dir)
+  +             .output()
+  +             .expect("git should be runnable in tests");
+  +         assert!(
+  +             out.status.success(),
+  +             "git {:?} failed in fixture: {}",
+  +             args,
+  +             String::from_utf8_lossy(&out.stderr)
+  +         );
+  +     }
+  + 
+  ... (24 more lines)
+ ✓ (15.4s)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     /// Run a git command inside the fixture repo, panicking on failure so
+  +     /// broken fixtures surface as loud test errors instead of vacuous passes.
+  +     fn fixture_git(dir: &std::path::Path, args: &[&str]) {
+  +         let out = std::process::Command::new("git")
+  ... (13 more lines)
+
+Expected — helpers unused until I convert the tests. Now converting:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (21 → 31 lines)
+        #[test]
+  -     fn test_get_project_file_listing_no_panic() {
+  -         // Should not panic regardless of whether we're in a git repo or not.
+  -         // In CI this runs inside a git repo, so we expect Some with files.
+  -         let result = get_project_file_listing();
+  -         // If we're in a git repo (likely in CI), verify the output is reasonable
+  -         if let Some(listing) = &result {
+  -             assert!(!listing.is_empty(), "File listing should not be empty");
+  -             let lines: Vec<&str> = listing.lines().collect();
+  -             assert!(
+  -                 lines.len() <= MAX_PROJECT_FILES + 1, // +1 for possible "... and N more" line
+  -                 "File listing should be capped at {} files",
+  -                 MAX_PROJECT_FILES
+  -             );
+  -             // Should contain at least Cargo.toml (we're in a Rust project)
+  -             assert!(
+  -                 listing.contains("Cargo.toml"),
+  -                 "File listing should contain Cargo.toml"
+  -             );
+  -         }
+  ... (30 more lines)
+ ✓ (15.5s)
+        #[test]
+  -     fn test_get_project_file_listing_no_panic() {
+  -         // Should not panic regardless of whether we're in a git repo or not.
+  -         // In CI this runs inside a git repo, so we expect Some with files.
+  -         let result = get_project_file_listing();
+  -         // If we're in a git repo (likely in CI), verify the output is reasonable
+  -         if let Some(listing) = &result {
+  -             assert!(!listing.is_empty(), "File listing should not be empty");
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,123 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'commit_worktree_handoff' in src/commands_spawn.rs  ▶ $ sed -n 230,260p docs/src/usage/commands.md ✓ (4ms)
+ ✓ (4ms)
+  ▶ read src/commands_spawn.rs:1100..1230  ▶ $ grep -n -i "spawn" docs/src/usage/commands.md | head -30; echo ---; grep -n "com… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ grep -n "commands_stash\|commands_move\|commands_risk" CLAUDE.md | head  ▶ read src/commands_spawn.rs:1650..1780 ✓ (2ms)
+ ✓ (3ms)
+  ▶ search 'fn setup_temp_repo|run_git_in\b' in src/commands_spawn.rs ✓ (2ms)
+  ▶ $ grep -n "setup_temp_repo\|run_git_in\|use crate::git" src/commands_spawn.rs | he… ✓ (4ms)
+  ▶ $ grep -rn "fn setup_temp_repo" src/ | head; grep -n "run_git_in_dir" src/git.rs |… ✓ (8ms)
+  ▶ read src/commands_spawn.rs:2010..2070 ✓ (1ms)
+  10 tools completed in 40.4s (10 ✓)
+
+Now I'll add the dirty-repo integration test. Let me insert it after the multibyte truncation test:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (5 → 52 lines)
+            let tmp = setup_temp_repo();
+            let result = commit_worktree_handoff(tmp.path(), "spawn/test-mb", &task);
+            assert_eq!(result, Ok(None), "clean tree yields no handoff");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_commit_worktree_handoff_dirty_tree_commits_and_summarizes() {
+  +         // Tempdir repo (never the project root — run_git guard) with an
+  +         // uncommitted file: the helper must commit it, point the branch at the
+  +         // new commit, and return a non-empty diffstat summary.
+  +         let tmp = setup_temp_repo();
+  +         let p = tmp.path();
+  +         std::fs::write(p.join("new_work.txt"), "line one\nline two\n").expect("write dirty file");
+  + 
+  +         let head_before = run_git_in(p, &["rev-parse", "HEAD"]).expect("head before");
+  + 
+  +         let handoff = commit_worktree_handoff(p, "spawn/7-test", "fix the ✓ widget rendering")
+  +             .expect("handoff should succeed")
+  +             .expect("dirty tree should produce a handoff");
+  + 
+  ... (31 more lines)
+ ✓ (1m 36s)
+            let tmp = setup_temp_repo();
+            let result = commit_worktree_handoff(tmp.path(), "spawn/test-mb", &task);
+            assert_eq!(result, Ok(None), "clean tree yields no handoff");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_commit_worktree_handoff_dirty_tree_commits_and_summarizes() {
+  +         // Tempdir repo (never the project root — run_git guard) with an
+  ... (13 more lines)
+  ▶ $ sed -n 88,95p CLAUDE.md ✓ (3ms)
+  ▶ $ grep -n "commands_move.rs\|commands_stash.rs" CLAUDE.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (9ms)
+  ▶ edit CLAUDE.md (2 → 3 lines)
+    - `commands_move.rs` — move methods between impl blocks, cross-file method relocation
+  + - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation, and completion handoff — when a worker finishes with uncommitted worktree changes, `commit_worktree_handoff` commits them to the worktree branch (`spawn: <task>` message, char-boundary truncation) and surfaces a `ready to review: branch spawn/<id> — N files changed (+a/-b)` line plus a `git diff main...spawn/<id>` hint; failed commits and no-change completions are reported honestly, never pre-announced
+    - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`)
+ ✓ (1m 20s)
+    - `commands_move.rs` — move methods between impl blocks, cross-file method relocation
+  + - `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation, and completion handoff — when a worker finishes with uncommitted worktree changes, `commit_worktree_handoff` commits them to the worktree branch (`spawn: <task>` message, char-boundary truncation) and surfaces a `ready to review: branch spawn/<id> — N files changed (+a/-b)` line plus a `git diff main...spawn/<id>` hint; failed commits and no-change completions are reported honestly, never pre-announced
+    - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`)
+  4 tools completed in 3m 29s (4 ✓)
+
+Now docs/src/usage/commands.md — let me see the full /spawn section:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 316,360p docs/src/usage/commands.md ✓ (4ms)
+  ▶ edit docs/src/usage/commands.md (3 → 12 lines)
+    The subagent has access to the same tools (bash, file operations, etc.) and uses the same model. Its token usage counts toward your session total, but its context is completely separate from your main conversation. When it finishes, a summary of the task and result is injected into your main conversation so you have awareness of what was done.
+  + 
+  + **Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees. When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+  + 
+  + ```
+  + ready to review: branch spawn/3-1712345678 — 3 files changed (+42/-7)
+  + review with: git diff main...spawn/3-1712345678
+  + ```
+  + 
+  + The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. Nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+    
+    > **Automatic sub-agent delegation**: In addition to `/spawn`, the model can autonomously delegate subtasks to a built-in `sub_agent` tool. This happens transparently — the model decides when a subtask benefits from a fresh context window (e.g., researching a codebase section, running a series of tests). You'll see a 🐙 indicator when delegation occurs.
+ ✓ (1m 16s)
+    The subagent has access to the same tools (bash, file operations, etc.) and uses the same model. Its token usage counts toward your session total, but its context is completely separate from your main conversation. When it finishes, a summary of the task and result is injected into your main conversation so you have awareness of what was done.
+  + 
+  + **Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees. When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+  + 
+  + ```
+  + ready to review: branch spawn/3-1712345678 — 3 files changed (+42/-7)
+  + review with: git diff main...spawn/3-1712345678
+  + ```
+  ... (4 more lines)
+  ▶ $ grep -n -A8 "fn spawn_branch_name" src/commands_spawn.rs; grep -n -B2 -A6 "handl… ✓ (5ms)
+  ▶ $ grep -n "handoff" src/commands_spawn.rs | head -30 ✓ (3ms)
+  ▶ $ grep -n -A40 "fn handle_spawn_status" src/commands_spawn.rs | grep -n "handoff\|… ✓ (4ms)
+  ▶ $ grep -n -A60 "fn handle_spawn_status" src/commands_spawn.rs | sed -n 1,60p ✓ (4ms)
+  6 tools completed in 1m 59s (6 ✓)
+
+handle_spawn_status doesn't show the handoff line yet — the task spec (point 4) explicitly requires it in /spawn status output. Adding it:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (4 → 10 lines)
+  -             SpawnStatus::Completed => println!(
+  -                 "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
+  -                 id = task.id
+  -             ),
+  +             SpawnStatus::Completed => {
+  +                 println!(
+  +                     "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
+  +                     id = task.id
+  +                 );
+  +                 if let Some(ref h) = task.handoff {
+  +                     println!("      {GREEN}{}{RESET}", h.summary_line());
+  +                     println!("      {DIM}review with: {}{RESET}", h.review_hint());
+  +                 }
+  +             }
+ ✓ (1m 37s)
+  -             SpawnStatus::Completed => println!(
+  -                 "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
+  -                 id = task.id
+  -             ),
+  +             SpawnStatus::Completed => {
+  +                 println!(
+  +                     "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
+  +                     id = task.id
+  ... (6 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 ✓ (16.1s)
+  ▶ $ cargo build 2>&1 | tail -2 && cargo test 2>&1 | tail -15

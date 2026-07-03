@@ -1,0 +1,112 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_load_project_conte… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:1..291 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:289..669 ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:387..619 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 2 lines)
+        // Append recently changed files if available
+  -     if let Some(recent_files) = get_recently_changed_files(MAX_RECENT_FILES) {
+  +     if let Some(recent_files) = get_recently_changed_files_from(dir, MAX_RECENT_FILES) {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 2 lines)
+        let mut conventions_injected = false;
+  -     let project_type = detect_project_type(std::path::Path::new("."));
+  +     let project_type = detect_project_type(dir);
+ ✓ (15.7s)
+        // Append recently changed files if available
+  -     if let Some(recent_files) = get_recently_changed_files(MAX_RECENT_FILES) {
+  +     if let Some(recent_files) = get_recently_changed_files_from(dir, MAX_RECENT_FILES) {
+ ✓ (31.1s)
+        let mut conventions_injected = false;
+  -     let project_type = detect_project_type(std::path::Path::new("."));
+  +     let project_type = detect_project_type(dir);
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (35 → 35 lines)
+        #[test]
+  -     #[serial]
+        fn test_load_project_context_includes_recently_changed() {
+  -         // Needs #[serial]: depends on the cwd being the project root, and
+  -         // other serial tests in this module temporarily change the working
+  -         // directory (set_current_dir is process-global).
+  -         //
+  -         // We're running inside the yoyo git repo, so load_project_context()
+  -         // must always return Some. Previously this test guarded with
+  -         // `if let Some`, silently passing without asserting in CI.
+  -         let result = load_project_context();
+  -         let context = result.expect("load_project_context should return Some in a git repo");
+  +         // Hermetic: points at a temp fixture repo via load_project_context_from,
+  +         // so it never reads the live CWD's git state (Day 125 lesson — the old
+  +         // version hard-asserted but still flaked on dirty trees / shallow clones,
+  +         // and before Day 124 it vacuously passed via `if let Some`).
+  +         let dir = tempfile::TempDir::new().unwrap();
+  +         init_fixture_repo(dir.path());
+  +         // A second commit so "recently changed" has more than the initial file.
+  +         fixture_commit_file(dir.path(), "second.txt", "world\n", "add second");
+  ... (41 more lines)
+ ✓ (1m 37s)
+        #[test]
+  -     #[serial]
+        fn test_load_project_context_includes_recently_changed() {
+  -         // Needs #[serial]: depends on the cwd being the project root, and
+  -         // other serial tests in this module temporarily change the working
+  -         // directory (set_current_dir is process-global).
+  -         //
+  -         // We're running inside the yoyo git repo, so load_project_context()
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (20 → 29 lines)
+        #[test]
+  -     #[serial]
+        fn test_load_project_context_includes_git_status() {
+  -         // Needs #[serial]: depends on the cwd being the project root, and
+  -         // other serial tests in this module temporarily change the working
+  -         // directory (set_current_dir is process-global).
+  -         //
+  -         // We're running inside the yoyo git repo, so both load_project_context()
+  -         // and get_git_status_context() must return Some. Previously this test
+  -         // guarded with `if let Some` on both, silently passing without asserting
+  -         // in CI shallow clones.
+  -         let result = load_project_context();
+  -         let context = result.expect("load_project_context should return Some in a git repo");
+  +         // Hermetic: points at a temp fixture repo via load_project_context_from,
+  +         // so it never reads the live CWD's git state (Day 125 lesson — the old
+  +         // version hard-asserted but still flaked on dirty trees / shallow clones,
+  +         // and before Day 124 it vacuously passed via `if let Some` on both calls).
+  +         let dir = tempfile::TempDir::new().unwrap();
+  +         init_fixture_repo(dir.path());
+    
+  ... (22 more lines)
+ ✓ (1m 38s)
+        #[test]
+  -     #[serial]
+        fn test_load_project_context_includes_git_status() {
+  -         // Needs #[serial]: depends on the cwd being the project root, and
+  -         // other serial tests in this module temporarily change the working
+  -         // directory (set_current_dir is process-global).
+  -         //
+  -         // We're running inside the yoyo git repo, so both load_project_context()
+  ... (13 more lines)
+  8 tools completed in 5m 9s (8 ✓)
+
+Now run the full gate:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (340ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch scratch_flake_check.tmp &&… ✓ (35ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch scratch_flake_check.tmp &&… ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch scratch_flake_check.tmp &&… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch scratch_flake_check.tmp &&… ✓ (7.2s)
+  7 tools completed in 2m 9s (7 ✓)
+
+One failure on the first dirty-tree run — exactly the flakiness this task exists to kill. Let me identify it:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch scratch_flake_check.tmp &&… ✓ (12.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5 6 7 8; do car… ✓ (1.3s)
+  2 tools completed in 45.6s (2 ✓)
+
+Passes alone but failed in the parallel set. I need the actual panic message:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch scratch_flake_check.tmp &&… ✓ (14.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn run_git_in_dir" -A 3…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ … ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch scratch_flake_check.tmp &&…

@@ -1,0 +1,142 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'run_watch_after_prompt'  ▶ search 'fn snapshot' in src/session.rs ✓ (2ms)
+ ✗ (8.5s)
+    │ Search error: grep: ./target/debug/deps/yoyo-3ffb3e73270c1576: binary file matches
+  ▶ search 'run_watch_after_prompt' (*.rs)  ▶ read src/session.rs:1..111 ✓ (1ms)
+ ✓ (19ms)
+  ▶ read src/watch.rs:1260..1380 ✓ (1ms)
+  ▶ read src/watch.rs (60 lines) ✓ (1ms)
+  ▶ read src/watch.rs:1810..1850 ✓ (1ms)
+  7 tools completed in 49.1s (6 ✓, 1 ✗)
+
+Now I'll add the tests first, then the helper and gate. Adding the pure helper before run_watch_after_prompt:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (3 → 18 lines)
+  + /// Decide whether the post-prompt watch cycle should run at all.
+  + ///
+  + /// Returns `false` when the prompt changed zero files (no write/edit tool
+  + /// calls this turn). Running clippy/tests after a read-only prompt burns
+  + /// wall-clock time and — worse — misattributes any pre-existing failures
+  + /// to "your changes" in the auto-fix loop. Pure so it's trivially testable.
+  + fn should_run_watch_after_prompt(changes: &SessionChanges) -> bool {
+  +     !changes.snapshot().is_empty()
+  + }
+  + 
+    /// Run the watch command(s) after a prompt completes.
+  + ///
+  + /// If the prompt changed zero files, the whole cycle is skipped (see
+  + /// [`should_run_watch_after_prompt`]) — there is nothing the watch could
+  + /// be validating, and pre-existing failures would be misattributed to
+  + /// the prompt.
+    ///
+    /// If watch commands are active, iterates through each phase in order.
+ ✓ (15.5s)
+  + /// Decide whether the post-prompt watch cycle should run at all.
+  + ///
+  + /// Returns `false` when the prompt changed zero files (no write/edit tool
+  + /// calls this turn). Running clippy/tests after a read-only prompt burns
+  + /// wall-clock time and — worse — misattributes any pre-existing failures
+  + /// to "your changes" in the auto-fix loop. Pure so it's trivially testable.
+  + fn should_run_watch_after_prompt(changes: &SessionChanges) -> bool {
+  +     !changes.snapshot().is_empty()
+  ... (10 more lines)
+
+Expected — now wire in the gate:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (7 → 15 lines)
+        let commands = get_watch_commands();
+        if commands.is_empty() {
+  +         return WatchResult {
+  +             passed: true,
+  +             last_tool_error: None,
+  +         };
+  +     }
+  + 
+  +     if !should_run_watch_after_prompt(changes) {
+  +         eprintln!("{DIM}  watch: no files changed this turn — skipping{RESET}");
+            return WatchResult {
+                passed: true,
+                last_tool_error: None,
+ ✓ (1m 24s)
+        let commands = get_watch_commands();
+        if commands.is_empty() {
+  +         return WatchResult {
+  +             passed: true,
+  +             last_tool_error: None,
+  +         };
+  +     }
+  + 
+  ... (5 more lines)
+
+Now add the paired positive/negative tests. Let me add them next to the existing run_watch_after_prompt tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/watch.rs (3 → 26 lines)
+  +     #[test]
+  +     fn test_should_run_watch_after_prompt_false_when_no_changes() {
+  +         // Negative case: a fresh SessionChanges has zero recorded file
+  +         // changes — the post-prompt watch cycle must be skipped.
+  +         let changes = SessionChanges::new();
+  +         assert!(
+  +             !should_run_watch_after_prompt(&changes),
+  +             "watch should be skipped when the prompt changed zero files"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_should_run_watch_after_prompt_true_with_one_change() {
+  +         // Paired positive case (Day 122 lesson): the minimum possible
+  +         // difference — one recorded change — must flip the decision.
+  +         let changes = SessionChanges::new();
+  +         changes.record("src/main.rs", crate::session::ChangeKind::Edit);
+  +         assert!(
+  +             should_run_watch_after_prompt(&changes),
+  +             "watch should run when the prompt changed at least one file"
+  ... (6 more lines)
+ ✓ (1m 22s)
+  +     #[test]
+  +     fn test_should_run_watch_after_prompt_false_when_no_changes() {
+  +         // Negative case: a fresh SessionChanges has zero recorded file
+  +         // changes — the post-prompt watch cycle must be skipped.
+  +         let changes = SessionChanges::new();
+  +         assert!(
+  +             !should_run_watch_after_prompt(&changes),
+  +             "watch should be skipped when the prompt changed zero files"
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo b… ✓ (16.1s)
+  ▶ $ cargo test 2>&1 | tail -8 ✓ (52.6s)
+  ▶ $ cargo test 2>&1 | grep -E "test result|should_run_watch" | head -20 ✓ (38.0s)
+  ▶ $ cargo test 2>&1 | grep "test result"  ✓ (37.7s)
+  5 tools completed in 4m 17s (5 ✓)
+
+All green (4096 + 88 tests). Now the docs. First, check where auto-watch is documented:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ search 'auto.?watch|watch' in docs/src ✓ (2ms)
+  ▶ $ grep -rli "watch" docs/src/ README.md | head; grep -n "watch" README.md | head -… ✓ (5ms)
+  ▶ $ grep -n -i "watch" docs/src/usage/commands.md docs/src/getting-started/quick-sta…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (15ms)
+  ▶ read docs/src/usage/commands.md:26..34 ✓ (1ms)
+  ▶ $ grep -n "/watch" docs/src/usage/commands.md src/help_data.rs | head ✓ (3ms)
+  ▶ read src/help_data.rs:1135..1165 ✓ (1ms)
+  ▶ read docs/src/getting-started/quick-start.md:14..29 ✓ (0ms)
+  7 tools completed in 44.9s (7 ✓)
+
+Now update CLAUDE.md and docs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts and structured Rust compiler error parsing (`CompilerError`, `parse_rust_errors`, category-specific hints) (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch
+  + - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts and structured Rust compiler error parsing (`CompilerError`, `parse_rust_errors`, category-specific hints) (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch; the post-prompt watch cycle is skipped entirely when the prompt changed zero files (`should_run_watch_after_prompt` gate)
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - > | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for two-phase lint→test, `yoyo watch cargo test`) |
+  + > | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for two-phase lint→test, `yoyo watch cargo test`). Runs only after turns that change files — skipped when a prompt changes nothing |
+ ✓ (1m 2s)
+  - - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts and structured Rust compiler error parsing (`CompilerError`, `parse_rust_errors`, category-specific hints) (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch
+  + - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts and structured Rust compiler error parsing (`CompilerError`, `parse_rust_errors`, category-specific hints) (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch; the post-prompt watch cycle is skipped entirely when the prompt changed zero files (`should_run_watch_after_prompt` gate)
+ ✓ (2m 10s)
+  - > | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for two-phase lint→test, `yoyo watch cargo test`) |
+  + > | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for two-phase lint→test, `yoyo watch cargo test`). Runs only after turns that change files — skipped when a prompt changes nothing |
+  2 tools completed in 2m 10s (2 ✓)
+
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+

@@ -1,0 +1,88 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git lo…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:360..490 ✓ (1ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_spawn.rs |… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_current_dir\|curren… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1660,1900p src/commands_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "setup_temp_repo\|set_va… ✓ (6ms)
+  6 tools completed in 35.5s (6 ✓)
+
+The new spawn tests all use tempdirs. Let me reproduce the failing context tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test context::tests::test_… ✓ (165ms)
+
+They pass in isolation — so it's a parallel-test race. Something in the new code must run git in the real repo during tests. Let me check:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1074,1210p src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_git_in\b" src/comma… ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2130,2289p src/commands_s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/fn test_commit_worktree_ha… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,200p src/context.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/ … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Mutex\|CWD\|cwd_lock\|l… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (50.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (49.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 500,560p src/context.rs &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 615,740p src/context.rs ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/context.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "serial" src/watch.rs sr… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 305,372p src/context.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (5 → 10 lines)
+        #[test]
+  +     #[serial]
+        fn test_load_project_context_includes_recently_changed() {
+  +         // Needs #[serial]: depends on the cwd being the project root, and
+  +         // other serial tests in this module temporarily change the working
+  +         // directory (set_current_dir is process-global).
+  +         //
+            // We're running inside the yoyo git repo, so load_project_context()
+            // must always return Some. Previously this test guarded with
+            // `if let Some`, silently passing without asserting in CI.
+ ✓ (1m 39s)
+        #[test]
+  +     #[serial]
+        fn test_load_project_context_includes_recently_changed() {
+  +         // Needs #[serial]: depends on the cwd being the project root, and
+  +         // other serial tests in this module temporarily change the working
+  +         // directory (set_current_dir is process-global).
+  +         //
+            // We're running inside the yoyo git repo, so load_project_context()
+            // must always return Some. Previously this test guarded with
+            // `if let Some`, silently passing without asserting in CI.
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (3 → 8 lines)
+        #[test]
+  +     #[serial]
+        fn test_load_project_context_includes_git_status() {
+  +         // Needs #[serial]: depends on the cwd being the project root, and
+  +         // other serial tests in this module temporarily change the working
+  +         // directory (set_current_dir is process-global).
+  +         //
+            // We're running inside the yoyo git repo, so both load_project_context()
+ ✓ (1m 35s)
+        #[test]
+  +     #[serial]
+        fn test_load_project_context_includes_git_status() {
+  +         // Needs #[serial]: depends on the cwd being the project root, and
+  +         // other serial tests in this module temporarily change the working
+  +         // directory (set_current_dir is process-global).
+  +         //
+            // We're running inside the yoyo git repo, so both load_project_context()
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (3 → 6 lines)
+        #[test]
+  +     #[serial]
+        fn test_get_git_status_context_in_repo() {
+  +         // Needs #[serial]: expects the cwd to be a git repo; other serial
+  +         // tests temporarily change the working directory.
+            // We're running inside a git repo, so this should return Some
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 4 lines)
+        #[test]
+  +     #[serial]
+        fn test_get_git_status_context_contains_branch() {
+  +         // Needs #[serial]: expects the cwd to be a git repo (see above).
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 4 lines)
+        #[test]
+  +     #[serial]
+        fn test_git_status_context_format() {
+  +         // Needs #[serial]: expects the cwd to be a git repo (see above).
