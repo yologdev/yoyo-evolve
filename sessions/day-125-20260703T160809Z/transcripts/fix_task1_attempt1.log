@@ -1,0 +1,104 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search '/risk' in docs/src/usage/commands.md  ▶ search 'effectiveness' in src/commands_risk.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ $ grep -n "^#" docs/src/usage/commands.md | head -60; echo ---; grep -n "risk" doc… ✓ (8ms)
+  ▶ read src/help_data.rs:1230..1265  ▶ read docs/src/usage/commands.md:527..582 ✓ (1ms)
+ ✓ (1ms)
+  ▶ $ sed -n '1210,1260p' src/commands_risk.rs; echo ---; grep -n "risk_effectiveness_… ✓ (6ms)
+  6 tools completed in 30.3s (6 ✓)
+
+Now I'll add the docs. First, a `## Risk Analysis section in commands.md (there's no /risk` section at all), placed after Code Review:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read docs/src/usage/commands.md:488..528 ✓ (0ms)
+  ▶ edit docs/src/usage/commands.md (3 → 40 lines)
+    This is one of the most common workflows for developers using coding agents — getting a second pair of eyes on your changes before committing.
+  + 
+  + ## Risk Analysis
+  + 
+  + | Command | Description |
+  + |---------|-------------|
+  + | `/risk` | Show the top 15 riskiest files, scored from git-history signals |
+  + | `/risk --all` | Show all scored files |
+  + | `/risk snapshot` | Save current predictions for later validation |
+  + | `/risk validate` | Compare past predictions against actual breakage |
+  + | `/risk history` | Show past snapshots |
+  + | `/risk predict` | Highlight emerging risks (files accelerating in churn) |
+  + | `/risk accuracy` | Show prediction accuracy and per-signal breakdown |
+  + | `/risk effectiveness` | Measure whether the risk reflex is actually improving over time |
+  + 
+  + The `/risk` command ranks source files by predicted regression risk using seven weighted signals from git history: change frequency, recent acceleration, file size, complexity, test density, co-change coupling, and revert involvement.
+  + 
+  + The snapshot → validate loop measures prediction accuracy: run `/risk snapshot`, keep coding, then `/risk validate` to see which predictions were right (Precision@10) and what surprised you. Validation events accumulate in `.yoyo/risk_validations.jsonl`.
+  + 
+  + ### `/risk effectiveness` — Is the reflex learning?
+  ... (20 more lines)
+ ✓ (1m 18s)
+    This is one of the most common workflows for developers using coding agents — getting a second pair of eyes on your changes before committing.
+  + 
+  + ## Risk Analysis
+  + 
+  + | Command | Description |
+  + |---------|-------------|
+  + | `/risk` | Show the top 15 riskiest files, scored from git-history signals |
+  + | `/risk --all` | Show all scored files |
+  ... (13 more lines)
+  ▶ edit src/help_data.rs (11 → 15 lines)
+                 \x20 /risk --all      Show all scored files\n\
+                 \x20 /risk snapshot   Save current predictions for later validation\n\
+                 \x20 /risk validate   Compare past predictions against actual breakage\n\
+  -              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\n\
+  +              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\
+  +              \x20 /risk effectiveness  Measure whether the risk reflex improves over time\n\n\
+                 The snapshot → validate loop measures prediction accuracy:\n\
+                 run /risk snapshot, keep coding, then /risk validate to see\n\
+                 which predictions were right (Precision@10) and what surprised you.\n\n\
+                 Use /risk accuracy to inspect which signals are most predictive,\n\
+                 view learned vs default weights, and track accuracy trends over time.\n\n\
+  +              Use /risk effectiveness to compare early vs recent hit rates and get\n\
+  +              a verdict: learning ↑, no measurable improvement, or decorative ↓.\n\
+  +              Needs at least 6 validation events for a verdict.\n\n\
+ ✓ (1m 41s)
+                 \x20 /risk --all      Show all scored files\n\
+                 \x20 /risk snapshot   Save current predictions for later validation\n\
+                 \x20 /risk validate   Compare past predictions against actual breakage\n\
+  -              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\n\
+  +              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\
+  +              \x20 /risk effectiveness  Measure whether the risk reflex improves over time\n\n\
+                 The snapshot → validate loop measures prediction accuracy:\n\
+                 run /risk snapshot, keep coding, then /risk validate to see\n\
+  ... (6 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings && cargo build 2>&1 | tai… ✓ (18.1s)
+  ▶ $ cargo test 2>&1 | tail -8 ✓ (53.6s)
+  5 tools completed in 4m 52s (5 ✓)
+
+One failure in context::tests — unrelated to my change (docs + help text only), but let me check it:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test context::tests::test_load_project_context_includes_recently_changed 2… ✓ (193ms)
+  ▶ $ cargo test test_load_project_context_includes_recently_changed 2>&1 | tail -25 ✓ (167ms)
+  ▶ $ cargo test 2>&1 | tail -4 ✓ (44.9s)
+  ▶ $ cargo test 2>&1 | grep "test result"  ✓ (45.3s)
+  ▶ $ git status --short && git diff --stat ✓ (9ms)
+  5 tools completed in 2m 6s (5 ✓)
+
+The missing docs deliverable is now complete. Committing so the evaluator sees it:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add docs/src/usage/commands.md src/help_data.rs && git c… (8 lines) ✓ (16ms)
+
+Done. The evaluator's feedback is addressed:
+
+What was missing: The code half (`/risk effectiveness subcommand, dispatch wiring, RISK_SUBCOMMANDS` entry, 15 hermetic tests) was already complete — only the docs deliverable was absent.
+
+What I added:
+
+1. `docs/src/usage/commands.md` — There was no `/risk` section at all, so I added a full Risk Analysis section (after Code Review) with:
+   • A command table covering all `/risk subcommands including effectiveness`
+   • A dedicated ### /risk effectiveness — Is the reflex learning? subsection documenting the early-vs-recent window split, the four verdict thresholds (learning ↑ / no improvement / decorative ↓ / insufficient data at <6 events), the trend agreement with /risk accuracy, and graceful degradation on repos with no validation history
+
+2. `src/help_data.rs` — Added `/risk effectiveness to the /help risk` usage list plus a short paragraph explaining the verdict semantics (the evaluator also noted "no help text was updated either").
+
+Verification: cargo fmt ✓, cargo clippy --all-targets -- -D warnings ✓, `cargo build ✓, cargo test` ✓ (4117 + 88 passed; one initial failure was the known flaky context.rs live-repo test, unrelated — passed on rerun and in isolation). Committed as 477cd93.
+
+  watch: no files changed this turn — skipping
+

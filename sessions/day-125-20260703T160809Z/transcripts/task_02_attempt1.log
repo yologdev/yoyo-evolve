@@ -1,0 +1,124 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_watch" src/main.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_detect_watch_comma… ✓ (7ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 270,290p src/main.rs && e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1420,1445p src/watch.rs &… ✓ (5ms)
+ ✓ (7ms)
+  4 tools completed in 47.2s (4 ✓)
+
+Now I'll add the shared helper to watch.rs. Let me check where to place it and look at the existing test module conventions:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1440,1470p src/watch.rs &… ✓ (5ms)
+
+Now I'll add the helper functions to watch.rs:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (9 → 92 lines)
+        if let Some(cmd) = auto_detect_watch_command() {
+            eprintln!(
+                "{DIM}  💡 Detected `{cmd}` — enable auto-watch with `auto_watch = true` in .yoyo.toml{RESET}"
+  +         );
+  +     }
+  + }
+  + 
+  + /// Return true if `tool` resolves to an executable: either an existing path
+  + /// (when it contains a path separator) or a file found in one of the `PATH`
+  + /// directories. Used as a pre-flight check before arming auto-watch so a
+  + /// detected-but-uninstalled runner fails once at startup instead of at every
+  + /// watch cycle.
+  + pub fn tool_on_path(tool: &str) -> bool {
+  +     if tool.is_empty() {
+  +         return false;
+  +     }
+  +     let p = std::path::Path::new(tool);
+  +     // Explicit path (relative like ./run.sh or absolute): just check existence.
+  +     if p.components().count() > 1 || p.is_absolute() {
+  +         return p.exists();
+  ... (69 more lines)
+ ✓ (16.3s)
+        if let Some(cmd) = auto_detect_watch_command() {
+            eprintln!(
+                "{DIM}  💡 Detected `{cmd}` — enable auto-watch with `auto_watch = true` in .yoyo.toml{RESET}"
+  +         );
+  +     }
+  + }
+  + 
+  + /// Return true if `tool` resolves to an executable: either an existing path
+  ... (13 more lines)
+
+Expected — the call sites aren't wired yet. Updating all three arming sites:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (23ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (9 → 4 lines)
+        // Auto-enable watch mode if a project type is detected and config allows it
+        if get_watch_command().is_none() && agent_config.auto_watch {
+  -         if let Some(cmd) = crate::watch::auto_detect_watch_command() {
+  -             set_watch_command(&cmd);
+  -             println!(
+  -                 "{DIM}  👀 Auto-watch: `{cmd}` (disable with /watch off or auto_watch = false){RESET}\n"
+  -             );
+  -         }
+  +         crate::watch::arm_auto_watch("/watch off or auto_watch = false", false);
+        } else if get_watch_command().is_none() && !agent_config.auto_watch {
+ ✓ (16.3s)
+        // Auto-enable watch mode if a project type is detected and config allows it
+        if get_watch_command().is_none() && agent_config.auto_watch {
+  -         if let Some(cmd) = crate::watch::auto_detect_watch_command() {
+  -             set_watch_command(&cmd);
+  -             println!(
+  -                 "{DIM}  👀 Auto-watch: `{cmd}` (disable with /watch off or auto_watch = false){RESET}\n"
+  -             );
+  -         }
+  +         crate::watch::arm_auto_watch("/watch off or auto_watch = false", false);
+        } else if get_watch_command().is_none() && !agent_config.auto_watch {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "set_watch_command" src/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/use crate::watch::{get… ✓ (7.7s)
+  4 tools completed in 51.2s (4 ✓)
+
+Builds. Now the tests — following Day 122's rule (paired negative cases for the discriminator):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn auto_detect_watch_co… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2210,2225p src/watch.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (3 → 3 lines) ✓ (1m 30s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs (5 → 77 lines)
+                    "auto-detect should chain lint && test: {cmd}"
+                );
+            });
+  +     }
+  + 
+  +     // --- tool_on_path / missing_watch_tool (#557): paired positive/negative
+  +     // cases per Day 122's rule — verify the discriminator both fires and
+  +     // stays silent.
+  + 
+  +     #[test]
+  +     fn tool_on_path_finds_sh() {
+  +         // `sh` is on PATH everywhere CI runs (POSIX shells, Git Bash on Windows CI).
+  +         assert!(tool_on_path("sh"), "sh should be found on PATH");
+  +     }
+  + 
+  +     #[test]
+  +     fn tool_on_path_rejects_nonexistent_tool() {
+  +         assert!(
+  +             !tool_on_path("definitely-not-a-real-tool-xyz"),
+  +             "made-up tool must not be found on PATH"
+  ... (56 more lines)
+ ✓ (1m 34s)
+                    "auto-detect should chain lint && test: {cmd}"
+                );
+            });
+  +     }
+  + 
+  +     // --- tool_on_path / missing_watch_tool (#557): paired positive/negative
+  +     // cases per Day 122's rule — verify the discriminator both fires and
+  +     // stays silent.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (1m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (46.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_watch\|Auto-watch… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_watch" docs/src/u… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -B2 -A8 "watch" docs/src… ✓ (4ms)
+  10 tools completed in 6m 23s (10 ✓)
+
+  watch: no files changed this turn — skipping
+

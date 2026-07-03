@@ -1,0 +1,128 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "parse_.*_from_config" src/config.rs | head -30  ▶ $ sed -n '440,570p' src/config.rs ✓ (6ms)
+ ✓ (4ms)
+  ▶ $ head -20 src/config.rs; grep -n "use std" src/config.rs | head ✓ (5ms)
+  ▶ $ sed -n '940,960p' src/config.rs; sed -n '1340,1375p' src/config.rs ✓ (5ms)
+  ▶ edit src/config.rs (1 → 24 lines)
+  + /// Generic boolean config-flag lookup shared by all `parse_*_from_config`
+  + /// boolean parsers.
+  + ///
+  + /// Truthy values: `"true"`, `"1"`, `"yes"`, `"on"`.
+  + /// Falsy values: `"false"`, `"0"`, `"no"`, `"off"`.
+  + /// A missing key or any unrecognized value falls back to `default`.
+  + ///
+  + /// This preserves the exact behavior of the original hand-rolled parsers:
+  + /// default-`false` flags only flip on an explicit truthy value, and
+  + /// default-`true` flags (e.g. `auto_continue`) only flip on an explicit
+  + /// falsy value — garbage input never changes the default.
+  + pub fn config_flag(
+  +     config: &std::collections::HashMap<String, String>,
+  +     key: &str,
+  +     default: bool,
+  + ) -> bool {
+  +     match config.get(key).map(|v| v.as_str()) {
+  +         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  +         Some("false") | Some("0") | Some("no") | Some("off") => false,
+  +         _ => default,
+  ... (4 more lines)
+ ✓ (19.1s)
+  + /// Generic boolean config-flag lookup shared by all `parse_*_from_config`
+  + /// boolean parsers.
+  + ///
+  + /// Truthy values: `"true"`, `"1"`, `"yes"`, `"on"`.
+  + /// Falsy values: `"false"`, `"0"`, `"no"`, `"off"`.
+  + /// A missing key or any unrecognized value falls back to `default`.
+  + ///
+  + /// This preserves the exact behavior of the original hand-rolled parsers:
+  ... (13 more lines)
+  5 tools completed in 1m 6s (5 ✓)
+
+Expected — the helper isn't wired yet. Now rewriting the 8 boolean wrappers:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_auto_watch_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_watch").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "auto_watch", false)
+    }
+ ✓ (1m 35s)
+    pub fn parse_auto_watch_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_watch").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "auto_watch", false)
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (18.2s)
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_auto_commit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_commit").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "auto_commit", false)
+    }
+ ✓ (1m 41s)
+    pub fn parse_auto_commit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_commit").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "auto_commit", false)
+    }
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_edit").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "auto_edit", false)
+    }
+ ✓ (1m 50s)
+    pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_edit").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "auto_edit", false)
+    }
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_lite_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("lite").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "lite", false)
+    }
+ ✓ (1m 47s)
+    pub fn parse_lite_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("lite").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: disabled
+  -     }
+  +     config_flag(config, "lite", false)
+    }
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_auto_continue_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_continue").map(|v| v.as_str()) {
+  -         Some("false") | Some("0") | Some("no") | Some("off") => false,
+  -         _ => true, // default: enabled
+  -     }
+  +     config_flag(config, "auto_continue", true)
+    }
+ ✓ (1m 52s)
+    pub fn parse_auto_continue_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("auto_continue").map(|v| v.as_str()) {
+  -         Some("false") | Some("0") | Some("no") | Some("off") => false,
+  -         _ => true, // default: enabled
+  -     }
+  +     config_flag(config, "auto_continue", true)
+    }
+  6 tools completed in 9m 38s (6 ✓)
+
+  watch: no files changed this turn — skipping
+

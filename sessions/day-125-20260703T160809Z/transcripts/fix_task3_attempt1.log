@@ -1,0 +1,117 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "config_flag\|parse_no_bell_from_config\|parse_quiet_from_config\|parse_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (8ms)
+ ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs:450..570 ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 3 lines)
+    pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_bell").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: bell enabled
+  -     }
+  +     config_flag(config, "no_bell", false)
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 3 lines)
+    pub fn parse_quiet_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("quiet").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: not quiet
+  -     }
+  +     config_flag(config, "quiet", false)
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (6 → 3 lines)
+    pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_color").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: colors enabled
+  -     }
+  +     config_flag(config, "no_color", false)
+    }
+ ✓ (1m 48s)
+    pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_bell").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: bell enabled
+  -     }
+  +     config_flag(config, "no_bell", false)
+    }
+ ✓ (3m 20s)
+    pub fn parse_quiet_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("quiet").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: not quiet
+  -     }
+  +     config_flag(config, "quiet", false)
+    }
+ ✓ (4m 44s)
+    pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_color").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: colors enabled
+  -     }
+  +     config_flag(config, "no_color", false)
+    }
+  6 tools completed in 5m 11s (6 ✓)
+
+Now add focused tests for `config_flag`. Let me find where the existing parser tests live:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_parse_auto_watc… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/config.rs (2 → 43 lines)
+  +     #[test]
+  +     fn config_flag_true_values() {
+  +         for v in ["true", "1", "yes", "on"] {
+  +             let mut config = std::collections::HashMap::new();
+  +             config.insert("flag".to_string(), v.to_string());
+  +             assert!(config_flag(&config, "flag", false), "{v} should be truthy");
+  +             assert!(
+  +                 config_flag(&config, "flag", true),
+  +                 "{v} should be truthy even with default true"
+  +             );
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn config_flag_false_values() {
+  +         for v in ["false", "0", "no", "off"] {
+  +             let mut config = std::collections::HashMap::new();
+  +             config.insert("flag".to_string(), v.to_string());
+  +             assert!(!config_flag(&config, "flag", true), "{v} should be falsy");
+  +             assert!(
+  ... (23 more lines)
+ ✓ (1m 45s)
+  +     #[test]
+  +     fn config_flag_true_values() {
+  +         for v in ["true", "1", "yes", "on"] {
+  +             let mut config = std::collections::HashMap::new();
+  +             config.insert("flag".to_string(), v.to_string());
+  +             assert!(config_flag(&config, "flag", false), "{v} should be truthy");
+  +             assert!(
+  +                 config_flag(&config, "flag", true),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 24s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test config 2>&1 | grep -E… ✓ (180ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib config_flag 2>&… ✓ (101ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test config_flag 2>&1 | ta… ✓ (127ms)
+  6 tools completed in 3m 50s (6 ✓)
+
+All checks green. Committing the fix:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (8 lines) ✓ (14ms)
+
+Done. Both evaluator issues are fixed:
+
+1. Remaining 3 boolean parsers converted — parse_no_bell_from_config, `parse_quiet_from_config, and parse_no_color_from_config are now one-line config_flag(config, key, false)` wrappers. I verified behavior equivalence first: the originals returned true only for "true"/"1"/"yes"/"on" and false for everything else (including explicit falsy values and garbage) — identical to config_flag with default: false, since its falsy arm and fallback both yield false.
+
+2. Focused `config_flag` tests added — 4 new tests covering all required cases:
+• `config_flag_true_values` — all 4 truthy strings, with both defaults
+• config_flag_false_values — all 4 falsy strings, with both defaults
+• config_flag_missing_key_returns_default
+• config_flag_garbage_value_returns_default
+
+All existing per-function tests kept unchanged (they pass, proving the wrappers preserve behavior).
+
+Verification: cargo fmt ✓, cargo clippy --all-targets -- -D warnings ✓, cargo build ✓, cargo test ✓ (4111 lib tests + 89 integration, 0 failures). Diff touches only `src/config.rs — no .yoyo.toml` scratch state swept in this time. Committed as 312bb5f.
+
+  watch: no files changed this turn — skipping
+

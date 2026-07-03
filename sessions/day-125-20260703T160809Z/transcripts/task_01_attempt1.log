@@ -1,0 +1,145 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+This is the dream task — measuring whether the risk reflex actually works. Let me start by understanding the existing validation machinery.
+  ▶ search 'load_validation_history_from|compute_accuracy_stats|Accuracy…' in src/commands_risk.rs  ▶ search 'RISK_SUBCOMMANDS' in src ✓ (3ms)
+ ✓ (9ms)
+  ▶ search 'validation|accuracy' in src (*.rs) ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "validate\|accuracy\|jso… ✓ (11ms)
+  ▶ read src/commands_risk.rs:1797..2017 ✓ (3ms)
+  ▶ read src/commands_risk.rs:1210..1310 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_risk_accuracy… ✓ (3ms)
+  ▶ read src/commands_risk.rs:2214..2304 ✓ (1ms)
+  8 tools completed in 56.0s (8 ✓)
+
+Now let me look at the existing test patterns for temp-dir JSONL tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prediction_accuracy_sum… ✓ (4ms)
+  ▶ read src/commands_risk.rs:4680..4755 ✓ (2ms)
+  2 tools completed in 22.4s (2 ✓)
+
+I have the full picture. Let me check the color constant imports, then implement:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs (30 lines) ✓ (1ms)
+  ▶ edit src/commands_risk.rs (5 → 173 lines)
+        let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+        Some((hit_rate, stats.total_validations, trend_label))
+  + }
+  + 
+  + // ── Risk reflex effectiveness (dream milestone: "measure whether the reflex works") ──
+  + 
+  + /// Minimum validation events needed before the early/recent window split
+  + /// produces a meaningful comparison.
+  + const MIN_EFFECTIVENESS_EVENTS: usize = 6;
+  + 
+  + /// Verdict from comparing the early validation window against the recent one.
+  + #[derive(Debug, PartialEq)]
+  + enum EffectivenessVerdict {
+  +     /// Recent hit rate exceeds early hit rate by ≥5 points — the reflex
+  +     /// appears to be learning.
+  +     Learning,
+  +     /// Delta within ±5 points — no measurable improvement yet.
+  +     NoImprovement,
+  +     /// Recent hit rate is worse by ≥5 points — the reflex may be decorative.
+  +     Decorative,
+  ... (153 more lines)
+ ✓ (17.8s)
+        let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+        Some((hit_rate, stats.total_validations, trend_label))
+  + }
+  + 
+  + // ── Risk reflex effectiveness (dream milestone: "measure whether the reflex works") ──
+  + 
+  + /// Minimum validation events needed before the early/recent window split
+  + /// produces a meaningful comparison.
+  ... (13 more lines)
+  2 tools completed in 53.2s (2 ✓)
+
+Dead-code warnings expected — the dispatch wiring comes next:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (4 → 9 lines)
+        if sub == "accuracy" {
+            handle_risk_accuracy();
+  +         return;
+  +     }
+  + 
+  +     if sub == "effectiveness" {
+  +         handle_risk_effectiveness();
+            return;
+        }
+ ✓ (1m 40s)
+        if sub == "accuracy" {
+            handle_risk_accuracy();
+  +         return;
+  +     }
+  + 
+  +     if sub == "effectiveness" {
+  +         handle_risk_effectiveness();
+            return;
+        }
+  ▶ edit src/commands_risk.rs (3 → 9 lines)
+    pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
+  -     "snapshot", "validate", "history", "predict", "accuracy", "--all",
+  +     "snapshot",
+  +     "validate",
+  +     "history",
+  +     "predict",
+  +     "accuracy",
+  +     "effectiveness",
+  +     "--all",
+    ];
+ ✓ (1m 37s)
+    pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
+  -     "snapshot", "validate", "history", "predict", "accuracy", "--all",
+  +     "snapshot",
+  +     "validate",
+  +     "history",
+  +     "predict",
+  +     "accuracy",
+  +     "effectiveness",
+  +     "--all",
+    ];
+  2 tools completed in 3m 42s (2 ✓)
+
+Now the tests. Let me find the end of the test_prediction_accuracy_summary_trend_declining test:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:4925..4965 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (5 → 232 lines)
+            assert!(result.is_some());
+            let (_hit_rate, _count, trend) = result.unwrap();
+            assert!(trend.contains("stable"), "expected stable, got: {trend}");
+  +     }
+  + 
+  +     // ── Risk reflex effectiveness tests ──
+  + 
+  +     /// Build a synthetic validation event with the given hits/changed counts.
+  +     fn effectiveness_event(hits: usize, changed: usize) -> ValidationEvent {
+  +         ValidationEvent {
+  +             day: 100,
+  +             hit_count: hits,
+  +             total_changed: changed,
+  +             accuracy_pct: if changed > 0 {
+  +                 (hits as f64 / changed as f64) * 100.0
+  +             } else {
+  +                 0.0
+  +             },
+  +         }
+  +     }
+  ... (211 more lines)
+ ✓ (1m 39s)
+            assert!(result.is_some());
+            let (_hit_rate, _count, trend) = result.unwrap();
+            assert!(trend.contains("stable"), "expected stable, got: {trend}");
+  +     }
+  + 
+  +     // ── Risk reflex effectiveness tests ──
+  + 
+  +     /// Build a synthetic validation event with the given hits/changed counts.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test effectiveness 2>&1 | … ✓ (19.6s)
+  4 tools completed in 3m 7s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

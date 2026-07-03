@@ -1,0 +1,75 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'fn parse_(no_bell|quiet|no_color|auto_watch)_from_config|fn …' in src/config.rs ✓ (2ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn config_flag\|fn pars… ✓ (7ms)
+  3 tools completed in 11.0s (3 ✓)
+
+A follow-up commit exists; let me verify the current state of the two functions the evaluator flagged, plus the .yoyo.toml cleanup.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/config.rs:455..565  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff origin/main..HEAD --sta… ✓ (2ms)
+ ✓ (10ms)
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_bell").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: bell enabled
+  -     }
+  +     config_flag(config, "no_bell", false)
+    }
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_quiet_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("quiet").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: not quiet
+  -     }
+  +     config_flag(config, "quiet", false)
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff origin/main..HEAD -- .y… ✓ (1m 47s)
+    pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_bell").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: bell enabled
+  -     }
+  +     config_flag(config, "no_bell", false)
+    }
+ ✓ (3m 13s)
+    pub fn parse_quiet_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("quiet").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: not quiet
+  -     }
+  +     config_flag(config, "quiet", false)
+    }
+ ✓ (3m 13s)
+  5 tools completed in 3m 33s (5 ✓)
+
+Those are wizard artifacts swept into the diff. Clean them up:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout origin/main -- .yoy… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 27s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (56.8s)
+  3 tools completed in 2m 39s (3 ✓)
+
+Line 534 still shows a no_bell match — let me check what that is:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 525,560p src/config.rs &&… ✓ (5ms)
+  ▶ edit src/config.rs (6 → 3 lines)
+    pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_bell").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: bell enabled
+  -     }
+  +     config_flag(config, "no_bell", false)
+    }
+ ✓ (1m 47s)
+    pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+  -     match config.get("no_bell").map(|v| v.as_str()) {
+  -         Some("true") | Some("1") | Some("yes") | Some("on") => true,
+  -         _ => false, // default: bell enabled
+  -     }
+  +     config_flag(config, "no_bell", false)
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "match config.get" src/c… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-…
