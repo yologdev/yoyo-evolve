@@ -27,6 +27,24 @@ set -euo pipefail
 
 source "$(dirname "$0")/common.sh"
 
+# GASP state instrumentation (fail-soft; see scripts/gasp_shim.sh). Skill
+# cycles serve their own standing goal; skill patches pin the skill commit —
+# the spec's canonical self-improvement case.
+export GASP_GOAL_ID="goal_skill_quality"
+export GASP_GOAL_TITLE="Keep yoyo's skills sharp: refine, create, retire"
+export GASP_GOAL_SUMMARY="the standing goal skill-evolve cycles serve; each skill change is a patch pinning the skill commit"
+# the eval fact must name THIS harness's actual oracle (no clippy, no
+# evaluator agent here) — the record never claims a stronger gate than ran
+export GASP_EVAL_COMMAND="diff-scope hard rules; cargo build+test"
+if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; then
+    :
+else
+    echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
+    gasp_session_start() { :; }; gasp_task_planned() { :; }
+    gasp_task_result()  { :; }; gasp_mirror_skills() { :; }; gasp_session_end() { :; }
+fi
+GASP_OUTCOME=""
+
 MODEL="${MODEL:-claude-opus-4-6}"
 THRESHOLD="${SKILL_EVOLVE_THRESHOLD:-5}"
 COOLDOWN="${SKILL_EVOLVE_COOLDOWN_SECS:-86400}"
@@ -93,6 +111,17 @@ cleanup() {
             git push origin HEAD 2>/dev/null || \
                 echo "  WARNING: push failed (next cron will retry)" >&2
         fi
+
+        # GASP: close the run and push state AFTER the code push (code first,
+        # state second). Fail-soft; no-ops when the session never opened.
+        # If the pre-push rebase rewrote the agent's commit, the recorded
+        # patch artifact pins a SHA that never becomes public — say so.
+        if [ -n "${HEAD_AFTER:-}" ] && [ "${HEAD_BEFORE:-}" != "${HEAD_AFTER:-}" ] \
+           && ! git merge-base --is-ancestor "$HEAD_AFTER" HEAD 2>/dev/null; then
+            echo "  WARNING: rebase rewrote ${HEAD_AFTER:0:7}; GASP patch artifact pins a non-pushed SHA" >&2
+            GASP_OUTCOME="${GASP_OUTCOME:-done} (artifact sha rewritten by rebase; now $(git rev-parse --short HEAD 2>/dev/null || echo unknown))"
+        fi
+        gasp_session_end "${GASP_OUTCOME:-aborted rc=$rc}"
     fi
 
     exit "$rc"
@@ -238,6 +267,13 @@ fi
 # ── Snapshot HEAD (for revert on build break) ──────────────────────────
 HEAD_BEFORE=$(git rev-parse HEAD)
 
+# Skill cycles intentionally emit no task node — the chain is
+# run -> patch -> eval -> decision under goal_skill_quality (the spec's
+# spine is "a backbone, not a forced linear workflow").
+GASP_DAY=$(cat DAY_COUNT 2>/dev/null || echo 0); GASP_DAY=${GASP_DAY//[^0-9]/}
+gasp_session_start "${GASP_DAY:-0}" "skill_day" \
+    "skill-evolve cycle (refine|create|retire one skill)"
+
 # ── Invoke yoyo ────────────────────────────────────────────────────────
 echo "skill-evolve: invoking agent (timeout=${TIMEOUT}s)..."
 
@@ -311,6 +347,9 @@ if [ "$HEAD_BEFORE" != "$HEAD_AFTER" ]; then
     if [ -n "$VIOLATIONS" ]; then
         echo "skill-evolve: DIFF SCOPE VIOLATION — reverting agent commits"
         printf '%b' "$VIOLATIONS"
+        gasp_task_result 1 "skill cycle: $(echo "$CHANGED_FILES" | paste -sd ', ' - | cut -c1-160)" \
+            rejected "$HEAD_BEFORE" "$HEAD_AFTER" "diff-scope violation: $(printf '%b' "$VIOLATIONS" | paste -sd '; ' -)"
+        GASP_OUTCOME="rejected: diff-scope violation"
         revert_agent_work
         exit 1
     fi
@@ -320,17 +359,42 @@ if [ "$HEAD_BEFORE" != "$HEAD_AFTER" ]; then
     cargo build --quiet 2>&1 | tail -10
     if [ "${PIPESTATUS[0]}" -ne 0 ]; then
         echo "skill-evolve: build broken after agent commit — reverting"
+        gasp_task_result 1 "skill cycle: $(echo "$CHANGED_FILES" | paste -sd ', ' - | cut -c1-160)" \
+            rejected "$HEAD_BEFORE" "$HEAD_AFTER" "build broken after skill change"
+        GASP_OUTCOME="rejected: build broken"
         revert_agent_work
         exit 1
     fi
     cargo test --quiet 2>&1 | tail -10
     if [ "${PIPESTATUS[0]}" -ne 0 ]; then
         echo "skill-evolve: tests broken after agent commit — reverting"
+        gasp_task_result 1 "skill cycle: $(echo "$CHANGED_FILES" | paste -sd ', ' - | cut -c1-160)" \
+            rejected "$HEAD_BEFORE" "$HEAD_AFTER" "tests broken after skill change"
+        GASP_OUTCOME="rejected: tests broken"
         revert_agent_work
         exit 1
     fi
     echo "skill-evolve: build/test still green"
+
+    # GASP: a journal-only commit (refused / NO-OP / meta-suggestion — the
+    # meta-skill journals every cycle) is NOT a skill change: no patch is
+    # recorded. A real change records the promoted patch pinning the skill
+    # commit; the state repo's skill tree is synced either way.
+    NON_JOURNAL=$(echo "$CHANGED_FILES" | grep -v -e '^skills/_journal\.md$' -e '^memory/learnings\.jsonl$' || true)
+    if [ -n "$NON_JOURNAL" ]; then
+        gasp_task_result 1 "skill cycle: $(echo "$NON_JOURNAL" | paste -sd ', ' - | cut -c1-160)" \
+            promoted "$HEAD_BEFORE" "$HEAD_AFTER"
+        GASP_OUTCOME="promoted skill change"
+    else
+        GASP_OUTCOME="journal-only cycle (refused, no-op, or meta-suggestion — no skill change)"
+    fi
+    gasp_mirror_skills
 fi
+if [ -z "$GASP_OUTCOME" ] && [ "${exit_code:-0}" -ne 0 ]; then
+    # agent timeout / API error with no commit is an abort, not a verdict
+    GASP_OUTCOME="aborted: agent exit=$exit_code (no commit)"
+fi
+[ -z "$GASP_OUTCOME" ] && GASP_OUTCOME="no-op (no skill change this cycle)"
 
 # Cycle complete. Gate state reset, push, and temp cleanup all happen in the
 # EXIT trap (cleanup() near the top). This ensures revert paths reach them too.
