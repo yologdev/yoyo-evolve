@@ -1213,7 +1213,13 @@ fn format_emerging_risks(emerging: &[EmergingRisk]) -> String {
 
 /// Subcommands for `/risk` tab-completion.
 pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
-    "snapshot", "validate", "history", "predict", "accuracy", "--all",
+    "snapshot",
+    "validate",
+    "history",
+    "predict",
+    "accuracy",
+    "effectiveness",
+    "--all",
 ];
 
 /// Handle the `/risk` command — display per-file risk scores.
@@ -1242,6 +1248,11 @@ pub(crate) fn handle_risk(input: &str) {
 
     if sub == "accuracy" {
         handle_risk_accuracy();
+        return;
+    }
+
+    if sub == "effectiveness" {
+        handle_risk_effectiveness();
         return;
     }
 
@@ -2271,6 +2282,164 @@ fn prediction_accuracy_summary_from(path: &std::path::Path) -> Option<(f64, usiz
     };
     let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
     Some((hit_rate, stats.total_validations, trend_label))
+}
+
+// ── Risk reflex effectiveness (`/risk effectiveness`) ──
+
+/// Minimum validation events needed for an early-vs-recent window split.
+const MIN_EFFECTIVENESS_EVENTS: usize = 6;
+
+/// Verdict on whether the risk reflex is measurably improving predictions.
+#[derive(Debug, PartialEq)]
+enum EffectivenessVerdict {
+    /// Recent hit rate beats the early window by ≥5 points.
+    Learning,
+    /// Recent and early hit rates are within ±5 points.
+    Flat,
+    /// Recent hit rate is worse than the early window by ≥5 points.
+    Decorative,
+    /// Fewer than `MIN_EFFECTIVENESS_EVENTS` total events — no split possible.
+    Insufficient,
+}
+
+/// Per-window aggregate for the effectiveness report.
+#[derive(Debug)]
+struct EffectivenessWindow {
+    event_count: usize,
+    hit_rate_pct: f64,
+}
+
+/// Full effectiveness report: early vs recent window comparison plus the
+/// overall trend from `compute_accuracy_stats` (so this and `/status` agree).
+struct EffectivenessReport {
+    total_events: usize,
+    early: Option<EffectivenessWindow>,
+    recent: Option<EffectivenessWindow>,
+    verdict: EffectivenessVerdict,
+    trend: AccuracyTrend,
+}
+
+/// Aggregate a slice of validation events into a window summary.
+/// Hit rate is total hits / total changed files across the window
+/// (same definition as the overall hit rate in `compute_accuracy_stats`).
+fn effectiveness_window(events: &[ValidationEvent]) -> EffectivenessWindow {
+    let hits: usize = events.iter().map(|e| e.hit_count).sum();
+    let changed: usize = events.iter().map(|e| e.total_changed).sum();
+    let hit_rate_pct = if changed > 0 {
+        (hits as f64 / changed as f64) * 100.0
+    } else {
+        0.0
+    };
+    EffectivenessWindow {
+        event_count: events.len(),
+        hit_rate_pct,
+    }
+}
+
+/// Compare early vs recent window hit rates and produce a verdict.
+fn compute_effectiveness_verdict(early_rate: f64, recent_rate: f64) -> EffectivenessVerdict {
+    let delta = recent_rate - early_rate;
+    if delta >= 5.0 {
+        EffectivenessVerdict::Learning
+    } else if delta <= -5.0 {
+        EffectivenessVerdict::Decorative
+    } else {
+        EffectivenessVerdict::Flat
+    }
+}
+
+/// Build the effectiveness report from a validation-history JSONL file.
+/// Splits events chronologically: early = first half, recent = second half
+/// (the recent window gets the extra event when the count is odd).
+fn effectiveness_report_from(path: &std::path::Path) -> EffectivenessReport {
+    let events = load_validation_history_from(path);
+    let trend = compute_accuracy_stats(&events).trend;
+    let total_events = events.len();
+
+    if total_events < MIN_EFFECTIVENESS_EVENTS {
+        return EffectivenessReport {
+            total_events,
+            early: None,
+            recent: None,
+            verdict: EffectivenessVerdict::Insufficient,
+            trend,
+        };
+    }
+
+    let mid = total_events / 2;
+    let early = effectiveness_window(&events[..mid]);
+    let recent = effectiveness_window(&events[mid..]);
+    let verdict = compute_effectiveness_verdict(early.hit_rate_pct, recent.hit_rate_pct);
+
+    EffectivenessReport {
+        total_events,
+        early: Some(early),
+        recent: Some(recent),
+        verdict,
+        trend,
+    }
+}
+
+/// Format the effectiveness report for terminal display.
+fn format_effectiveness_report(report: &EffectivenessReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "\n{BOLD}{CYAN}  Risk Reflex Effectiveness{RESET}\n\n"
+    ));
+
+    if report.verdict == EffectivenessVerdict::Insufficient {
+        out.push_str(&format!(
+            "  {YELLOW}insufficient data ({} events; need ≥{}){RESET}\n\
+             {DIM}  Validation events accumulate automatically when watch failures\n\
+             {DIM}  are checked against risk predictions. Keep working — the\n\
+             {DIM}  verdict unlocks at {} events.{RESET}\n",
+            report.total_events, MIN_EFFECTIVENESS_EVENTS, MIN_EFFECTIVENESS_EVENTS
+        ));
+        return out;
+    }
+
+    // Both windows are always present for a non-insufficient verdict.
+    if let (Some(early), Some(recent)) = (&report.early, &report.recent) {
+        let early_rate = (early.hit_rate_pct * 10.0).round() / 10.0;
+        let recent_rate = (recent.hit_rate_pct * 10.0).round() / 10.0;
+        out.push_str(&format!(
+            "  Early window:   {} events, {early_rate:.1}% hit rate\n\
+             \x20 Recent window:  {} events, {recent_rate:.1}% hit rate\n",
+            early.event_count, recent.event_count
+        ));
+    }
+
+    let verdict_line = match report.verdict {
+        EffectivenessVerdict::Learning => {
+            format!("{GREEN}reflex appears to be learning ↑{RESET}")
+        }
+        EffectivenessVerdict::Flat => {
+            format!("{YELLOW}no measurable improvement yet — need more cycles{RESET}")
+        }
+        EffectivenessVerdict::Decorative => format!(
+            "{RED}reflex may be decorative ↓ — consider anticipatory signals (see DREAM.md){RESET}"
+        ),
+        EffectivenessVerdict::Insufficient => unreachable!("handled above"),
+    };
+    out.push_str(&format!("\n  Verdict: {verdict_line}\n"));
+
+    let trend_str = match report.trend {
+        AccuracyTrend::Improving => format!("{GREEN}↑ improving{RESET}"),
+        AccuracyTrend::Declining => format!("{RED}↓ declining{RESET}"),
+        AccuracyTrend::Stable => format!("{YELLOW}→ stable{RESET}"),
+        AccuracyTrend::Insufficient => format!("{DIM}? insufficient{RESET}"),
+    };
+    out.push_str(&format!(
+        "  Overall trend: {trend_str} {DIM}(same signal as /status){RESET}\n"
+    ));
+
+    out
+}
+
+/// Handle the `/risk effectiveness` subcommand.
+fn handle_risk_effectiveness() {
+    let report = effectiveness_report_from(std::path::Path::new(RISK_VALIDATION_PATH));
+    print!("{}", format_effectiveness_report(&report));
 }
 
 /// Parsed git-log entry: one commit message + the files it touched.
@@ -4682,6 +4851,167 @@ src/baz.rs
     fn test_risk_accuracy_dispatches_without_panic() {
         // Smoke test: `/risk accuracy` should not panic
         handle_risk("/risk accuracy");
+    }
+
+    // ── /risk effectiveness tests ──
+
+    /// Write a synthetic validation JSONL file where each entry has the given
+    /// number of hit files and surprise files. Returns the file path.
+    fn write_effectiveness_fixture(
+        dir: &std::path::Path,
+        entries: &[(usize, usize)], // (hits, surprises) per event
+    ) -> std::path::PathBuf {
+        let path = dir.join("validations.jsonl");
+        let mut content = String::new();
+        for (i, (hits, surprises)) in entries.iter().enumerate() {
+            let hit_files: Vec<String> = (0..*hits).map(|n| format!("\"h{n}.rs\"")).collect();
+            let surprise_files: Vec<String> =
+                (0..*surprises).map(|n| format!("\"s{n}.rs\"")).collect();
+            let total = hits + surprises;
+            let acc = if total > 0 {
+                (*hits as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            content.push_str(&format!(
+                "{{\"ts\":\"2025-01-{:02}T12:00:00Z\",\"day\":{},\"trigger\":\"watch_failure\",\"hits\":[{}],\"surprises\":[{}],\"predicted_count\":10,\"accuracy_pct\":{acc:.1}}}\n",
+                i + 1,
+                100 + i,
+                hit_files.join(","),
+                surprise_files.join(","),
+            ));
+        }
+        std::fs::write(&path, content).expect("write fixture");
+        path
+    }
+
+    #[test]
+    fn test_effectiveness_insufficient_at_exactly_five_events() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Boundary test (below): exactly 5 events → insufficient, no split.
+        let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 5]);
+        let report = effectiveness_report_from(&path);
+        assert_eq!(report.verdict, EffectivenessVerdict::Insufficient);
+        assert_eq!(report.total_events, 5);
+        assert!(report.early.is_none());
+        assert!(report.recent.is_none());
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("insufficient data (5 events; need ≥6)"));
+    }
+
+    #[test]
+    fn test_effectiveness_real_verdict_at_exactly_six_events() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Boundary test (above): exactly 6 events → windows split 3/3, real verdict.
+        let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 6]);
+        let report = effectiveness_report_from(&path);
+        assert_ne!(report.verdict, EffectivenessVerdict::Insufficient);
+        assert_eq!(report.total_events, 6);
+        let early = report.early.as_ref().expect("early window present at 6 events");
+        let recent = report.recent.as_ref().expect("recent window present at 6 events");
+        assert_eq!(early.event_count, 3);
+        assert_eq!(recent.event_count, 3);
+    }
+
+    #[test]
+    fn test_effectiveness_verdict_learning() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Early: 1/4 hit rate (25%); recent: 3/4 hit rate (75%) → learning.
+        let path = write_effectiveness_fixture(
+            dir.path(),
+            &[(1, 3), (1, 3), (1, 3), (3, 1), (3, 1), (3, 1)],
+        );
+        let report = effectiveness_report_from(&path);
+        assert_eq!(report.verdict, EffectivenessVerdict::Learning);
+        let early = report.early.as_ref().expect("early window");
+        let recent = report.recent.as_ref().expect("recent window");
+        assert!((early.hit_rate_pct - 25.0).abs() < 0.1);
+        assert!((recent.hit_rate_pct - 75.0).abs() < 0.1);
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("reflex appears to be learning ↑"));
+    }
+
+    #[test]
+    fn test_effectiveness_verdict_flat() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Both windows at 50% hit rate → flat.
+        let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 6]);
+        let report = effectiveness_report_from(&path);
+        assert_eq!(report.verdict, EffectivenessVerdict::Flat);
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("no measurable improvement yet"));
+    }
+
+    #[test]
+    fn test_effectiveness_verdict_decorative() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Early: 3/4 (75%); recent: 1/4 (25%) → decorative.
+        let path = write_effectiveness_fixture(
+            dir.path(),
+            &[(3, 1), (3, 1), (3, 1), (1, 3), (1, 3), (1, 3)],
+        );
+        let report = effectiveness_report_from(&path);
+        assert_eq!(report.verdict, EffectivenessVerdict::Decorative);
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("reflex may be decorative ↓"));
+        assert!(formatted.contains("DREAM.md"));
+    }
+
+    #[test]
+    fn test_effectiveness_verdict_boundary_exactly_five_points() {
+        // Delta of exactly +5.0 points → learning; exactly -5.0 → decorative.
+        assert_eq!(
+            compute_effectiveness_verdict(50.0, 55.0),
+            EffectivenessVerdict::Learning
+        );
+        assert_eq!(
+            compute_effectiveness_verdict(50.0, 45.0),
+            EffectivenessVerdict::Decorative
+        );
+        // Just inside the ±5 band → flat (paired negative cases).
+        assert_eq!(
+            compute_effectiveness_verdict(50.0, 54.9),
+            EffectivenessVerdict::Flat
+        );
+        assert_eq!(
+            compute_effectiveness_verdict(50.0, 45.1),
+            EffectivenessVerdict::Flat
+        );
+    }
+
+    #[test]
+    fn test_effectiveness_odd_event_count_splits_extra_to_recent() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // 7 events → early 3, recent 4.
+        let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 7]);
+        let report = effectiveness_report_from(&path);
+        let early = report.early.as_ref().expect("early window");
+        let recent = report.recent.as_ref().expect("recent window");
+        assert_eq!(early.event_count, 3);
+        assert_eq!(recent.event_count, 4);
+    }
+
+    #[test]
+    fn test_effectiveness_missing_file_is_insufficient() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("nonexistent.jsonl");
+        let report = effectiveness_report_from(&path);
+        assert_eq!(report.verdict, EffectivenessVerdict::Insufficient);
+        assert_eq!(report.total_events, 0);
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("insufficient data (0 events; need ≥6)"));
+    }
+
+    #[test]
+    fn test_effectiveness_report_includes_overall_trend() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 6]);
+        let report = effectiveness_report_from(&path);
+        // Flat 50% throughout → stable trend, matching /status.
+        assert_eq!(report.trend, AccuracyTrend::Stable);
+        let formatted = format_effectiveness_report(&report);
+        assert!(formatted.contains("Overall trend"));
+        assert!(formatted.contains("stable"));
     }
 
     #[test]
