@@ -291,19 +291,95 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
-    /// Run a git command inside the fixture repo, panicking on failure so
-    /// broken fixtures surface as loud test errors instead of vacuous passes.
-    fn fixture_git(dir: &std::path::Path, args: &[&str]) {
-        let out = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir)
+    /// Build a fully environment-isolated git Command for fixture repos.
+    ///
+    /// In CI and under parallel test execution, a bare `git commit` in a
+    /// temp-dir repo can fail or silently no-op for reasons that don't exist
+    /// locally: leaked global/system config (`commit.gpgsign=true` with no
+    /// key, `core.hooksPath`), leaked env vars (`GIT_DIR`, `GIT_INDEX_FILE`,
+    /// ...) redirecting the repo elsewhere, or missing identity when HOME is
+    /// overridden. That exact failure killed
+    /// `test_load_project_context_includes_recently_changed` on Day 125: the
+    /// second fixture commit failed, the file stayed dirty, and the test saw
+    /// "Uncommitted changes: 1 file" with no Recently Changed section.
+    /// Every fixture git invocation goes through here so no leakage path
+    /// exists.
+    fn fixture_git_command(dir: &std::path::Path, args: &[&str]) -> std::process::Command {
+        let mut cmd = std::process::Command::new("git");
+        // Ignore global/system config entirely (supported since git 2.32).
+        cmd.env("GIT_CONFIG_GLOBAL", "/dev/null");
+        cmd.env("GIT_CONFIG_SYSTEM", "/dev/null");
+        // Strip env vars that can redirect the repo/index/objects elsewhere
+        // or inject config from a parallel test or the harness.
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_NAMESPACE",
+            "GIT_COMMON_DIR",
+            "GIT_CONFIG_COUNT",
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_AUTHOR_DATE",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+            "GIT_COMMITTER_DATE",
+        ] {
+            cmd.env_remove(var);
+        }
+        // Identity + safety inline on every call: `-c` beats config files
+        // because leaked config can't override it.
+        cmd.args([
+            "-c",
+            "user.name=yoyo-test",
+            "-c",
+            "user.email=test@yoyo.local",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "init.defaultBranch=main",
+        ]);
+        cmd.args(args);
+        cmd.current_dir(dir);
+        cmd
+    }
+
+    /// Run a git command inside the fixture repo, panicking loudly — full
+    /// command, exit status, stdout AND stderr — so broken fixtures surface
+    /// as diagnostic test errors instead of confusing downstream assertion
+    /// failures. Returns stdout so callers can assert postconditions.
+    fn fixture_git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = fixture_git_command(dir, args)
             .output()
             .expect("git should be runnable in tests");
         assert!(
             out.status.success(),
-            "git {:?} failed in fixture: {}",
-            args,
-            String::from_utf8_lossy(&out.stderr)
+            "git {args:?} failed in fixture repo {dir:?}\n  status: {}\n  stdout: {}\n  stderr: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// Assert the postcondition of a fixture commit: HEAD resolves and the
+    /// committed file no longer appears in `git status --porcelain`. This
+    /// catches the Day 125 CI failure mode (commit "succeeded" but the file
+    /// stayed staged/dirty) at the helper level with a precise message.
+    fn assert_committed(dir: &std::path::Path, name: &str) {
+        let head = fixture_git(dir, &["rev-parse", "HEAD"]);
+        assert!(
+            !head.trim().is_empty(),
+            "git rev-parse HEAD returned empty output in fixture repo {dir:?}"
+        );
+        let status = fixture_git(dir, &["status", "--porcelain"]);
+        assert!(
+            !status.lines().any(|l| l.ends_with(name)),
+            "fixture commit of {name:?} was a no-op — file still dirty per \
+             `git status --porcelain` in {dir:?}:\n{status}"
         );
     }
 
@@ -315,21 +391,24 @@ mod tests {
     fn init_fixture_repo(dir: &std::path::Path) {
         fixture_git(dir, &["init", "-q"]);
         fixture_git(dir, &["config", "user.name", "yoyo-test"]);
-        fixture_git(dir, &["config", "user.email", "yoyo-test@example.com"]);
+        fixture_git(dir, &["config", "user.email", "test@yoyo.local"]);
         fixture_git(dir, &["config", "commit.gpgsign", "false"]);
         std::fs::write(dir.join("committed.txt"), "hello\n").unwrap();
         fixture_git(dir, &["add", "committed.txt"]);
         fixture_git(dir, &["commit", "-q", "-m", "initial"]);
+        assert_committed(dir, "committed.txt");
         // Normalize the branch name (init.defaultBranch varies by environment)
         fixture_git(dir, &["branch", "-M", "main"]);
         std::fs::write(dir.join("untracked.txt"), "scratch\n").unwrap();
     }
 
-    /// Add and commit a file in the fixture repo.
+    /// Add and commit a file in the fixture repo, asserting the commit
+    /// actually landed (not just that git exited 0).
     fn fixture_commit_file(dir: &std::path::Path, name: &str, contents: &str, msg: &str) {
         std::fs::write(dir.join(name), contents).unwrap();
         fixture_git(dir, &["add", name]);
         fixture_git(dir, &["commit", "-q", "-m", msg]);
+        assert_committed(dir, name);
     }
 
     #[test]
