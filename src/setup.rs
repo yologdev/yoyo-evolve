@@ -59,6 +59,8 @@ pub fn generate_config_contents(provider: &str, model: &str, base_url: Option<&s
 }
 
 /// Save a `.yoyo.toml` config file in the given directory.
+/// If the file already exists, it is backed up to `.yoyo.toml.bak` first and
+/// unmanaged top-level keys are preserved into the new contents.
 /// Returns Ok(path) on success.
 pub fn save_config_to_file(
     dir: &std::path::Path,
@@ -68,12 +70,68 @@ pub fn save_config_to_file(
 ) -> io::Result<String> {
     let path = dir.join(".yoyo.toml");
     let contents = generate_config_contents(provider, model, base_url);
-    std::fs::write(&path, contents)?;
+    write_config_with_backup(&path, contents)?;
     Ok(path.display().to_string())
 }
 
+/// Top-level keys the setup wizard manages in `generate_config_contents`.
+/// Anything else found at the top level of an existing config is preserved.
+const MANAGED_CONFIG_KEYS: &[&str] = &["provider", "model", "base_url"];
+
+/// Scan an existing config's top-level `key = value` lines and return those
+/// whose key is NOT managed by the wizard (e.g. `auto_watch = true`).
+/// The scan is deliberately line-based and stops at the first `[section]`
+/// header — keys inside sections are not top-level and must not be appended.
+fn preserved_unmanaged_lines(old_contents: &str) -> Vec<String> {
+    let mut preserved = Vec::new();
+    for line in old_contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            break; // section keys are not top-level — stop scanning
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, _value)) = trimmed.split_once('=') {
+            if !MANAGED_CONFIG_KEYS.contains(&key.trim()) {
+                preserved.push(trimmed.to_string());
+            }
+        }
+    }
+    preserved
+}
+
+/// Write `contents` to `path`. If `path` already exists, first copy it to
+/// `<path>.bak` and append any unmanaged top-level keys from the old file
+/// under a `# preserved from previous config` comment.
+fn write_config_with_backup(path: &std::path::Path, mut contents: String) -> io::Result<()> {
+    if path.exists() {
+        let old_contents = std::fs::read_to_string(path)?;
+        std::fs::copy(path, backup_path(path))?;
+        let preserved = preserved_unmanaged_lines(&old_contents);
+        if !preserved.is_empty() {
+            contents.push_str("\n# preserved from previous config\n");
+            for line in preserved {
+                contents.push_str(&line);
+                contents.push('\n');
+            }
+        }
+    }
+    std::fs::write(path, contents)
+}
+
+/// `<path>.bak` — appends rather than replaces the extension
+/// (`.yoyo.toml` → `.yoyo.toml.bak`).
+fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
+    let mut os = path.as_os_str().to_owned();
+    os.push(".bak");
+    std::path::PathBuf::from(os)
+}
+
 /// Save config to the user-level XDG path (`~/.config/yoyo/config.toml`).
-/// Creates parent directories if they don't exist.
+/// Creates parent directories if they don't exist. If the file already exists,
+/// it is backed up to `config.toml.bak` first and unmanaged top-level keys are
+/// preserved into the new contents.
 /// Returns Ok(path_string) on success.
 pub fn save_config_to_user_file(
     provider: &str,
@@ -90,7 +148,7 @@ pub fn save_config_to_user_file(
         std::fs::create_dir_all(parent)?;
     }
     let contents = generate_config_contents(provider, model, base_url);
-    std::fs::write(&path, contents)?;
+    write_config_with_backup(&path, contents)?;
     Ok(path.display().to_string())
 }
 
@@ -447,23 +505,37 @@ pub fn run_wizard_interactive<R: BufRead, W: Write>(
     let save_location = parse_save_choice(&save_input);
 
     match save_location {
-        SaveLocation::Project => match save_config_to_file(
-            &std::env::current_dir().unwrap_or_default(),
-            provider,
-            &model,
-            base_url.as_deref(),
-        ) {
-            Ok(path) => {
-                writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
+        SaveLocation::Project => {
+            let target = std::env::current_dir().unwrap_or_default();
+            let existed = target.join(".yoyo.toml").exists();
+            match save_config_to_file(&target, provider, &model, base_url.as_deref()) {
+                Ok(path) => {
+                    writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
+                    if existed {
+                        writeln!(
+                            writer,
+                            "  {DIM}Previous config backed up to {path}.bak (unmanaged settings preserved){RESET}"
+                        )
+                        .ok();
+                    }
+                }
+                Err(e) => {
+                    writeln!(writer, "  {YELLOW}Could not save config: {e}{RESET}").ok();
+                }
             }
-            Err(e) => {
-                writeln!(writer, "  {YELLOW}Could not save config: {e}{RESET}").ok();
-            }
-        },
+        }
         SaveLocation::User => {
+            let existed = crate::cli::user_config_path().is_some_and(|p| p.exists());
             match save_config_to_user_file(provider, &model, base_url.as_deref()) {
                 Ok(path) => {
                     writeln!(writer, "  {GREEN}✓{RESET} Saved to {CYAN}{path}{RESET}").ok();
+                    if existed {
+                        writeln!(
+                            writer,
+                            "  {DIM}Previous config backed up to {path}.bak (unmanaged settings preserved){RESET}"
+                        )
+                        .ok();
+                    }
                 }
                 Err(e) => {
                     writeln!(writer, "  {YELLOW}Could not save config: {e}{RESET}").ok();
@@ -757,6 +829,194 @@ mod tests {
         let content = std::fs::read_to_string(tmp_dir.path().join(".yoyo.toml")).unwrap();
         assert!(content.contains("provider = \"openai\""));
         assert!(content.contains("model = \"gpt-4o\""));
+    }
+
+    #[test]
+    fn test_save_over_existing_creates_bak_with_original_contents() {
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_wizard_bak")
+            .tempdir()
+            .unwrap();
+        let path = tmp_dir.path().join(".yoyo.toml");
+        let original = "provider = \"anthropic\"\nmodel = \"old-model\"\nauto_watch = true\n";
+        std::fs::write(&path, original).unwrap();
+
+        let result = save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None);
+        assert!(result.is_ok());
+
+        let bak_path = tmp_dir.path().join(".yoyo.toml.bak");
+        assert!(bak_path.exists(), ".bak should exist after overwrite");
+        let bak_contents = std::fs::read_to_string(&bak_path).unwrap();
+        assert_eq!(
+            bak_contents, original,
+            ".bak should hold the ORIGINAL contents"
+        );
+    }
+
+    #[test]
+    fn test_save_over_existing_preserves_unmanaged_keys() {
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_wizard_preserve")
+            .tempdir()
+            .unwrap();
+        let path = tmp_dir.path().join(".yoyo.toml");
+        std::fs::write(
+            &path,
+            "provider = \"anthropic\"\nmodel = \"old-model\"\nauto_watch = true\n",
+        )
+        .unwrap();
+
+        save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("auto_watch = true"),
+            "unmanaged key should survive: {content}"
+        );
+        assert!(
+            content.contains("# preserved from previous config"),
+            "preserved keys should be under a comment: {content}"
+        );
+    }
+
+    #[test]
+    fn test_save_over_existing_managed_key_not_duplicated() {
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_wizard_managed")
+            .tempdir()
+            .unwrap();
+        let path = tmp_dir.path().join(".yoyo.toml");
+        std::fs::write(
+            &path,
+            "provider = \"anthropic\"\nmodel = \"old-model\"\nbase_url = \"http://old\"\n",
+        )
+        .unwrap();
+
+        save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("model = \"gpt-4o\""), "new value wins");
+        assert!(
+            !content.contains("old-model"),
+            "old managed value must not be duplicated: {content}"
+        );
+        assert!(
+            !content.contains("http://old"),
+            "old base_url is managed — must not be re-appended: {content}"
+        );
+        assert_eq!(
+            content.matches("model = ").count(),
+            1,
+            "exactly one model key: {content}"
+        );
+    }
+
+    #[test]
+    fn test_fresh_save_creates_no_bak() {
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_wizard_fresh")
+            .tempdir()
+            .unwrap();
+
+        save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None).unwrap();
+
+        assert!(
+            !tmp_dir.path().join(".yoyo.toml.bak").exists(),
+            "fresh save must not create a .bak"
+        );
+        let content = std::fs::read_to_string(tmp_dir.path().join(".yoyo.toml")).unwrap();
+        assert!(
+            !content.contains("# preserved from previous config"),
+            "fresh save must not include a preserved comment"
+        );
+    }
+
+    #[test]
+    fn test_save_over_existing_only_managed_keys_appends_nothing() {
+        // Paired negative (Day 122 lesson): old file with ONLY managed keys →
+        // no "# preserved" comment, nothing appended.
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_wizard_negative")
+            .tempdir()
+            .unwrap();
+        let path = tmp_dir.path().join(".yoyo.toml");
+        std::fs::write(&path, "provider = \"anthropic\"\nmodel = \"old-model\"\n").unwrap();
+
+        save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("# preserved from previous config"),
+            "no unmanaged keys → no preserved comment: {content}"
+        );
+        // .bak is still written — backup happens regardless of key preservation
+        assert!(tmp_dir.path().join(".yoyo.toml.bak").exists());
+    }
+
+    #[test]
+    fn test_save_over_existing_stops_scan_at_first_section() {
+        // Keys inside [section] blocks are NOT top-level — must not be appended.
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_wizard_section")
+            .tempdir()
+            .unwrap();
+        let path = tmp_dir.path().join(".yoyo.toml");
+        std::fs::write(
+            &path,
+            "provider = \"anthropic\"\nauto_watch = true\n[permissions]\nallow_all = true\n",
+        )
+        .unwrap();
+
+        save_config_to_file(tmp_dir.path(), "openai", "gpt-4o", None).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("auto_watch = true"),
+            "top-level unmanaged key survives: {content}"
+        );
+        assert!(
+            !content.contains("allow_all"),
+            "section keys must not be mis-appended as top-level: {content}"
+        );
+    }
+
+    #[test]
+    fn test_preserved_unmanaged_lines_skips_comments_and_blanks() {
+        let old = "# a comment\n\nprovider = \"x\"\ncustom_key = 1\n";
+        let preserved = preserved_unmanaged_lines(old);
+        assert_eq!(preserved, vec!["custom_key = 1".to_string()]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_save_config_to_user_file_backs_up_existing() {
+        let tmp_dir = tempfile::Builder::new()
+            .prefix("yoyo_test_xdg_bak")
+            .tempdir()
+            .unwrap();
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::set_var("XDG_CONFIG_HOME", tmp_dir.path());
+
+        let config_path = tmp_dir.path().join("yoyo").join("config.toml");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(&config_path, "provider = \"google\"\nauto_watch = true\n").unwrap();
+
+        let result = save_config_to_user_file("openai", "gpt-4o", None);
+        assert!(result.is_ok());
+
+        let bak_path = tmp_dir.path().join("yoyo").join("config.toml.bak");
+        assert!(bak_path.exists(), "user config backup should exist");
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("auto_watch = true"),
+            "unmanaged key survives in user config: {content}"
+        );
+
+        if let Some(val) = prev_xdg {
+            std::env::set_var("XDG_CONFIG_HOME", val);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
     }
 
     #[test]

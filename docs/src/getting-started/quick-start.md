@@ -18,7 +18,9 @@ yoyo --api-key sk-ant-...
 > a model, and optionally saving a `.yoyo.toml` config file. After setup, you
 > go straight into the REPL — no restart needed. You can also run the wizard
 > anytime with `yoyo setup`. If you prefer to skip it, set your API key
-> environment variable first or press Ctrl+C to cancel.
+> environment variable first or press Ctrl+C to cancel. Re-running setup over
+> an existing config backs it up to `.yoyo.toml.bak` and preserves any settings
+> the wizard doesn't manage (e.g. `auto_watch`).
 
 You'll see a banner like this:
 
