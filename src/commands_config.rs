@@ -128,65 +128,33 @@ pub fn architect_model() -> Option<String> {
     ARCHITECT_MODEL.lock().ok().and_then(|m| m.clone())
 }
 
-/// Choose a default editor model given the current (architect) model.
-/// Maps strong/expensive models to their cheaper counterparts from the same provider.
+/// Explicit editor-model override for architect mode (issue #542).
+/// `None` means the editor uses the same model as the architect.
+static EDITOR_MODEL: Mutex<Option<String>> = Mutex::new(None);
+
+/// Set (or clear) the explicit editor model for architect mode.
+pub fn set_editor_model(model: Option<String>) {
+    if let Ok(mut m) = EDITOR_MODEL.lock() {
+        *m = model;
+    }
+}
+
+/// Get the explicit editor model override (if set).
+pub fn editor_model() -> Option<String> {
+    EDITOR_MODEL.lock().ok().and_then(|m| m.clone())
+}
+
+/// Choose the editor model given the current (architect) model.
+///
+/// Models are named explicitly in config, never inferred (issue #542): if an
+/// explicit editor model was set via `/architect <arch> <editor>` or
+/// `--editor-model`, return it; otherwise the editor is the current model.
+/// The old auto-downgrade map (opus → sonnet, gpt-4o → gpt-4o-mini, …) is gone
+/// — inferred model IDs go stale and 404 when providers retire them.
 pub fn default_editor_model(current_model: &str) -> String {
-    let m = current_model.to_lowercase();
-
-    // Anthropic: opus → sonnet, sonnet → haiku
-    if m.contains("opus") {
-        return "claude-sonnet-4-6".into();
+    if let Some(explicit) = editor_model() {
+        return explicit;
     }
-    if m.contains("sonnet") {
-        return "claude-haiku-4-5".into();
-    }
-
-    // OpenAI: gpt-4o → gpt-4o-mini, gpt-4.1 → gpt-4.1-mini, o3 → o3-mini
-    if m.contains("gpt-4o") && !m.contains("mini") {
-        return "gpt-4o-mini".into();
-    }
-    if m.contains("gpt-4.1") && !m.contains("mini") && !m.contains("nano") {
-        return "gpt-4.1-mini".into();
-    }
-    if m == "o3" {
-        return "o3-mini".into();
-    }
-
-    // Google: pro → flash
-    if m.contains("gemini") && m.contains("pro") {
-        return m.replace("pro", "flash");
-    }
-
-    // DeepSeek: reasoner → chat
-    if m.contains("deepseek-reasoner") {
-        return "deepseek-chat".into();
-    }
-
-    // xAI: grok-4 → grok-4-mini, grok-3 → grok-3-mini
-    if m == "grok-4" {
-        return "grok-4-mini".into();
-    }
-    if m == "grok-3" {
-        return "grok-3-mini".into();
-    }
-
-    // Mistral: large → small
-    if m.contains("mistral-large") {
-        return "mistral-small-latest".into();
-    }
-
-    // Bedrock: follows the same anthropic pattern with prefix
-    if m.contains("bedrock") || m.starts_with("anthropic.") {
-        if m.contains("opus") {
-            return "anthropic.claude-sonnet-4-6".into();
-        }
-        if m.contains("sonnet") {
-            return "anthropic.claude-haiku-4-5-20250414-v1:0".into();
-        }
-    }
-
-    // Fallback: if we don't recognize the model, use it as its own editor
-    // (architect mode still benefits from the plan-then-implement split)
     current_model.to_string()
 }
 
@@ -209,7 +177,7 @@ pub fn handle_architect(input: &str) {
         "on" => {
             set_architect_mode(true, None);
             let current = "current model";
-            let editor = "(auto-selected)";
+            let editor = editor_model().unwrap_or_else(|| "same as architect model".to_string());
             eprintln!(
                 "{GREEN}  ✓ architect mode: ON{RESET}\n\
                  {DIM}    architect: {current}\n\
@@ -228,20 +196,30 @@ pub fn handle_architect(input: &str) {
                 eprintln!("{YELLOW}  ✗ architect mode: OFF{RESET}\n");
             } else {
                 set_architect_mode(true, None);
+                let editor =
+                    editor_model().unwrap_or_else(|| "same as architect model".to_string());
                 eprintln!(
                     "{GREEN}  ✓ architect mode: ON{RESET}\n\
                      {DIM}    architect: current model\n\
-                     {DIM}    editor: auto-selected{RESET}\n"
+                     {DIM}    editor: {editor}{RESET}\n"
                 );
             }
         }
         model => {
-            // Enable with a specific architect model
-            set_architect_mode(true, Some(model.to_string()));
+            // Enable with a specific architect model, and optionally an
+            // explicit editor model as a second token (issue #542):
+            //   /architect <arch-model> [editor-model]
+            let mut tokens = model.split_whitespace();
+            let arch = tokens.next().unwrap_or(model).to_string();
+            let editor = tokens.next().map(|t| t.to_string());
+            set_architect_mode(true, Some(arch.clone()));
+            set_editor_model(editor.clone());
+            let editor_desc =
+                editor.unwrap_or_else(|| "same as architect model".to_string());
             eprintln!(
                 "{GREEN}  ✓ architect mode: ON{RESET}\n\
-                 {DIM}    architect: {model}\n\
-                 {DIM}    editor: auto-selected{RESET}\n"
+                 {DIM}    architect: {arch}\n\
+                 {DIM}    editor: {editor_desc}{RESET}\n"
             );
         }
     }
@@ -253,7 +231,7 @@ pub fn architect_status(current_model: &str) -> Option<String> {
         return None;
     }
     let arch_model = architect_model().unwrap_or_else(|| current_model.to_string());
-    let editor = default_editor_model(&arch_model);
+    let editor = editor_model().unwrap_or_else(|| "same as architect model".to_string());
     Some(format!("architect: {arch_model} → editor: {editor}"))
 }
 
@@ -1537,30 +1515,61 @@ mod tests {
     // --- architect mode tests ---
 
     #[test]
-    fn test_default_editor_model_sonnet_maps_to_haiku() {
-        let editor = default_editor_model("claude-sonnet-4-20250514");
-        assert!(
-            editor.to_lowercase().contains("haiku"),
-            "expected haiku for sonnet, got: {editor}"
+    #[serial]
+    fn test_default_editor_model_defaults_to_main_model() {
+        // No explicit override → editor is the main model, never inferred (#542)
+        set_editor_model(None);
+        assert_eq!(default_editor_model("claude-opus-4-6"), "claude-opus-4-6");
+        assert_eq!(default_editor_model("gpt-4o"), "gpt-4o");
+        assert_eq!(
+            default_editor_model("anthropic.claude-sonnet-4-6"),
+            "anthropic.claude-sonnet-4-6"
         );
     }
 
     #[test]
-    fn test_default_editor_model_opus_maps_to_sonnet() {
-        let editor = default_editor_model("claude-opus-4-20250115");
-        assert!(
-            editor.to_lowercase().contains("sonnet"),
-            "expected sonnet for opus, got: {editor}"
-        );
+    #[serial]
+    fn test_default_editor_model_explicit_override_wins() {
+        set_editor_model(Some("my-cheap-editor".to_string()));
+        // Returned regardless of the current model
+        assert_eq!(default_editor_model("claude-opus-4-6"), "my-cheap-editor");
+        assert_eq!(default_editor_model("gpt-4o"), "my-cheap-editor");
+        // Clean up global state
+        set_editor_model(None);
     }
 
     #[test]
-    fn test_default_editor_model_gpt4o_maps_to_mini() {
-        let editor = default_editor_model("gpt-4o");
-        assert!(
-            editor.to_lowercase().contains("gpt-4o-mini"),
-            "expected gpt-4o-mini for gpt-4o, got: {editor}"
-        );
+    #[serial]
+    fn test_architect_parse_two_tokens_sets_both_models() {
+        set_architect_mode(false, None);
+        set_editor_model(None);
+
+        // Simulate `/architect claude-opus-4-6 claude-haiku-4-5`
+        handle_architect("/architect claude-opus-4-6 claude-haiku-4-5");
+        assert!(is_architect_mode());
+        assert_eq!(architect_model().as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(editor_model().as_deref(), Some("claude-haiku-4-5"));
+
+        // Clean up
+        set_architect_mode(false, None);
+        set_editor_model(None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_architect_parse_one_token_leaves_editor_unset() {
+        set_architect_mode(false, None);
+        // Pre-set an editor to verify the one-token form clears it
+        set_editor_model(Some("stale-editor".to_string()));
+
+        handle_architect("/architect claude-opus-4-6");
+        assert!(is_architect_mode());
+        assert_eq!(architect_model().as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(editor_model(), None);
+
+        // Clean up
+        set_architect_mode(false, None);
+        set_editor_model(None);
     }
 
     #[test]

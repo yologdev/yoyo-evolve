@@ -170,6 +170,7 @@ pub fn compute_lite_disallowed_tools() -> Vec<String> {
 /// All known CLI flags (both boolean and value-taking).
 const KNOWN_FLAGS: &[&str] = &[
     "--model",
+    "--editor-model",
     "--provider",
     "--base-url",
     "--thinking",
