@@ -445,6 +445,29 @@ pub struct McpServerConfig {
     pub env: Vec<(String, String)>,
 }
 
+/// Generic boolean config-flag lookup shared by all `parse_*_from_config`
+/// boolean parsers.
+///
+/// Truthy values: `"true"`, `"1"`, `"yes"`, `"on"`.
+/// Falsy values: `"false"`, `"0"`, `"no"`, `"off"`.
+/// A missing key or any unrecognized value falls back to `default`.
+///
+/// This preserves the exact behavior of the original hand-rolled parsers:
+/// default-`false` flags only flip on an explicit truthy value, and
+/// default-`true` flags (e.g. `auto_continue`) only flip on an explicit
+/// falsy value — garbage input never changes the default.
+pub fn config_flag(
+    config: &std::collections::HashMap<String, String>,
+    key: &str,
+    default: bool,
+) -> bool {
+    match config.get(key).map(|v| v.as_str()) {
+        Some("true") | Some("1") | Some("yes") | Some("on") => true,
+        Some("false") | Some("0") | Some("no") | Some("off") => false,
+        _ => default,
+    }
+}
+
 /// Check whether auto-watch is enabled in the config.
 ///
 /// Reads `auto_watch` from the given config map. Defaults to `false`
@@ -452,10 +475,7 @@ pub struct McpServerConfig {
 /// via `auto_watch = true` in `.yoyo.toml`. This avoids surprising
 /// non-Rust users and local-model users with automatic test runs.
 pub fn parse_auto_watch_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("auto_watch").map(|v| v.as_str()) {
-        Some("true") | Some("1") | Some("yes") | Some("on") => true,
-        _ => false, // default: disabled
-    }
+    config_flag(config, "auto_watch", false)
 }
 
 /// Check whether auto-commit is enabled in the config.
@@ -463,10 +483,7 @@ pub fn parse_auto_watch_from_config(config: &std::collections::HashMap<String, S
 /// Reads `auto_commit` from the given config map. Defaults to `false`
 /// when the key is absent — auto-commit must be explicitly opted into.
 pub fn parse_auto_commit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("auto_commit").map(|v| v.as_str()) {
-        Some("true") | Some("1") | Some("yes") | Some("on") => true,
-        _ => false, // default: disabled
-    }
+    config_flag(config, "auto_commit", false)
 }
 
 /// Check whether auto-edit is enabled in the config.
@@ -476,10 +493,7 @@ pub fn parse_auto_commit_from_config(config: &std::collections::HashMap<String, 
 /// via `auto_edit = true` in `.yoyo.toml`. When enabled, file edits
 /// are auto-approved without confirmation (bash commands still confirm).
 pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("auto_edit").map(|v| v.as_str()) {
-        Some("true") | Some("1") | Some("yes") | Some("on") => true,
-        _ => false, // default: disabled
-    }
+    config_flag(config, "auto_edit", false)
 }
 
 /// Check whether lite mode is enabled in the config.
@@ -487,10 +501,7 @@ pub fn parse_auto_edit_from_config(config: &std::collections::HashMap<String, St
 /// Reads `lite` from the given config map. Defaults to `false`
 /// when the key is absent — lite mode must be explicitly opted into.
 pub fn parse_lite_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("lite").map(|v| v.as_str()) {
-        Some("true") | Some("1") | Some("yes") | Some("on") => true,
-        _ => false, // default: disabled
-    }
+    config_flag(config, "lite", false)
 }
 
 /// Check whether auto-continue is enabled in the config.
@@ -499,10 +510,7 @@ pub fn parse_lite_from_config(config: &std::collections::HashMap<String, String>
 /// when the key is absent — auto-continuation is on by default so
 /// incomplete responses are automatically followed up.
 pub fn parse_auto_continue_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("auto_continue").map(|v| v.as_str()) {
-        Some("false") | Some("0") | Some("no") | Some("off") => false,
-        _ => true, // default: enabled
-    }
+    config_flag(config, "auto_continue", true)
 }
 
 /// Parse `max_auto_continues` from the config map.
