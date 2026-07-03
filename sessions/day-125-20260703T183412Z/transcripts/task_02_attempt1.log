@@ -1,0 +1,140 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "load_validation_history_from\|compute_accuracy_stats\|AccuracyTrend\|pr…  ▶ $ git log --oneline -5 && git status --short ✓ (7ms)
+ ✓ (7ms)
+  ▶ read src/commands_risk.rs:1780..2020 ✓ (2ms)
+  ▶ read src/commands_risk.rs:2180..2300 ✓ (1ms)
+  ▶ read src/commands_risk.rs:1210..1250  ▶ $ grep -n "fn handle_risk\b\|\"accuracy\"\|\"validate\"\|\"history\"\|=> {$" src/c… ✓ (2ms)
+ ✓ (6ms)
+  6 tools completed in 42.6s (6 ✓)
+
+Now let me check the existing test patterns for _from(path) tests and the JSONL write format:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "prediction_accuracy_summary_from\|tempdir\|temp_dir\|TempDir" src/comma… ✓ (5ms)
+  ▶ read src/commands_risk.rs:4655..4685 ✓ (1ms)
+  2 tools completed in 8.6s (2 ✓)
+
+I have the full picture. Now implementing — first the core logic after prediction_accuracy_summary_from:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (3 → 161 lines)
+        let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+        Some((hit_rate, stats.total_validations, trend_label))
+  + }
+  + 
+  + // ── Risk reflex effectiveness (`/risk effectiveness`) ──
+  + 
+  + /// Minimum validation events needed for an early-vs-recent window split.
+  + const MIN_EFFECTIVENESS_EVENTS: usize = 6;
+  + 
+  + /// Verdict on whether the risk reflex is measurably improving predictions.
+  + #[derive(Debug, PartialEq)]
+  + enum EffectivenessVerdict {
+  +     /// Recent hit rate beats the early window by ≥5 points.
+  +     Learning,
+  +     /// Recent and early hit rates are within ±5 points.
+  +     Flat,
+  +     /// Recent hit rate is worse than the early window by ≥5 points.
+  +     Decorative,
+  +     /// Fewer than `MIN_EFFECTIVENESS_EVENTS` total events — no split possible.
+  +     Insufficient,
+  ... (141 more lines)
+ ✓ (16.8s)
+        let hit_rate = (stats.overall_hit_rate_pct * 10.0).round() / 10.0;
+        Some((hit_rate, stats.total_validations, trend_label))
+  + }
+  + 
+  + // ── Risk reflex effectiveness (`/risk effectiveness`) ──
+  + 
+  + /// Minimum validation events needed for an early-vs-recent window split.
+  + const MIN_EFFECTIVENESS_EVENTS: usize = 6;
+  ... (13 more lines)
+  ▶ edit src/commands_risk.rs (3 → 9 lines)
+    pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
+  -     "snapshot", "validate", "history", "predict", "accuracy", "--all",
+  +     "snapshot",
+  +     "validate",
+  +     "history",
+  +     "predict",
+  +     "accuracy",
+  +     "effectiveness",
+  +     "--all",
+    ];
+ ✓ (16.9s)
+    pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
+  -     "snapshot", "validate", "history", "predict", "accuracy", "--all",
+  +     "snapshot",
+  +     "validate",
+  +     "history",
+  +     "predict",
+  +     "accuracy",
+  +     "effectiveness",
+  +     "--all",
+    ];
+  ▶ edit src/commands_risk.rs (4 → 9 lines)
+        if sub == "accuracy" {
+            handle_risk_accuracy();
+  +         return;
+  +     }
+  + 
+  +     if sub == "effectiveness" {
+  +         handle_risk_effectiveness();
+            return;
+        }
+ ✓ (1m 32s)
+        if sub == "accuracy" {
+            handle_risk_accuracy();
+  +         return;
+  +     }
+  + 
+  +     if sub == "effectiveness" {
+  +         handle_risk_effectiveness();
+            return;
+        }
+  3 tools completed in 2m 23s (3 ✓)
+
+Now the tests — hermetic, temp-dir based, boundary-paired:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (2 → 2 lines) ✓ (1m 32s)
+  ▶ $ grep -n "fn test_risk_accuracy_dispatches_without_panic" src/commands_risk.rs; s… ✓ (5ms)
+  ▶ edit src/commands_risk.rs (5 → 166 lines)
+        fn test_risk_accuracy_dispatches_without_panic() {
+            // Smoke test: `/risk accuracy` should not panic
+            handle_risk("/risk accuracy");
+  +     }
+  + 
+  +     // ── /risk effectiveness tests ──
+  + 
+  +     /// Write a synthetic validation JSONL file where each entry has the given
+  +     /// number of hit files and surprise files. Returns the file path.
+  +     fn write_effectiveness_fixture(
+  +         dir: &std::path::Path,
+  +         entries: &[(usize, usize)], // (hits, surprises) per event
+  +     ) -> std::path::PathBuf {
+  +         let path = dir.join("validations.jsonl");
+  +         let mut content = String::new();
+  +         for (i, (hits, surprises)) in entries.iter().enumerate() {
+  +             let hit_files: Vec<String> = (0..*hits).map(|n| format!("\"h{n}.rs\"")).collect();
+  +             let surprise_files: Vec<String> =
+  +                 (0..*surprises).map(|n| format!("\"s{n}.rs\"")).collect();
+  +             let total = hits + surprises;
+  ... (145 more lines)
+ ✓ (9.9s)
+        fn test_risk_accuracy_dispatches_without_panic() {
+            // Smoke test: `/risk accuracy` should not panic
+            handle_risk("/risk accuracy");
+  +     }
+  + 
+  +     // ── /risk effectiveness tests ──
+  + 
+  +     /// Write a synthetic validation JSONL file where each entry has the given
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/report\.early\.expect(… ✓ (15.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test effectiveness 2>&1 | … ✓ (18.1s)
+  ▶ $ grep -n "risk" docs/src/usage/commands.md | head -20 ✓ (3ms)
+  ▶ $ grep -rn "/risk" docs/src/ | head; grep -rn "risk accuracy\|risk predict" docs/s… ✓ (5ms)
+  ▶ $ grep -n "risk" src/help_data.rs | head -10; grep -rn "\brisk\b" README.md | head… ✓ (5ms)
+  8 tools completed in 3m 13s (8 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,102 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "struct SpawnArgs\|fn parse_spawn_args\|struct SpawnTask\|struct SpawnHa…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (16ms)
+  ▶ read src/commands_spawn.rs:30..360 ✓ (3ms)
+  ▶ read src/commands_spawn.rs:359..439 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:1100..1250 ✓ (2ms)
+  ▶ $ grep -n "try_worktree_handoff\|SpawnArgs {" src/commands_spawn.rs | head -40; gr… ✓ (10ms)
+  ▶ read src/commands_spawn.rs:640..760 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:800..920 ✓ (1ms)
+  ▶ $ grep -n "fn run_git_in\|fn spawn_branch_name\|fn repo_root" src/commands_spawn.r… ✓ (5ms)
+  ▶ read src/commands_spawn.rs:1030..1110 ✓ (1ms)
+  ▶ $ grep -n "destructive\|DESTRUCTIVE\|cfg(test)" src/git.rs | head; sed -n '1,80p' … ✓ (5ms)
+  ▶ $ grep -n "fn format_spawn_result" src/commands_spawn.rs; sed -n '/fn format_spawn… ✓ (5ms)
+  11 tools completed in 1m 16s (11 ✓)
+
+Now let me look at the existing tests for parse_spawn_args and handoff to follow conventions:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '2070,2130p' src/commands_spawn.rs; grep -n "fn test.*handoff\|fn test.*p… ✓ (5ms)
+  ▶ $ sed -n '1691,1830p' src/commands_spawn.rs ✓ (4ms)
+  2 tools completed in 24.4s (2 ✓)
+
+Now let me check run_git_in_dir's error format and the docs /spawn section:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '/pub fn run_git_in_dir/,/^}/p' src/git.rs; grep -n "spawn" docs/src/usag… ✓ (7ms)
+  ▶ $ sed -n '316,360p' docs/src/usage/commands.md ✓ (3ms)
+  ▶ $ grep -n -- "--bg\|--parallel\|--model\|--system" docs/src/usage/commands.md | he… ✓ (5ms)
+  ▶ $ grep -n "bg\|background\|status" docs/src/usage/commands.md | sed -n '1,30p'; se… ✓ (5ms)
+  4 tools completed in 19.8s (4 ✓)
+
+I have the full picture. Let me implement:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ todo add 'Add push field to SpawnHandoff + PushOutcome enum,…' ✓ (0ms)
+  ▶ todo add 'Add push field to SpawnArgs + parse --push' ✓ (0ms)
+  ▶ todo add 'Push execution: push_spawn_branch helper + thread …' ✓ (0ms)
+  ▶ todo add 'Tests: parse (pos/neg), summary variants, bare-rep…' ✓ (0ms)
+  ▶ todo add 'Docs: commands.md /spawn section + CLAUDE.md bulle…' ✓ (0ms)
+  5 tools completed in 3.4s (5 ✓)
+
+**Task 1: SpawnHandoff + PushOutcome**
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (22 → 51 lines)
+        pub branch: String,
+        /// One-line diffstat summary (e.g. `3 files changed (+42/-7)`).
+        pub diffstat: String,
+  +     /// Outcome of the opt-in `--push` publish, if one was attempted.
+  +     /// `None` means no push was requested (the default).
+  +     pub push: Option<PushOutcome>,
+  + }
+  + 
+  + /// Result of pushing a spawn handoff branch to `origin` (opt-in via `--push`).
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub enum PushOutcome {
+  +     /// The branch was pushed to `origin` successfully.
+  +     Pushed,
+  +     /// The push failed; carries the first line of the git error. The branch
+  +     /// remains local.
+  +     Failed(String),
+    }
+    
+    impl SpawnHandoff {
+  -     /// One-line human summary: `ready to review: branch <b> — <diffstat>`.
+  ... (33 more lines)
+ ✓ (10.6s)
+        pub branch: String,
+        /// One-line diffstat summary (e.g. `3 files changed (+42/-7)`).
+        pub diffstat: String,
+  +     /// Outcome of the opt-in `--push` publish, if one was attempted.
+  +     /// `None` means no push was requested (the default).
+  +     pub push: Option<PushOutcome>,
+  + }
+  + 
+  ... (13 more lines)
+  ▶ edit src/commands_spawn.rs (4 → 5 lines)
+        Ok(Some(SpawnHandoff {
+            branch: branch_name.to_string(),
+            diffstat: format_diffstat_summary(&shortstat),
+  +         push: None,
+        }))
+ ✓ (10.5s)
+        Ok(Some(SpawnHandoff {
+            branch: branch_name.to_string(),
+            diffstat: format_diffstat_summary(&shortstat),
+  +         push: None,
+        }))
+  ▶ edit src/commands_spawn.rs (4 → 5 lines)
+            let handoff = SpawnHandoff {
+                branch: "spawn/3-12345".to_string(),
+                diffstat: "3 files changed (+42/-7)".to_string(),
+  +             push: None,
+            };
+ ✓ (10.4s)
+            let handoff = SpawnHandoff {
+                branch: "spawn/3-12345".to_string(),
+                diffstat: "3 files changed (+42/-7)".to_string(),
+  +             push: None,
+            };
+  3 tools completed in 42.6s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

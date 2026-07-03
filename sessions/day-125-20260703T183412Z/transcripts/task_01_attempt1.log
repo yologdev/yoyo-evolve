@@ -1,0 +1,100 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the fixture git helpers in src/context.rs.
+  ▶ search 'fixture|fn.*git|Command::new' in src/context.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/context.… ✓ (5ms)
+  ▶ read src/context.rs:288..408 ✓ (1ms)
+  ▶ read src/context.rs:407..587 ✓ (1ms)
+  ▶ edit src/context.rs (15 → 91 lines)
+  -     /// Run a git command inside the fixture repo, panicking on failure so
+  -     /// broken fixtures surface as loud test errors instead of vacuous passes.
+  -     fn fixture_git(dir: &std::path::Path, args: &[&str]) {
+  -         let out = std::process::Command::new("git")
+  -             .args(args)
+  -             .current_dir(dir)
+  +     /// Build a fully environment-isolated git Command for fixture repos.
+  +     ///
+  +     /// In CI and under parallel test execution, a bare `git commit` in a
+  +     /// temp-dir repo can fail or silently no-op for reasons that don't exist
+  +     /// locally: leaked global/system config (`commit.gpgsign=true` with no
+  +     /// key, `core.hooksPath`), leaked env vars (`GIT_DIR`, `GIT_INDEX_FILE`,
+  +     /// ...) redirecting the repo elsewhere, or missing identity when HOME is
+  +     /// overridden. That exact failure killed
+  +     /// `test_load_project_context_includes_recently_changed` on Day 125: the
+  +     /// second fixture commit failed, the file stayed dirty, and the test saw
+  +     /// "Uncommitted changes: 1 file" with no Recently Changed section.
+  +     /// Every fixture git invocation goes through here so no leakage path
+  +     /// exists.
+  +     fn fixture_git_command(dir: &std::path::Path, args: &[&str]) -> std::process::Command {
+  ... (80 more lines)
+ ✓ (17.2s)
+  -     /// Run a git command inside the fixture repo, panicking on failure so
+  -     /// broken fixtures surface as loud test errors instead of vacuous passes.
+  -     fn fixture_git(dir: &std::path::Path, args: &[&str]) {
+  -         let out = std::process::Command::new("git")
+  -             .args(args)
+  -             .current_dir(dir)
+  +     /// Build a fully environment-isolated git Command for fixture repos.
+  +     ///
+  ... (13 more lines)
+  6 tools completed in 1m 29s (6 ✓)
+
+Expected — now wire assert_committed into the two commit sites:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/context.rs (19 → 22 lines)
+        fn init_fixture_repo(dir: &std::path::Path) {
+            fixture_git(dir, &["init", "-q"]);
+            fixture_git(dir, &["config", "user.name", "yoyo-test"]);
+  -         fixture_git(dir, &["config", "user.email", "yoyo-test@example.com"]);
+  +         fixture_git(dir, &["config", "user.email", "test@yoyo.local"]);
+            fixture_git(dir, &["config", "commit.gpgsign", "false"]);
+            std::fs::write(dir.join("committed.txt"), "hello\n").unwrap();
+            fixture_git(dir, &["add", "committed.txt"]);
+            fixture_git(dir, &["commit", "-q", "-m", "initial"]);
+  +         assert_committed(dir, "committed.txt");
+            // Normalize the branch name (init.defaultBranch varies by environment)
+            fixture_git(dir, &["branch", "-M", "main"]);
+            std::fs::write(dir.join("untracked.txt"), "scratch\n").unwrap();
+        }
+    
+  -     /// Add and commit a file in the fixture repo.
+  +     /// Add and commit a file in the fixture repo, asserting the commit
+  +     /// actually landed (not just that git exited 0).
+        fn fixture_commit_file(dir: &std::path::Path, name: &str, contents: &str, msg: &str) {
+            std::fs::write(dir.join(name), contents).unwrap();
+  ... (4 more lines)
+ ✓ (1m 29s)
+        fn init_fixture_repo(dir: &std::path::Path) {
+            fixture_git(dir, &["init", "-q"]);
+            fixture_git(dir, &["config", "user.name", "yoyo-test"]);
+  -         fixture_git(dir, &["config", "user.email", "yoyo-test@example.com"]);
+  +         fixture_git(dir, &["config", "user.email", "test@yoyo.local"]);
+            fixture_git(dir, &["config", "commit.gpgsign", "false"]);
+            std::fs::write(dir.join("committed.txt"), "hello\n").unwrap();
+            fixture_git(dir, &["add", "committed.txt"]);
+  ... (13 more lines)
+
+The auto-check output was truncated — let me verify explicitly:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test -… (10 lines) ✓ (434ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && GIT_CONFIG_GLOBAL=/tmp/evil-gitc… ✓ (213ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && \ (12 lines) ✓ (35ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && \ (5 lines) ✓ (195ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && GIT_CONFIG_GLOBAL=/tmp/evil-gitc… ✓ (193ms)
+  6 tools completed in 1m 18s (6 ✓)
+
+GIT_DIR poisons the production run_git_in_dir calls (out of scope — the fixture side is what I'm hardening). Test with just the realistic config/identity leakage:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && \ (8 lines) ✓ (18.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && fo… ✓ (26.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context::t… ✓ (218ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context::t… ✓ (230ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3 4 5; do cargo tes… ✓ (1.1s)
+  5 tools completed in 1m 17s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

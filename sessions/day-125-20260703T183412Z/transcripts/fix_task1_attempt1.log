@@ -1,0 +1,108 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs ✓ (6ms)
+ ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:100..500 ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:198..458 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:500..700 ✓ (2ms)
+  ▶ search 'fn load_memories_from|fn load_memories\(|fn memory_file_path' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/memory.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'pub fn load_memories|pub fn memory_file_path' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/memory.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_memories\|fn me… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40:70p src/memory.rs 2>/d… ✓ (4ms)
+  9 tools completed in 59.7s (8 ✓, 1 ✗)
+
+The memory path is relative, so load_memories() also reads from CWD. Now let me check all uses of these functions to confirm the fix scope:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "load_project_context_f… ✓ (13ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 9 lines)
+  -     // Append recently changed files if available
+  -     if let Some(recent_files) = get_recently_changed_files(MAX_RECENT_FILES) {
+  +     // Append recently changed files if available.
+  +     //
+  +     // NOTE: this must use the `_from(dir)` variant, not the CWD one. The CWD
+  +     // variant was the Day 125 flake root cause: under parallel test execution,
+  +     // `#[serial]` tests mutate the process CWD, so the "Recently Changed
+  +     // Files" section was computed from whatever directory the process happened
+  +     // to be in — sometimes a temp repo with no commits (git log fails, the
+  +     // error is swallowed by `.ok()?`, and the section silently vanishes).
+  +     if let Some(recent_files) = get_recently_changed_files_from(dir, MAX_RECENT_FILES) {
+ ✓ (1m 31s)
+  -     // Append recently changed files if available
+  -     if let Some(recent_files) = get_recently_changed_files(MAX_RECENT_FILES) {
+  +     // Append recently changed files if available.
+  +     //
+  +     // NOTE: this must use the `_from(dir)` variant, not the CWD one. The CWD
+  +     // variant was the Day 125 flake root cause: under parallel test execution,
+  +     // `#[serial]` tests mutate the process CWD, so the "Recently Changed
+  +     // Files" section was computed from whatever directory the process happened
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (2 → 6 lines)
+  -     // Append project memories if available
+  -     let memory = crate::memory::load_memories();
+  +     // Append project memories if available. Loaded relative to `dir` (not the
+  +     // process CWD) so a hermetic fixture context never picks up the real
+  +     // repo's `.yoyo/memory.json` — memory entries can contain arbitrary text
+  +     // (including section-header-like strings), which made fixture-based test
+  +     // assertions nondeterministic under parallel execution.
+  +     let memory = crate::memory::load_memories_from(&dir.join(crate::memory::memory_file_path()));
+ ✓ (1m 32s)
+  -     // Append project memories if available
+  -     let memory = crate::memory::load_memories();
+  +     // Append project memories if available. Loaded relative to `dir` (not the
+  +     // process CWD) so a hermetic fixture context never picks up the real
+  +     // repo's `.yoyo/memory.json` — memory entries can contain arbitrary text
+  +     // (including section-header-like strings), which made fixture-based test
+  +     // assertions nondeterministic under parallel execution.
+  +     let memory = crate::memory::load_memories_from(&dir.join(crate::memory::memory_file_path()));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Project Memories\|fn fo… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/memory.rs && … ✓ (5ms)
+  5 tools completed in 3m 50s (5 ✓)
+
+Now strengthen the flaking test with section-scoped assertions and add regression tests pinning the dir-scoping:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs (35 → 142 lines)
+            // so it never reads the live CWD's git state (Day 125 lesson — the old
+            // version hard-asserted but still flaked on dirty trees / shallow clones,
+            // and before Day 124 it vacuously passed via `if let Some`).
+  +         //
+  +         // Day 125 root cause (evaluator round 2): load_project_context_from used
+  +         // the CWD variant get_recently_changed_files() instead of the _from(dir)
+  +         // variant, so under parallel execution the section came from whatever
+  +         // directory a #[serial] test had chdir'd to — sometimes a repo with no
+  +         // commits, making the section vanish. Fixed in production code; these
+  +         // assertions are section-scoped so a regression can't hide behind the
+  +         // Project Files listing (which also contains the fixture file names).
+            let dir = tempfile::TempDir::new().unwrap();
+            init_fixture_repo(dir.path());
+            // A second commit so "recently changed" has more than the initial file.
+  ···
+                context.contains("## Recently Changed Files"),
+                "Context should contain Recently Changed Files section, got: {context}"
+            );
+  +         let recent_section = recently_changed_section(&context);
+            assert!(
+  ... (116 more lines)
+ ✓ (1m 30s)
+            // so it never reads the live CWD's git state (Day 125 lesson — the old
+            // version hard-asserted but still flaked on dirty trees / shallow clones,
+            // and before Day 124 it vacuously passed via `if let Some`).
+  +         //
+  +         // Day 125 root cause (evaluator round 2): load_project_context_from used
+  +         // the CWD variant get_recently_changed_files() instead of the _from(dir)
+  +         // variant, so under parallel execution the section came from whatever
+  +         // directory a #[serial] test had chdir'd to — sometimes a repo with no
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.2s)
+  2 tools completed in 1m 40s (2 ✓)
+
+Tests pass. Now the task's verification criterion — the loop under parallel execution:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in $(seq 1 20); do cargo t… ✓ (9.6s)
+
+20/20 clean. Full verification suite:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 12s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | tai… ✓ (43.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2; do cargo test --bi…

@@ -1,0 +1,85 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search '/risk' in docs/src/usage/commands.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline … ✓ (4ms)
+ ✓ (11ms)
+  2 tools completed in 6.0s (2 ✓)
+
+The implementation is in place; only the docs are missing. Let me look at the docs file structure:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^#" docs/src/usage/comm… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "risk" docs/src/ | grep… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1225,1260p' src/help_dat… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '488,560p' docs/src/usage… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2384,2440p' src/commands… ✓ (4ms)
+  5 tools completed in 30.7s (5 ✓)
+
+Now I'll add a `/risk` section to the docs, between Code Review and Issue Revisiting:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/usage/commands.md (1 → 50 lines)
+  + ## Risk Analysis
+  + 
+  + | Command | Description |
+  + |---------|-------------|
+  + | `/risk` | Show the top 15 riskiest files, ranked by predicted regression risk |
+  + | `/risk --all` | Show all scored files, not just the top 15 |
+  + | `/risk snapshot` | Save the current risk ranking for later validation |
+  + | `/risk validate` | Check the last snapshot against files that actually changed since |
+  + | `/risk history` | Show past snapshots and validation results |
+  + | `/risk predict` | Predict which files are most likely to break next |
+  + | `/risk accuracy` | Show prediction accuracy, per-signal breakdown, and learned weights |
+  + | `/risk effectiveness` | Measure whether the risk reflex is actually improving over time |
+  + 
+  + The `/risk` command analyzes source files and ranks them by predicted
+  + regression risk using weighted signals from git history: change frequency
+  + (30-day churn), recent fix/bugfix commits, co-change coupling, file size,
+  + author churn, test coverage mapping, and revert involvement.
+  + 
+  + The snapshot → validate loop measures prediction accuracy: run
+  + `/risk snapshot`, keep coding, then `/risk validate` to see which predictions
+  ... (30 more lines)
+ ✓ (1m 11s)
+  + ## Risk Analysis
+  + 
+  + | Command | Description |
+  + |---------|-------------|
+  + | `/risk` | Show the top 15 riskiest files, ranked by predicted regression risk |
+  + | `/risk --all` | Show all scored files, not just the top 15 |
+  + | `/risk snapshot` | Save the current risk ranking for later validation |
+  + | `/risk validate` | Check the last snapshot against files that actually changed since |
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_VALIDATION_PATH" s… ✓ (5ms)
+  2 tools completed in 1m 20s (2 ✓)
+
+Path is accurate. Now run the full verification suite:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 37s)
+
+All checks pass. Let me verify the mdbook still builds (docs change) and check the diff:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (command -v mdbook >/dev/null &&… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/commands_risk.rs ✓ (6ms)
+  2 tools completed in 8.7s (2 ✓)
+
+Just formatting fixes from cargo fmt on the previously committed test code — good to include. Now commit:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt --… (8 lines) ✓ (873ms)
+
+The docs deliverable is complete. The task also says to comment on and close #559 after landing — let me check its state:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 559 --json state,t… ✓ (292ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (10 lines) ✓ (1.5s)
+  2 tools completed in 18.7s (2 ✓)
+
+All work is complete:
+
+What the evaluator flagged: The /risk effectiveness docs deliverable was skipped — docs/src/usage/commands.md had no mention of it (in fact, the entire /risk family had no docs section at all).
+
+What I did:
+1. Added a full Risk Analysis section to docs/src/usage/commands.md (between Code Review and Issue Revisiting), with a subcommand table covering all /risk subcommands and a dedicated `/risk effectiveness` subsection documenting the early/recent window split, all four verdict lines (learning ↑ / flat / decorative ↓ / insufficient data at <6 events), the /status trend agreement, and the graceful degradation on repos with no validation history.
+2. Ran the full verification suite: cargo fmt (picked up a small formatting fix in the boundary test), cargo clippy -D warnings, cargo build, cargo test — all green (88 tests passed in commands_risk).
+3. Committed as `c1ebb1f`.
+4. Commented on and closed #559 as the task required.
+
+  watch: no files changed this turn — skipping
+
