@@ -842,8 +842,17 @@ For EACH task, create a file: session_plan/task_01.md, session_plan/task_02.md, 
 
 Each file should contain:
 Title: [short task title]
+Kind: [product | evolve]
 Files: [files to modify]
 Issue: #N (or "none")
+
+Kind declares who the task is for — decide this consciously for every task:
+- product: users of yoyo benefit directly (features, CLI/UX, defaults, docs they read).
+  Product tasks must be safe for ALL project types and setups — never assume this
+  repo's Rust/CI environment (issue #448 is the canonical failure: an evolve-loop
+  convenience shipped as a product default and broke non-Rust users).
+- evolve: yoyo's own loop, skills, harness, or infrastructure improves.
+If a task is genuinely both, pick the primary beneficiary.
 
 [Detailed description of what to do — specific enough for a focused implementation agent.
 Include which docs need updating (CLAUDE.md, README.md, docs/src/) if the task changes behavior, features, or architecture.]
@@ -978,9 +987,11 @@ for TASK_FILE in session_plan/task_*.md; do
     TASK_DESC=$(cat "$TASK_FILE")
     task_title=$(grep '^Title:' "$TASK_FILE" | head -1 | sed 's/^Title:[[:space:]]*//' || true)
     task_title="${task_title:-Task $TASK_NUM}"
+    task_kind=$(grep '^Kind:' "$TASK_FILE" | head -1 | sed 's/^Kind:[[:space:]]*//' | tr '[:upper:]' '[:lower:]' || true)
+    case "$task_kind" in product|evolve) ;; *) task_kind="evolve" ;; esac
 
-    echo "  → Task $TASK_NUM: $task_title"
-    gasp_task_planned "$TASK_NUM" "$task_title"
+    echo "  → Task $TASK_NUM: $task_title [$task_kind]"
+    GASP_TASK_KIND="$task_kind" gasp_task_planned "$TASK_NUM" "$task_title"
 
     # Save pre-task state for rollback
     if ! PRE_TASK_SHA=$(git rev-parse HEAD 2>&1); then
@@ -1004,6 +1015,11 @@ $YOYO_CONTEXT
 Use your voice in commit messages and comments — curious, honest, celebrating wins.
 
 Your ONLY job: implement this single task and commit.
+
+Task Kind: $task_kind. product tasks must work for ALL users' projects and
+setups (any language, local models, no CI) — never assume this repo's own
+environment. evolve tasks serve your own loop; keep their conveniences
+opt-in if they touch anything a product user sees.
 
 $TASK_DESC
 ${CHECKPOINT_SECTION:+
@@ -1315,6 +1331,10 @@ BFIXEOF
 You are an evaluator agent. Your job: verify that a task was implemented correctly.
 You have 3 minutes. Be fast and focused.
 
+Task Kind: $task_kind. RED FLAG: if this is an evolve-kind task whose diff
+changes product surface (config defaults, CLI flags, setup wizard, startup
+behavior), reject unless the change is explicitly opt-in — see issue #448.
+
 === TASK DESCRIPTION ===
 $TASK_DESC
 
@@ -1485,7 +1505,7 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
     if [ "$TASK_OK" = false ]; then
         # record the rejected patch BEFORE the reset, while the attempted
         # commits are still reachable (the log remembers what was tried)
-        gasp_task_result "$TASK_NUM" "$task_title" rejected "$PRE_TASK_SHA" \
+        GASP_TASK_KIND="$task_kind" gasp_task_result "$TASK_NUM" "$task_title" rejected "$PRE_TASK_SHA" \
             "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$REVERT_REASON"
         echo "    Reverting Task $TASK_NUM (resetting to $PRE_TASK_SHA)"
         if ! git reset --hard "$PRE_TASK_SHA"; then
@@ -1533,7 +1553,7 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
         fi
     else
         echo "    Task $TASK_NUM: verified OK"
-        gasp_task_result "$TASK_NUM" "$task_title" promoted "$PRE_TASK_SHA" \
+        GASP_TASK_KIND="$task_kind" gasp_task_result "$TASK_NUM" "$task_title" promoted "$PRE_TASK_SHA" \
             "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
         # evolve tasks can legitimately touch skills/ too — keep the state
         # repo's skill tree in sync (full-tree sync; no-op when unchanged)

@@ -137,9 +137,14 @@ gasp_session_start() {
 }
 
 # gasp_task_planned <num> <title>
+# GASP_TASK_KIND (product|evolve, optional) routes the task/patch to the
+# matching standing goal: product work advances goal_product_value, evolve
+# work advances the session goal — so the lineage graph separates what yoyo
+# ships for users from what it invests in itself.
 gasp_task_planned() {
     _gasp_emit task --state-dir "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" \
-        --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" --num "$1" --title "$2"
+        --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" \
+        --kind "${GASP_TASK_KIND:-}" --num "$1" --title "$2"
 }
 
 # gasp_task_result <num> <title> <promoted|rejected> <pre-sha> <post-sha> [reason]
@@ -149,6 +154,7 @@ gasp_task_planned() {
 gasp_task_result() {
     _gasp_emit task-result --state-dir "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" \
         --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" \
+        --kind "${GASP_TASK_KIND:-}" \
         --num "$1" --title "$2" --verdict "$3" --pre-sha "$4" --post-sha "$5" \
         --repo "${REPO:-yologdev/yoyo-evolve}" --branch "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)" \
         --eval-command "${GASP_EVAL_COMMAND:-}" \
