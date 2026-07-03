@@ -214,8 +214,7 @@ pub fn handle_architect(input: &str) {
             let editor = tokens.next().map(|t| t.to_string());
             set_architect_mode(true, Some(arch.clone()));
             set_editor_model(editor.clone());
-            let editor_desc =
-                editor.unwrap_or_else(|| "same as architect model".to_string());
+            let editor_desc = editor.unwrap_or_else(|| "same as architect model".to_string());
             eprintln!(
                 "{GREEN}  ✓ architect mode: ON{RESET}\n\
                  {DIM}    architect: {arch}\n\
