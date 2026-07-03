@@ -30,11 +30,14 @@ fn parse_args() -> (String, HashMap<String, String>) {
     let mut flags = HashMap::new();
     let mut key: Option<String> = None;
     for arg in args {
-        if let Some(name) = arg.strip_prefix("--") {
+        // Every flag takes exactly one value, so a pending flag consumes the
+        // next token unconditionally — LLM-authored values starting with
+        // `--` (task titles, revert reasons) stay values, not flags.
+        if let Some(name) = key.take() {
+            flags.insert(name, arg);
+        } else if let Some(name) = arg.strip_prefix("--") {
             key = Some(name.to_string());
             flags.entry(name.to_string()).or_default();
-        } else if let Some(name) = key.take() {
-            flags.insert(name, arg);
         }
     }
     (cmd, flags)
@@ -57,8 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_dir = req(&flags, "state-dir");
     let run_id = RunId::new(req(&flags, "run-id"));
     let yoyo = ActorRef::agent("yoyo");
+    // Per-session worker id (the shim passes evolve-shim-$PID) so overlapping
+    // sessions with a pinned GASP_STATE_DIR cannot share a lease identity.
+    let worker = flags
+        .get("worker")
+        .map(String::as_str)
+        .unwrap_or("evolve-shim");
 
-    let store = GitEventStore::open(state_dir, "evolve-shim")?;
+    let store = GitEventStore::open(state_dir, worker)?;
     let state = YoAgentState::load(store.clone()).await?;
     // Each invocation is a fresh process: recover the open run so events
     // chain and correlate to it (yoagent-state 0.4.1+).
