@@ -53,6 +53,30 @@ fn req<'a>(flags: &'a HashMap<String, String>, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing --{name}"))
 }
 
+/// Create a standing goal node if absent (used for goal_product_value, which
+/// no session opens but product-kind tasks advance).
+async fn ensure_goal<S: yoagent_state::EventStore>(
+    state: &YoAgentState<S>,
+    goal: &str,
+    actor: &ActorRef,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if state.get_node(NodeId::new(goal)).await.is_none() {
+        state
+            .record_goal(Goal::new(
+                GoalId::new(goal),
+                if goal == "goal_product_value" {
+                    "Ship value to yoyo's users"
+                } else {
+                    goal
+                },
+                "standing goal (created on first reference)",
+                actor.clone(),
+            ))
+            .await?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (cmd, flags) = parse_args();
@@ -76,6 +100,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(String::as_str)
         .unwrap_or(DEFAULT_GOAL)
         .to_string();
+    // --kind product reroutes a task/patch to the product-value goal, so the
+    // graph separates work shipped for users from self-investment.
+    let kind = flags.get("kind").cloned().unwrap_or_default();
+    let goal = if kind == "product" { "goal_product_value".to_string() } else { goal };
 
     let store = GitEventStore::open(state_dir, worker)?;
     let state = YoAgentState::load(store.clone()).await?;
@@ -105,6 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ))
                     .await?;
             }
+            // ^ session goals keep their configured title/summary
             let day = flags.get("day").cloned().unwrap_or_default();
             let task = flags
                 .get("task")
@@ -116,6 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "task" => {
             let num = req(&flags, "num");
             let title = req(&flags, "title");
+            ensure_goal(&state, &goal, &yoyo).await?;
             state
                 .record_task(Task {
                     id: TaskId::new(format!("task_{}_{num}", run_id.as_str())),
@@ -124,12 +154,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     status: TaskStatus::Open,
                     goal: Some(GoalId::new(goal.as_str())),
                     created_by: yoyo,
-                    metadata: serde_json::json!({}),
+                    metadata: serde_json::json!({ "kind": kind }),
                 })
                 .await?;
         }
 
         "task-result" => {
+            ensure_goal(&state, &goal, &yoyo).await?;
             let num = req(&flags, "num");
             let title = req(&flags, "title");
             let verdict = req(&flags, "verdict");

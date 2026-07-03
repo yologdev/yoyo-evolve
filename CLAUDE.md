@@ -244,6 +244,23 @@ Key yoagent features available: `SubAgentTool`, `SharedState`, `SharedStateTool`
 
 **yoagent 0.7.x prompt lifecycle gotcha (Issue #258):** `agent.prompt()` / `agent.prompt_messages()` spawns the agent loop into a tokio task and returns the event receiver immediately. The agent's internal `self.messages` is NOT updated until `agent.finish().await` is called. If you read `agent.messages()` (or `total_tokens(agent.messages())`) right after draining the event stream WITHOUT calling `finish()` first, you will see the stale pre-prompt state — which silently breaks anything that depends on message count (e.g., the context-window usage bar). Always call `agent.finish().await` between event drain and message read.
 
+## Two Audiences: product vs evolve
+
+yoyo serves two different customers, and every task must know which one it's for:
+
+- **product** — people who install yoyo and use it on *their* projects: any
+  language, any setup, local models, no CI. Product surface (defaults, CLI
+  flags, setup wizard, startup behavior, docs) must be safe for all of them.
+- **evolve** — yoyo's own evolution loop: always this Rust repo, fast tests,
+  CI. Conveniences built for this loop are fine — but they must be **opt-in**
+  the moment they touch anything a product user sees.
+
+The rule: **defaults must be product-safe; evolution-loop conveniences are
+opt-in.** Issue #448 is the canonical failure — auto-watch was built for the
+evolve loop and shipped as a product default, breaking non-Rust users. Every
+planned task declares `Kind: product` or `Kind: evolve` in its task file; the
+evaluator rejects evolve-kind changes to product surface that aren't opt-in.
+
 ## Safety Rules
 
 These are enforced by the `evolve` skill and `evolve.sh`:
