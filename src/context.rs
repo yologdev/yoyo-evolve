@@ -37,6 +37,8 @@ pub const MAX_RECENT_FILES: usize = 20;
 /// Get a listing of project files using `git ls-files`.
 /// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
 /// Returns None if git is not available or the directory is not a git repo.
+/// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn get_project_file_listing() -> Option<String> {
     get_project_file_listing_from(std::path::Path::new("."))
 }
@@ -63,6 +65,8 @@ pub fn get_project_file_listing_from(dir: &std::path::Path) -> Option<String> {
 
 /// Get a brief git status summary for system prompt injection.
 /// Returns None if not in a git repo or git is unavailable.
+/// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn get_git_status_context() -> Option<String> {
     get_git_status_context_from(std::path::Path::new("."))
 }
@@ -111,6 +115,8 @@ fn git_branch_in(dir: &std::path::Path) -> Option<String> {
 /// Get the most recently changed files from git log, deduplicated.
 /// Returns up to `max_files` unique file paths that were modified in recent commits.
 /// Returns None if not in a git repo or git is unavailable.
+/// Only exercised by smoke tests today; kept as the CWD-convenience entry point.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
     get_recently_changed_files_from(std::path::Path::new("."), max_files)
 }
@@ -155,10 +161,16 @@ pub fn get_recently_changed_files_from(
 /// Appends project file listing, recently changed files, git status, and memories
 /// when available.
 pub fn load_project_context() -> Option<String> {
+    load_project_context_from(std::path::Path::new("."))
+}
+
+/// Directory-parameterized variant of [`load_project_context`].
+/// Lets tests point at a hermetic temp git repo instead of the live CWD.
+pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
     let mut context = String::new();
     let mut found = Vec::new();
     for name in PROJECT_CONTEXT_FILES {
-        if let Ok(content) = std::fs::read_to_string(name) {
+        if let Ok(content) = std::fs::read_to_string(dir.join(name)) {
             let content = content.trim();
             if !content.is_empty() {
                 if !context.is_empty() {
@@ -176,7 +188,7 @@ pub fn load_project_context() -> Option<String> {
     }
 
     // Append project file listing if available
-    if let Some(file_listing) = get_project_file_listing() {
+    if let Some(file_listing) = get_project_file_listing_from(dir) {
         if !context.is_empty() {
             context.push_str("\n\n");
         }
@@ -198,11 +210,11 @@ pub fn load_project_context() -> Option<String> {
     }
 
     // Append git status if available
-    let git_branch_name = if let Some(git_status) = get_git_status_context() {
+    let git_branch_name = if let Some(git_status) = get_git_status_context_from(dir) {
         if !context.is_empty() {
             context.push_str("\n\n");
         }
-        let branch = crate::git::git_branch();
+        let branch = git_branch_in(dir);
         context.push_str(&git_status);
         branch
     } else {
@@ -279,6 +291,47 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    /// Run a git command inside the fixture repo, panicking on failure so
+    /// broken fixtures surface as loud test errors instead of vacuous passes.
+    fn fixture_git(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git should be runnable in tests");
+        assert!(
+            out.status.success(),
+            "git {:?} failed in fixture: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Build a hermetic git repo fixture: init on branch `main`, local user
+    /// config, one committed file (`committed.txt`), and one untracked file
+    /// (`untracked.txt`) so git status is deterministic and non-empty —
+    /// completely independent of the live repo's state (Day 124/125 lesson:
+    /// no vacuous `if let` passes, no live-CWD reads).
+    fn init_fixture_repo(dir: &std::path::Path) {
+        fixture_git(dir, &["init", "-q"]);
+        fixture_git(dir, &["config", "user.name", "yoyo-test"]);
+        fixture_git(dir, &["config", "user.email", "yoyo-test@example.com"]);
+        fixture_git(dir, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(dir.join("committed.txt"), "hello\n").unwrap();
+        fixture_git(dir, &["add", "committed.txt"]);
+        fixture_git(dir, &["commit", "-q", "-m", "initial"]);
+        // Normalize the branch name (init.defaultBranch varies by environment)
+        fixture_git(dir, &["branch", "-M", "main"]);
+        std::fs::write(dir.join("untracked.txt"), "scratch\n").unwrap();
+    }
+
+    /// Add and commit a file in the fixture repo.
+    fn fixture_commit_file(dir: &std::path::Path, name: &str, contents: &str, msg: &str) {
+        std::fs::write(dir.join(name), contents).unwrap();
+        fixture_git(dir, &["add", name]);
+        fixture_git(dir, &["commit", "-q", "-m", msg]);
+    }
+
     #[test]
     fn test_project_context_file_names_not_empty() {
         assert_eq!(PROJECT_CONTEXT_FILES.len(), 6);
@@ -318,25 +371,35 @@ mod tests {
     }
 
     #[test]
-    fn test_get_project_file_listing_no_panic() {
-        // Should not panic regardless of whether we're in a git repo or not.
-        // In CI this runs inside a git repo, so we expect Some with files.
-        let result = get_project_file_listing();
-        // If we're in a git repo (likely in CI), verify the output is reasonable
-        if let Some(listing) = &result {
-            assert!(!listing.is_empty(), "File listing should not be empty");
-            let lines: Vec<&str> = listing.lines().collect();
-            assert!(
-                lines.len() <= MAX_PROJECT_FILES + 1, // +1 for possible "... and N more" line
-                "File listing should be capped at {} files",
-                MAX_PROJECT_FILES
-            );
-            // Should contain at least Cargo.toml (we're in a Rust project)
-            assert!(
-                listing.contains("Cargo.toml"),
-                "File listing should contain Cargo.toml"
-            );
-        }
+    fn test_get_project_file_listing_hermetic() {
+        // Hermetic: points at a temp fixture repo, not the live CWD, so it
+        // cannot flake on dirty trees or shallow clones (Day 125 lesson).
+        let dir = tempfile::TempDir::new().unwrap();
+        init_fixture_repo(dir.path());
+        let listing = get_project_file_listing_from(dir.path())
+            .expect("fixture repo should always produce a file listing");
+        assert!(
+            listing.contains("committed.txt"),
+            "Listing should contain the tracked file, got: {listing}"
+        );
+        assert!(
+            !listing.contains("untracked.txt"),
+            "ls-files should not include untracked files, got: {listing}"
+        );
+        let lines: Vec<&str> = listing.lines().collect();
+        assert!(
+            lines.len() <= MAX_PROJECT_FILES + 1, // +1 for possible "... and N more" line
+            "File listing should be capped at {} files",
+            MAX_PROJECT_FILES
+        );
+    }
+
+    #[test]
+    fn test_get_project_file_listing_live_smoke() {
+        // Live-CWD smoke check: only asserts flake-proof properties (the CWD
+        // wrapper must not panic and must delegate). Content assertions live
+        // in the hermetic test above.
+        let _ = get_project_file_listing();
     }
 
     #[test]
