@@ -45,6 +45,25 @@ git pull --rebase --quiet 2>/dev/null || true
 
 echo "=== Day $DAY ($DATE $SESSION_TIME) ==="
 echo "Model: $MODEL"
+
+# GASP state instrumentation (fail-soft; see scripts/gasp_shim.sh).
+# The source itself is guarded, and a missing/broken shim degrades to no-op
+# stubs — instrumentation must be optional at its installation point too.
+if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; then
+    :
+else
+    echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
+    gasp_session_start() { :; }; gasp_task_planned() { :; }
+    gasp_task_result()  { :; }; gasp_mirror_skills() { :; }; gasp_session_end() { :; }
+fi
+
+# Non-main branches run in quiet mode: no issue-tracker writes, no tags, no
+# audit-log push. Test sessions must not touch surfaces shared with main.
+QUIET_MODE=false
+if [ "$(git branch --show-current 2>/dev/null || echo main)" != "main" ]; then
+    QUIET_MODE=true
+    echo "  [quiet] non-main branch: issue writes, tags, and audit push are disabled"
+fi
 echo "Plan timeout: ${TIMEOUT}s (assess: $((TIMEOUT/2))s + plan: $((TIMEOUT/2))s) | Impl timeout: 1200s/task"
 echo ""
 
@@ -254,6 +273,7 @@ cargo build --quiet
 cargo test --quiet
 YOYO_BIN="./target/debug/yoyo"
 echo "  Build OK."
+gasp_session_start "$DAY"
 echo ""
 
 # ── Step 1b: Enable per-tool-call audit + set up session evidence staging ──
@@ -1071,7 +1091,8 @@ safety_commit() {
     git add -A 2>/dev/null || true
     staged_protected=$(git diff --cached --name-only -- \
         .github/workflows/ IDENTITY.md PERSONALITY.md \
-        scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+        scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
         skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
     if [ -n "$staged_protected" ]; then
         git reset -q 2>/dev/null || true
@@ -1113,6 +1134,7 @@ for TASK_FILE in session_plan/task_*.md; do
     task_title="${task_title:-Task $TASK_NUM}"
 
     echo "  → Task $TASK_NUM: $task_title"
+    gasp_task_planned "$TASK_NUM" "$task_title"
 
     # Save pre-task state for rollback
     if ! PRE_TASK_SHA=$(git rev-parse HEAD 2>&1); then
@@ -1272,7 +1294,8 @@ and commit if needed."
     PROTECTED_CHANGES=""
     if ! PROTECTED_CHANGES=$(git diff --name-only "$PRE_TASK_SHA"..HEAD -- \
         .github/workflows/ IDENTITY.md PERSONALITY.md \
-        scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+        scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
         skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
         echo "    BLOCKED: Task $TASK_NUM — git diff failed (cannot verify protected files)"
         echo "    Error: $PROTECTED_CHANGES"
@@ -1283,7 +1306,8 @@ and commit if needed."
     if [ "$TASK_OK" = true ]; then
         if ! PROTECTED_STAGED=$(git diff --cached --name-only -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
             echo "    BLOCKED: Task $TASK_NUM — git diff --cached failed"
             echo "    Error: $PROTECTED_STAGED"
@@ -1298,7 +1322,8 @@ and commit if needed."
     if [ "$TASK_OK" = true ]; then
         if ! PROTECTED_UNSTAGED=$(git diff --name-only -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
             echo "    BLOCKED: Task $TASK_NUM — git diff (working tree) failed"
             echo "    Error: $PROTECTED_UNSTAGED"
@@ -1394,7 +1419,8 @@ BFIXEOF
         # Re-check protected files after fix agent (committed + staged)
         if ! BFIX_PROTECTED=$(git diff --name-only "$PRE_TASK_SHA"..HEAD -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>&1); then
             echo "    Build-fix: git diff failed — cannot verify protected files, reverting"
             TASK_OK=false
@@ -1403,7 +1429,8 @@ BFIXEOF
         fi
         BFIX_PROTECTED_STAGED=$(git diff --cached --name-only -- \
             .github/workflows/ IDENTITY.md PERSONALITY.md \
-            scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+            scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
             skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
         if [ -n "$BFIX_PROTECTED" ] || [ -n "${BFIX_PROTECTED_STAGED:-}" ]; then
             echo "    Build-fix agent modified protected files — reverting"
@@ -1531,11 +1558,13 @@ FIXEOF
                 # Re-check protected files after fix agent
                 FIX_PROTECTED=$(git diff --name-only "$PRE_TASK_SHA"..HEAD -- \
                     .github/workflows/ IDENTITY.md PERSONALITY.md \
-                    scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+                    scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
                     skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
                 FIX_PROTECTED_STAGED=$(git diff --cached --name-only -- \
                     .github/workflows/ IDENTITY.md PERSONALITY.md \
-                    scripts/evolve.sh scripts/format_issues.py scripts/build_site.py \
+                    scripts/evolve.sh scripts/gasp_shim.sh tools/gasp-emit/ \
+        scripts/format_issues.py scripts/build_site.py \
                     skills/self-assess/ skills/evolve/ skills/communicate/ skills/research/ 2>/dev/null || true)
                 if [ -n "$FIX_PROTECTED" ] || [ -n "$FIX_PROTECTED_STAGED" ]; then
                     echo "    Fix agent modified protected files — reverting"
@@ -1608,6 +1637,10 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
 
     # Revert task if verification or evaluation failed
     if [ "$TASK_OK" = false ]; then
+        # record the rejected patch BEFORE the reset, while the attempted
+        # commits are still reachable (the log remembers what was tried)
+        gasp_task_result "$TASK_NUM" "$task_title" rejected "$PRE_TASK_SHA" \
+            "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$REVERT_REASON"
         echo "    Reverting Task $TASK_NUM (resetting to $PRE_TASK_SHA)"
         if ! git reset --hard "$PRE_TASK_SHA"; then
             echo "    FATAL: git reset --hard failed. Cannot guarantee clean state."
@@ -1618,7 +1651,7 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
         TASK_FAILURES=$((TASK_FAILURES + 1))
 
         # File an issue so future sessions know what was reverted
-        if command -v gh &>/dev/null; then
+        if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
             ISSUE_TITLE="Task reverted: ${task_title:0:200}"
             ISSUE_BODY="**Day $DAY, Task $TASK_NUM** was automatically reverted by the verification gate.
 
@@ -1654,6 +1687,11 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
         fi
     else
         echo "    Task $TASK_NUM: verified OK"
+        gasp_task_result "$TASK_NUM" "$task_title" promoted "$PRE_TASK_SHA" \
+            "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        # evolve tasks can legitimately touch skills/ too — keep the state
+        # repo's skill tree in sync (full-tree sync; no-op when unchanged)
+        gasp_mirror_skills
     fi
 
 done
@@ -1666,7 +1704,7 @@ echo "  Implementation complete. $TASK_FAILURES of $TASK_NUM tasks had issues."
 # File issue if ALL tasks were reverted (planning-only session)
 if [ "$TASK_FAILURES" -eq "$TASK_NUM" ] && [ "$TASK_NUM" -gt 0 ]; then
     echo "  WARNING: All $TASK_NUM tasks were reverted — planning-only session."
-    if command -v gh &>/dev/null; then
+    if [ "$QUIET_MODE" = false ] && command -v gh &>/dev/null; then
         PLAN_TASK_LIST=""
         for f in session_plan/task_*.md; do
             [ -f "$f" ] || continue
@@ -1973,7 +2011,10 @@ if [ -f "session_plan/issue_responses.md" ]; then
 fi
 
 ISSUE_COUNT=$(echo "$ALL_ISSUES" | grep -c '^### Issue' 2>/dev/null) || ISSUE_COUNT=0
-if [ "$ISSUE_COUNT" -gt 0 ] && command -v gh &>/dev/null; then
+if [ "$QUIET_MODE" = true ] && [ "$ISSUE_COUNT" -gt 0 ]; then
+    echo "  [quiet] skipping issue responses ($ISSUE_COUNT issue(s)) — non-main branch"
+fi
+if [ "$QUIET_MODE" = false ] && [ "$ISSUE_COUNT" -gt 0 ] && command -v gh &>/dev/null; then
     # Pre-filter: find issues already commented on today (cross-session dedup)
     SKIP_COUNT=0
     ALREADY_RESPONDED=""
@@ -2207,7 +2248,9 @@ PYEOF
     else
         git branch audit-log 2>/dev/null || true
     fi
-    if git worktree add "$AUDIT_PUSH_WT" audit-log 2>/dev/null; then
+    # quiet mode: audit evidence feeds main sessions' self-assessment; a test
+    # session must not leak into it
+    if [ "$QUIET_MODE" = false ] && git worktree add "$AUDIT_PUSH_WT" audit-log 2>/dev/null; then
         mkdir -p "$AUDIT_PUSH_WT/$SESSION_DIR"
         cp -R "$SESSION_STAGING/." "$AUDIT_PUSH_WT/$SESSION_DIR/" 2>/dev/null || true
         if (
@@ -2228,7 +2271,9 @@ PYEOF
         git worktree prune 2>/dev/null || true
     fi
 
-    if [ "$AUDIT_PUSH_OK" = "1" ]; then
+    if [ "$QUIET_MODE" = true ]; then
+        echo "  [quiet] skipping audit-log push — non-main branch"
+    elif [ "$AUDIT_PUSH_OK" = "1" ]; then
         # Reset failure counter on success
         echo 0 > "$AUDIT_FAIL_FILE" 2>/dev/null || true
     else
@@ -2250,9 +2295,13 @@ PYEOF
 fi
 
 # ── Step 7b: Tag known-good state ──
-TAG_NAME="day${DAY}-$(echo "$SESSION_TIME" | tr ':' '-')"
-git tag "$TAG_NAME" -m "Day $DAY evolution ($SESSION_TIME)" 2>/dev/null || true
-echo "  Tagged: $TAG_NAME"
+if [ "$QUIET_MODE" = false ]; then
+    TAG_NAME="day${DAY}-$(echo "$SESSION_TIME" | tr ':' '-')"
+    git tag "$TAG_NAME" -m "Day $DAY evolution ($SESSION_TIME)" 2>/dev/null || true
+    echo "  Tagged: $TAG_NAME"
+else
+    echo "  [quiet] skipping day tag — non-main branch"
+fi
 
 # ── Step 7c: Eligibility logging ──
 if [ -f "$SPONSOR_INFO_FILE" ]; then
@@ -2282,7 +2331,13 @@ echo "→ Pushing..."
 refresh_gh_token
 git pull --rebase || echo "  Pull --rebase failed (will attempt push anyway)"
 git push || echo "  Push failed (maybe no remote or auth issue)"
-git push --tags || echo "  Tag push failed (non-fatal)"
+if [ "$QUIET_MODE" = false ]; then
+    git push --tags || echo "  Tag push failed (non-fatal)"
+fi
+
+# GASP: close the run and push state AFTER the code push, so patch artifacts
+# never reference unpushed commits (code first, state second).
+gasp_session_end "promoted ${SESSION_TASKS_SUCCEEDED:-0}/${SESSION_TASKS_ATTEMPTED:-0} tasks"
 
 echo ""
 echo "=== Day $DAY complete ==="
