@@ -288,6 +288,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_project_file_listing_no_panic() {
         // Should not panic regardless of whether we're in a git repo or not.
         // In CI this runs inside a git repo, so we expect Some with files.
@@ -329,6 +330,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_recently_changed_files_in_git_repo() {
         // We're running in a git repo (CI or local), so this should return Some
         let result = get_recently_changed_files(20);
@@ -347,6 +349,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_recently_changed_files_respects_limit() {
         // Request only 2 files — should return at most 2
         let result = get_recently_changed_files(2);
@@ -360,6 +363,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_recently_changed_files_no_duplicates() {
         let result = get_recently_changed_files(50);
         if let Some(files) = &result {
@@ -369,10 +373,13 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_load_project_context_includes_recently_changed() {
         // We're running inside the yoyo git repo, so load_project_context()
         // must always return Some. Previously this test guarded with
         // `if let Some`, silently passing without asserting in CI.
+        // #[serial]: reads the cwd, which other serial tests temporarily change —
+        // without it, the hard assertions race against set_current_dir and flake.
         let result = load_project_context();
         let context = result.expect("load_project_context should return Some in a git repo");
 
@@ -434,6 +441,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_git_status_context_in_repo() {
         // We're running inside a git repo, so this should return Some
         let result = get_git_status_context();
@@ -445,6 +453,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_git_status_context_contains_branch() {
         let result = get_git_status_context().expect("Should be in a git repo");
         // Get the actual branch name to verify it's in the output
@@ -456,7 +465,9 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_git_status_context_format() {
+        // #[serial]: reads the cwd, which other serial tests temporarily change.
         let result = get_git_status_context().expect("Should be in a git repo");
         assert!(
             result.starts_with("## Git Status\n\n"),
@@ -465,7 +476,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_load_project_context_includes_git_status() {
+        // #[serial]: reads the cwd, which other serial tests temporarily change —
+        // without it, this races against set_current_dir and flakes in CI.
         // We're running inside the yoyo git repo, so both load_project_context()
         // and get_git_status_context() must return Some. Previously this test
         // guarded with `if let Some` on both, silently passing without asserting
