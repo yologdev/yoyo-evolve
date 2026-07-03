@@ -343,6 +343,10 @@ else
     echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
     gasp_session_start() { :; }; gasp_session_end() { :; }
 fi
+# Abort symmetry with dream.sh: any exit path closes the run in the ledger
+# (gasp_session_end is terminal — the happy-path call makes this a no-op).
+trap 'gasp_session_end "${GASP_OUTCOME:-aborted: early exit}"' EXIT
+GASP_OUTCOME=""
 gasp_session_start "$DAY" "social_day" "social session (replies, discussions, people-learnings)"
 
 echo "→ Running social session..."
@@ -448,7 +452,8 @@ fi
 # GASP: close the run and push state AFTER the code push (code first, state
 # second). The memory mirror inside session-end converts any new social
 # learnings to facts.
-gasp_session_end "social session complete (agent exit=${AGENT_EXIT:-0})"
+GASP_OUTCOME="social session complete (agent exit=${AGENT_EXIT:-0})"
+gasp_session_end "$GASP_OUTCOME"
 
 echo ""
 echo "=== Social session complete ==="

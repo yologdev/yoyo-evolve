@@ -54,6 +54,7 @@ _gasp_note_failure() {
     n=${n//[^0-9]/}
     n=$(( ${n:-0} + 1 ))
     echo "$n" > "$GASP_FAIL_COUNTER" 2>/dev/null || true
+    [ "${GITHUB_ACTIONS:-}" = "true" ] && echo "::warning::GASP state stream failure ($n recorded failures) — check the [gasp] log lines" 2>/dev/null
     if [ "$n" -ge 3 ]; then
         echo "  [gasp] ⚠⚠⚠ GASP has failed $n recorded sessions — the state stream may be dead" >&2
         echo "  [gasp]     check: GH_PAT validity/push access to ${GASP_STATE_REPO}, gasp-emit build" >&2
@@ -217,118 +218,218 @@ _gasp_rebind() {
 }
 
 # gasp_mirror_memory — keeps the state repo's memory/journal/dream streams
-# current (called automatically from gasp_session_end, fail-soft):
-#   - new learnings lines (session + social) are converted to the GASP fact
-#     envelope {id, ts_ms, text, derived_from: [run], supersedes} and APPENDED
-#     to memory/*facts.jsonl (append-only paths — never rewritten). Since the
-#     seed was a verbatim copy, "new" = executor lines beyond the state file's
-#     line count, so a missed session self-heals on the next one.
-#   - new journal entries (yoyo PREPENDS to its journal; the state copy is
-#     append-only) are extracted by their "## Day N — ..." headers and
-#     appended oldest-first.
-#   - dreams/dream_log.jsonl is appended by line count; regenerable
-#     projections (active syntheses, DREAM.md, dream arc, notes, cursors,
-#     DAY_COUNT) are overwritten — the spec's projection tier allows it.
+# current (called automatically from gasp_session_end):
+#   - new learnings lines (session + social) convert to the GASP fact envelope
+#     and APPEND to memory/*facts.jsonl; dreams/dream_log.jsonl appends
+#     verbatim. Progress is tracked by an explicit cursor
+#     (memory/.gasp_mirror_cursor.json in the state repo: consumed line count
+#     + hash of the last consumed line, verified before every append) — never
+#     inferred from destination line counts, so blank lines, unicode line
+#     separators, or an upstream rewrite of a source file can stall a stream
+#     loudly but can never append duplicated or misaligned facts.
+#   - new journal entries (yoyo PREPENDS; the state copy is append-only) are
+#     matched by strict "## Day N — " headers with multiset counting
+#     (duplicate headers append their surplus) and appended oldest-first.
+#   - regenerable projections (active syntheses, DREAM.md, dream arc,
+#     DAY_COUNT) are overwritten; notes/cursors JSON copies verbatim (no
+#     rebind — a substitution inside a seen-state key could reset it).
+# Failure isolation: each stream degrades independently with its own warning;
+# a broken stream NEVER disables event recording or the boundary commit.
 # Generation stays in the executor; this copies outputs only.
 gasp_mirror_memory() {
     [ "$GASP_ENABLED" = true ] || return 0
-    local out
-    if ! out=$(GASP_RUN_ID="$GASP_RUN_ID" GASP_STATE_DIR="$GASP_STATE_DIR" python3 - << 'PYEOF' 2>&1
-import json, os, sys, time, uuid
-from datetime import datetime, timezone
+    local out root
+    root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    out=$(GASP_RUN_ID="$GASP_RUN_ID" GASP_STATE_DIR="$GASP_STATE_DIR" GASP_SRC_ROOT="$root" python3 - << 'PYEOF' 2>&1
+import hashlib, json, os, re, sys, time, uuid
+from datetime import datetime
 
 state = os.environ["GASP_STATE_DIR"]
 run_id = os.environ["GASP_RUN_ID"]
+root = os.environ["GASP_SRC_ROOT"]
+CURSOR_PATH = os.path.join(state, "memory/.gasp_mirror_cursor.json")
+
+def warn(msg):
+    print(f"WARN {msg}")
 
 def lines_of(path):
+    """Physical \\n-split lines (never splitlines(): U+2028/NEL must not count)."""
     try:
-        with open(path, encoding="utf-8") as f:
-            return f.read().splitlines()
+        with open(path, encoding="utf-8", errors="strict") as f:
+            raw = f.read()
     except FileNotFoundError:
         return None
+    except UnicodeDecodeError as e:
+        warn(f"{path}: undecodable ({e}) — stream skipped")
+        return None
+    lines = raw.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
-# 1. learnings -> facts (append-only, envelope-converted)
-for src, dst in [("memory/learnings.jsonl", "memory/facts.jsonl"),
-                 ("memory/social_learnings.jsonl", "memory/social_facts.jsonl")]:
+def line_hash(line):
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()[:16]
+
+def ensure_trailing_newline(path):
+    """Appending after a file that lacks a final newline would merge lines."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                with open(path, "a", encoding="utf-8") as g:
+                    g.write("\n")
+    except OSError:
+        pass  # empty file or unseekable: append is safe
+
+try:
+    cursors = json.load(open(CURSOR_PATH, encoding="utf-8"))
+except (FileNotFoundError, json.JSONDecodeError):
+    cursors = {}
+
+def sync_stream(src_rel, dst_rel, convert):
+    """Append src lines beyond the verified cursor; each stream fails alone."""
+    src = os.path.join(root, src_rel)
+    dst = os.path.join(state, dst_rel)
     src_lines = lines_of(src)
     if src_lines is None:
-        continue
-    dst_path = os.path.join(state, dst)
-    dst_lines = lines_of(dst_path) or []
-    if len(src_lines) < len(dst_lines):
-        print(f"WARNING: {src} has fewer lines than {dst} — skipping (append-only source shrank?)")
-        continue
-    new = src_lines[len(dst_lines):]
-    if not new:
-        continue
-    with open(dst_path, "a", encoding="utf-8") as f:
-        for line in new:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                legacy = json.loads(line)
-                title = legacy.get("title", "")
-                context = legacy.get("context", "")
-                text = (f"{title} — {context}" if title and context
-                        else title or context or json.dumps(legacy, ensure_ascii=False))
-                ts = legacy.get("ts", "")
-                try:
-                    ts_ms = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
-                except (ValueError, AttributeError):
-                    ts_ms = int(time.time() * 1000)
-            except json.JSONDecodeError:
-                text, ts_ms = line, int(time.time() * 1000)
-            fact = {"id": f"fact_{uuid.uuid4().hex}", "ts_ms": ts_ms, "text": text,
-                    "derived_from": [run_id], "supersedes": None}
-            f.write(json.dumps(fact, ensure_ascii=False) + "\n")
-    print(f"facts: +{len(new)} from {src}")
+        return
+    cur = cursors.get(src_rel)
+    if cur is None:
+        # first run with a cursor: trust the seed alignment (dst length),
+        # exactly the old semantics, then never infer again
+        dst_lines = lines_of(dst) or []
+        consumed = min(len(dst_lines), len(src_lines))
+        cur = {"consumed": consumed,
+               "last": line_hash(src_lines[consumed - 1]) if consumed else ""}
+    consumed = int(cur.get("consumed", 0))
+    if consumed > len(src_lines):
+        warn(f"{src_rel}: source shrank below cursor ({len(src_lines)} < {consumed}) — stream stalled, reconcile manually")
+        return
+    if consumed and line_hash(src_lines[consumed - 1]) != cur.get("last"):
+        warn(f"{src_rel}: content at cursor changed (source rewritten?) — stream stalled, reconcile manually")
+        return
+    new = src_lines[consumed:]
+    if new:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.exists(dst):
+            ensure_trailing_newline(dst)
+        written = 0
+        with open(dst, "a", encoding="utf-8") as f:
+            for line in new:
+                out_line = convert(line)
+                if out_line is not None:
+                    f.write(out_line + "\n")
+                    written += 1
+        if written:
+            print(f"{dst_rel}: +{written} from {src_rel}")
+    cursors[src_rel] = {"consumed": len(src_lines),
+                        "last": line_hash(src_lines[-1]) if src_lines else ""}
 
-# 2. journal: append entries whose header the state copy lacks (oldest first)
-src_j = lines_of("journals/JOURNAL.md")
-dst_j_path = os.path.join(state, "journal/JOURNAL.md")
-dst_j = lines_of(dst_j_path)
-if src_j is not None and dst_j is not None:
-    have = {l for l in dst_j if l.startswith("## ")}
-    entries, cur = [], None
-    for l in src_j:
-        if l.startswith("## "):
-            cur = [l]
-            entries.append(cur)
-        elif cur is not None:
-            cur.append(l)
-    missing = [e for e in entries if e[0] not in have]
-    if missing:
-        with open(dst_j_path, "a", encoding="utf-8") as f:
-            for e in reversed(missing):  # executor is newest-first; append chronologically
-                block = "\n".join(e).rstrip("\n")
-                f.write("\n" + block + "\n")
-        print(f"journal: +{len(missing)} entrie(s)")
+def to_fact(line):
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        legacy = json.loads(line)
+        title = legacy.get("title", "")
+        context = legacy.get("context", "")
+        text = (f"{title} — {context}" if title and context
+                else title or context or json.dumps(legacy, ensure_ascii=True))
+        ts = legacy.get("ts", "")
+        try:
+            ts_ms = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+        except (ValueError, AttributeError):
+            ts_ms = int(time.time() * 1000)
+    except json.JSONDecodeError:
+        text, ts_ms = line, int(time.time() * 1000)
+    fact = {"id": f"fact_{uuid.uuid4().hex}", "ts_ms": ts_ms, "text": text,
+            "derived_from": [run_id], "supersedes": None}
+    # ensure_ascii=True: raw U+2028/U+2029 in output would break line counts
+    return json.dumps(fact, ensure_ascii=True)
 
-# 3. dream log: verbatim append by line count
-src_d = lines_of("dreams/dream_log.jsonl")
-if src_d is not None:
-    dst_d_path = os.path.join(state, "dreams/dream_log.jsonl")
-    os.makedirs(os.path.dirname(dst_d_path), exist_ok=True)
-    dst_d = lines_of(dst_d_path) or []
-    if len(src_d) > len(dst_d):
-        with open(dst_d_path, "a", encoding="utf-8") as f:
-            for line in src_d[len(dst_d):]:
-                f.write(line + "\n")
-        print(f"dream log: +{len(src_d) - len(dst_d)}")
+def verbatim(line):
+    return line if line.strip() else None
+
+for args in [("memory/learnings.jsonl", "memory/facts.jsonl", to_fact),
+             ("memory/social_learnings.jsonl", "memory/social_facts.jsonl", to_fact),
+             ("dreams/dream_log.jsonl", "dreams/dream_log.jsonl", verbatim)]:
+    try:
+        sync_stream(*args)
+    except Exception as e:  # one broken stream must not stop the others
+        warn(f"{args[0]}: mirror error: {type(e).__name__}: {e}")
+
+# journal: strict headers, multiset dedup, append surplus oldest-first
+try:
+    HEADER = re.compile(r"^## Day \d+ ")
+    src_j = lines_of(os.path.join(root, "journals/JOURNAL.md"))
+    dst_j_path = os.path.join(state, "journal/JOURNAL.md")
+    dst_j = lines_of(dst_j_path)
+    if src_j is None:
+        warn("journals/JOURNAL.md: not found — journal skipped")
+    elif dst_j is None:
+        warn("state journal/JOURNAL.md: not found — journal skipped")
+    else:
+        from collections import Counter
+        have = Counter(l for l in dst_j if HEADER.match(l))
+        entries, cur_e = [], None
+        for l in src_j:
+            if HEADER.match(l):
+                cur_e = [l]
+                entries.append(cur_e)
+            elif cur_e is not None:
+                cur_e.append(l)
+        missing, skipped = [], 0
+        for e in entries:
+            if have[e[0]] > 0:
+                have[e[0]] -= 1
+                skipped += 1
+            else:
+                missing.append(e)
+        if missing:
+            ensure_trailing_newline(dst_j_path)
+            with open(dst_j_path, "a", encoding="utf-8") as f:
+                for e in reversed(missing):  # executor is newest-first
+                    f.write("\n" + "\n".join(e).rstrip("\n") + "\n")
+            print(f"journal: +{len(missing)} entrie(s) ({skipped} already present)")
+except Exception as e:
+    warn(f"journal: mirror error: {type(e).__name__}: {e}")
+
+os.makedirs(os.path.dirname(CURSOR_PATH), exist_ok=True)
+with open(CURSOR_PATH, "w", encoding="utf-8") as f:
+    json.dump(cursors, f, indent=1, sort_keys=True)
 PYEOF
-    ); then
-        _gasp_off "memory mirror failed: $(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')"
-        return 0
+    ) || warn_rc=$?
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out" | sed 's/^WARN /  [gasp] WARNING: /; s/^\([^ ]\)/  [gasp] \1/' | sed 's/^  \[gasp\]   \[gasp\]/  [gasp]/'
+        if printf '%s' "$out" | grep -q '^WARN '; then
+            _gasp_note_failure
+        fi
     fi
-    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/  [gasp] /'
+    if [ "${warn_rc:-0}" != "0" ]; then
+        echo "  [gasp] WARNING: memory mirror crashed (rc=$warn_rc) — events still record" >&2
+        _gasp_note_failure
+    fi
 
-    # regenerable projections + runtime state: plain overwrite copies
-    local src dst
+    # regenerable projections: rebind-copy with the mirror_skills guard
+    # pattern (never leave a truncated file behind silently); JSON runtime
+    # state copies verbatim — no rebind inside opaque data
+    local src dst err
     while IFS=: read -r src dst; do
+        src="$root/$src"
         [ -f "$src" ] || continue
         mkdir -p "$GASP_STATE_DIR/$(dirname "$dst")" 2>/dev/null || true
-        _gasp_rebind < "$src" > "$GASP_STATE_DIR/$dst" 2>/dev/null || true
+        case "$dst" in
+            *.json)
+                cp "$src" "$GASP_STATE_DIR/$dst" 2>/dev/null \
+                    || echo "  [gasp] WARNING: copy failed for $dst" >&2 ;;
+            *)
+                if ! err=$(_gasp_rebind 2>&1 < "$src" > "$GASP_STATE_DIR/$dst"); then
+                    echo "  [gasp] WARNING: projection rebind failed for $dst: $(printf '%s' "$err" | head -n 1)" >&2
+                elif [ -s "$src" ] && [ ! -s "$GASP_STATE_DIR/$dst" ]; then
+                    echo "  [gasp] WARNING: projection rebind emptied $dst — restoring verbatim copy" >&2
+                    cp "$src" "$GASP_STATE_DIR/$dst" 2>/dev/null || true
+                fi ;;
+        esac
     done << 'MAP'
 memory/active_learnings.md:memory/active_memory.md
 memory/active_social_learnings.md:memory/active_social_memory.md
@@ -353,8 +454,9 @@ gasp_session_end() {
     # any mirror changed rides the boundary commit (state/ is always staged
     # by commit_run itself)
     gasp_mirror_memory
-    GASP_EXTRA_PATHS=$(git -C "$GASP_STATE_DIR" status --porcelain 2>/dev/null \
-        | awk '{print $NF}' | grep -v '^state/' | cut -d/ -f1 | sort -u | paste -sd, - || true)
+    # NUL-parsed porcelain (verbatim paths — spaces/quotes safe), renames off
+    GASP_EXTRA_PATHS=$(git -C "$GASP_STATE_DIR" -c status.renames=false status --porcelain=v1 -z 2>/dev/null \
+        | tr '\0' '\n' | cut -c4- | grep -v '^state/' | grep -v '^$' | cut -d/ -f1 | sort -u | paste -sd, - || true)
     [ -n "$GASP_EXTRA_PATHS" ] && echo "  [gasp] state streams synced: ${GASP_EXTRA_PATHS}"
 
     if ! out=$("$GASP_EMIT_BIN" session-end --state-dir "$GASP_STATE_DIR" \
@@ -369,6 +471,7 @@ gasp_session_end() {
         echo "  [gasp] state pushed to ${GASP_STATE_REPO}"
         echo 0 > "$GASP_FAIL_COUNTER" 2>/dev/null || true
         rm -rf "$GASP_STATE_DIR" 2>/dev/null || true
+        GASP_ENABLED=false  # terminal: a later abort-trap call is a no-op
     else
         echo "  [gasp] WARNING: state push failed — boundary commit preserved at ${GASP_STATE_DIR}" >&2
         echo "  [gasp]   $(_gasp_scrub "$(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')")" >&2

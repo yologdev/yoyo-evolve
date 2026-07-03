@@ -904,6 +904,7 @@ if [ "$TASK_COUNT" -eq 0 ]; then
     mkdir -p session_plan
     cat > session_plan/task_01.md <<FALLBACK
 Title: Self-improvement (small, committed)
+Kind: evolve
 Files: src/
 Issue: none
 
@@ -987,8 +988,16 @@ for TASK_FILE in session_plan/task_*.md; do
     TASK_DESC=$(cat "$TASK_FILE")
     task_title=$(grep '^Title:' "$TASK_FILE" | head -1 | sed 's/^Title:[[:space:]]*//' || true)
     task_title="${task_title:-Task $TASK_NUM}"
-    task_kind=$(grep '^Kind:' "$TASK_FILE" | head -1 | sed 's/^Kind:[[:space:]]*//' | tr '[:upper:]' '[:lower:]' || true)
-    case "$task_kind" in product|evolve) ;; *) task_kind="evolve" ;; esac
+    # first token only, so "product (user-facing)" still parses; warn on
+    # anything unrecognized — a silently coerced product task would face the
+    # evaluator's evolve-kind RED FLAG and could be falsely rejected
+    task_kind_raw=$(grep '^Kind:' "$TASK_FILE" | head -1 | sed 's/^Kind:[[:space:]]*//' | awk '{print tolower($1)}' || true)
+    case "$task_kind_raw" in
+        product|evolve) task_kind="$task_kind_raw" ;;
+        "") task_kind="evolve" ;;
+        *)  echo "    WARNING: unrecognized Kind '$task_kind_raw' in $TASK_FILE — defaulting to evolve"
+            task_kind="evolve" ;;
+    esac
 
     echo "  → Task $TASK_NUM: $task_title [$task_kind]"
     GASP_TASK_KIND="$task_kind" gasp_task_planned "$TASK_NUM" "$task_title"
