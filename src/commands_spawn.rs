@@ -34,6 +34,35 @@ impl std::fmt::Display for SpawnStatus {
     }
 }
 
+/// A completed spawn worker's committed work, ready for review.
+///
+/// When a spawn worker finishes in an isolated worktree and left file changes
+/// behind, those changes are committed to a named branch that survives
+/// worktree cleanup. This record carries the branch name and a one-line
+/// diffstat so the user (and the main agent) know where to look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnHandoff {
+    /// The branch the worker's commit lives on (e.g. `spawn/3-1719...`).
+    pub branch: String,
+    /// One-line diffstat summary (e.g. `3 files changed (+42/-7)`).
+    pub diffstat: String,
+}
+
+impl SpawnHandoff {
+    /// One-line human summary: `ready to review: branch <b> — <diffstat>`.
+    pub fn summary_line(&self) -> String {
+        format!(
+            "ready to review: branch {} — {}",
+            self.branch, self.diffstat
+        )
+    }
+
+    /// Hint showing how to inspect the handoff branch.
+    pub fn review_hint(&self) -> String {
+        format!("git diff main...{}", self.branch)
+    }
+}
+
 /// A tracked spawn task with its metadata and result.
 #[derive(Debug, Clone)]
 pub struct SpawnTask {
@@ -49,6 +78,8 @@ pub struct SpawnTask {
     pub output_path: Option<String>,
     /// Whether this spawn was launched in the background.
     pub background: bool,
+    /// Committed worktree changes ready for review, if any.
+    pub handoff: Option<SpawnHandoff>,
 }
 
 /// Thread-safe tracker for multiple spawn tasks.
@@ -89,16 +120,28 @@ impl SpawnTracker {
             result: None,
             output_path,
             background,
+            handoff: None,
         });
         id
     }
 
     /// Mark a task as completed with its result.
+    /// Convenience wrapper over `complete_with_handoff` (production paths now
+    /// always go through the handoff-aware variant; this remains for tests
+    /// and future callers that have no worktree).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn complete(&self, id: usize, result: String) {
+        self.complete_with_handoff(id, result, None);
+    }
+
+    /// Mark a task as completed with its result and an optional handoff
+    /// (committed worktree changes ready for review).
+    pub fn complete_with_handoff(&self, id: usize, result: String, handoff: Option<SpawnHandoff>) {
         let mut tasks = lock_or_recover(&self.inner);
         if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
             task.status = SpawnStatus::Completed;
             task.result = Some(result);
+            task.handoff = handoff;
         }
     }
 
@@ -141,23 +184,31 @@ impl SpawnTracker {
     }
 
     /// Try to collect a background spawn's result.
-    /// Returns `Ok(Some(result))` if finished, `Ok(None)` if still running.
-    /// Returns `Err` if the spawn doesn't exist or wasn't a background spawn.
-    pub fn try_collect(&self, id: usize) -> Result<Option<(String, String)>, String> {
+    /// Returns `Ok(Some((task, result, handoff)))` if finished, `Ok(None)` if
+    /// still running. Returns `Err` if the spawn doesn't exist or wasn't a
+    /// background spawn.
+    #[allow(clippy::type_complexity)]
+    pub fn try_collect(
+        &self,
+        id: usize,
+    ) -> Result<Option<(String, String, Option<SpawnHandoff>)>, String> {
         let tasks = lock_or_recover(&self.inner);
         let task = tasks.iter().find(|t| t.id == id);
         match task {
             None => Err(format!("no spawn #{id} found")),
             Some(t) if !t.background => {
                 if t.status == SpawnStatus::Completed {
-                    Ok(t.result.clone().map(|r| (t.task.clone(), r)))
+                    Ok(t.result
+                        .clone()
+                        .map(|r| (t.task.clone(), r, t.handoff.clone())))
                 } else {
                     Err(format!("spawn #{id} was not a background spawn"))
                 }
             }
-            Some(t) if t.status == SpawnStatus::Completed => {
-                Ok(t.result.clone().map(|r| (t.task.clone(), r)))
-            }
+            Some(t) if t.status == SpawnStatus::Completed => Ok(t
+                .result
+                .clone()
+                .map(|r| (t.task.clone(), r, t.handoff.clone()))),
             Some(t) if matches!(t.status, SpawnStatus::Failed(_)) => {
                 Err(format!("spawn #{id} {}", t.status))
             }
@@ -423,17 +474,31 @@ pub fn summarize_conversation_for_spawn(messages: &[AgentMessage]) -> String {
 }
 
 /// Format a spawn result as a context message for the main agent.
-pub fn format_spawn_result(task: &str, result: &str, spawn_id: usize) -> String {
+pub fn format_spawn_result(
+    task: &str,
+    result: &str,
+    spawn_id: usize,
+    handoff: Option<&SpawnHandoff>,
+) -> String {
     let result_text = if result.trim().is_empty() {
         "(no output)".to_string()
     } else {
         result.trim().to_string()
     };
 
+    let handoff_text = match handoff {
+        Some(h) => format!(
+            "\n\n**Handoff:** {}\nInspect with: `{}`",
+            h.summary_line(),
+            h.review_hint()
+        ),
+        None => String::new(),
+    };
+
     format!(
         "Subagent #{spawn_id} completed a task. Here is its result:\n\n\
          **Task:** {task}\n\n\
-         **Result:**\n{result_text}"
+         **Result:**\n{result_text}{handoff_text}"
     )
 }
 
@@ -641,8 +706,12 @@ pub async fn handle_spawn(
         }
     }
 
-    // Mark completed in tracker
-    tracker.complete(spawn_id, response.clone());
+    // Mark completed in tracker — commit worktree changes first so the
+    // handoff (if any) is recorded alongside the result.
+    let handoff = worktree
+        .as_ref()
+        .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id));
+    tracker.complete_with_handoff(spawn_id, response.clone(), handoff.clone());
 
     // Clean up the worktree
     if let Some(ref wt) = worktree {
@@ -657,7 +726,7 @@ pub async fn handle_spawn(
     println!("\n{GREEN}  ✓ subagent #{spawn_id} completed{RESET}");
     println!("{DIM}  injecting result into main conversation...{RESET}\n");
 
-    let context_msg = format_spawn_result(&args.task, &response, spawn_id);
+    let context_msg = format_spawn_result(&args.task, &response, spawn_id, handoff.as_ref());
     Some(context_msg)
 }
 
@@ -782,8 +851,12 @@ fn handle_spawn_bg(
             }
         }
 
-        // Mark completed in tracker
-        tracker_clone.complete(spawn_id, response);
+        // Mark completed in tracker — commit worktree changes first so the
+        // handoff (if any) travels with the result.
+        let handoff = worktree
+            .as_ref()
+            .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id));
+        tracker_clone.complete_with_handoff(spawn_id, response, handoff);
 
         // Clean up worktree after completion
         if let Some(ref wt) = worktree {
@@ -862,10 +935,14 @@ fn handle_spawn_parallel(
 /// Returns Some(context_msg) if the spawn is done, None otherwise.
 fn handle_spawn_collect(tracker: &SpawnTracker, id: usize) -> Option<String> {
     match tracker.try_collect(id) {
-        Ok(Some((task, result))) => {
+        Ok(Some((task, result, handoff))) => {
             println!("{GREEN}  ✓ subagent #{id} completed{RESET}");
+            if let Some(ref h) = handoff {
+                println!("{GREEN}  {}{RESET}", h.summary_line());
+                println!("{DIM}  review with: {}{RESET}", h.review_hint());
+            }
             println!("{DIM}  injecting result into main conversation...{RESET}\n");
-            Some(format_spawn_result(&task, &result, id))
+            Some(format_spawn_result(&task, &result, id, handoff.as_ref()))
         }
         Ok(None) => {
             println!("{CYAN}  ⏳ subagent #{id} is still running...{RESET}");
@@ -995,6 +1072,130 @@ pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<Worktree
         branch: head,
         created_at: Instant::now(),
     })
+}
+
+/// Maximum characters of the task description used in the handoff commit message.
+const HANDOFF_COMMIT_DESC_CHARS: usize = 60;
+
+/// Derive the handoff branch name for a worktree.
+/// The worktree dir is named `spawn-<id>-<ts>`; the branch becomes
+/// `spawn/<id>-<ts>` so the commit survives worktree cleanup under a
+/// discoverable ref.
+fn spawn_branch_name(info: &WorktreeInfo) -> String {
+    let dir_name = info
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "spawn-unknown".to_string());
+    format!(
+        "spawn/{}",
+        dir_name.strip_prefix("spawn-").unwrap_or(&dir_name)
+    )
+}
+
+/// Condense a `git diff --shortstat` line into a compact summary like
+/// `3 files changed (+42/-7)`. Falls back to the trimmed raw line if the
+/// format is unrecognized.
+fn format_diffstat_summary(shortstat: &str) -> String {
+    let raw = shortstat.trim();
+    if raw.is_empty() {
+        return "no diffstat available".to_string();
+    }
+    let mut files: Option<&str> = None;
+    let mut insertions = 0u64;
+    let mut deletions = 0u64;
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.contains("file") {
+            files = part.split_whitespace().next();
+        } else if part.contains("insertion") {
+            insertions = part
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+        } else if part.contains("deletion") {
+            deletions = part
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+        }
+    }
+    match files {
+        Some(n) => {
+            let plural = if n == "1" { "file" } else { "files" };
+            format!("{n} {plural} changed (+{insertions}/-{deletions})")
+        }
+        None => raw.to_string(),
+    }
+}
+
+/// Commit any uncommitted changes in a spawn worktree and summarize them.
+///
+/// If the worktree is clean, returns `Ok(None)` (no handoff — nothing to
+/// review). Otherwise stages everything, commits with a `spawn: <task>`
+/// message (task description truncated at a char boundary), points
+/// `branch_name` at the new commit so it survives worktree removal, and
+/// returns a `SpawnHandoff` with the branch and a one-line diffstat.
+///
+/// The commit is performed *before* any success is reported — if the commit
+/// fails, the error propagates and callers must report it honestly.
+pub fn commit_worktree_handoff(
+    worktree: &Path,
+    branch_name: &str,
+    task: &str,
+) -> Result<Option<SpawnHandoff>, String> {
+    let status = run_git_in(worktree, &["status", "--porcelain"])?;
+    if status.trim().is_empty() {
+        return Ok(None);
+    }
+
+    run_git_in(worktree, &["add", "-A"])?;
+
+    let desc: String = task.chars().take(HANDOFF_COMMIT_DESC_CHARS).collect();
+    let msg = format!("spawn: {}", desc.trim());
+    run_git_in(worktree, &["commit", "-m", &msg])?;
+
+    // Name the commit with a branch so it survives worktree cleanup.
+    run_git_in(worktree, &["branch", "--force", branch_name, "HEAD"])?;
+
+    // One-line summary of what the commit changed.
+    let shortstat = run_git_in(worktree, &["diff", "--shortstat", "HEAD~1..HEAD"])
+        .or_else(|_| run_git_in(worktree, &["show", "--shortstat", "--format=", "HEAD"]))
+        .unwrap_or_default();
+
+    Ok(Some(SpawnHandoff {
+        branch: branch_name.to_string(),
+        diffstat: format_diffstat_summary(&shortstat),
+    }))
+}
+
+/// Attempt the completion handoff for a finished worker: commit worktree
+/// changes (if any) and return the handoff record. Never pre-announces
+/// success — warnings are printed only when the commit itself fails, and the
+/// worker's result is still delivered without a handoff in that case.
+fn try_worktree_handoff(
+    worktree: &WorktreeInfo,
+    task: &str,
+    spawn_id: usize,
+) -> Option<SpawnHandoff> {
+    let branch = spawn_branch_name(worktree);
+    match commit_worktree_handoff(&worktree.path, &branch, task) {
+        Ok(Some(handoff)) => {
+            println!("{GREEN}  {}{RESET}", handoff.summary_line());
+            println!("{DIM}  review with: {}{RESET}", handoff.review_hint());
+            Some(handoff)
+        }
+        Ok(None) => {
+            println!("{DIM}  spawn #{spawn_id}: no file changes to hand off{RESET}");
+            None
+        }
+        Err(e) => {
+            eprintln!("{YELLOW}  ⚠ spawn #{spawn_id}: handoff commit failed: {e}{RESET}");
+            None
+        }
+    }
 }
 
 /// Remove a spawn worktree, cleaning up both the directory and the git metadata.
@@ -1464,16 +1665,76 @@ mod tests {
 
     #[test]
     fn test_format_spawn_result_includes_id() {
-        let result = format_spawn_result("read file", "contents here", 3);
+        let result = format_spawn_result("read file", "contents here", 3, None);
         assert!(result.contains("#3"));
         assert!(result.contains("read file"));
         assert!(result.contains("contents here"));
+        assert!(
+            !result.contains("Handoff"),
+            "no handoff line without a handoff"
+        );
     }
 
     #[test]
     fn test_format_spawn_result_empty_output() {
-        let result = format_spawn_result("task", "   ", 1);
+        let result = format_spawn_result("task", "   ", 1, None);
         assert!(result.contains("(no output)"));
+    }
+
+    #[test]
+    fn test_format_spawn_result_with_handoff() {
+        let handoff = SpawnHandoff {
+            branch: "spawn/3-12345".to_string(),
+            diffstat: "3 files changed (+42/-7)".to_string(),
+        };
+        let result = format_spawn_result("fix bug", "done", 3, Some(&handoff));
+        assert!(result.contains("ready to review: branch spawn/3-12345"));
+        assert!(result.contains("3 files changed (+42/-7)"));
+        assert!(result.contains("git diff main...spawn/3-12345"));
+    }
+
+    #[test]
+    fn test_spawn_handoff_summary_and_hint() {
+        let handoff = SpawnHandoff {
+            branch: "spawn/1-999".to_string(),
+            diffstat: "1 file changed (+2/-0)".to_string(),
+        };
+        assert_eq!(
+            handoff.summary_line(),
+            "ready to review: branch spawn/1-999 — 1 file changed (+2/-0)"
+        );
+        assert_eq!(handoff.review_hint(), "git diff main...spawn/1-999");
+    }
+
+    #[test]
+    fn test_format_diffstat_summary() {
+        assert_eq!(
+            format_diffstat_summary(" 3 files changed, 42 insertions(+), 7 deletions(-)"),
+            "3 files changed (+42/-7)"
+        );
+        assert_eq!(
+            format_diffstat_summary(" 1 file changed, 2 insertions(+)"),
+            "1 file changed (+2/-0)"
+        );
+        assert_eq!(
+            format_diffstat_summary(" 1 file changed, 5 deletions(-)"),
+            "1 file changed (+0/-5)"
+        );
+        assert_eq!(format_diffstat_summary(""), "no diffstat available");
+        // Unrecognized format falls back to trimmed raw
+        assert_eq!(format_diffstat_summary(" something odd "), "something odd");
+    }
+
+    #[test]
+    fn test_handoff_commit_message_multibyte_truncation() {
+        // A task made of multi-byte chars must not panic when truncated.
+        let task = "✓".repeat(200);
+        let desc: String = task.chars().take(HANDOFF_COMMIT_DESC_CHARS).collect();
+        assert_eq!(desc.chars().count(), HANDOFF_COMMIT_DESC_CHARS);
+        // And the full helper path must not panic either (clean repo → no commit).
+        let tmp = setup_temp_repo();
+        let result = commit_worktree_handoff(tmp.path(), "spawn/test-mb", &task);
+        assert_eq!(result, Ok(None), "clean tree yields no handoff");
     }
 
     // ── SpawnStatus display tests ───────────────────────────────────────
@@ -1644,9 +1905,10 @@ mod tests {
         tracker.complete(bg_id, "bg result".to_string());
         let collected = tracker.try_collect(bg_id).unwrap();
         assert!(collected.is_some());
-        let (task, result) = collected.unwrap();
+        let (task, result, handoff) = collected.unwrap();
         assert_eq!(task, "bg task");
         assert_eq!(result, "bg result");
+        assert!(handoff.is_none());
     }
 
     #[test]

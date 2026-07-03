@@ -369,7 +369,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_load_project_context_includes_recently_changed() {
+        // Needs #[serial]: depends on the cwd being the project root, and
+        // other serial tests in this module temporarily change the working
+        // directory (set_current_dir is process-global).
+        //
         // We're running inside the yoyo git repo, so load_project_context()
         // must always return Some. Previously this test guarded with
         // `if let Some`, silently passing without asserting in CI.
@@ -456,7 +461,9 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_git_status_context_format() {
+        // Needs #[serial]: expects the cwd to be a git repo (see above).
         let result = get_git_status_context().expect("Should be in a git repo");
         assert!(
             result.starts_with("## Git Status\n\n"),
@@ -465,7 +472,12 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_load_project_context_includes_git_status() {
+        // Needs #[serial]: depends on the cwd being the project root, and
+        // other serial tests in this module temporarily change the working
+        // directory (set_current_dir is process-global).
+        //
         // We're running inside the yoyo git repo, so both load_project_context()
         // and get_git_status_context() must return Some. Previously this test
         // guarded with `if let Some` on both, silently passing without asserting
