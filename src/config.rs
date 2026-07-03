@@ -553,10 +553,7 @@ pub fn parse_quiet_from_config(config: &std::collections::HashMap<String, String
 /// Reads `no_color` from the given config map. Defaults to `false`
 /// when the key is absent — colors are enabled by default.
 pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("no_color").map(|v| v.as_str()) {
-        Some("true") | Some("1") | Some("yes") | Some("on") => true,
-        _ => false, // default: colors enabled
-    }
+    config_flag(config, "no_color", false)
 }
 
 /// Keys that `/config set` understands. Each entry is a key name and a
@@ -1349,6 +1346,47 @@ env = { API_KEY = "secret" }
             format_toml_value("claude-sonnet-4-6"),
             "\"claude-sonnet-4-6\""
         );
+    }
+
+    #[test]
+    fn config_flag_true_values() {
+        for v in ["true", "1", "yes", "on"] {
+            let mut config = std::collections::HashMap::new();
+            config.insert("flag".to_string(), v.to_string());
+            assert!(config_flag(&config, "flag", false), "{v} should be truthy");
+            assert!(
+                config_flag(&config, "flag", true),
+                "{v} should be truthy even with default true"
+            );
+        }
+    }
+
+    #[test]
+    fn config_flag_false_values() {
+        for v in ["false", "0", "no", "off"] {
+            let mut config = std::collections::HashMap::new();
+            config.insert("flag".to_string(), v.to_string());
+            assert!(!config_flag(&config, "flag", true), "{v} should be falsy");
+            assert!(
+                !config_flag(&config, "flag", false),
+                "{v} should be falsy even with default false"
+            );
+        }
+    }
+
+    #[test]
+    fn config_flag_missing_key_returns_default() {
+        let config = std::collections::HashMap::new();
+        assert!(!config_flag(&config, "flag", false));
+        assert!(config_flag(&config, "flag", true));
+    }
+
+    #[test]
+    fn config_flag_garbage_value_returns_default() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("flag".to_string(), "maybe".to_string());
+        assert!(!config_flag(&config, "flag", false));
+        assert!(config_flag(&config, "flag", true));
     }
 
     #[test]
