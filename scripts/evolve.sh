@@ -45,6 +45,9 @@ git pull --rebase --quiet 2>/dev/null || true
 
 echo "=== Day $DAY ($DATE $SESSION_TIME) ==="
 echo "Model: $MODEL"
+
+# GASP state instrumentation (fail-soft; see scripts/gasp_shim.sh)
+. "$(dirname "$0")/gasp_shim.sh"
 echo "Plan timeout: ${TIMEOUT}s (assess: $((TIMEOUT/2))s + plan: $((TIMEOUT/2))s) | Impl timeout: 1200s/task"
 echo ""
 
@@ -254,6 +257,7 @@ cargo build --quiet
 cargo test --quiet
 YOYO_BIN="./target/debug/yoyo"
 echo "  Build OK."
+gasp_session_start "$DAY"
 echo ""
 
 # ── Step 1b: Enable per-tool-call audit + set up session evidence staging ──
@@ -1113,6 +1117,7 @@ for TASK_FILE in session_plan/task_*.md; do
     task_title="${task_title:-Task $TASK_NUM}"
 
     echo "  → Task $TASK_NUM: $task_title"
+    gasp_task_planned "$TASK_NUM" "$task_title"
 
     # Save pre-task state for rollback
     if ! PRE_TASK_SHA=$(git rev-parse HEAD 2>&1); then
@@ -1608,6 +1613,10 @@ $(cat "session_plan/eval_task_${TASK_NUM}.md" 2>/dev/null || echo 'no eval file 
 
     # Revert task if verification or evaluation failed
     if [ "$TASK_OK" = false ]; then
+        # record the rejected patch BEFORE the reset, while the attempted
+        # commits are still reachable (the log remembers what was tried)
+        gasp_task_result "$TASK_NUM" "$task_title" rejected "$PRE_TASK_SHA" \
+            "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$REVERT_REASON"
         echo "    Reverting Task $TASK_NUM (resetting to $PRE_TASK_SHA)"
         if ! git reset --hard "$PRE_TASK_SHA"; then
             echo "    FATAL: git reset --hard failed. Cannot guarantee clean state."
@@ -1654,6 +1663,8 @@ ${REVERT_DETAILS:-no details captured}" 2>/dev/null; then
         fi
     else
         echo "    Task $TASK_NUM: verified OK"
+        gasp_task_result "$TASK_NUM" "$task_title" promoted "$PRE_TASK_SHA" \
+            "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     fi
 
 done
@@ -2283,6 +2294,10 @@ refresh_gh_token
 git pull --rebase || echo "  Pull --rebase failed (will attempt push anyway)"
 git push || echo "  Push failed (maybe no remote or auth issue)"
 git push --tags || echo "  Tag push failed (non-fatal)"
+
+# GASP: close the run and push state AFTER the code push, so patch artifacts
+# never reference unpushed commits (code first, state second).
+gasp_session_end "promoted ${SESSION_TASKS_SUCCEEDED:-0}/${SESSION_TASKS_ATTEMPTED:-0} tasks"
 
 echo ""
 echo "=== Day $DAY complete ==="
