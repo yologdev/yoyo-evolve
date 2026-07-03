@@ -531,10 +531,7 @@ pub fn parse_max_auto_continues_from_config(
 /// Reads `no_bell` from the given config map. Defaults to `false`
 /// when the key is absent — bell is enabled by default.
 pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("no_bell").map(|v| v.as_str()) {
-        Some("true") | Some("1") | Some("yes") | Some("on") => true,
-        _ => false, // default: bell enabled
-    }
+    config_flag(config, "no_bell", false)
 }
 
 /// Check whether quiet mode is enabled in the config.
@@ -542,10 +539,7 @@ pub fn parse_no_bell_from_config(config: &std::collections::HashMap<String, Stri
 /// Reads `quiet` from the given config map. Defaults to `false`
 /// when the key is absent — quiet mode must be explicitly opted into.
 pub fn parse_quiet_from_config(config: &std::collections::HashMap<String, String>) -> bool {
-    match config.get("quiet").map(|v| v.as_str()) {
-        Some("true") | Some("1") | Some("yes") | Some("on") => true,
-        _ => false, // default: not quiet
-    }
+    config_flag(config, "quiet", false)
 }
 
 /// Check whether color output should be disabled via config.
