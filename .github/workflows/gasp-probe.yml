@@ -1,0 +1,33 @@
+# Test scaffolding for the gasp branch: verifies GH_PAT can clone AND push
+# yoyo-gasp using the shim's exact preflight, without running a session.
+# Not part of the upstream cherry-pick — delete when the branch retires.
+name: GASP access probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe yoyo-gasp access with GH_PAT
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -uo pipefail
+          url="https://x-access-token:${GH_PAT}@github.com/yologdev/yoyo-gasp.git"
+          if ! out=$(git clone --quiet "$url" /tmp/probe-state 2>&1); then
+            echo "::error::clone FAILED: ${out//${GH_PAT}/***}"
+            exit 1
+          fi
+          echo "clone OK"
+          if ! out=$(git -C /tmp/probe-state push --dry-run --quiet "$url" HEAD:main 2>&1); then
+            echo "::error::push probe FAILED (read-only access?): ${out//${GH_PAT}/***}"
+            exit 1
+          fi
+          echo "push probe OK — GH_PAT has write access to yoyo-gasp"
