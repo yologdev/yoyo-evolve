@@ -38,7 +38,13 @@ pub const MAX_RECENT_FILES: usize = 20;
 /// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
 /// Returns None if git is not available or the directory is not a git repo.
 pub fn get_project_file_listing() -> Option<String> {
-    let stdout = crate::git::run_git(&["ls-files"]).ok()?;
+    get_project_file_listing_from(std::path::Path::new("."))
+}
+
+/// Directory-parameterized variant of [`get_project_file_listing`].
+/// Lets tests point at a hermetic temp git repo instead of the live CWD.
+pub fn get_project_file_listing_from(dir: &std::path::Path) -> Option<String> {
+    let stdout = crate::git::run_git_in_dir(dir, &["ls-files"]).ok()?;
     let files: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     if files.is_empty() {
         return None;
@@ -58,14 +64,20 @@ pub fn get_project_file_listing() -> Option<String> {
 /// Get a brief git status summary for system prompt injection.
 /// Returns None if not in a git repo or git is unavailable.
 pub fn get_git_status_context() -> Option<String> {
-    let branch = crate::git::git_branch()?;
+    get_git_status_context_from(std::path::Path::new("."))
+}
 
-    let uncommitted = crate::git::run_git(&["status", "--porcelain"])
+/// Directory-parameterized variant of [`get_git_status_context`].
+/// Lets tests point at a hermetic temp git repo instead of the live CWD.
+pub fn get_git_status_context_from(dir: &std::path::Path) -> Option<String> {
+    let branch = git_branch_in(dir)?;
+
+    let uncommitted = crate::git::run_git_in_dir(dir, &["status", "--porcelain"])
         .ok()
         .map(|s| s.lines().filter(|l| !l.is_empty()).count())
         .unwrap_or(0);
 
-    let staged = crate::git::run_git(&["diff", "--cached", "--name-only"])
+    let staged = crate::git::run_git_in_dir(dir, &["diff", "--cached", "--name-only"])
         .ok()
         .map(|s| s.lines().filter(|l| !l.is_empty()).count())
         .unwrap_or(0);
@@ -90,18 +102,36 @@ pub fn get_git_status_context() -> Option<String> {
     Some(result)
 }
 
+/// Get the current branch name for a specific directory.
+/// Directory-parameterized sibling of `crate::git::git_branch()`.
+fn git_branch_in(dir: &std::path::Path) -> Option<String> {
+    crate::git::run_git_in_dir(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()
+}
+
 /// Get the most recently changed files from git log, deduplicated.
 /// Returns up to `max_files` unique file paths that were modified in recent commits.
 /// Returns None if not in a git repo or git is unavailable.
 pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
-    let stdout = crate::git::run_git(&[
-        "log",
-        "--diff-filter=AM",
-        "--name-only",
-        "--pretty=format:",
-        "-n",
-        "20",
-    ])
+    get_recently_changed_files_from(std::path::Path::new("."), max_files)
+}
+
+/// Directory-parameterized variant of [`get_recently_changed_files`].
+/// Lets tests point at a hermetic temp git repo instead of the live CWD.
+pub fn get_recently_changed_files_from(
+    dir: &std::path::Path,
+    max_files: usize,
+) -> Option<Vec<String>> {
+    let stdout = crate::git::run_git_in_dir(
+        dir,
+        &[
+            "log",
+            "--diff-filter=AM",
+            "--name-only",
+            "--pretty=format:",
+            "-n",
+            "20",
+        ],
+    )
     .ok()?;
     let mut seen = std::collections::HashSet::new();
     let files: Vec<String> = stdout

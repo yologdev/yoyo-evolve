@@ -861,11 +861,20 @@ pub(crate) fn compute_file_risk_scores() -> Vec<FileRisk> {
 /// Convenience wrapper around `compute_file_risk_scores()` for use by `/status`
 /// and other consumers that just need names and numbers.
 pub(crate) fn top_risk_files(n: usize) -> Vec<(String, f64)> {
-    let risks = compute_file_risk_scores();
+    top_n_from(&compute_file_risk_scores(), n)
+}
+
+/// Pure helper: take the top `n` entries from an already-computed (sorted)
+/// score list as `(path, score)` pairs.
+///
+/// Extracted so tests can exercise the prefix logic against a fixed synthetic
+/// list instead of computing live repo scores twice (which flaked when repo
+/// state shifted between the two computations mid-test).
+pub(crate) fn top_n_from(risks: &[FileRisk], n: usize) -> Vec<(String, f64)> {
     risks
-        .into_iter()
+        .iter()
         .take(n)
-        .map(|r| (r.path, r.score))
+        .map(|r| (r.path.clone(), r.score))
         .collect()
 }
 
@@ -4165,27 +4174,57 @@ src/baz.rs
 
     #[test]
     fn test_top_risk_files_respects_n() {
-        let top1 = top_risk_files(1);
-        assert!(
-            top1.len() <= 1,
-            "expected at most 1 entry, got {}",
-            top1.len()
-        );
+        // Pure, deterministic check of the prefix logic: build a fixed synthetic
+        // score list and derive both prefixes from the SAME snapshot. The old
+        // version computed live repo scores twice (top-1 and top-5 calls) and
+        // flaked when repo state shifted between the two computations mid-test.
+        let risks = vec![
+            FileRisk {
+                path: "src/a.rs".to_string(),
+                score: 0.9,
+                signals: vec!["▲churn"],
+                test_density: 0.5,
+            },
+            FileRisk {
+                path: "src/b.rs".to_string(),
+                score: 0.7,
+                signals: vec![],
+                test_density: 1.0,
+            },
+            FileRisk {
+                path: "src/c.rs".to_string(),
+                score: 0.4,
+                signals: vec![],
+                test_density: 2.0,
+            },
+        ];
 
-        let top5 = top_risk_files(5);
-        assert!(
-            top5.len() <= 5,
-            "expected at most 5 entries, got {}",
-            top5.len()
-        );
+        let top1 = top_n_from(&risks, 1);
+        let top5 = top_n_from(&risks, 5);
 
-        // top1 should be a prefix of top5
-        if !top1.is_empty() && !top5.is_empty() {
-            assert_eq!(
-                top1[0].0, top5[0].0,
-                "top-1 file should match first entry of top-5"
-            );
-        }
+        assert_eq!(top1.len(), 1, "top-1 should return exactly 1 entry");
+        assert_eq!(top5.len(), 3, "top-5 of 3 entries should return all 3");
+        assert_eq!(top1[0].0, "src/a.rs", "top-1 should be the highest score");
+        assert_eq!(
+            top1[0], top5[0],
+            "top-1 entry should match first entry of top-5 (same snapshot)"
+        );
+        assert_eq!(top5[1].0, "src/b.rs");
+        assert_eq!(top5[2].0, "src/c.rs");
+
+        // n = 0 returns nothing
+        assert!(top_n_from(&risks, 0).is_empty(), "n=0 should be empty");
+        // Empty input returns nothing
+        assert!(top_n_from(&[], 5).is_empty(), "empty input should be empty");
+
+        // Smoke: the live wrapper still respects the cap (this part can't flake —
+        // it's a single computation and only checks the length bound).
+        let live = top_risk_files(2);
+        assert!(
+            live.len() <= 2,
+            "live top_risk_files(2) should return at most 2 entries, got {}",
+            live.len()
+        );
     }
 
     #[test]
