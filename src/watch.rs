@@ -1281,7 +1281,22 @@ pub fn maybe_learn_from_fix(watch_cmd: &str, failed_output: &str) {
     }
 }
 
+/// Decide whether the post-prompt watch cycle should run at all.
+///
+/// Returns `false` when the prompt changed zero files (no write/edit tool
+/// calls this turn). Running clippy/tests after a read-only prompt burns
+/// wall-clock time and — worse — misattributes any pre-existing failures
+/// to "your changes" in the auto-fix loop. Pure so it's trivially testable.
+fn should_run_watch_after_prompt(changes: &SessionChanges) -> bool {
+    !changes.snapshot().is_empty()
+}
+
 /// Run the watch command(s) after a prompt completes.
+///
+/// If the prompt changed zero files, the whole cycle is skipped (see
+/// [`should_run_watch_after_prompt`]) — there is nothing the watch could
+/// be validating, and pre-existing failures would be misattributed to
+/// the prompt.
 ///
 /// If watch commands are active, iterates through each phase in order.
 /// For each phase: runs the command, and if it fails, enters the fix loop
@@ -1300,6 +1315,14 @@ pub async fn run_watch_after_prompt(
 ) -> WatchResult {
     let commands = get_watch_commands();
     if commands.is_empty() {
+        return WatchResult {
+            passed: true,
+            last_tool_error: None,
+        };
+    }
+
+    if !should_run_watch_after_prompt(changes) {
+        eprintln!("{DIM}  watch: no files changed this turn — skipping{RESET}");
         return WatchResult {
             passed: true,
             last_tool_error: None,
@@ -1821,6 +1844,29 @@ mod tests {
             clear_watch_command();
             assert!(get_watch_command().is_none());
         });
+    }
+
+    #[test]
+    fn test_should_run_watch_after_prompt_false_when_no_changes() {
+        // Negative case: a fresh SessionChanges has zero recorded file
+        // changes — the post-prompt watch cycle must be skipped.
+        let changes = SessionChanges::new();
+        assert!(
+            !should_run_watch_after_prompt(&changes),
+            "watch should be skipped when the prompt changed zero files"
+        );
+    }
+
+    #[test]
+    fn test_should_run_watch_after_prompt_true_with_one_change() {
+        // Paired positive case (Day 122 lesson): the minimum possible
+        // difference — one recorded change — must flip the decision.
+        let changes = SessionChanges::new();
+        changes.record("src/main.rs", crate::session::ChangeKind::Edit);
+        assert!(
+            should_run_watch_after_prompt(&changes),
+            "watch should run when the prompt changed at least one file"
+        );
     }
 
     #[serial]

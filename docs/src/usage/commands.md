@@ -27,7 +27,7 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > | `yoyo index` | Build and display project index |
 > | `yoyo update` | Check for and install the latest yoyo release |
 > | `yoyo docs` | Look up docs.rs documentation (e.g. `yoyo docs serde`) |
-> | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for two-phase lint→test, `yoyo watch cargo test`) |
+> | `yoyo watch` | Toggle watch mode (e.g. `yoyo watch all` for two-phase lint→test, `yoyo watch cargo test`). Runs only after turns that change files — skipped when a prompt changes nothing |
 > | `yoyo status` | Show version, git branch, and working directory |
 > | `yoyo undo` | Undo changes (e.g. `yoyo undo --last-commit`) |
 >
