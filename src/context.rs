@@ -224,7 +224,7 @@ pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
     // Append project-type conventions (always, regardless of context files —
     // conventions complement explicit instructions rather than replacing them)
     let mut conventions_injected = false;
-    let project_type = detect_project_type(std::path::Path::new("."));
+    let project_type = detect_project_type(dir);
     if let Some(hints) = project_type_hints(&project_type) {
         if !context.is_empty() {
             context.push_str("\n\n");
@@ -462,38 +462,38 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_load_project_context_includes_recently_changed() {
-        // Needs #[serial]: depends on the cwd being the project root, and
-        // other serial tests in this module temporarily change the working
-        // directory (set_current_dir is process-global).
-        //
-        // We're running inside the yoyo git repo, so load_project_context()
-        // must always return Some. Previously this test guarded with
-        // `if let Some`, silently passing without asserting in CI.
-        let result = load_project_context();
-        let context = result.expect("load_project_context should return Some in a git repo");
+        // Hermetic: points at a temp fixture repo via load_project_context_from,
+        // so it never reads the live CWD's git state (Day 125 lesson — the old
+        // version hard-asserted but still flaked on dirty trees / shallow clones,
+        // and before Day 124 it vacuously passed via `if let Some`).
+        let dir = tempfile::TempDir::new().unwrap();
+        init_fixture_repo(dir.path());
+        // A second commit so "recently changed" has more than the initial file.
+        fixture_commit_file(dir.path(), "second.txt", "world\n", "add second");
 
-        // Git Status section should always be present in a git repo
+        let context = load_project_context_from(dir.path())
+            .expect("load_project_context_from should return Some in a fixture git repo");
+
+        // Recently Changed Files must be present — the fixture has real commits,
+        // so no conditional guard is needed (no vacuous passes).
         assert!(
-            context.contains("## Git Status"),
-            "Context should always contain Git Status section"
+            context.contains("## Recently Changed Files"),
+            "Context should contain Recently Changed Files section, got: {context}"
+        );
+        assert!(
+            context.contains("committed.txt"),
+            "Recently changed should include the first committed file, got: {context}"
+        );
+        assert!(
+            context.contains("second.txt"),
+            "Recently changed should include the second committed file, got: {context}"
         );
 
-        // Recently Changed Files depends on git history depth — may be absent
-        // in shallow clones. Assert conditionally, but always assert *something*.
-        let has_modified_files = get_recently_changed_files(1).is_some();
-        if has_modified_files {
-            assert!(
-                context.contains("## Recently Changed Files"),
-                "Context should contain Recently Changed Files when modified files exist"
-            );
-        }
-
-        // Unconditional: context is never empty in a git repo
+        // Git Status section is always present in a git repo
         assert!(
-            !context.is_empty(),
-            "Context should never be empty in a git repo"
+            context.contains("## Git Status"),
+            "Context should always contain Git Status section, got: {context}"
         );
     }
 
@@ -565,23 +565,32 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_load_project_context_includes_git_status() {
-        // Needs #[serial]: depends on the cwd being the project root, and
-        // other serial tests in this module temporarily change the working
-        // directory (set_current_dir is process-global).
-        //
-        // We're running inside the yoyo git repo, so both load_project_context()
-        // and get_git_status_context() must return Some. Previously this test
-        // guarded with `if let Some` on both, silently passing without asserting
-        // in CI shallow clones.
-        let result = load_project_context();
-        let context = result.expect("load_project_context should return Some in a git repo");
+        // Hermetic: points at a temp fixture repo via load_project_context_from,
+        // so it never reads the live CWD's git state (Day 125 lesson — the old
+        // version hard-asserted but still flaked on dirty trees / shallow clones,
+        // and before Day 124 it vacuously passed via `if let Some` on both calls).
+        let dir = tempfile::TempDir::new().unwrap();
+        init_fixture_repo(dir.path());
 
-        // Git status should always be available when running tests inside a git repo
+        let context = load_project_context_from(dir.path())
+            .expect("load_project_context_from should return Some in a fixture git repo");
+
         assert!(
             context.contains("## Git Status"),
-            "Context should contain Git Status section"
+            "Context should contain Git Status section, got: {context}"
+        );
+        // The fixture normalizes the branch to `main`, so the branch line is
+        // deterministic regardless of the environment's init.defaultBranch.
+        assert!(
+            context.contains("Branch: main"),
+            "Git status should report the fixture branch, got: {context}"
+        );
+        // Exactly one untracked file (untracked.txt) in a fresh fixture repo,
+        // so the uncommitted count is deterministic and non-empty.
+        assert!(
+            context.contains("Uncommitted changes: 1 file"),
+            "Git status should report the single untracked fixture file, got: {context}"
         );
     }
 
