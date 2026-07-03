@@ -1092,6 +1092,153 @@ pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
     }
 }
 
+// ─── Parallelizable-prompt detection ────────────────────────────────────────
+
+/// Phrases that indicate sequential dependency between steps. If any appears
+/// (as a whole word/phrase) anywhere in the prompt, the listed tasks are
+/// treated as dependent and NOT parallelizable. Kept small and easy to extend.
+const SEQUENTIAL_DEPENDENCY_MARKERS: &[&str] = &[
+    "then",
+    "after that",
+    "once that's done",
+    "once that is done",
+    "using the result",
+    "based on the above",
+    "afterwards",
+];
+
+/// Minimum number of list items required before the prompt looks like a
+/// decomposable batch of tasks.
+const MIN_PARALLEL_ITEMS: usize = 3;
+
+/// Minimum character length of a list item (after the marker) to count as a
+/// real task rather than a fragment like "- yes".
+const MIN_ITEM_CHARS: usize = 15;
+
+/// File extensions used by the path-conflict heuristic.
+const PATH_EXTENSIONS: &[&str] = &[
+    "rs", "py", "js", "ts", "tsx", "jsx", "go", "java", "c", "cpp", "h", "hpp", "rb", "php", "md",
+    "toml", "yaml", "yml", "json", "sh", "css", "html", "txt",
+];
+
+/// Word-boundary-aware phrase search on an already-lowercased haystack.
+/// `marker` must be ASCII. Boundaries are non-alphanumeric ASCII bytes (or
+/// string edges), so "then" does not match inside "authentication".
+fn contains_marker_phrase(haystack_lower: &str, marker: &str) -> bool {
+    let bytes = haystack_lower.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = haystack_lower[start..].find(marker) {
+        let abs = start + pos;
+        let end = abs + marker.len();
+        let before_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
+        let after_ok = end >= bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = end;
+    }
+    false
+}
+
+/// Parse a line as a list item: `- item`, `* item`, `1. item`, or `1) item`.
+/// Returns the item text (trimmed) if the line matches.
+fn parse_list_item(line: &str) -> Option<&str> {
+    let t = line.trim_start();
+    if let Some(rest) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+        return Some(rest.trim());
+    }
+    // Numbered: one or more digits, then '.' or ')', then a space.
+    let digits_end = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+    if digits_end == 0 {
+        return None;
+    }
+    let rest = &t[digits_end..];
+    let rest = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')'))?;
+    let rest = rest.strip_prefix(' ')?;
+    Some(rest.trim())
+}
+
+/// Heuristic: does this token look like a file path?
+/// Either it contains a `/` (but isn't a URL), or it ends with a known
+/// source-file extension.
+fn looks_like_path(token: &str) -> bool {
+    if token.starts_with("http://") || token.starts_with("https://") {
+        return false;
+    }
+    if token.contains('/') && token.len() > 2 {
+        return true;
+    }
+    if let Some((stem, ext)) = token.rsplit_once('.') {
+        if !stem.is_empty() && PATH_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Extract path-looking tokens from a list item (deduplicated, lowercased).
+fn extract_path_tokens(item: &str) -> std::collections::HashSet<String> {
+    item.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                ',' | ';' | '(' | ')' | '`' | '"' | '\'' | '<' | '>' | '@'
+            )
+    })
+    .map(|t| t.trim_matches(|c: char| matches!(c, '.' | ':' | '!' | '?')))
+    .filter(|t| looks_like_path(t))
+    .map(|t| t.to_lowercase())
+    .collect()
+}
+
+/// Detect whether a prompt looks like a list of INDEPENDENT tasks that could
+/// run in parallel worktrees via `/spawn`.
+///
+/// Returns `Some(items)` only when ALL of these hold:
+/// - the prompt contains a numbered or bulleted list with ≥3 items
+/// - every item is non-trivial (>15 chars after the marker)
+/// - no sequential-dependency marker appears anywhere in the prompt
+///   (including "first ... second" ordinal narrative)
+/// - no file path is referenced by 2+ items (they'd conflict in worktrees)
+///
+/// Deliberately conservative: a false negative costs nothing, a false
+/// positive is an annoying wrong hint.
+pub fn detect_parallelizable_tasks(prompt: &str) -> Option<Vec<String>> {
+    let lower = prompt.to_lowercase();
+    for marker in SEQUENTIAL_DEPENDENCY_MARKERS {
+        if contains_marker_phrase(&lower, marker) {
+            return None;
+        }
+    }
+    // "first ... second" as ordinal narrative implies ordering.
+    if contains_marker_phrase(&lower, "first") && contains_marker_phrase(&lower, "second") {
+        return None;
+    }
+
+    let items: Vec<&str> = prompt.lines().filter_map(parse_list_item).collect();
+    if items.len() < MIN_PARALLEL_ITEMS {
+        return None;
+    }
+    // Every item must be a real task, not a fragment.
+    if items.iter().any(|i| i.chars().count() <= MIN_ITEM_CHARS) {
+        return None;
+    }
+
+    // Same file path in 2+ items → worktree conflict, not parallelizable.
+    let mut path_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for item in &items {
+        for path in extract_path_tokens(item) {
+            *path_counts.entry(path).or_insert(0) += 1;
+        }
+    }
+    if path_counts.values().any(|&c| c >= 2) {
+        return None;
+    }
+
+    Some(items.into_iter().map(String::from).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1802,5 +1949,79 @@ mod tests {
         // --parallel with no task text should return None
         let args = parse_spawn_args("/spawn --parallel");
         assert!(args.is_none());
+    }
+
+    // ── detect_parallelizable_tasks ─────────────────────────────────────
+
+    #[test]
+    fn test_detect_numbered_list_of_independent_tasks() {
+        let prompt = "Please do these:\n\
+                      1. Add error handling to src/parser.rs\n\
+                      2. Write integration tests for the config loader\n\
+                      3. Update the installation docs in README.md";
+        let items = detect_parallelizable_tasks(prompt).expect("should detect 3 tasks");
+        assert_eq!(items.len(), 3);
+        assert!(items[0].contains("src/parser.rs"));
+    }
+
+    #[test]
+    fn test_detect_bulleted_list_of_four_tasks() {
+        // "authentication" contains "then" — word boundaries must prevent
+        // a false sequential-marker match.
+        let prompt = "- Refactor the authentication module for clarity\n\
+                      - Add pagination to the users endpoint\n\
+                      - Improve logging in the worker queue\n\
+                      - Document the deployment process end to end";
+        let items = detect_parallelizable_tasks(prompt).expect("should detect 4 tasks");
+        assert_eq!(items.len(), 4);
+    }
+
+    #[test]
+    fn test_detect_rejects_sequential_then() {
+        // Paired negative: same list as the numbered test, but with "then"
+        // signaling ordering — minimum-difference from the positive case.
+        let prompt = "Please do these:\n\
+                      1. Add error handling to src/parser.rs\n\
+                      2. Then write integration tests for the config loader\n\
+                      3. Update the installation docs in README.md";
+        assert_eq!(detect_parallelizable_tasks(prompt), None);
+    }
+
+    #[test]
+    fn test_detect_rejects_two_items() {
+        let prompt = "1. Add error handling to src/parser.rs\n\
+                      2. Write integration tests for the config loader";
+        assert_eq!(detect_parallelizable_tasks(prompt), None);
+    }
+
+    #[test]
+    fn test_detect_rejects_shared_file_path() {
+        // Two items touch src/parser.rs — worktrees would conflict.
+        let prompt = "1. Add error handling to src/parser.rs\n\
+                      2. Improve the doc comments in src/parser.rs\n\
+                      3. Update the installation docs in README.md";
+        assert_eq!(detect_parallelizable_tasks(prompt), None);
+    }
+
+    #[test]
+    fn test_detect_rejects_plain_prose() {
+        let prompt = "Can you explain how the retry logic works and why it \
+                      uses exponential backoff instead of a fixed delay?";
+        assert_eq!(detect_parallelizable_tasks(prompt), None);
+    }
+
+    #[test]
+    fn test_detect_rejects_short_fragments() {
+        let prompt = "- yes\n- no\n- maybe so";
+        assert_eq!(detect_parallelizable_tasks(prompt), None);
+    }
+
+    #[test]
+    fn test_detect_rejects_first_second_narrative() {
+        let prompt = "First, review these areas. Second, report back.\n\
+                      1. Add error handling to the parser module\n\
+                      2. Write integration tests for the config loader\n\
+                      3. Update the installation documentation pages";
+        assert_eq!(detect_parallelizable_tasks(prompt), None);
     }
 }

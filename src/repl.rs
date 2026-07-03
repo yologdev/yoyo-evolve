@@ -941,6 +941,21 @@ pub async fn run_repl(
         };
         let _ = &auto_context_files; // suppress unused warning when not logging
 
+        // ── Parallelizable-prompt hint: if the prompt looks like 3+ independent
+        // tasks, suggest /spawn once per session. Detection only — never blocks,
+        // never changes execution. (First increment of issue #341.)
+        static SPAWN_HINT_SHOWN: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !is_quiet() && !SPAWN_HINT_SHOWN.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(tasks) = crate::commands_spawn::detect_parallelizable_tasks(input) {
+                SPAWN_HINT_SHOWN.store(true, std::sync::atomic::Ordering::Relaxed);
+                eprintln!(
+                    "{DIM}  ⑂ this looks like {} independent tasks — /spawn can run them in parallel worktrees{RESET}",
+                    tasks.len()
+                );
+            }
+        }
+
         let prompt_start = Instant::now();
         turn_count += 1;
 
