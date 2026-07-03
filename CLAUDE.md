@@ -90,6 +90,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`
 - `commands_risk.rs` — /risk command: file risk scoring, snapshot, validate, history, predict, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
 - `commands_move.rs` — move methods between impl blocks, cross-file method relocation
+- `commands_spawn.rs` — `/spawn` subagent orchestration: SpawnTracker, worktree isolation, and completion handoff — when a worker finishes with uncommitted worktree changes, `commit_worktree_handoff` commits them to the worktree branch (`spawn: <task>` message, char-boundary truncation) and surfaces a `ready to review: branch spawn/<id> — N files changed (+a/-b)` line plus a `git diff main...spawn/<id>` hint; failed commits and no-change completions are reported honestly, never pre-announced
 - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`)
 - `sync_util.rs` — shared synchronisation helpers: `lock_or_recover` for poisoned `Mutex` recovery (deduplicated Day 58)
 

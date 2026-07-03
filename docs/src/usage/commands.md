@@ -327,6 +327,15 @@ This is useful for tasks that would consume a lot of context in your main sessio
 
 The subagent has access to the same tools (bash, file operations, etc.) and uses the same model. Its token usage counts toward your session total, but its context is completely separate from your main conversation. When it finishes, a summary of the task and result is injected into your main conversation so you have awareness of what was done.
 
+**Completion handoff — ready-to-review branches**: spawn workers run in isolated git worktrees. When a worker finishes successfully with uncommitted file changes in its worktree, those changes are automatically committed to the worktree branch (commit message `spawn: <task description>`), and the result includes a handoff line:
+
+```
+ready to review: branch spawn/3-1712345678 — 3 files changed (+42/-7)
+review with: git diff main...spawn/3-1712345678
+```
+
+The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. Nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+
 > **Automatic sub-agent delegation**: In addition to `/spawn`, the model can autonomously delegate subtasks to a built-in `sub_agent` tool. This happens transparently — the model decides when a subtask benefits from a fresh context window (e.g., researching a codebase section, running a series of tests). You'll see a 🐙 indicator when delegation occurs.
 
 ## Git

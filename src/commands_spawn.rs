@@ -535,10 +535,16 @@ pub fn handle_spawn_status(tracker: &SpawnTracker) {
                     id = task.id
                 );
             }
-            SpawnStatus::Completed => println!(
-                "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
-                id = task.id
-            ),
+            SpawnStatus::Completed => {
+                println!(
+                    "    {GREEN}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
+                    id = task.id
+                );
+                if let Some(ref h) = task.handoff {
+                    println!("      {GREEN}{}{RESET}", h.summary_line());
+                    println!("      {DIM}review with: {}{RESET}", h.review_hint());
+                }
+            }
             SpawnStatus::Failed(_) => println!(
                 "    {RED}{status_icon} #{id}: {task_preview}{output_note}{RESET}",
                 id = task.id
@@ -1735,6 +1741,56 @@ mod tests {
         let tmp = setup_temp_repo();
         let result = commit_worktree_handoff(tmp.path(), "spawn/test-mb", &task);
         assert_eq!(result, Ok(None), "clean tree yields no handoff");
+    }
+
+    #[test]
+    fn test_commit_worktree_handoff_dirty_tree_commits_and_summarizes() {
+        // Tempdir repo (never the project root — run_git guard) with an
+        // uncommitted file: the helper must commit it, point the branch at the
+        // new commit, and return a non-empty diffstat summary.
+        let tmp = setup_temp_repo();
+        let p = tmp.path();
+        std::fs::write(p.join("new_work.txt"), "line one\nline two\n").expect("write dirty file");
+
+        let head_before = run_git_in(p, &["rev-parse", "HEAD"]).expect("head before");
+
+        let handoff = commit_worktree_handoff(p, "spawn/7-test", "fix the ✓ widget rendering")
+            .expect("handoff should succeed")
+            .expect("dirty tree should produce a handoff");
+
+        // A new commit exists and the tree is clean afterwards.
+        let head_after = run_git_in(p, &["rev-parse", "HEAD"]).expect("head after");
+        assert_ne!(head_before, head_after, "a new commit should exist");
+        let status = run_git_in(p, &["status", "--porcelain"]).expect("status");
+        assert!(
+            status.trim().is_empty(),
+            "tree should be clean after commit"
+        );
+
+        // Commit message carries the spawn: prefix + task description.
+        let msg = run_git_in(p, &["log", "-1", "--format=%s"]).expect("log");
+        assert!(
+            msg.starts_with("spawn: fix the ✓ widget"),
+            "commit message should be 'spawn: <task>', got: {msg}"
+        );
+
+        // The branch was created and points at the new commit.
+        let branch_sha = run_git_in(p, &["rev-parse", "spawn/7-test"]).expect("branch sha");
+        assert_eq!(branch_sha, head_after, "branch should point at the commit");
+
+        // Diffstat summary is non-empty and mentions the change.
+        assert_eq!(handoff.branch, "spawn/7-test");
+        assert!(!handoff.diffstat.is_empty(), "diffstat should be non-empty");
+        assert!(
+            handoff.diffstat.contains("1 file changed"),
+            "diffstat should summarize the change, got: {}",
+            handoff.diffstat
+        );
+        assert!(
+            handoff.diffstat.contains("+2"),
+            "diffstat should count 2 insertions, got: {}",
+            handoff.diffstat
+        );
     }
 
     // ── SpawnStatus display tests ───────────────────────────────────────
