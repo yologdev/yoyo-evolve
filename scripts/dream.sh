@@ -96,6 +96,9 @@ cleanup() {
             [ "$push_ok" = "1" ] || \
                 echo "  WARNING: push failed after 3 attempts — cooldown NOT persisted; the next cron will re-run the full dream cycle, not just the push" >&2
         fi
+
+        # GASP: close the run and push state AFTER the code push
+        gasp_session_end "${GASP_OUTCOME:-aborted rc=$rc}"
     fi
 
     exit "$rc"
@@ -245,6 +248,21 @@ if [ "$DRY_RUN" = "true" ]; then
 fi
 
 # ── Snapshot HEAD (for revert on out-of-scope writes) ──────────────────
+# GASP: dream cycles are runs too — the arc/log changes ride the state
+# repo's boundary commit via the session-end memory mirror.
+export GASP_GOAL_ID="goal_dreaming"
+export GASP_GOAL_TITLE="Dream: keep a long-horizon arc worth chasing"
+export GASP_GOAL_SUMMARY="the standing goal dream cycles serve; DREAM.md and the dream log are the agent's self-narrative"
+if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; then
+    :
+else
+    echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
+    gasp_session_start() { :; }; gasp_session_end() { :; }
+fi
+GASP_OUTCOME=""
+GASP_DAY=$(cat DAY_COUNT 2>/dev/null || echo 0); GASP_DAY=${GASP_DAY//[^0-9]/}
+gasp_session_start "${GASP_DAY:-0}" "dream_day" "dream cycle (reflect on the long-horizon arc)"
+
 HEAD_BEFORE=$(git rev-parse HEAD)
 
 echo "dream: invoking agent (timeout=${TIMEOUT}s)..."
@@ -286,10 +304,13 @@ if [ "$HEAD_BEFORE" != "$HEAD_AFTER" ]; then
     if [ -n "$VIOLATIONS" ]; then
         echo "dream: DIFF SCOPE VIOLATION — reverting (a dream cycle may write only DREAM.md + dreams/dream_log.jsonl)"
         printf '%b' "$VIOLATIONS"
+        GASP_OUTCOME="rejected: diff-scope violation"
         revert_agent_work
         exit 1
     fi
     echo "dream: diff scope OK ($(echo "$CHANGED_FILES" | wc -l | tr -d ' ') file(s), all in allow-list)"
+    GASP_OUTCOME="dreamed: $(echo "$CHANGED_FILES" | paste -sd ', ' - | cut -c1-120)"
 fi
+[ -z "$GASP_OUTCOME" ] && GASP_OUTCOME="no-op (no dream change this cycle)"
 
 echo "dream: cycle complete"
