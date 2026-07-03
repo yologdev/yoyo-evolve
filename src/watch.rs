@@ -1438,6 +1438,89 @@ pub fn hint_auto_watch_available() {
     }
 }
 
+/// Return true if `tool` resolves to an executable: either an existing path
+/// (when it contains a path separator) or a file found in one of the `PATH`
+/// directories. Used as a pre-flight check before arming auto-watch so a
+/// detected-but-uninstalled runner fails once at startup instead of at every
+/// watch cycle.
+pub fn tool_on_path(tool: &str) -> bool {
+    if tool.is_empty() {
+        return false;
+    }
+    let p = std::path::Path::new(tool);
+    // Explicit path (relative like ./run.sh or absolute): just check existence.
+    if p.components().count() > 1 || p.is_absolute() {
+        return p.exists();
+    }
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path_var) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        if dir.join(tool).is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            for ext in ["exe", "cmd", "bat", "com"] {
+                if dir.join(format!("{tool}.{ext}")).is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check every `&&`-separated phase of a watch command and return the first
+/// leading token that is NOT on PATH, or `None` if all phases look runnable.
+/// (Detected commands are either a single command or `lint && test` combos.)
+pub fn missing_watch_tool(cmd: &str) -> Option<String> {
+    for phase in cmd.split("&&") {
+        if let Some(tok) = phase.split_whitespace().next() {
+            if !tool_on_path(tok) {
+                return Some(tok.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Shared arming path for `auto_watch = true` (issue #557, follow-up to #448).
+/// Detects the project's watch command, validates its tool(s) exist on PATH,
+/// and arms the watch command — or explains why it couldn't:
+///
+/// 1. Nothing detected → warn (no more silent no-op behind the opt-in flag).
+/// 2. Detected but the tool isn't installed → warn once at startup instead of
+///    failing at every watch cycle.
+/// 3. Otherwise arm and announce.
+///
+/// `disable_hint` is interpolated into the announcement (call sites differ:
+/// the REPL also offers `/watch off`). When `quiet` is true the success
+/// announcement is suppressed (piped/print mode), but warnings still go to
+/// stderr — surfacing misconfiguration is the point.
+pub fn arm_auto_watch(disable_hint: &str, quiet: bool) -> Option<String> {
+    let Some(cmd) = auto_detect_watch_command() else {
+        eprintln!(
+            "{DIM}  auto_watch is enabled but no test command was detected for this project — set one with /watch <cmd>{RESET}"
+        );
+        return None;
+    };
+    if let Some(tool) = missing_watch_tool(&cmd) {
+        eprintln!(
+            "{DIM}  auto_watch detected `{cmd}` but `{tool}` is not on PATH — watch not armed{RESET}"
+        );
+        return None;
+    }
+    set_watch_command(&cmd);
+    if !quiet {
+        eprintln!("{DIM}  👀 Auto-watch: `{cmd}` (disable with {disable_hint}){RESET}");
+    }
+    Some(cmd)
+}
+
 /// Auto-detect a combined lint + test command for the given directory.
 /// Returns both commands chained with `&&` so the first failure stops execution.
 /// Falls back to just the test command if no lint command is available,
@@ -2128,6 +2211,78 @@ mod tests {
                 "auto-detect should chain lint && test: {cmd}"
             );
         });
+    }
+
+    // --- tool_on_path / missing_watch_tool (#557): paired positive/negative
+    // cases per Day 122's rule — verify the discriminator both fires and
+    // stays silent.
+
+    #[test]
+    fn tool_on_path_finds_sh() {
+        // `sh` is on PATH everywhere CI runs (POSIX shells, Git Bash on Windows CI).
+        assert!(tool_on_path("sh"), "sh should be found on PATH");
+    }
+
+    #[test]
+    fn tool_on_path_rejects_nonexistent_tool() {
+        assert!(
+            !tool_on_path("definitely-not-a-real-tool-xyz"),
+            "made-up tool must not be found on PATH"
+        );
+    }
+
+    #[test]
+    fn tool_on_path_rejects_empty_string() {
+        assert!(!tool_on_path(""), "empty token is never a valid tool");
+    }
+
+    #[test]
+    fn tool_on_path_checks_explicit_paths_directly() {
+        // A token containing a path separator is checked for existence, not PATH.
+        assert!(
+            !tool_on_path("./definitely-not-a-real-script-xyz.sh"),
+            "nonexistent relative path must be rejected"
+        );
+        #[cfg(unix)]
+        assert!(
+            tool_on_path("/bin/sh"),
+            "absolute path to an existing binary must be accepted"
+        );
+    }
+
+    #[test]
+    fn missing_watch_tool_none_when_tool_exists() {
+        assert_eq!(
+            missing_watch_tool("sh -c 'echo hi'"),
+            None,
+            "sh is on PATH, so nothing should be reported missing"
+        );
+    }
+
+    #[test]
+    fn missing_watch_tool_reports_first_token_of_bad_command() {
+        assert_eq!(
+            missing_watch_tool("definitely-not-a-real-tool-xyz test"),
+            Some("definitely-not-a-real-tool-xyz".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_watch_tool_validates_each_phase_of_combo() {
+        // First phase valid, second phase's tool missing → report the second.
+        assert_eq!(
+            missing_watch_tool("sh -c true && bogus-tool-xyz check"),
+            Some("bogus-tool-xyz".to_string())
+        );
+        // Both phases valid → None (paired negative for the combo case).
+        assert_eq!(missing_watch_tool("sh -c true && sh -c true"), None);
+    }
+
+    #[test]
+    fn missing_watch_tool_empty_command_is_none() {
+        // No tokens at all → nothing to validate, nothing missing.
+        assert_eq!(missing_watch_tool(""), None);
+        assert_eq!(missing_watch_tool("   "), None);
     }
 
     #[serial]

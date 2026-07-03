@@ -110,7 +110,7 @@ use prompt::{
 use prompt_budget::enable_audit_log;
 use prompt_utils::write_output_file;
 use session::SessionChanges;
-use watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
+use watch::{get_watch_command, run_watch_after_prompt};
 
 use agent_builder::try_fallback_prompt;
 pub(crate) use agent_builder::{connect_external_servers, AgentConfig, FallbackRetry};
@@ -274,12 +274,7 @@ async fn run_single_prompt(
 
     // Auto-enable watch mode if a project type is detected and config allows it
     if get_watch_command().is_none() && agent_config.auto_watch {
-        if let Some(cmd) = watch::auto_detect_watch_command() {
-            set_watch_command(&cmd);
-            if !print_mode {
-                eprintln!("{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}");
-            }
-        }
+        watch::arm_auto_watch("auto_watch = false", print_mode);
     } else if get_watch_command().is_none() && !agent_config.auto_watch && !print_mode {
         watch::hint_auto_watch_available();
     }
@@ -470,12 +465,7 @@ async fn run_piped_mode(
 
     // Auto-enable watch mode if a project type is detected and config allows it
     if get_watch_command().is_none() && agent_config.auto_watch {
-        if let Some(cmd) = watch::auto_detect_watch_command() {
-            set_watch_command(&cmd);
-            if !print_mode {
-                eprintln!("{DIM}  👀 Auto-watch: `{cmd}` (disable with auto_watch = false){RESET}");
-            }
-        }
+        watch::arm_auto_watch("auto_watch = false", print_mode);
     } else if get_watch_command().is_none() && !agent_config.auto_watch && !print_mode {
         watch::hint_auto_watch_available();
     }

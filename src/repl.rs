@@ -11,7 +11,7 @@ use crate::format::*;
 use crate::git::*;
 use crate::prompt::{run_prompt_auto_retry, run_prompt_auto_retry_with_content, PromptOutcome};
 use crate::session::{format_turn_changes, SessionChanges, TurnHistory, TurnSnapshot};
-use crate::watch::{get_watch_command, run_watch_after_prompt, set_watch_command};
+use crate::watch::{get_watch_command, run_watch_after_prompt};
 use crate::AgentConfig;
 
 /// Configuration for the REPL session, bundling the positional arguments
@@ -691,12 +691,7 @@ fn print_startup_info(agent_config: &AgentConfig, repl_config: &ReplConfig) {
 
     // Auto-enable watch mode if a project type is detected and config allows it
     if get_watch_command().is_none() && agent_config.auto_watch {
-        if let Some(cmd) = crate::watch::auto_detect_watch_command() {
-            set_watch_command(&cmd);
-            println!(
-                "{DIM}  👀 Auto-watch: `{cmd}` (disable with /watch off or auto_watch = false){RESET}\n"
-            );
-        }
+        crate::watch::arm_auto_watch("/watch off or auto_watch = false", false);
     } else if get_watch_command().is_none() && !agent_config.auto_watch {
         crate::watch::hint_auto_watch_available();
     }
