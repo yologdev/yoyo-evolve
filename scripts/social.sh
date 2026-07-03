@@ -331,6 +331,20 @@ if ! command -v timeout &>/dev/null; then
     fi
 fi
 
+# GASP state instrumentation (fail-soft; see scripts/gasp_shim.sh). Social
+# sessions serve their own standing goal; learnings mirror to the state repo
+# as facts with derived_from pointing at this run.
+export GASP_GOAL_ID="goal_community"
+export GASP_GOAL_TITLE="Build genuine relationships with the community"
+export GASP_GOAL_SUMMARY="the standing goal social sessions serve; social learnings become facts derived from these runs"
+if [ -r "$(dirname "$0")/gasp_shim.sh" ] && . "$(dirname "$0")/gasp_shim.sh"; then
+    :
+else
+    echo "  [gasp] shim missing or failed to load — GASP instrumentation disabled" >&2
+    gasp_session_start() { :; }; gasp_session_end() { :; }
+fi
+gasp_session_start "$DAY" "social_day" "social session (replies, discussions, people-learnings)"
+
 echo "→ Running social session..."
 AGENT_LOG=$(mktemp)
 set +o errexit
@@ -430,6 +444,11 @@ else
         exit 1
     fi
 fi
+
+# GASP: close the run and push state AFTER the code push (code first, state
+# second). The memory mirror inside session-end converts any new social
+# learnings to facts.
+gasp_session_end "social session complete (agent exit=${AGENT_EXIT:-0})"
 
 echo ""
 echo "=== Social session complete ==="

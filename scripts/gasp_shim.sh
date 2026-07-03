@@ -196,11 +196,142 @@ gasp_mirror_skills() {
             done < <(find "$GASP_STATE_DIR/$dir" -type f -print0 2>/dev/null)
         fi
     done
-    # name only directories that actually changed — git add fatals on
-    # pathspecs matching nothing in the state clone
-    GASP_EXTRA_PATHS=$(git -C "$GASP_STATE_DIR" status --porcelain -- skills skills_attic 2>/dev/null \
-        | awk '{print $NF}' | cut -d/ -f1 | sort -u | paste -sd, - || true)
-    [ -n "$GASP_EXTRA_PATHS" ] && echo "  [gasp] skills synced into the state repo"
+    return 0
+}
+
+# The perl rebind shared by every mirror: executor-layout paths -> state layout.
+_gasp_rebind() {
+    perl -pe '
+        s/active_social_learnings\.md/active_social_memory.md/g;
+        s/social_learnings\.jsonl/social_facts.jsonl/g;
+        s/active_learnings\.md/active_memory.md/g;
+        s/learnings\.jsonl/facts.jsonl/g;
+        s/journals\//journal\//g;
+    '
+}
+
+# gasp_mirror_memory — keeps the state repo's memory/journal/dream streams
+# current (called automatically from gasp_session_end, fail-soft):
+#   - new learnings lines (session + social) are converted to the GASP fact
+#     envelope {id, ts_ms, text, derived_from: [run], supersedes} and APPENDED
+#     to memory/*facts.jsonl (append-only paths — never rewritten). Since the
+#     seed was a verbatim copy, "new" = executor lines beyond the state file's
+#     line count, so a missed session self-heals on the next one.
+#   - new journal entries (yoyo PREPENDS to its journal; the state copy is
+#     append-only) are extracted by their "## Day N — ..." headers and
+#     appended oldest-first.
+#   - dreams/dream_log.jsonl is appended by line count; regenerable
+#     projections (active syntheses, DREAM.md, dream arc, notes, cursors,
+#     DAY_COUNT) are overwritten — the spec's projection tier allows it.
+# Generation stays in the executor; this copies outputs only.
+gasp_mirror_memory() {
+    [ "$GASP_ENABLED" = true ] || return 0
+    local out
+    if ! out=$(GASP_RUN_ID="$GASP_RUN_ID" GASP_STATE_DIR="$GASP_STATE_DIR" python3 - << 'PYEOF' 2>&1
+import json, os, sys, time, uuid
+from datetime import datetime, timezone
+
+state = os.environ["GASP_STATE_DIR"]
+run_id = os.environ["GASP_RUN_ID"]
+
+def lines_of(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().splitlines()
+    except FileNotFoundError:
+        return None
+
+# 1. learnings -> facts (append-only, envelope-converted)
+for src, dst in [("memory/learnings.jsonl", "memory/facts.jsonl"),
+                 ("memory/social_learnings.jsonl", "memory/social_facts.jsonl")]:
+    src_lines = lines_of(src)
+    if src_lines is None:
+        continue
+    dst_path = os.path.join(state, dst)
+    dst_lines = lines_of(dst_path) or []
+    if len(src_lines) < len(dst_lines):
+        print(f"WARNING: {src} has fewer lines than {dst} — skipping (append-only source shrank?)")
+        continue
+    new = src_lines[len(dst_lines):]
+    if not new:
+        continue
+    with open(dst_path, "a", encoding="utf-8") as f:
+        for line in new:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                legacy = json.loads(line)
+                title = legacy.get("title", "")
+                context = legacy.get("context", "")
+                text = (f"{title} — {context}" if title and context
+                        else title or context or json.dumps(legacy, ensure_ascii=False))
+                ts = legacy.get("ts", "")
+                try:
+                    ts_ms = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+                except (ValueError, AttributeError):
+                    ts_ms = int(time.time() * 1000)
+            except json.JSONDecodeError:
+                text, ts_ms = line, int(time.time() * 1000)
+            fact = {"id": f"fact_{uuid.uuid4().hex}", "ts_ms": ts_ms, "text": text,
+                    "derived_from": [run_id], "supersedes": None}
+            f.write(json.dumps(fact, ensure_ascii=False) + "\n")
+    print(f"facts: +{len(new)} from {src}")
+
+# 2. journal: append entries whose header the state copy lacks (oldest first)
+src_j = lines_of("journals/JOURNAL.md")
+dst_j_path = os.path.join(state, "journal/JOURNAL.md")
+dst_j = lines_of(dst_j_path)
+if src_j is not None and dst_j is not None:
+    have = {l for l in dst_j if l.startswith("## ")}
+    entries, cur = [], None
+    for l in src_j:
+        if l.startswith("## "):
+            cur = [l]
+            entries.append(cur)
+        elif cur is not None:
+            cur.append(l)
+    missing = [e for e in entries if e[0] not in have]
+    if missing:
+        with open(dst_j_path, "a", encoding="utf-8") as f:
+            for e in reversed(missing):  # executor is newest-first; append chronologically
+                block = "\n".join(e).rstrip("\n")
+                f.write("\n" + block + "\n")
+        print(f"journal: +{len(missing)} entrie(s)")
+
+# 3. dream log: verbatim append by line count
+src_d = lines_of("dreams/dream_log.jsonl")
+if src_d is not None:
+    dst_d_path = os.path.join(state, "dreams/dream_log.jsonl")
+    os.makedirs(os.path.dirname(dst_d_path), exist_ok=True)
+    dst_d = lines_of(dst_d_path) or []
+    if len(src_d) > len(dst_d):
+        with open(dst_d_path, "a", encoding="utf-8") as f:
+            for line in src_d[len(dst_d):]:
+                f.write(line + "\n")
+        print(f"dream log: +{len(src_d) - len(dst_d)}")
+PYEOF
+    ); then
+        _gasp_off "memory mirror failed: $(printf '%s' "$out" | tail -n 2 | tr '\n' '; ')"
+        return 0
+    fi
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/  [gasp] /'
+
+    # regenerable projections + runtime state: plain overwrite copies
+    local src dst
+    while IFS=: read -r src dst; do
+        [ -f "$src" ] || continue
+        mkdir -p "$GASP_STATE_DIR/$(dirname "$dst")" 2>/dev/null || true
+        _gasp_rebind < "$src" > "$GASP_STATE_DIR/$dst" 2>/dev/null || true
+    done << 'MAP'
+memory/active_learnings.md:memory/active_memory.md
+memory/active_social_learnings.md:memory/active_social_memory.md
+.yoyo/memory.json:memory/notes.json
+.yoyo/social-state.json:memory/social_cursors.json
+DREAM.md:DREAM.md
+dreams/active_dream_arc.md:dreams/active_dream_arc.md
+DAY_COUNT:DAY_COUNT
+MAP
     return 0
 }
 
@@ -211,6 +342,15 @@ gasp_mirror_skills() {
 gasp_session_end() {
     [ "$GASP_ENABLED" = true ] || return 0
     local outcome="${1:-done}" out
+
+    # memory/journal/dream streams sync on every session close; everything
+    # any mirror changed rides the boundary commit (state/ is always staged
+    # by commit_run itself)
+    gasp_mirror_memory
+    GASP_EXTRA_PATHS=$(git -C "$GASP_STATE_DIR" status --porcelain 2>/dev/null \
+        | awk '{print $NF}' | grep -v '^state/' | cut -d/ -f1 | sort -u | paste -sd, - || true)
+    [ -n "$GASP_EXTRA_PATHS" ] && echo "  [gasp] state streams synced: ${GASP_EXTRA_PATHS}"
+
     if ! out=$("$GASP_EMIT_BIN" session-end --state-dir "$GASP_STATE_DIR" \
         --run-id "$GASP_RUN_ID" --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" \
         --extra "$GASP_EXTRA_PATHS" --outcome "$outcome" 2>&1); then
