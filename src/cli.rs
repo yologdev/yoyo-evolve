@@ -524,6 +524,15 @@ fn parse_model_config(
     }
 }
 
+/// Parse the `--editor-model` flag value, trimming whitespace and rejecting
+/// empty/whitespace-only values — same hardening as `--model` (see 1bc346c).
+/// Returns `None` when the flag is absent or its value is empty after trim.
+fn parse_editor_model_flag(args: &[String]) -> Option<String> {
+    flag_value(args, &["--editor-model"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Parsed boolean/simple output flags.
 struct OutputFlags {
     verbose: bool,
@@ -741,6 +750,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // Validate that flags requiring values actually have them
     let flags_needing_values = [
         "--model",
+        "--editor-model",
         "--provider",
         "--base-url",
         "--thinking",
@@ -839,6 +849,12 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
 
     // Parse model/provider/API-key/fallback configuration
     let mc = parse_model_config(args, &file_config, &prompt_arg);
+
+    // --editor-model <name>: explicit editor model for architect mode (issue #542).
+    // Editor defaults to the main model; this flag overrides it.
+    if let Some(editor) = parse_editor_model_flag(args) {
+        crate::commands_config::set_editor_model(Some(editor));
+    }
 
     let skill_dirs = collect_repeatable_flag(args, "--skills");
 
@@ -1466,6 +1482,7 @@ mod tests {
         // Every flag in the code should be in KNOWN_FLAGS
         let flags_with_values = [
             "--model",
+            "--editor-model",
             "--thinking",
             "--max-tokens",
             "--max-turns",
@@ -1490,6 +1507,50 @@ mod tests {
                 "Flag {flag} should be in KNOWN_FLAGS"
             );
         }
+    }
+
+    #[test]
+    fn test_parse_editor_model_flag_value() {
+        let args: Vec<String> = ["yoyo", "--editor-model", "claude-sonnet-4-6", "-p", "hi"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_editor_model_flag(&args),
+            Some("claude-sonnet-4-6".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_editor_model_flag_trims_whitespace() {
+        let args: Vec<String> = ["yoyo", "--editor-model", "  gpt-4o-mini  "]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_editor_model_flag(&args),
+            Some("gpt-4o-mini".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_editor_model_flag_whitespace_only_rejected() {
+        // `--editor-model "  "` must be rejected like `--model` is —
+        // whitespace-only values yield None (no override set).
+        let args: Vec<String> = ["yoyo", "--editor-model", "   "]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(parse_editor_model_flag(&args), None);
+    }
+
+    #[test]
+    fn test_parse_editor_model_flag_absent() {
+        let args: Vec<String> = ["yoyo", "-p", "hello"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(parse_editor_model_flag(&args), None);
     }
 
     #[test]
