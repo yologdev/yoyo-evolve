@@ -200,8 +200,15 @@ pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
         }
     }
 
-    // Append recently changed files if available
-    if let Some(recent_files) = get_recently_changed_files(MAX_RECENT_FILES) {
+    // Append recently changed files if available.
+    //
+    // NOTE: this must use the `_from(dir)` variant, not the CWD one. The CWD
+    // variant was the Day 125 flake root cause: under parallel test execution,
+    // `#[serial]` tests mutate the process CWD, so the "Recently Changed
+    // Files" section was computed from whatever directory the process happened
+    // to be in — sometimes a temp repo with no commits (git log fails, the
+    // error is swallowed by `.ok()?`, and the section silently vanishes).
+    if let Some(recent_files) = get_recently_changed_files_from(dir, MAX_RECENT_FILES) {
         if !context.is_empty() {
             context.push_str("\n\n");
         }
@@ -234,8 +241,12 @@ pub fn load_project_context_from(dir: &std::path::Path) -> Option<String> {
         conventions_injected = true;
     }
 
-    // Append project memories if available
-    let memory = crate::memory::load_memories();
+    // Append project memories if available. Loaded relative to `dir` (not the
+    // process CWD) so a hermetic fixture context never picks up the real
+    // repo's `.yoyo/memory.json` — memory entries can contain arbitrary text
+    // (including section-header-like strings), which made fixture-based test
+    // assertions nondeterministic under parallel execution.
+    let memory = crate::memory::load_memories_from(&dir.join(crate::memory::memory_file_path()));
     if let Some(memories_section) = crate::memory::format_memories_for_prompt(&memory) {
         if !context.is_empty() {
             context.push_str("\n\n");
@@ -546,6 +557,14 @@ mod tests {
         // so it never reads the live CWD's git state (Day 125 lesson — the old
         // version hard-asserted but still flaked on dirty trees / shallow clones,
         // and before Day 124 it vacuously passed via `if let Some`).
+        //
+        // Day 125 root cause (evaluator round 2): load_project_context_from used
+        // the CWD variant get_recently_changed_files() instead of the _from(dir)
+        // variant, so under parallel execution the section came from whatever
+        // directory a #[serial] test had chdir'd to — sometimes a repo with no
+        // commits, making the section vanish. Fixed in production code; these
+        // assertions are section-scoped so a regression can't hide behind the
+        // Project Files listing (which also contains the fixture file names).
         let dir = tempfile::TempDir::new().unwrap();
         init_fixture_repo(dir.path());
         // A second commit so "recently changed" has more than the initial file.
@@ -560,19 +579,118 @@ mod tests {
             context.contains("## Recently Changed Files"),
             "Context should contain Recently Changed Files section, got: {context}"
         );
+        let recent_section = recently_changed_section(&context);
         assert!(
-            context.contains("committed.txt"),
-            "Recently changed should include the first committed file, got: {context}"
+            recent_section.contains("committed.txt"),
+            "Recently Changed section should include the first committed file, \
+             got section: {recent_section}\nfull context: {context}"
         );
         assert!(
-            context.contains("second.txt"),
-            "Recently changed should include the second committed file, got: {context}"
+            recent_section.contains("second.txt"),
+            "Recently Changed section should include the second committed file, \
+             got section: {recent_section}\nfull context: {context}"
         );
 
         // Git Status section is always present in a git repo
         assert!(
             context.contains("## Git Status"),
             "Context should always contain Git Status section, got: {context}"
+        );
+    }
+
+    /// Extract the "## Recently Changed Files" section body from a context
+    /// string (up to the next "## " header or end of string), so tests can
+    /// assert on the section's actual contents instead of the whole context
+    /// (where the Project Files listing also mentions the same file names).
+    fn recently_changed_section(context: &str) -> &str {
+        let start = context
+            .find("## Recently Changed Files")
+            .expect("caller must ensure the section exists");
+        let body = &context[start..];
+        match body[3..].find("\n## ") {
+            Some(end) => &body[..end + 3],
+            None => body,
+        }
+    }
+
+    #[test]
+    fn test_load_project_context_recently_changed_is_dir_scoped() {
+        // Regression guard for the Day 125 flake root cause: the Recently
+        // Changed section must be computed from the *passed dir*, never the
+        // process CWD. If the CWD variant leaks back in, the section would
+        // (nondeterministically) show live-repo files like src/context.rs —
+        // or vanish entirely when a parallel #[serial] test parks the CWD in
+        // a commitless temp repo.
+        let dir = tempfile::TempDir::new().unwrap();
+        init_fixture_repo(dir.path());
+        fixture_commit_file(dir.path(), "second.txt", "world\n", "add second");
+
+        let files = get_recently_changed_files_from(dir.path(), MAX_RECENT_FILES)
+            .expect("fixture repo with two commits must yield recently changed files");
+        assert!(
+            files.iter().any(|f| f == "committed.txt"),
+            "Fixture recently-changed must contain committed.txt, got: {files:?}"
+        );
+        assert!(
+            files.iter().any(|f| f == "second.txt"),
+            "Fixture recently-changed must contain second.txt, got: {files:?}"
+        );
+        // No live-repo paths may leak in: every entry must be a fixture file.
+        for f in &files {
+            assert!(
+                f == "committed.txt" || f == "second.txt",
+                "Recently-changed leaked a non-fixture path {f:?} — \
+                 get_recently_changed_files_from is not dir-scoped. All: {files:?}"
+            );
+        }
+
+        // And the assembled context's section must match the same dir-scoped list.
+        let context = load_project_context_from(dir.path())
+            .expect("load_project_context_from should return Some in a fixture git repo");
+        let recent_section = recently_changed_section(&context);
+        for line in recent_section.lines().skip(1).filter(|l| !l.is_empty()) {
+            assert!(
+                line == "committed.txt" || line == "second.txt",
+                "Context Recently Changed section leaked a non-fixture path {line:?}; \
+                 section: {recent_section}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_load_project_context_memories_are_dir_scoped() {
+        // Project memories must load from `<dir>/.yoyo/memory.json`, not the
+        // process CWD's — otherwise the real repo's memory entries (arbitrary
+        // text) leak into hermetic fixture contexts under parallel execution.
+        let dir = tempfile::TempDir::new().unwrap();
+        init_fixture_repo(dir.path());
+
+        // Without a fixture memory file, no memories section may appear —
+        // regardless of what the live repo's .yoyo/memory.json contains.
+        let context = load_project_context_from(dir.path())
+            .expect("load_project_context_from should return Some in a fixture git repo");
+        assert!(
+            !context.contains("## Project Memories"),
+            "Fixture without .yoyo/memory.json must not contain a memories \
+             section (CWD memory leak), got: {context}"
+        );
+
+        // With a fixture memory file, its entry must appear.
+        std::fs::create_dir_all(dir.path().join(".yoyo")).unwrap();
+        std::fs::write(
+            dir.path().join(".yoyo/memory.json"),
+            r#"{"entries":[{"note":"fixture memory sentinel","timestamp":"2026-01-01 00:00","category":"general"}]}"#,
+        )
+        .unwrap();
+        let context = load_project_context_from(dir.path())
+            .expect("load_project_context_from should return Some in a fixture git repo");
+        assert!(
+            context.contains("## Project Memories"),
+            "Fixture with .yoyo/memory.json must contain a memories section, got: {context}"
+        );
+        assert!(
+            context.contains("fixture memory sentinel"),
+            "Fixture memory entry must appear in the context, got: {context}"
         );
     }
 
