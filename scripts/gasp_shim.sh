@@ -32,6 +32,13 @@ GASP_EMIT_BIN="target/gasp-emit/debug/gasp-emit"
 GASP_PUSH_URL=""
 GASP_RUN_ID=""
 GASP_FAIL_COUNTER=".yoyo/gasp_failures"
+# The standing goal this session's tasks/patches serve. Callers may override
+# before gasp_session_start (skill_evolve.sh sets goal_skill_quality).
+GASP_GOAL_ID="${GASP_GOAL_ID:-goal_self_improvement}"
+GASP_GOAL_TITLE="${GASP_GOAL_TITLE:-}"
+GASP_GOAL_SUMMARY="${GASP_GOAL_SUMMARY:-}"
+# Extra repo-relative paths for the boundary commit (set by gasp_mirror_skills)
+GASP_EXTRA_PATHS=""
 
 # Remove credentials from any text we are about to print.
 _gasp_scrub() {
@@ -74,9 +81,12 @@ _gasp_emit() {
 
 # Call once, after the baseline build passes. Builds the emitter, clones the
 # state repo, verifies push access, opens the run.
+# gasp_session_start <day> [kind] [task-desc]
+# kind defaults to "day" (run ids run_day124_...); skill_evolve passes
+# "skill_day" (run_skill_day124_...) plus its own task description.
 gasp_session_start() {
     [ "${GASP_DISABLE:-}" = "1" ] && return 0
-    local day="${1:-0}" out
+    local day="${1:-0}" kind="${2:-day}" task="${3:-evolve session day ${1:-0}}" out
 
     # 1. build the emitter (own manifest; target/ is cached+ignored already)
     if ! out=$(cargo build --quiet --manifest-path tools/gasp-emit/Cargo.toml \
@@ -114,10 +124,14 @@ gasp_session_start() {
         return 0
     fi
 
-    GASP_RUN_ID="run_day${day}_$(date -u +%Y%m%dT%H%M%SZ)"
+    GASP_RUN_ID="run_${kind}${day}_$(date -u +%Y%m%dT%H%M%SZ)"
     GASP_ENABLED=true
+    # flags are passed unconditionally (empty = use default) — conditional
+    # ${var:+...} argv splicing is a bash-only subtlety worth avoiding
     _gasp_emit session-start --state-dir "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" \
-        --worker "evolve-shim-$$" --day "$day" --task "evolve session day $day"
+        --worker "evolve-shim-$$" --day "$day" --goal "$GASP_GOAL_ID" \
+        --goal-title "$GASP_GOAL_TITLE" --goal-summary "$GASP_GOAL_SUMMARY" \
+        --task "$task"
     [ "$GASP_ENABLED" = true ] && echo "  [gasp] recording as $GASP_RUN_ID -> ${GASP_STATE_REPO}"
     return 0
 }
@@ -125,16 +139,62 @@ gasp_session_start() {
 # gasp_task_planned <num> <title>
 gasp_task_planned() {
     _gasp_emit task --state-dir "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" \
-        --worker "evolve-shim-$$" --num "$1" --title "$2"
+        --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" --num "$1" --title "$2"
 }
 
 # gasp_task_result <num> <title> <promoted|rejected> <pre-sha> <post-sha> [reason]
 gasp_task_result() {
     _gasp_emit task-result --state-dir "$GASP_STATE_DIR" --run-id "$GASP_RUN_ID" \
-        --worker "evolve-shim-$$" \
+        --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" \
         --num "$1" --title "$2" --verdict "$3" --pre-sha "$4" --post-sha "$5" \
         --repo "${REPO:-yologdev/yoyo-evolve}" --branch "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)" \
         --reason "${6:-}"
+}
+
+# gasp_mirror_skills <pre-sha> <post-sha>
+# Mirror-on-change (GASP conformance rule 3): copy the cycle's changed
+# skills/ + skills_attic/ files into the state clone, rebinding executor-
+# layout paths to the state layout (learnings.jsonl -> facts.jsonl,
+# journals/ -> journal/, ...) exactly as the original seed did. Deletions
+# (retire = git mv into the attic) are mirrored as deletions. The mirrored
+# tree rides the same boundary commit as the events (session-end extra
+# paths), so a skill version and its lineage ship together.
+gasp_mirror_skills() {
+    [ "$GASP_ENABLED" = true ] || return 0
+    local pre="$1" post="$2" f mirrored=0 touched_skills=0 touched_attic=0
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        case "$f" in
+            skills/*) touched_skills=1 ;;
+            skills_attic/*) touched_attic=1 ;;
+            *) continue ;;
+        esac
+        if [ -f "$f" ]; then
+            mkdir -p "$GASP_STATE_DIR/$(dirname "$f")" 2>/dev/null || true
+            if ! perl -pe '
+                s/active_social_learnings\.md/active_social_memory.md/g;
+                s/social_learnings\.jsonl/social_facts.jsonl/g;
+                s/active_learnings\.md/active_memory.md/g;
+                s/learnings\.jsonl/facts.jsonl/g;
+                s/journals\//journal\//g;
+            ' "$f" > "$GASP_STATE_DIR/$f" 2>/dev/null; then
+                _gasp_off "skill mirror failed for $f"
+                return 0
+            fi
+        else
+            rm -f "$GASP_STATE_DIR/$f" 2>/dev/null || true
+        fi
+        mirrored=$((mirrored + 1))
+    done < <(git diff --name-only "$pre".."$post" -- skills/ skills_attic/ 2>/dev/null || true)
+    if [ "$mirrored" -gt 0 ]; then
+        # only name directories that actually received changes — git add
+        # fatals on pathspecs matching nothing in the state clone
+        GASP_EXTRA_PATHS=""
+        [ "$touched_skills" = 1 ] && GASP_EXTRA_PATHS="skills"
+        [ "$touched_attic" = 1 ] && GASP_EXTRA_PATHS="${GASP_EXTRA_PATHS:+$GASP_EXTRA_PATHS,}skills_attic"
+        echo "  [gasp] mirrored $mirrored skill file(s) into the state repo"
+    fi
+    return 0
 }
 
 # Call after Step 8's code push. Closes the run, makes the boundary commit,
@@ -145,7 +205,8 @@ gasp_session_end() {
     [ "$GASP_ENABLED" = true ] || return 0
     local outcome="${1:-done}" out
     if ! out=$("$GASP_EMIT_BIN" session-end --state-dir "$GASP_STATE_DIR" \
-        --run-id "$GASP_RUN_ID" --worker "evolve-shim-$$" --outcome "$outcome" 2>&1); then
+        --run-id "$GASP_RUN_ID" --worker "evolve-shim-$$" --goal "$GASP_GOAL_ID" \
+        --extra "$GASP_EXTRA_PATHS" --outcome "$outcome" 2>&1); then
         printf '%s\n' "$(_gasp_scrub "$out")" | sed 's/^/  [gasp] /' >&2
         _gasp_off "session-end failed"
         return 0

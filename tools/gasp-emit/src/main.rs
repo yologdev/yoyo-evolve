@@ -22,7 +22,10 @@ use yoagent_state::{
     Task, TaskId, TaskStatus, YoAgentState,
 };
 
-const GOAL_ID: &str = "goal_self_improvement";
+const DEFAULT_GOAL: &str = "goal_self_improvement";
+const DEFAULT_GOAL_TITLE: &str = "Evolve: improve yoyo's own code, skills, and reliability";
+const DEFAULT_GOAL_SUMMARY: &str =
+    "the standing goal every evolve session serves; tasks and patches under it are the self-improvement ratchet";
 
 fn parse_args() -> (String, HashMap<String, String>) {
     let mut args = std::env::args().skip(1);
@@ -66,6 +69,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get("worker")
         .map(String::as_str)
         .unwrap_or("evolve-shim");
+    // Sessions of different kinds serve different standing goals (evolve ->
+    // goal_self_improvement, skill-evolve -> goal_skill_quality, ...).
+    let goal = flags
+        .get("goal")
+        .map(String::as_str)
+        .unwrap_or(DEFAULT_GOAL)
+        .to_string();
 
     let store = GitEventStore::open(state_dir, worker)?;
     let state = YoAgentState::load(store.clone()).await?;
@@ -77,12 +87,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cmd.as_str() {
         "session-start" => {
-            if state.get_node(NodeId::new(GOAL_ID)).await.is_none() {
+            if state.get_node(NodeId::new(goal.as_str())).await.is_none() {
                 state
                     .record_goal(Goal::new(
-                        GoalId::new(GOAL_ID),
-                        "Evolve: improve yoyo's own code, skills, and reliability",
-                        "the standing goal every evolve session serves; tasks and patches under it are the self-improvement ratchet",
+                        GoalId::new(goal.as_str()),
+                        flags
+                            .get("goal-title")
+                            .map(String::as_str)
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(DEFAULT_GOAL_TITLE),
+                        flags
+                            .get("goal-summary")
+                            .map(String::as_str)
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(DEFAULT_GOAL_SUMMARY),
                         yoyo.clone(),
                     ))
                     .await?;
@@ -104,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     title: title.to_string(),
                     summary: format!("planned as task {num} of the session"),
                     status: TaskStatus::Open,
-                    goal: Some(GoalId::new(GOAL_ID)),
+                    goal: Some(GoalId::new(goal.as_str())),
                     created_by: yoyo,
                     metadata: serde_json::json!({}),
                 })
@@ -143,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     yoyo.clone(),
                     NodeId::new(format!("patch_{suffix}")),
                     "advances",
-                    NodeId::new(GOAL_ID),
+                    NodeId::new(goal.as_str()),
                 )
                 .await?;
 
@@ -212,7 +230,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             state
                 .record_run_finished(yoyo, run_id.clone(), outcome.clone())
                 .await?;
-            let sha = store.commit_run(&run_id, &GoalId::new(GOAL_ID), &outcome, &[])?;
+            // --extra: comma-separated repo-relative paths committed with the
+            // boundary commit (e.g. mirrored skills/)
+            let extra = flags.get("extra").cloned().unwrap_or_default();
+            let extra_paths: Vec<&str> = extra
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .collect();
+            let sha = store.commit_run(&run_id, &GoalId::new(goal.as_str()), &outcome, &extra_paths)?;
             store.release_lease()?;
             println!("gasp boundary commit: {}", sha.as_deref().unwrap_or("(nothing to commit)"));
         }
