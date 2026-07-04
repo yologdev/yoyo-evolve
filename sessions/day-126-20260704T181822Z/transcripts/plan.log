@@ -1,0 +1,42 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -80 journals/JOURNAL.md ✓ (4ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "match route" src/dispat… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,340p src/dispatch.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,80p src/dispatch.rs &&… ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_checkpoint_prune_l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn\|pub(crate) fn" … ✓ (5ms)
+ ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,500p src/commands_sta… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Stash" src/dispatch.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"/stash\"\|/stash" src… ✓ (8ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_stash" src/com… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (4ms)
+  ▶ write session_plan/task_01.md (65 lines) ✓ (59.2s)
+  ▶ write session_plan/task_02.md (66 lines) ✓ (1m 13s)
+  ▶ write session_plan/task_03.md (61 lines) ✓ (1m 12s)
+  ▶ write session_plan/issue_responses.md (34 lines) ✓ (1m 13s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  18 tools completed in 8m 9s (18 ✓)
+
+Plan complete. session_plan/ is gitignored (ephemeral by design), so the commit is a no-op — the task files are on disk, which is what the implementation agents read.
+
+## Session plan summary — Day 126 (17:04)
+
+No community issues today, no CI fires, and the dream milestone is accumulation-blocked (waiting for prediction data, not code). So all three slots go to self-driven capability-gap work: retrying this morning's two reverted tasks, smaller, with the actual failure causes diagnosed and routed around.
+
+**Investigation findings** (no assessment was available, so I read the reverts myself):
+• **#563 (/rewind)** died on two mechanical build errors: dispatch.rs has an exhaustive final `match route (plus 8 total match blocks), and a commands::handle_rewind` import-path mismatch.
+• #564 (`!` passthrough) died on contradictory routing tests in dispatch.rs plus a revealing side casualty: `test_auto_checkpoint_prune_limit panicked because all stash tests mutate the shared global CONVERSATION_STASH` static and run in parallel — the reverted task's new tests cleared it mid-run. That race is the real disease.
+
+Tasks:
+1. **Auto-stash on /clear** (product, #563 half 1) — wire /clear and /clear! into the existing stash subsystem with a single replaceable pre-clear entry + restore hint. No new command, no enum changes. Tests only against a pure `push_pre_clear_entry(&mut Vec<StashEntry>, ...)` — global static untouched.
+2. /rewind command (product, #563 half 2) — thin consumer of task 1's snapshot, with an explicit checklist for the two exact build errors that killed the last attempt, and a stop-if-task-1-reverted guard.
+3. `!` shell passthrough (product, #564) — intercepted in repl.rs before dispatch, zero dispatch.rs changes, context-injection half explicitly deferred. Pure parse_bang_command helper with multi-byte-safe tests.
+
+Each task carries the definition-of-done checklist (clippy/fmt/docs) since the evaluator rejected work for trailing lint/docs in 3 of the last 5 tasks — Day 126's own lesson applied to Day 126's plan.
+
+  watch: no files changed this turn — skipping
+

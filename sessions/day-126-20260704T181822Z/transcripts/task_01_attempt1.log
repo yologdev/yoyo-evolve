@@ -1,0 +1,158 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_stash.rs  ▶ search 'CommandRoute::Clear' in src/dispatch.rs ✓ (5ms)
+ ✓ (6ms)
+  ▶ read src/commands_stash.rs:100..320  ▶ read src/dispatch.rs:985..1045 ✓ (2ms)
+ ✓ (3ms)
+  ▶ search 'commands_stash' in src/commands.rs  ▶ $ grep -rn "fn save_messages" ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null |… ✓ (4ms)
+ ✓ (7ms)
+  6 tools completed in 17.9s (6 ✓)
+
+save_messages(&self) takes &self — good, stash_pre_clear(&Agent) works. Now implementing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_stash.rs (1 → 53 lines)
+  + /// Description label used for the automatic pre-`/clear` snapshot.
+  + pub const PRE_CLEAR_LABEL: &str = "pre-clear";
+  + 
+  + /// Push a pre-clear entry onto `entries`, replacing any existing one.
+  + ///
+  + /// At most ONE pre-clear snapshot is kept, so repeated `/clear` doesn't grow
+  + /// the stash. Ordinary entries are preserved untouched. Pure function so it
+  + /// can be tested against a local `Vec` without touching the global stash.
+  + fn push_pre_clear_entry(entries: &mut Vec<StashEntry>, entry: StashEntry) {
+  +     entries.retain(|e| e.description != PRE_CLEAR_LABEL);
+  +     entries.push(entry);
+  + }
+  + 
+  + /// Automatically stash the conversation right before `/clear` wipes it.
+  + ///
+  + /// Returns `true` if a snapshot was saved (i.e. the conversation was
+  + /// non-empty and serialization succeeded), `false` for a no-op. Unlike
+  + /// `/stash push`, this does NOT clear the agent's messages — the caller
+  + /// (`/clear`) rebuilds the agent itself.
+  + pub fn stash_pre_clear(agent: &Agent) -> bool {
+  ... (33 more lines)
+ ✓ (16.5s)
+  + /// Description label used for the automatic pre-`/clear` snapshot.
+  + pub const PRE_CLEAR_LABEL: &str = "pre-clear";
+  + 
+  + /// Push a pre-clear entry onto `entries`, replacing any existing one.
+  + ///
+  + /// At most ONE pre-clear snapshot is kept, so repeated `/clear` doesn't grow
+  + /// the stash. Ordinary entries are preserved untouched. Pure function so it
+  + /// can be tested against a local `Vec` without touching the global stash.
+  ... (13 more lines)
+
+Expected dead-code errors until wired. Now the re-export and dispatch:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_stash::{auto_checkpoint, handle_stash};
+  + pub use crate::commands_stash::{auto_checkpoint, handle_stash, stash_pre_clear};
+ ✓ (16.4s)
+  - pub use crate::commands_stash::{auto_checkpoint, handle_stash};
+  + pub use crate::commands_stash::{auto_checkpoint, handle_stash, stash_pre_clear};
+
+Now the dispatch.rs wiring:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/dispatch.rs (15 → 25 lines)
+  +             let stashed = commands::stash_pre_clear(ctx.agent);
+                *ctx.agent = ctx.agent_config.build_agent();
+                ctx.session_changes.clear();
+                ctx.turn_history.clear();
+                reset_compact_thrash();
+                reset_context_budget_warning();
+  -             println!("{DIM}  (conversation cleared){RESET}\n");
+  +             if stashed {
+  +                 println!("{DIM}  (conversation cleared — /stash pop to restore){RESET}\n");
+  +             } else {
+  +                 println!("{DIM}  (conversation cleared){RESET}\n");
+  +             }
+                CommandResult::Continue
+            }
+            CommandRoute::ClearForce => {
+  +             let stashed = commands::stash_pre_clear(ctx.agent);
+                *ctx.agent = ctx.agent_config.build_agent();
+                ctx.session_changes.clear();
+                ctx.turn_history.clear();
+                reset_compact_thrash();
+  ... (7 more lines)
+ ✓ (1m 31s)
+  +             let stashed = commands::stash_pre_clear(ctx.agent);
+                *ctx.agent = ctx.agent_config.build_agent();
+                ctx.session_changes.clear();
+                ctx.turn_history.clear();
+                reset_compact_thrash();
+                reset_context_budget_warning();
+  -             println!("{DIM}  (conversation cleared){RESET}\n");
+  +             if stashed {
+  ... (13 more lines)
+
+Now add the tests. Let me insert them in the tests module:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_stash.rs (2 → 76 lines)
+  +     #[test]
+  +     fn test_push_pre_clear_entry_replaces_existing() {
+  +         let mut entries = vec![
+  +             StashEntry {
+  +                 description: "ordinary".to_string(),
+  +                 messages_json: "[]".to_string(),
+  +                 timestamp: "00:00:01".to_string(),
+  +             },
+  +             StashEntry {
+  +                 description: PRE_CLEAR_LABEL.to_string(),
+  +                 messages_json: "[\"old\"]".to_string(),
+  +                 timestamp: "00:00:02".to_string(),
+  +             },
+  +         ];
+  + 
+  +         push_pre_clear_entry(
+  +             &mut entries,
+  +             StashEntry {
+  +                 description: PRE_CLEAR_LABEL.to_string(),
+  +                 messages_json: "[\"new\"]".to_string(),
+  ... (56 more lines)
+ ✓ (1m 31s)
+  +     #[test]
+  +     fn test_push_pre_clear_entry_replaces_existing() {
+  +         let mut entries = vec![
+  +             StashEntry {
+  +                 description: "ordinary".to_string(),
+  +                 messages_json: "[]".to_string(),
+  +                 timestamp: "00:00:01".to_string(),
+  +             },
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 ✓ (16.8s)
+  ▶ $ cargo test 2>&1 | tail -8 ✓ (56.6s)
+  ▶ $ cargo test 2>&1 | grep -E "test result|FAILED|panicked" | head -20 ✓ (46.3s)
+  4 tools completed in 3m 50s (4 ✓)
+
+All green. Now the docs — first find the /clear mention in commands.md:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ search 'clear|stash' in docs/src/usage/commands.md ✓ (2ms)
+  ▶ $ grep -rn "clear" docs/src/usage/commands.md | head; echo ---; grep -rln "/stash"… ✓ (5ms)
+  ▶ $ grep -rn "stash" docs/src/ | head; echo ---; grep -n "stash" docs/src/features/s… ✓ (5ms)
+  ▶ read docs/src/usage/commands.md:44..64 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - | `/clear` | Clear conversation history and start fresh |
+  + | `/clear` | Clear conversation history and start fresh (the conversation is auto-stashed first — `/stash pop` to restore it) |
+ ✓ (1m 12s)
+  - | `/clear` | Clear conversation history and start fresh |
+  + | `/clear` | Clear conversation history and start fresh (the conversation is auto-stashed first — `/stash pop` to restore it) |
+  5 tools completed in 1m 32s (5 ✓)
+
+Now CLAUDE.md — the commands_stash.rs module line:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`)
+  + - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`); `/clear` auto-stashes the outgoing conversation as a single `pre-clear` entry (`stash_pre_clear`), restorable via `/stash pop`
+ ✓ (1m 12s)
+  - - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`)
+  + - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`); `/clear` auto-stashes the outgoing conversation as a single `pre-clear` entry (`stash_pre_clear`), restorable via `/stash pop`
+
+Let me check whether any existing help text now makes a false claim about /clear being irreversible:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "cannot be" src/help_data.rs | grep -i clear; grep -n "clear" src/help_… ✓ (5ms)
+
+  watch: no files changed this turn — skipping
+

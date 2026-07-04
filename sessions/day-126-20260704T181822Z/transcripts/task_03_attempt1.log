@@ -1,0 +1,177 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ search 'needs_continuation' in src/repl.rs ✓ (2ms)
+ ✓ (9ms)
+  ▶ read src/repl.rs:260..300  ▶ read src/repl.rs:770..860 ✓ (1ms)
+ ✓ (2ms)
+  ▶ search 'cmd /C|cfg\(windows\)|"sh".*"-c"|arg\("-c"\)' (*.rs) ✓ (22ms)
+  ▶ search 'sh -c|/C|windows' (*.rs) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"-c"\|"sh"\|cfg(window… ✓ (10ms)
+  ▶ read src/watch.rs:1455..1485 ✓ (1ms)
+  ▶ read src/tools.rs:195..220 ✓ (1ms)
+  9 tools completed in 47.7s (9 ✓)
+
+Now let me check repl.rs imports and the tests module location:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs (40 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/repl.rs … ✓ (2ms)
+ ✓ (5ms)
+  ▶ edit src/repl.rs (4 → 38 lines)
+    /// Check if a line needs continuation (backslash at end, or opens a code fence).
+    pub fn needs_continuation(line: &str) -> bool {
+        line.ends_with('\\') || line.starts_with("```")
+  + }
+  + 
+  + /// Parse a `!` shell-passthrough line.
+  + ///
+  + /// Returns `Some(cmd)` when the trimmed line starts with `!`: the command is
+  + /// everything after the `!`, trimmed. A bare `!` (or `!` + whitespace only)
+  + /// returns `Some("")` so the caller can print a usage hint. Lines not starting
+  + /// with `!` return `None`. Uses only char-safe operations (no byte indexing).
+  + pub fn parse_bang_command(line: &str) -> Option<&str> {
+  +     line.trim().strip_prefix('!').map(str::trim)
+  + }
+  + 
+  + /// Run a shell command directly for `!` passthrough, inheriting stdout/stderr
+  + /// so output streams live to the terminal. Prints the exit code only when
+  + /// non-zero. Never panics on spawn failure — prints the error and returns.
+  + fn run_bang_command(cmd: &str) {
+  +     #[cfg(not(windows))]
+  ... (18 more lines)
+ ✓ (16.5s)
+    /// Check if a line needs continuation (backslash at end, or opens a code fence).
+    pub fn needs_continuation(line: &str) -> bool {
+        line.ends_with('\\') || line.starts_with("```")
+  + }
+  + 
+  + /// Parse a `!` shell-passthrough line.
+  + ///
+  + /// Returns `Some(cmd)` when the trimmed line starts with `!`: the command is
+  ... (13 more lines)
+  ▶ edit src/repl.rs (3 → 13 lines)
+            let input = input.trim();
+  + 
+  +         // `!` shell passthrough: run the command directly, no API call, no cost.
+  +         if let Some(cmd) = parse_bang_command(input) {
+  +             if cmd.is_empty() {
+  +                 println!("{DIM}! <cmd> — run a shell command directly{RESET}");
+  +             } else {
+  +                 run_bang_command(cmd);
+  +             }
+  +             continue;
+  +         }
+    
+            let mut dispatch_ctx = crate::dispatch::DispatchContext {
+ ✓ (1m 42s)
+            let input = input.trim();
+  + 
+  +         // `!` shell passthrough: run the command directly, no API call, no cost.
+  +         if let Some(cmd) = parse_bang_command(input) {
+  +             if cmd.is_empty() {
+  +                 println!("{DIM}! <cmd> — run a shell command directly{RESET}");
+  +             } else {
+  +                 run_bang_command(cmd);
+  ... (5 more lines)
+  ▶ read src/repl.rs:1493..1518 ✓ (1ms)
+  ▶ edit src/repl.rs (47 → 2 lines)
+  -     #[test]
+  -     fn test_parse_bang_command_basic() {
+  -         assert_eq!(parse_bang_command("!ls -la"), Some("ls -la"));
+  -         assert_eq!(parse_bang_command("  !git status"), Some("git status"));
+  -         assert_eq!(parse_bang_command("!echo hi  "), Some("echo hi"));
+  -     }
+  - 
+  -     #[test]
+  -     fn test_parse_bang_command_empty_command() {
+  -         // Bare `!` or `!` + whitespace → Some("") so the caller prints a usage hint
+  -         assert_eq!(parse_bang_command("!"), Some(""));
+  -         assert_eq!(parse_bang_command("!   "), Some(""));
+  -     }
+  - 
+  -     #[test]
+  -     fn test_parse_bang_command_not_bang() {
+  -         assert_eq!(parse_bang_command("hello"), None);
+  -         assert_eq!(parse_bang_command("/help"), None);
+  -         assert_eq!(parse_bang_command(""), None);
+  -         assert_eq!(parse_bang_command("   "), None);
+  ... (27 more lines)
+ ✗ (3ms)
+    │ old_text not found in src/repl.rs.
+  6 tools completed in 2m 39s (5 ✓, 1 ✗)
+
+I swapped old/new. Retrying correctly, anchoring after the needs_continuation tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (7 → 52 lines)
+            assert!(needs_continuation("```"));
+            assert!(!needs_continuation("some text ```"));
+            assert!(!needs_continuation("normal"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_needs_continuation_does_not_swallow_bang() {
+  +         // Pin that `!` lines never enter multi-line collection
+  +         assert!(!needs_continuation("!echo hi"));
+  +         assert!(!needs_continuation("!git status"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_bang_command_basic() {
+  +         assert_eq!(parse_bang_command("!ls -la"), Some("ls -la"));
+  +         assert_eq!(parse_bang_command("  !git status"), Some("git status"));
+  +         assert_eq!(parse_bang_command("!echo hi  "), Some("echo hi"));
+  +     }
+  + 
+  +     #[test]
+  ... (29 more lines)
+ ✓ (1m 43s)
+            assert!(needs_continuation("```"));
+            assert!(!needs_continuation("some text ```"));
+            assert!(!needs_continuation("normal"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_needs_continuation_does_not_swallow_bang() {
+  +         // Pin that `!` lines never enter multi-line collection
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## " docs/src/usage/re… ✓ (4ms)
+  ▶ read docs/src/usage/repl.md:97..127 ✓ (1ms)
+  ▶ edit docs/src/usage/repl.md (1 → 12 lines)
+  + ## Shell passthrough
+  + 
+  + Prefix a line with `!` to run a shell command directly — no API call, no tokens, no confirmation prompt:
+  + 
+  + ```
+  + 🐙 › !git status
+  + 🐙 › !ls -la src/
+  + ```
+  + 
+  + Output streams live to your terminal (via `sh -c` on Unix, `cmd /C` on Windows), and the exit code is shown only when non-zero. A bare `!` prints a usage hint.
+  + 
+    ## Tool output
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  + - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, `!` shell passthrough (`parse_bang_command` — run a shell command directly with zero tokens, output streamed live), auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+ ✓ (1m 8s)
+  + ## Shell passthrough
+  + 
+  + Prefix a line with `!` to run a shell command directly — no API call, no tokens, no confirmation prompt:
+  + 
+  + ```
+  + 🐙 › !git status
+  + 🐙 › !ls -la src/
+  + ```
+  ... (4 more lines)
+ ✓ (2m 33s)
+  - - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  + - `repl.rs` — interactive REPL loop, tab-completion, multi-line input, `!` shell passthrough (`parse_bang_command` — run a shell command directly with zero tokens, output streamed live), auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  6 tools completed in 5m 11s (6 ✓)
+
+Now check if there's a natural spot in the /help header for a one-liner:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "@file\|mentions\|Tips\|… ✓ (4ms)
+  ▶ read src/help.rs:395..425 ✓ (1ms)
+  2 tools completed in 7.1s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

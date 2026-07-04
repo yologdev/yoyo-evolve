@@ -1,0 +1,114 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Rewind" src/dispatch.rs…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:975..1025 ✓ (0ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rewind" src/dispatch.rs… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_rewind\|handle_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Stash" sr… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '305,340p' src/commands_s… ✓ (6ms)
+  6 tools completed in 32.7s (6 ✓)
+
+The handler and enum variant exist; what's missing is the dispatch arm, the exhaustive-match grouping entry, and the re-export. Let me fix all three:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (5 → 10 lines)
+            CommandRoute::Stash => {
+                let result = commands::handle_stash(ctx.agent, ctx.input);
+  +             print!("{result}");
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Rewind => {
+  +             let result = commands::handle_rewind(ctx.agent);
+                print!("{result}");
+                Some(CommandResult::Continue)
+            }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1216,1236p' src/dispatch… ✓ (9.6s)
+            CommandRoute::Stash => {
+                let result = commands::handle_stash(ctx.agent, ctx.input);
+  +             print!("{result}");
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Rewind => {
+  +             let result = commands::handle_rewind(ctx.agent);
+                print!("{result}");
+                Some(CommandResult::Continue)
+            }
+ ✓ (9.6s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_stash::{auto_checkpoint, handle_stash, stash_pre_clear};
+  + pub use crate::commands_stash::{auto_checkpoint, handle_rewind, handle_stash, stash_pre_clear};
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "CommandRoute::Stash$" s… ✓ (9.7s)
+  - pub use crate::commands_stash::{auto_checkpoint, handle_stash, stash_pre_clear};
+  + pub use crate::commands_stash::{auto_checkpoint, handle_rewind, handle_stash, stash_pre_clear};
+ ✓ (9.7s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 2 lines)
+            | CommandRoute::Stash
+  +         | CommandRoute::Rewind
+ ✓ (1m 27s)
+            | CommandRoute::Stash
+  +         | CommandRoute::Rewind
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (42.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -A2 "^fai… ✓ (43.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "^    " |… ✓ (43.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/stash"\|"stash"' src/… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1190p' src/help_dat… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_text_documents_a… ✓ (149ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stash" src/help.rs | he… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '395,403p' src/help.rs &&… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (4 → 8 lines)
+        let _ = writeln!(
+            s,
+            "    /stash [desc]      Stash conversation and start fresh"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /rewind            Restore the conversation auto-stashed by /clear"
+        );
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (3 → 4 lines)
+        out.push_str(
+            "  /stash [desc]      Stash conversation and start fresh (like git stash for chat)\n",
+        );
+  +     out.push_str("  /rewind            Restore the conversation auto-stashed by /clear\n");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (1 → 9 lines)
+  +         "rewind" => Some(
+  +             "/rewind — Restore the conversation auto-stashed by /clear\n\n\
+  +              Usage:\n\
+  +              \x20 /rewind              Restore the pre-clear snapshot\n\n\
+  +              When you run /clear, the outgoing conversation is auto-stashed as a\n\
+  +              `pre-clear` entry. /rewind restores it and removes the entry —\n\
+  +              consuming semantics, so each /clear allows one rewind.",
+  +         ),
+            "stash" => Some(
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (1 → 2 lines)
+  +         "rewind" => Some("Restore the conversation auto-stashed by /clear"),
+            "side" => Some("Ask a quick question without affecting conversation"),
+ ✗ (1ms)
+    │ old_text matches 2 locations in /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs. Include more surrounding context to make the match unique.
+ ✓ (1m 28s)
+        let _ = writeln!(
+            s,
+            "    /stash [desc]      Stash conversation and start fresh"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /rewind            Restore the conversation auto-stashed by /clear"
+        );
+ ✓ (2m 39s)
+        out.push_str(
+            "  /stash [desc]      Stash conversation and start fresh (like git stash for chat)\n",
+        );
+  +     out.push_str("  /rewind            Restore the conversation auto-stashed by /clear\n");
+ ✓ (3m 50s)
+  +         "rewind" => Some("Restore the conversation auto-stashed by /clear"),
+            "side" => Some("Ask a quick question without affecting conversation"),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (2 → 10 lines)
+  +         "rewind" => Some(
+  +             "/rewind — Restore the conversation auto-stashed by /clear\n\n\
+  +              Usage:\n\
+  +              \x20 /rewind              Restore the pre-clear snapshot\n\n\
+  +              When you run /clear, the outgoing conversation is auto-stashed as a\n\
+  +              `pre-clear` entry. /rewind restores it and removes the entry —\n\
+  +              consuming semantics, so each /clear allows one rewind.",
+  +         ),
+            "stash" => Some(
+                "/stash — Save and restore conversation context\n\n\

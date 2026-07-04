@@ -1,0 +1,137 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PRE_CLEAR_LABEL" src/co…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (5ms)
+ ✓ (6ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Task 1 landed. Let me read the stash module to understand the restore path.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs:100..460 ✓ (2ms)
+  2 tools completed in 8.7s (2 ✓)
+
+Now let me look at the dispatch routing for /stash.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "stash" src/dispatch.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "match route" src/dispat… ✓ (3ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:40..70  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:200..225 ✓ (1ms)
+ ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:465..495  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1200..1240 ✓ (0ms)
+ ✓ (1ms)
+  6 tools completed in 19.5s (6 ✓)
+
+Now let me check help_data.rs and KNOWN_COMMANDS context.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 125,145p src/commands.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rewind" -ri src/ docs/ … ✓ (7ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "stash\|clear" docs/s… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/stash" docs/src/usage/… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 45,75p docs/src/usage/com… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md:47..59 ✓ (0ms)
+  6 tools completed in 38.9s (6 ✓)
+
+Now I'll implement. First the stash module — test-first with the pure function pattern:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs (2 → 42 lines)
+  + /// Remove and return the most recent pre-clear entry from `entries`.
+  + ///
+  + /// Pure function over a `&mut Vec` so it can be unit-tested with a local
+  + /// vector without touching the shared global stash.
+  + fn take_pre_clear_entry(entries: &mut Vec<StashEntry>) -> Option<StashEntry> {
+  +     let idx = entries
+  +         .iter()
+  +         .rposition(|e| e.description == PRE_CLEAR_LABEL)?;
+  +     Some(entries.remove(idx))
+  + }
+  + 
+  + /// `/rewind` — restore the conversation auto-stashed by the last `/clear`.
+  + ///
+  + /// Consuming semantics: on a successful restore the pre-clear snapshot is
+  + /// REMOVED from the stash, so `/rewind` works at most once per `/clear`.
+  + /// If the restore itself fails, the snapshot is put back so it isn't lost.
+  + pub fn handle_rewind(agent: &mut Agent) -> String {
+  +     let entry = {
+  +         let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
+  +         take_pre_clear_entry(&mut stash)
+  ... (22 more lines)
+ ✓ (16.2s)
+  + /// Remove and return the most recent pre-clear entry from `entries`.
+  + ///
+  + /// Pure function over a `&mut Vec` so it can be unit-tested with a local
+  + /// vector without touching the shared global stash.
+  + fn take_pre_clear_entry(entries: &mut Vec<StashEntry>) -> Option<StashEntry> {
+  +     let idx = entries
+  +         .iter()
+  +         .rposition(|e| e.description == PRE_CLEAR_LABEL)?;
+  ... (13 more lines)
+
+Expected until wired. Now add the tests:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs (2 → 82 lines)
+  +     #[test]
+  +     fn test_take_pre_clear_entry_empty() {
+  +         let mut entries: Vec<StashEntry> = Vec::new();
+  +         assert!(take_pre_clear_entry(&mut entries).is_none());
+  +         assert!(entries.is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_take_pre_clear_entry_none_present() {
+  +         let mut entries = vec![
+  +             StashEntry {
+  +                 description: "WIP".to_string(),
+  +                 messages_json: "[]".to_string(),
+  +                 timestamp: "00:00:00".to_string(),
+  +             },
+  +             StashEntry {
+  +                 description: "other".to_string(),
+  +                 messages_json: "[]".to_string(),
+  +                 timestamp: "00:00:01".to_string(),
+  +             },
+  ... (62 more lines)
+ ✓ (16.2s)
+  +     #[test]
+  +     fn test_take_pre_clear_entry_empty() {
+  +         let mut entries: Vec<StashEntry> = Vec::new();
+  +         assert!(take_pre_clear_entry(&mut entries).is_none());
+  +         assert!(entries.is_empty());
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Now wire it in. commands.rs re-export + KNOWN_COMMANDS:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 1 lines)
+  - pub use crate::commands_stash::{auto_checkpoint, handle_stash, stash_pre_clear};
+  + pub use crate::commands_stash::{auto_checkpoint, handle_rewind, handle_stash, stash_pre_clear};
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 2 lines)
+        "/stash",
+  +     "/rewind",
+ ✓ (16.1s)
+  - pub use crate::commands_stash::{auto_checkpoint, handle_stash, stash_pre_clear};
+  + pub use crate::commands_stash::{auto_checkpoint, handle_rewind, handle_stash, stash_pre_clear};
+ ✓ (32.2s)
+        "/stash",
+  +     "/rewind",
+  2 tools completed in 36.3s (2 ✓)
+
+Now dispatch.rs — enum variant, route, handler arm, and grouping:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 2 lines)
+        Stash,
+  +     Rewind,
+ ✓ (9.7s)
+        Stash,
+  +     Rewind,
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 2 lines)
+                "stash" => CommandRoute::Stash,
+  +             "rewind" => CommandRoute::Rewind,
+ ✓ (9.7s)
+                "stash" => CommandRoute::Stash,
+  +             "rewind" => CommandRoute::Rewind,
+  2 tools completed in 24.0s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

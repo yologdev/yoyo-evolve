@@ -1,0 +1,81 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ sed -n 1180,1200p src/cli.rs; grep -n "rewind" src/help.rs src/help_data.rs src/… ✓ (7ms)
+  ▶ $ grep -n "stash" src/help.rs | head; grep -n "cli_help_text\|fn help_text" src/he… ✓ (5ms)
+  ▶ $ sed -n 390,410p src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (4 → 8 lines)
+        let _ = writeln!(
+            s,
+            "    /stash [desc]      Stash conversation and start fresh"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /rewind            Restore the conversation auto-stashed by /clear"
+        );
+ ✓ (1m 32s)
+        let _ = writeln!(
+            s,
+            "    /stash [desc]      Stash conversation and start fresh"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /rewind            Restore the conversation auto-stashed by /clear"
+        );
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -3 ✓ (982ms)
+  ▶ $ cargo test 2>&1 | tail -5 ✓ (46.0s)
+  ▶ $ cargo test 2>&1 | grep -E "test result|FAILED"  ✓ (57.8s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -2 && cargo fmt -- --check… ✓ (17.0s)
+  8 tools completed in 4m 5s (8 ✓)
+
+All checks green. Let me commit the fix along with the rest of the /rewind work.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git status --short && git diff --stat ✓ (10ms)
+  ▶ $ grep -n "rewind" docs/src/usage/commands.md CLAUDE.md | head; git log --oneline … ✓ (5ms)
+  ▶ $ grep -n "stash\|clear" docs/src/usage/commands.md | head -20 ✓ (3ms)
+  ▶ $ grep -n "/stash" docs/src/usage/commands.md | head; sed -n 45,60p docs/src/usage… ✓ (5ms)
+  ▶ $ sed -n 48,62p docs/src/usage/commands.md ✓ (3ms)
+  ▶ $ awk 'NR>=48 && NR<=60' docs/src/usage/commands.md | cat -A | head -3; sed -n '48… ✓ (7ms)
+  ▶ read docs/src/usage/commands.md:48..62 ✓ (1ms)
+  ▶ edit docs/src/usage/commands.md (1 → 2 lines)
+  - | `/clear` | Clear conversation history and start fresh (the conversation is auto-stashed first — `/stash pop` to restore it) |
+  + | `/clear` | Clear conversation history and start fresh (the conversation is auto-stashed first — `/rewind` or `/stash pop` to restore it) |
+  + | `/rewind` | Restore the conversation auto-stashed by the last `/clear` (consuming: one rewind per clear) |
+ ✓ (1m 9s)
+  - | `/clear` | Clear conversation history and start fresh (the conversation is auto-stashed first — `/stash pop` to restore it) |
+  + | `/clear` | Clear conversation history and start fresh (the conversation is auto-stashed first — `/rewind` or `/stash pop` to restore it) |
+  + | `/rewind` | Restore the conversation auto-stashed by the last `/clear` (consuming: one rewind per clear) |
+  ▶ $ grep -n "commands_stash" CLAUDE.md📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (16ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`); `/clear` auto-stashes the outgoing conversation as a single `pre-clear` entry (`stash_pre_clear`), restorable via `/stash pop`
+  + - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`); `/clear` auto-stashes the outgoing conversation as a single `pre-clear` entry (`stash_pre_clear`), restorable via `/rewind` (consuming — one rewind per clear, via `handle_rewind`/`take_pre_clear_entry`) or `/stash pop`
+ ✓ (1m 24s)
+  - - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`); `/clear` auto-stashes the outgoing conversation as a single `pre-clear` entry (`stash_pre_clear`), restorable via `/stash pop`
+  + - `commands_stash.rs` — conversation stash subsystem: push/pop/list/drop conversation snapshots (extracted from `commands_session.rs`); `/clear` auto-stashes the outgoing conversation as a single `pre-clear` entry (`stash_pre_clear`), restorable via `/rewind` (consuming — one rewind per clear, via `handle_rewind`/`take_pre_clear_entry`) or `/stash pop`
+  ▶ $ grep -n "take_pre_clear_entry\|fn handle_rewind" src/commands_stash.rs | head ✓ (3ms)
+  11 tools completed in 3m 27s (11 ✓)
+
+Good, both exist. Final verification and commit:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check && cargo build 2>&1 | tail -1 && cargo test 2>&1 | grep -E … ✓ (1m 14s)
+  ▶ $ git add src/commands.rs src/commands_stash.rs src/dispatch.r… (9 lines) ✓ (26ms)
+  2 tools completed in 1m 27s (2 ✓)
+
+Fixed and committed. 
+
+The failure: cli::tests::help_text_documents_all_repl_commands requires every entry in KNOWN_COMMANDS to appear in the --help output. /rewind had been added to KNOWN_COMMANDS, the REPL `/help, and help_data.rs — but not to cli_help_text() in src/help.rs`.
+
+The fix: added one line to the CLI help text next to /stash:
+```
+    /rewind            Restore the conversation auto-stashed by /clear
+```
+
+Also completed the remaining definition-of-done items that hadn't landed yet:
+• docs/src/usage/commands.md — added /rewind row (consuming semantics noted) and updated the `/clear` row to mention it
+• CLAUDE.md — updated the commands_stash.rs module bullet
+
+Verification: all green — cargo build, cargo test (4151 + 88 passed, 0 failed), cargo clippy -D warnings, `cargo fmt -- --check. Committed as 9717d3c8` with a clean working tree.
+
+  watch: no files changed this turn — skipping
+
