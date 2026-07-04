@@ -905,6 +905,43 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    // === notify_command decision + spawn tests ===
+
+    #[test]
+    fn should_run_notify_command_just_below_threshold_is_false() {
+        // 2s < LONG_PROMPT_THRESHOLD_SECS (3s) — even when configured.
+        assert!(!should_run_notify_command(Duration::from_secs(2), true));
+    }
+
+    #[test]
+    fn should_run_notify_command_at_threshold_is_true() {
+        assert!(should_run_notify_command(Duration::from_secs(3), true));
+    }
+
+    #[test]
+    fn should_run_notify_command_above_threshold_is_true() {
+        assert!(should_run_notify_command(Duration::from_secs(120), true));
+    }
+
+    #[test]
+    fn should_run_notify_command_not_configured_is_false() {
+        // Long prompt but no command configured → completely inert.
+        assert!(!should_run_notify_command(Duration::from_secs(60), false));
+        assert!(!should_run_notify_command(Duration::from_secs(2), false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_notify_command_spawns_without_panicking() {
+        // Fire-and-forget: spawn a trivially-successful command and a
+        // guaranteed-missing binary; neither may panic or block.
+        run_notify_command("true", Duration::from_secs(5));
+        run_notify_command(
+            "/nonexistent/definitely-not-a-binary",
+            Duration::from_secs(5),
+        );
+    }
+
     #[test]
     fn test_truncate_short_string() {
         assert_eq!(truncate("hello", 10), "hello");

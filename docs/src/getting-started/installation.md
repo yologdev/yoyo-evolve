@@ -122,6 +122,9 @@ no_bell = false
 quiet = false
 no_color = false
 
+# Run a command when a long prompt finishes (opt-in; empty/absent = disabled)
+# notify_command = "notify-send 'yoyo' 'done'"
+
 # Custom endpoint (for ollama, proxies, etc.)
 # base_url = "http://localhost:11434/v1"
 

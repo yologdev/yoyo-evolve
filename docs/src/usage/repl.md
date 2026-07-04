@@ -98,6 +98,34 @@ This shows:
 
 Press **Ctrl+C** to cancel the current response. The agent will stop and you can type a new prompt. Press Ctrl+C again to exit.
 
+## Completion notifications
+
+When a prompt takes more than a few seconds, yoyo rings the terminal bell so you notice the finish even if you switched windows (disable with `no_bell = true` or `--no-bell`).
+
+For an actionable desktop alert, set the opt-in `notify_command` config key — a shell command yoyo runs (fire-and-forget) whenever a long prompt finishes, at the same threshold as the bell:
+
+```toml
+# .yoyo.toml — Linux
+notify_command = "notify-send 'yoyo' 'done'"
+
+# macOS
+notify_command = "osascript -e 'display notification \"done\" with title \"yoyo\"'"
+```
+
+Or set it from inside the REPL:
+
+```
+/config set notify_command notify-send 'yoyo' 'done'
+```
+
+Details:
+
+- **Opt-in and inert by default** — when the key is absent (or empty), nothing is spawned and no tools are probed.
+- Runs via `sh -c` on Unix and `cmd /C` on Windows, fully detached: yoyo never waits on it and its output is discarded, so it can never block the REPL.
+- The command receives two environment variables so one script can serve multiple purposes: `YOYO_EVENT=prompt_completed` and `YOYO_ELAPSED_SECS=<seconds>`.
+- If the command fails to spawn, yoyo stays silent by default (one-line warning with `--verbose`).
+- Setting it to an empty string clears it: `/config set notify_command ""`.
+
 ## Inline @file mentions
 
 You can reference files directly in your prompts using `@path` syntax. The file content is automatically read and injected into the conversation — no need for a separate `/add` command.

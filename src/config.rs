@@ -1704,6 +1704,71 @@ env = { API_KEY = "secret" }
         assert!(validate_config_value("no_bell", "maybe").is_err());
     }
 
+    // === notify_command config tests ===
+
+    #[test]
+    fn notify_command_absent_is_none() {
+        let config = std::collections::HashMap::new();
+        assert_eq!(parse_notify_command_from_config(&config), None);
+    }
+
+    #[test]
+    fn notify_command_empty_is_none() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("notify_command".to_string(), "".to_string());
+        assert_eq!(parse_notify_command_from_config(&config), None);
+    }
+
+    #[test]
+    fn notify_command_whitespace_only_is_none() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("notify_command".to_string(), "   ".to_string());
+        assert_eq!(parse_notify_command_from_config(&config), None);
+    }
+
+    #[test]
+    fn notify_command_set_returns_value() {
+        let mut config = std::collections::HashMap::new();
+        config.insert(
+            "notify_command".to_string(),
+            "notify-send 'yoyo' 'done'".to_string(),
+        );
+        assert_eq!(
+            parse_notify_command_from_config(&config),
+            Some("notify-send 'yoyo' 'done'".to_string())
+        );
+    }
+
+    #[test]
+    fn notify_command_value_is_trimmed() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("notify_command".to_string(), "  echo done  ".to_string());
+        assert_eq!(
+            parse_notify_command_from_config(&config),
+            Some("echo done".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_notify_command_accepts_any_string() {
+        // Any user-supplied command string is valid...
+        assert_eq!(
+            validate_config_value("notify_command", "notify-send 'yoyo' 'done'"),
+            Ok("notify-send 'yoyo' 'done'".to_string())
+        );
+        // ...including an empty string, which clears/disables the feature.
+        assert_eq!(
+            validate_config_value("notify_command", ""),
+            Ok("".to_string())
+        );
+    }
+
+    #[test]
+    fn notify_command_is_a_settable_key() {
+        // `/config set` recognizes keys via SETTABLE_KEYS.
+        assert!(SETTABLE_KEYS.iter().any(|(k, _)| *k == "notify_command"));
+    }
+
     // === quiet config tests ===
 
     #[test]
