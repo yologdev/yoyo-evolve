@@ -267,6 +267,40 @@ pub fn needs_continuation(line: &str) -> bool {
     line.ends_with('\\') || line.starts_with("```")
 }
 
+/// Parse a `!` shell-passthrough line.
+///
+/// Returns `Some(cmd)` when the trimmed line starts with `!`: the command is
+/// everything after the `!`, trimmed. A bare `!` (or `!` + whitespace only)
+/// returns `Some("")` so the caller can print a usage hint. Lines not starting
+/// with `!` return `None`. Uses only char-safe operations (no byte indexing).
+pub fn parse_bang_command(line: &str) -> Option<&str> {
+    line.trim().strip_prefix('!').map(str::trim)
+}
+
+/// Run a shell command directly for `!` passthrough, inheriting stdout/stderr
+/// so output streams live to the terminal. Prints the exit code only when
+/// non-zero. Never panics on spawn failure — prints the error and returns.
+fn run_bang_command(cmd: &str) {
+    #[cfg(not(windows))]
+    let status = std::process::Command::new("sh").args(["-c", cmd]).status();
+    #[cfg(windows)]
+    let status = std::process::Command::new("cmd").args(["/C", cmd]).status();
+
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            let code = s
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "terminated by signal".to_string());
+            eprintln!("{DIM}(exit {code}){RESET}");
+        }
+        Err(e) => {
+            eprintln!("{RED}failed to run command: {e}{RESET}");
+        }
+    }
+}
+
 /// Collect multi-line input using rustyline (for interactive REPL mode).
 /// Same logic as `collect_multiline` but uses rustyline's readline for continuation prompts.
 pub fn collect_multiline_rl(
@@ -790,6 +824,16 @@ pub async fn run_repl(
             input.to_string()
         };
         let input = input.trim();
+
+        // `!` shell passthrough: run the command directly, no API call, no cost.
+        if let Some(cmd) = parse_bang_command(input) {
+            if cmd.is_empty() {
+                println!("{DIM}! <cmd> — run a shell command directly{RESET}");
+            } else {
+                run_bang_command(cmd);
+            }
+            continue;
+        }
 
         let mut dispatch_ctx = crate::dispatch::DispatchContext {
             input,
@@ -1484,6 +1528,51 @@ mod tests {
         assert!(needs_continuation("```"));
         assert!(!needs_continuation("some text ```"));
         assert!(!needs_continuation("normal"));
+    }
+
+    #[test]
+    fn test_needs_continuation_does_not_swallow_bang() {
+        // Pin that `!` lines never enter multi-line collection
+        assert!(!needs_continuation("!echo hi"));
+        assert!(!needs_continuation("!git status"));
+    }
+
+    #[test]
+    fn test_parse_bang_command_basic() {
+        assert_eq!(parse_bang_command("!ls -la"), Some("ls -la"));
+        assert_eq!(parse_bang_command("  !git status"), Some("git status"));
+        assert_eq!(parse_bang_command("!echo hi  "), Some("echo hi"));
+    }
+
+    #[test]
+    fn test_parse_bang_command_empty_command() {
+        // Bare `!` or `!` + whitespace → Some("") so the caller prints a usage hint
+        assert_eq!(parse_bang_command("!"), Some(""));
+        assert_eq!(parse_bang_command("!   "), Some(""));
+    }
+
+    #[test]
+    fn test_parse_bang_command_not_bang() {
+        assert_eq!(parse_bang_command("hello"), None);
+        assert_eq!(parse_bang_command("/help"), None);
+        assert_eq!(parse_bang_command(""), None);
+        assert_eq!(parse_bang_command("   "), None);
+        // `!` in the middle is not passthrough
+        assert_eq!(parse_bang_command("wow!"), None);
+    }
+
+    #[test]
+    fn test_parse_bang_command_edge_spellings() {
+        // `!!` and `!=` are still commands — pass through as-is
+        assert_eq!(parse_bang_command("!!"), Some("!"));
+        assert_eq!(parse_bang_command("!="), Some("="));
+    }
+
+    #[test]
+    fn test_parse_bang_command_multibyte() {
+        // Must not panic on multi-byte chars (char-safe ops only, no byte indexing)
+        assert_eq!(parse_bang_command("!echo héllo ✓"), Some("echo héllo ✓"));
+        assert_eq!(parse_bang_command("!héllo"), Some("héllo"));
     }
 
     #[test]

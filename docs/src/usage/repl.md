@@ -64,6 +64,17 @@ This happens up to 3 times per user turn. Auto-continue won't fire if:
 - The session budget is exhausted
 - The response doesn't show clear signs of being incomplete
 
+## Shell passthrough
+
+Prefix a line with `!` to run a shell command directly — no API call, no tokens, no confirmation prompt:
+
+```
+🐙 › !git status
+🐙 › !ls -la src/
+```
+
+Output streams live to your terminal (via `sh -c` on Unix, `cmd /C` on Windows), and the exit code is shown only when non-zero. A bare `!` prints a usage hint.
+
 ## Tool output
 
 When yoyo uses tools, you'll see status indicators:
