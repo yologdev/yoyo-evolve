@@ -1,0 +1,191 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs ✓ (3ms)
+ ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs:100..340  ▶ search 'Clear' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs ✓ (3ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:985..1055  ▶ search 'Stash|stash' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ search 'handle_stash' in /home/runner/work/yoyo-evolve/yoyo-evolve/src  ▶ search '/stash' in /home/runner/work/yoyo-evolve/yoyo-evolve/src ✓ (7ms)
+ ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:465..495  ▶ search 'CommandRoute::(Stash|Save|Load)' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs ✓ (2ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:30..90  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:130..170 ✓ (1ms)
+ ✓ (2ms)
+  ▶ search 'replace_messages\(vec!' in /home/runner/work/yoyo-evolve/yoyo-evolve/src  ▶ search 'Message \{|Message::user|MessageRole' in /home/runner/work/yoyo-evolve/yoyo-evolve/src ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+ ✗ (2ms)
+    │ Search error: grep: Unmatched \{
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "replace_messages(vec!"… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentMessage\|use yoag… ✓ (8ms)
+  16 tools completed in 52.3s (14 ✓, 2 ✗)
+
+Now let me check the KNOWN_COMMANDS list and help_data patterns:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/stash"' src/commands.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 125,145p src/commands.rs … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TEST_LOCK\|serial\|Mute… ✓ (5ms)
+  3 tools completed in 50.8s (3 ✓)
+
+Now I have the full picture. Let me implement. First, commands_stash.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs (2 → 75 lines)
+  + /// Reserved label for the automatic snapshot taken right before `/clear`.
+  + /// At most one entry with this label exists at a time.
+  + pub const PRE_CLEAR_LABEL: &str = "pre-clear";
+  + 
+  + /// Snapshot the current conversation before `/clear` so `/rewind` can restore it.
+  + ///
+  + /// Replaces any previous pre-clear snapshot (at most one is kept, so repeated
+  + /// `/clear` doesn't grow the stash unboundedly). Does nothing for an empty
+  + /// conversation. The snapshot shows up in `/stash list` under its `pre-clear`
+  + /// label. Returns `true` if a snapshot was saved.
+  + pub fn stash_pre_clear(agent: &Agent) -> bool {
+  +     stash_pre_clear_in(&CONVERSATION_STASH, agent)
+  + }
+  + 
+  + /// Testable inner implementation of [`stash_pre_clear`] operating on an
+  + /// explicit stash lock (tests use a local lock to avoid global-state races).
+  + fn stash_pre_clear_in(stash_lock: &RwLock<Vec<StashEntry>>, agent: &Agent) -> bool {
+  +     if agent.messages().is_empty() {
+  +         return false;
+  +     }
+  ... (55 more lines)
+ ✓ (16.3s)
+  + /// Reserved label for the automatic snapshot taken right before `/clear`.
+  + /// At most one entry with this label exists at a time.
+  + pub const PRE_CLEAR_LABEL: &str = "pre-clear";
+  + 
+  + /// Snapshot the current conversation before `/clear` so `/rewind` can restore it.
+  + ///
+  + /// Replaces any previous pre-clear snapshot (at most one is kept, so repeated
+  + /// `/clear` doesn't grow the stash unboundedly). Does nothing for an empty
+  ... (13 more lines)
+
+Expected — dead-code until wired. Now add the tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs (7 → 125 lines)
+  +     #[test]
+  +     fn test_stash_pre_clear_replaces_previous_entry() {
+  +         use yoagent::provider::AnthropicProvider;
+  +         use yoagent::{AgentMessage, Message};
+  + 
+  +         // Local lock: no interference with other tests or the global stash.
+  +         let lock: RwLock<Vec<StashEntry>> = RwLock::new(Vec::new());
+  +         let mut agent = Agent::new(AnthropicProvider)
+  +             .with_system_prompt("test")
+  +             .with_model("test-model")
+  +             .with_api_key("test-key");
+  +         agent.replace_messages(vec![AgentMessage::Llm(Message::user("first"))]);
+  + 
+  +         let saved1 = stash_pre_clear_in(&lock, &agent);
+  +         assert!(saved1, "First pre-clear snapshot should be saved");
+  + 
+  +         agent.replace_messages(vec![
+  +             AgentMessage::Llm(Message::user("second")),
+  +             AgentMessage::Llm(Message::user("third")),
+  +         ]);
+  ... (108 more lines)
+ ✓ (243ms)
+  +     #[test]
+  +     fn test_stash_pre_clear_replaces_previous_entry() {
+  +         use yoagent::provider::AnthropicProvider;
+  +         use yoagent::{AgentMessage, Message};
+  + 
+  +         // Local lock: no interference with other tests or the global stash.
+  +         let lock: RwLock<Vec<StashEntry>> = RwLock::new(Vec::new());
+  +         let mut agent = Agent::new(AnthropicProvider)
+  ... (13 more lines)
+
+I broke the previous test's closing. Let me fix:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,560p src/commands_sta… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_stash.rs (3 → 10 lines)
+                .expect("Should have at least one auto-checkpoint");
+  +         assert!(
+  +             first_auto.description.contains("turn 15"),
+  +             "Oldest remaining should be turn 15, got: {}",
+  +             first_auto.description
+  +         );
+  +     }
+  + 
+        #[test]
+        fn test_stash_pre_clear_replaces_previous_entry() {
+ ✓ (16.2s)
+                .expect("Should have at least one auto-checkpoint");
+  +         assert!(
+  +             first_auto.description.contains("turn 15"),
+  +             "Oldest remaining should be turn 15, got: {}",
+  +             first_auto.description
+  +         );
+  +     }
+  + 
+        #[test]
+        fn test_stash_pre_clear_replaces_previous_entry() {
+  2 tools completed in 24.1s (2 ✓)
+
+Good — only dead-code errors remain until wired. Now wire up dispatch.rs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (3 → 4 lines)
+        Save,
+        Load,
+        Stash,
+  +     Rewind,
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (2 → 3 lines)
+            "/clear" => CommandRoute::Clear,
+            "/clear!" => CommandRoute::ClearForce,
+  +         "/rewind" => CommandRoute::Rewind,
+ ✓ (9.9s)
+        Save,
+        Load,
+        Stash,
+  +     Rewind,
+ ✓ (19.7s)
+            "/clear" => CommandRoute::Clear,
+            "/clear!" => CommandRoute::ClearForce,
+  +         "/rewind" => CommandRoute::Rewind,
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Rewind" src/dispatch.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/dispatch.rs | head … ✓ (6ms)
+  4 tools completed in 35.7s (4 ✓)
+
+The parallel edits raced on the same file. Applying the enum change again, sequentially:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (4 → 5 lines)
+        Save,
+        Load,
+        Stash,
+  +     Rewind,
+        Fork,
+ ✓ (9.7s)
+        Save,
+        Load,
+        Stash,
+  +     Rewind,
+        Fork,
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (5 → 11 lines)
+            CommandRoute::Stash => {
+                let result = commands::handle_stash(ctx.agent, ctx.input);
+  +             print!("{result}");
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Rewind => {
+  +             let result = commands::handle_rewind(ctx.agent);
+                print!("{result}");
+  +             reset_compact_thrash();
+                Some(CommandResult::Continue)
+            }
+ ✓ (10.2s)
+            CommandRoute::Stash => {
+                let result = commands::handle_stash(ctx.agent, ctx.input);
+  +             print!("{result}");
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Rewind => {
+  +             let result = commands::handle_rewind(ctx.agent);
+                print!("{result}");
+  ... (3 more lines)
+  2 tools completed in 25.0s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

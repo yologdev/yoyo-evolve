@@ -1,0 +1,50 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1470,1480p src/commands_r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1430,1445p src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 170,200p src/commands_ris… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (7.8s)
+  4 tools completed in 32.0s (4 ✓)
+
+Build is green. Now run the full check suite:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && git stat… ✓ (931ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk" CLAUDE.m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use crate::commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_report\|p… ✓ (6ms)
+  6 tools completed in 1m 55s (6 ✓)
+
+The re-exports are in place. Now update CLAUDE.md per the task:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (2 → 3 lines)
+  - - `commands_risk.rs` — /risk command: file risk scoring, history, predict, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+  + - `commands_risk.rs` — /risk command: file risk scoring (`compute_file_risk_scores`, `learn_weights_from_history`, `detect_emerging_risks`), history, predict, co-change coupling, `top_risk_files` helper for cross-module risk queries
+  + - `commands_risk_report.rs` — report/context formatting for /risk: `format_risk_report`, `format_risk_context`, `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+    - `commands_risk_snapshots.rs` —
+ ✓ (1m 15s)
+  - - `commands_risk.rs` — /risk command: file risk scoring, history, predict, co-change coupling, test coverage mapping, `top_risk_files` helper for cross-module risk queries
+  + - `commands_risk.rs` — /risk command: file risk scoring (`compute_file_risk_scores`, `learn_weights_from_history`, `detect_emerging_risks`), history, predict, co-change coupling, `top_risk_files` helper for cross-module risk queries
+  + - `commands_risk_report.rs` — report/context formatting for /risk: `format_risk_report`, `format_risk_context`, `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+    - `commands_risk_snapshots.rs` —
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build … (10 lines) ✓ (1.0s)
+  2 tools completed in 1m 29s (2 ✓)
+
+Fixed and committed. The problem was a visibility gap left by the extraction:
+
+Root cause: `commands_risk_report.rs imports compute_accuracy_stats from commands_risk, but that function (and its return type AccuracyStats`, whose fields the report module reads) was still private.
+
+Fix: Made compute_accuracy_stats and `AccuracyStats (with its fields) pub(crate) in src/commands_risk.rs` — no behavior change, just visibility.
+
+Verification (all green):
+• cargo build ✓
+• cargo test ✓ — 4144 + 88 passed, 0 failed
+• cargo clippy --all-targets -- -D warnings ✓
+• cargo fmt -- --check ✓
+• CLAUDE.md module list updated (added commands_risk_report.rs entry, trimmed the commands_risk.rs line)
+• Committed as `fa41fc27`
+
+  watch: no files changed this turn — skipping
+

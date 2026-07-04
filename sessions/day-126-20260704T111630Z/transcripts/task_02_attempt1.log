@@ -1,0 +1,95 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "needs_continuation\|fn …  ▶ search 'safe_truncate|append_tail_preview' in src/format/mod.rs ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_truncate\|append_t…  ▶ read src/repl.rs:260..340 ✓ (1ms)
+ ✓ (4ms)
+  ▶ read src/repl.rs:701..901 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'cmd /C\|"cmd"\|cfg(win…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"sh"' src/*.rs src/form… ✓ (8ms)
+ ✓ (14ms)
+  ▶ read src/format/mod.rs:95..145  ▶ read src/format/mod.rs:305..395 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "starts_with(\"!\")\|sta… ✓ (11ms)
+  ▶ read src/dispatch.rs:150..210  ▶ read src/commands_run.rs:100..220 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/commands_run.rs (100 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RunUsage\|CommandRoute:…  ▶ read src/commands_run.rs:490..530 ✓ (1ms)
+ ✓ (6ms)
+  ▶ read src/dispatch.rs:895..915 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod commands_run" src/m… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"run"' src/help_data.rs… ✓ (5ms)
+  ▶ read src/help_data.rs:718..743 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"!"' src/dispatch.rs sr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1520,1545p;1620,1640p' s… ✓ (3ms)
+  ▶ edit src/commands_run.rs (16 → 110 lines)
+    /// Clear the last failed run result (e.g. after a successful run).
+    fn clear_last_failed_run() {
+        *lock_or_recover(&LAST_FAILED_RUN) = None;
+  + }
+  + 
+  + /// Classification of a REPL input line with respect to `!` shell passthrough.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub enum BangLine<'a> {
+  +     /// `!<cmd>` — run `cmd` directly in the shell (no API call).
+  +     Command(&'a str),
+  +     /// A bare `!` (possibly with trailing whitespace) — show a usage hint.
+  +     Bare,
+  +     /// Not a `!` line at all.
+  +     NotBang,
+  + }
+  + 
+  + /// Parse a REPL input line for `!` shell passthrough.
+  + ///
+  + /// Pure helper so the detection logic is unit-testable independently of
+  + /// dispatch routing and command execution.
+  ... (88 more lines)
+ ✓ (16.7s)
+    /// Clear the last failed run result (e.g. after a successful run).
+    fn clear_last_failed_run() {
+        *lock_or_recover(&LAST_FAILED_RUN) = None;
+  + }
+  + 
+  + /// Classification of a REPL input line with respect to `!` shell passthrough.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + pub enum BangLine<'a> {
+  ... (13 more lines)
+  22 tools completed in 3m 17s (22 ✓)
+
+Expected dead-code warnings until wired up. Continuing — update handle_run:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_run.rs (20 → 31 lines)
+    pub fn handle_run(input: &str) {
+  -     let cmd = if input.starts_with("/run ") {
+  -         input.trim_start_matches("/run ").trim()
+  -     } else if input.starts_with('!') && input.len() > 1 {
+  -         input[1..].trim()
+  +     let cmd = if let Some(rest) = input.strip_prefix("/run") {
+  +         rest.trim()
+        } else {
+  -         ""
+  +         match parse_bang_line(input) {
+  +             BangLine::Command(c) => c,
+  +             _ => "",
+  +         }
+        };
+        if cmd.is_empty() {
+            println!("{DIM}  usage: /run <command>  or  !<command>{RESET}\n");
+        } else {
+            let result = run_shell_command(cmd);
+            print_run_result(&result);
+  +         // Record a compact note so the agent sees what the user just ran
+  ... (12 more lines)
+ ✓ (16.6s)
+    pub fn handle_run(input: &str) {
+  -     let cmd = if input.starts_with("/run ") {
+  -         input.trim_start_matches("/run ").trim()
+  -     } else if input.starts_with('!') && input.len() > 1 {
+  -         input[1..].trim()
+  +     let cmd = if let Some(rest) = input.strip_prefix("/run") {
+  +         rest.trim()
+        } else {
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

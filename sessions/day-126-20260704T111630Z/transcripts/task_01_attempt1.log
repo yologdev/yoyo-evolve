@@ -1,0 +1,120 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_stash.rs  ▶ search 'Clear' in src/dispatch.rs ✓ (4ms)
+ ✓ (5ms)
+  ▶ read src/commands_stash.rs:100..350  ▶ read src/dispatch.rs:980..1050 ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/dispatch.rs (120 lines)  ▶ search 'Stash' in src/dispatch.rs ✓ (2ms)
+ ✓ (3ms)
+  ▶ read src/dispatch.rs:190..290  ▶ read src/dispatch.rs:470..490 ✓ (1ms)
+ ✓ (2ms)
+  ▶ search 'stash' in src/commands.rs  ▶ search 'stash' in src/help_data.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/commands.rs:125..155  ▶ search '"clear"' in src/help_data.rs ✓ (2ms)
+ ✓ (2ms)
+  ▶ read src/help_data.rs:85..110  ▶ read src/help_data.rs:1290..1315 ✓ (0ms)
+ ✓ (1ms)
+  ▶ read src/commands_stash.rs:349..449 ✓ (1ms)
+  ▶ search 'Message \{|Message::|MessageRole|ContentBlock::Text' in src (*.rs) ✗ (2ms)
+    │ Search error: grep: Unmatched \{
+  ▶ search 'replace_messages' in src (*.rs)  ▶ search 'ContentBlock::Text' in src (*.rs) ✓ (6ms)
+ ✓ (9ms)
+  ▶ search 'role: .user|Role::User|user_text|Message::user' in src (*.rs) ✓ (12ms)
+  ▶ $ grep -rn "Message" src/prompt_utils.rs src/session.rs src/commands_session.rs | … ✓ (8ms)
+  ▶ $ grep -n "use yoagent" src/prompt_utils.rs | head; grep -n "AgentMessage" ~/.carg… ✓ (4ms)
+  21 tools completed in 1m 47s (20 ✓, 1 ✗)
+
+Now I have the full picture. Let me check the dispatch context around line 1207 and the Stash handler's enclosing function:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/dispatch.rs:1185..1225  ▶ $ awk 'NR>=380 && NR<=480 && /^(pub|async|fn|    fn)|^async fn|^pub\(crate\)/' src… ✓ (1ms)
+ ✓ (5ms)
+  2 tools completed in 8.4s (2 ✓)
+
+Now implementing. First, the new functions in commands_stash.rs — starting with a shared timestamp helper and the pre-clear/rewind logic:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_stash.rs (2 → 15 lines)
+  + /// Current wall-clock time as `HH:MM:SS` (UTC), for stash entry timestamps.
+  + fn hhmmss_now() -> String {
+  +     use std::time::SystemTime;
+  +     let secs = SystemTime::now()
+  +         .duration_since(SystemTime::UNIX_EPOCH)
+  +         .unwrap_or_default()
+  +         .as_secs();
+  +     let h = (secs % 86400) / 3600;
+  +     let m = (secs % 3600) / 60;
+  +     let s = secs % 60;
+  +     format!("{h:02}:{m:02}:{s:02}")
+  + }
+  + 
+    /// A single stash entry holding a serialized conversation snapshot.
+    struct StashEntry {
+  ▶ edit src/commands_stash.rs (15 → 4 lines)
+  -     let timestamp = {
+  -         use std::time::SystemTime;
+  -         let secs = SystemTime::now()
+  -             .duration_since(SystemTime::UNIX_EPOCH)
+  -             .unwrap_or_default()
+  -             .as_secs();
+  -         // Simple HH:MM:SS from epoch seconds (UTC)
+  -         let h = (secs % 86400) / 3600;
+  -         let m = (secs % 3600) / 60;
+  -         let s = secs % 60;
+  -         format!("{h:02}:{m:02}:{s:02}")
+  -     };
+  +     let timestamp = hhmmss_now();
+    
+        stash.push(StashEntry {
+            description: desc.clone(),
+  ▶ edit src/commands_stash.rs (12 → 2 lines)
+        let description = format!("{AUTO_CHECKPOINT_PREFIX} at turn {turn_count}");
+  -     let timestamp = {
+  -         use std::time::SystemTime;
+  -         let secs = SystemTime::now()
+  -             .duration_since(SystemTime::UNIX_EPOCH)
+  -             .unwrap_or_default()
+  -             .as_secs();
+  -         let h = (secs % 86400) / 3600;
+  -         let m = (secs % 3600) / 60;
+  -         let s = secs % 60;
+  -         format!("{h:02}:{m:02}:{s:02}")
+  -     };
+  +     let timestamp = hhmmss_now();
+ ✓ (695ms)
+  -     let timestamp = {
+  -         use std::time::SystemTime;
+  -         let secs = SystemTime::now()
+  -             .duration_since(SystemTime::UNIX_EPOCH)
+  -             .unwrap_or_default()
+  -             .as_secs();
+  -         // Simple HH:MM:SS from epoch seconds (UTC)
+  -         let h = (secs % 86400) / 3600;
+  ... (8 more lines)
+ ✓ (10.9s)
+  + /// Current wall-clock time as `HH:MM:SS` (UTC), for stash entry timestamps.
+  + fn hhmmss_now() -> String {
+  +     use std::time::SystemTime;
+  +     let secs = SystemTime::now()
+  +         .duration_since(SystemTime::UNIX_EPOCH)
+  +         .unwrap_or_default()
+  +         .as_secs();
+  +     let h = (secs % 86400) / 3600;
+  ... (7 more lines)
+ ✓ (21.1s)
+        let description = format!("{AUTO_CHECKPOINT_PREFIX} at turn {turn_count}");
+  -     let timestamp = {
+  -         use std::time::SystemTime;
+  -         let secs = SystemTime::now()
+  -             .duration_since(SystemTime::UNIX_EPOCH)
+  -             .unwrap_or_default()
+  -             .as_secs();
+  -         let h = (secs % 86400) / 3600;
+  ... (5 more lines)
+  3 tools completed in 26.3s (3 ✓)
+
+The parallel edits to the same file collided. Let me inspect the damage:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ git diff --stat; sed -n '1,60p' src/commands_stash.rs ✓ (6ms)
+
+  watch: no files changed this turn — skipping
+
