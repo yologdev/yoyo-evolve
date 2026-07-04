@@ -133,6 +133,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/open",
     "/outline",
     "/stash",
+    "/rewind",
     "/teach",
     "/tips",
     "/todo",
@@ -559,7 +560,7 @@ pub use crate::commands_session::{
 };
 
 // Stash subsystem
-pub use crate::commands_stash::{auto_checkpoint, handle_stash, stash_pre_clear};
+pub use crate::commands_stash::{auto_checkpoint, handle_rewind, handle_stash, stash_pre_clear};
 
 // Fork and checkpoint handlers
 pub use crate::commands_fork::{

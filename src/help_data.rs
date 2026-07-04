@@ -1167,6 +1167,14 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /ast $X.unwrap() --lang rust\n\
              \x20 /ast fn $NAME($$$ARGS) --lang rust --in src/",
         ),
+        "rewind" => Some(
+            "/rewind — Restore the conversation auto-stashed by /clear\n\n\
+             Usage:\n\
+             \x20 /rewind              Restore the pre-clear snapshot\n\n\
+             When you run /clear, the outgoing conversation is auto-stashed as a\n\
+             `pre-clear` entry. /rewind restores it and removes the entry —\n\
+             consuming semantics, so each /clear allows one rewind.",
+        ),
         "stash" => Some(
             "/stash — Save and restore conversation context\n\n\
              Usage:\n\
@@ -1357,6 +1365,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "save" => Some("Save session to file"),
         "search" => Some("Search conversation history"),
         "security" => Some("Run dependency vulnerability scan"),
+        "rewind" => Some("Restore the conversation auto-stashed by /clear"),
         "side" => Some("Ask a quick question without affecting conversation"),
         "skill" => Some("List, inspect, install, and search for skills"),
         "spawn" => Some("Run a task in a sub-agent"),

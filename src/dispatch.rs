@@ -45,6 +45,7 @@ pub(crate) enum CommandRoute {
     Save,
     Load,
     Stash,
+    Rewind,
     Fork,
     Checkpoint,
     Diff,
@@ -209,6 +210,7 @@ fn route_command_prefix(input: &str) -> CommandRoute {
             "save" => CommandRoute::Save,
             "load" => CommandRoute::Load,
             "stash" => CommandRoute::Stash,
+            "rewind" => CommandRoute::Rewind,
             "fork" => CommandRoute::Fork,
             "checkpoint" => CommandRoute::Checkpoint,
             "diff" => CommandRoute::Diff,
@@ -477,6 +479,11 @@ async fn dispatch_session_command(
         }
         CommandRoute::Stash => {
             let result = commands::handle_stash(ctx.agent, ctx.input);
+            print!("{result}");
+            Some(CommandResult::Continue)
+        }
+        CommandRoute::Rewind => {
+            let result = commands::handle_rewind(ctx.agent);
             print!("{result}");
             Some(CommandResult::Continue)
         }
@@ -1215,6 +1222,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         CommandRoute::Save
         | CommandRoute::Load
         | CommandRoute::Stash
+        | CommandRoute::Rewind
         | CommandRoute::Fork
         | CommandRoute::Checkpoint
         | CommandRoute::History

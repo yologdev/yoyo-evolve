@@ -400,6 +400,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "    /rewind            Restore the conversation auto-stashed by /clear"
+    );
+    let _ = writeln!(
+        s,
         "    /fork [sub]        Branch conversations (switch/list/delete/rename)"
     );
     let _ = writeln!(
@@ -719,6 +723,7 @@ pub fn help_text() -> String {
     out.push_str(
         "  /stash [desc]      Stash conversation and start fresh (like git stash for chat)\n",
     );
+    out.push_str("  /rewind            Restore the conversation auto-stashed by /clear\n");
     out.push_str("  /fork [sub]        Branch conversations (switch, list, delete, rename)\n");
     out.push_str(
         "  /todo [subcmd]     Track tasks: add, done, wip, remove, clear (in-session checklist)\n",

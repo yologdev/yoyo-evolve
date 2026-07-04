@@ -306,6 +306,46 @@ pub fn stash_pre_clear(agent: &Agent) -> bool {
     true
 }
 
+/// Remove and return the most recent pre-clear entry from `entries`.
+///
+/// Pure function over a `&mut Vec` so it can be unit-tested with a local
+/// vector without touching the shared global stash.
+fn take_pre_clear_entry(entries: &mut Vec<StashEntry>) -> Option<StashEntry> {
+    let idx = entries
+        .iter()
+        .rposition(|e| e.description == PRE_CLEAR_LABEL)?;
+    Some(entries.remove(idx))
+}
+
+/// `/rewind` — restore the conversation auto-stashed by the last `/clear`.
+///
+/// Consuming semantics: on a successful restore the pre-clear snapshot is
+/// REMOVED from the stash, so `/rewind` works at most once per `/clear`.
+/// If the restore itself fails, the snapshot is put back so it isn't lost.
+pub fn handle_rewind(agent: &mut Agent) -> String {
+    let entry = {
+        let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
+        take_pre_clear_entry(&mut stash)
+    };
+
+    let Some(entry) = entry else {
+        return format!("{DIM}  nothing to rewind — /clear hasn't been used this session{RESET}\n");
+    };
+
+    match agent.restore_messages(&entry.messages_json) {
+        Ok(_) => format!(
+            "{GREEN}  ✓ rewound to pre-clear snapshot ({} messages restored){RESET}\n",
+            agent.messages().len()
+        ),
+        Err(e) => {
+            // Restore failed — put the snapshot back so it isn't consumed.
+            let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
+            push_pre_clear_entry(&mut stash, entry);
+            format!("{RED}  failed to rewind: {e}{RESET}\n")
+        }
+    }
+}
+
 /// Dispatch a `/stash` command.
 pub fn handle_stash(agent: &mut Agent, input: &str) -> String {
     let (subcmd, arg) = parse_stash_subcommand(input);
@@ -574,6 +614,86 @@ mod tests {
 
         // No messages → no-op, and the global stash is never touched.
         assert!(!stash_pre_clear(&agent));
+    }
+
+    #[test]
+    fn test_take_pre_clear_entry_empty() {
+        let mut entries: Vec<StashEntry> = Vec::new();
+        assert!(take_pre_clear_entry(&mut entries).is_none());
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_take_pre_clear_entry_none_present() {
+        let mut entries = vec![
+            StashEntry {
+                description: "WIP".to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:00".to_string(),
+            },
+            StashEntry {
+                description: "other".to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:01".to_string(),
+            },
+        ];
+        assert!(take_pre_clear_entry(&mut entries).is_none());
+        // Untouched: both ordinary entries survive.
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].description, "WIP");
+        assert_eq!(entries[1].description, "other");
+    }
+
+    #[test]
+    fn test_take_pre_clear_entry_removes_and_returns() {
+        let mut entries = vec![
+            StashEntry {
+                description: "WIP".to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:00".to_string(),
+            },
+            StashEntry {
+                description: PRE_CLEAR_LABEL.to_string(),
+                messages_json: "[{\"snapshot\":true}]".to_string(),
+                timestamp: "00:00:01".to_string(),
+            },
+            StashEntry {
+                description: "later".to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:02".to_string(),
+            },
+        ];
+        let taken = take_pre_clear_entry(&mut entries).expect("should find pre-clear entry");
+        assert_eq!(taken.description, PRE_CLEAR_LABEL);
+        assert_eq!(taken.messages_json, "[{\"snapshot\":true}]");
+        // Consuming semantics: entry removed, neighbors preserved in order.
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].description, "WIP");
+        assert_eq!(entries[1].description, "later");
+        // Second take finds nothing — one rewind per clear.
+        assert!(take_pre_clear_entry(&mut entries).is_none());
+    }
+
+    #[test]
+    fn test_take_pre_clear_entry_takes_most_recent() {
+        // Two pre-clear entries (shouldn't happen via push_pre_clear_entry,
+        // but be defensive): the most recent one wins.
+        let mut entries = vec![
+            StashEntry {
+                description: PRE_CLEAR_LABEL.to_string(),
+                messages_json: "old".to_string(),
+                timestamp: "00:00:00".to_string(),
+            },
+            StashEntry {
+                description: PRE_CLEAR_LABEL.to_string(),
+                messages_json: "new".to_string(),
+                timestamp: "00:00:01".to_string(),
+            },
+        ];
+        let taken = take_pre_clear_entry(&mut entries).expect("should find pre-clear entry");
+        assert_eq!(taken.messages_json, "new");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].messages_json, "old");
     }
 
     #[test]
