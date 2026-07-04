@@ -257,6 +257,9 @@ pub struct SpawnArgs {
     /// If set, multiple tasks to run in parallel (from `--parallel` flag).
     /// `None` for normal spawn, `Some(tasks)` for parallel dispatch.
     pub parallel_tasks: Option<Vec<String>>,
+    /// Whether to push the handoff branch and open a draft PR on completion
+    /// (`--pr` flag). Strictly opt-in — defaults to false.
+    pub pr: bool,
 }
 
 /// Parse the `/spawn` command input, extracting flags and task.
@@ -268,6 +271,7 @@ pub struct SpawnArgs {
 /// - `/spawn --bg -o <path> <task>` — background with output capture
 /// - `/spawn --model <name> <task>` — use a specific model
 /// - `/spawn --system <prompt> <task>` — custom system prompt (quoted for multi-word)
+/// - `/spawn --pr <task>` — push handoff branch + open a draft PR on completion
 /// - `/spawn collect <id>` — collect a finished background spawn
 ///
 /// Returns `None` if no task or if this is a subcommand like `status`.
@@ -289,6 +293,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
                 model: None,
                 system_prompt: None,
                 parallel_tasks: None,
+                pr: false,
             });
         }
         // "collect" without valid id — fall through to show usage
@@ -298,6 +303,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
     let mut words: Vec<&str> = rest.split_whitespace().collect();
     let mut background = false;
     let mut parallel = false;
+    let mut pr = false;
     let mut output_path = None;
     let mut model = None;
     let mut system_prompt = None;
@@ -313,6 +319,9 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
             words.remove(0);
         } else if words[0] == "--parallel" {
             parallel = true;
+            words.remove(0);
+        } else if words[0] == "--pr" {
+            pr = true;
             words.remove(0);
         } else if words[0] == "-o" && words.len() > 1 {
             output_path = Some(words[1].to_string());
@@ -352,6 +361,14 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
         }
     }
 
+    // `--pr` may also appear after the task text (e.g. `/spawn do thing --pr`).
+    // Strip any remaining standalone occurrences so the flag never leaks into
+    // the task description.
+    if words.iter().any(|w| *w == "--pr") {
+        pr = true;
+        words.retain(|w| *w != "--pr");
+    }
+
     let task = words.join(" ");
     if task.is_empty() {
         return None;
@@ -375,6 +392,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
             model,
             system_prompt,
             parallel_tasks: Some(tasks),
+            pr,
         });
     }
 
@@ -386,6 +404,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
         model,
         system_prompt,
         parallel_tasks: None,
+        pr,
     })
 }
 
@@ -716,7 +735,7 @@ pub async fn handle_spawn(
     // handoff (if any) is recorded alongside the result.
     let handoff = worktree
         .as_ref()
-        .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id));
+        .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id, args.pr));
     tracker.complete_with_handoff(spawn_id, response.clone(), handoff.clone());
 
     // Clean up the worktree
@@ -832,6 +851,7 @@ fn handle_spawn_bg(
     }
 
     let task_text = args.task.clone();
+    let open_pr = args.pr;
     let output_path = args.output_path.clone();
     let model = effective_model.to_string();
     let tracker_clone = tracker.clone();
@@ -861,7 +881,7 @@ fn handle_spawn_bg(
         // handoff (if any) travels with the result.
         let handoff = worktree
             .as_ref()
-            .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id));
+            .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id, open_pr));
         tracker_clone.complete_with_handoff(spawn_id, response, handoff);
 
         // Clean up worktree after completion
@@ -917,6 +937,7 @@ fn handle_spawn_parallel(
             model: args.model.clone(),
             system_prompt: args.system_prompt.clone(),
             parallel_tasks: None,
+            pr: args.pr,
         };
         // Reuse the existing --bg infrastructure — it prints per-task info
         // and registers + launches the background task, returning None.
@@ -1185,21 +1206,130 @@ fn try_worktree_handoff(
     worktree: &WorktreeInfo,
     task: &str,
     spawn_id: usize,
+    open_pr: bool,
 ) -> Option<SpawnHandoff> {
     let branch = spawn_branch_name(worktree);
     match commit_worktree_handoff(&worktree.path, &branch, task) {
         Ok(Some(handoff)) => {
             println!("{GREEN}  {}{RESET}", handoff.summary_line());
             println!("{DIM}  review with: {}{RESET}", handoff.review_hint());
+            if open_pr {
+                push_and_open_pr(&worktree.path, task, &handoff);
+            }
             Some(handoff)
         }
         Ok(None) => {
             println!("{DIM}  spawn #{spawn_id}: no file changes to hand off{RESET}");
+            if open_pr {
+                println!("{DIM}  skipped PR: no changes to hand off{RESET}");
+            }
             None
         }
         Err(e) => {
             eprintln!("{YELLOW}  ⚠ spawn #{spawn_id}: handoff commit failed: {e}{RESET}");
             None
+        }
+    }
+}
+
+/// Build the `gh` argument vector for opening a draft PR from a spawn handoff.
+///
+/// Pure — touches neither git nor the network, so it is unit-testable. The
+/// title reuses the handoff commit description (task truncated to
+/// `HANDOFF_COMMIT_DESC_CHARS` *characters* via `chars().take`, never byte
+/// indexing, so multi-byte task text cannot panic). The body carries the
+/// handoff summary plus the review hint.
+fn build_spawn_pr_args(task: &str, handoff: &SpawnHandoff) -> Vec<String> {
+    let desc: String = task.chars().take(HANDOFF_COMMIT_DESC_CHARS).collect();
+    let title = format!("spawn: {}", desc.trim());
+    let body = format!(
+        "{}\n\nReview with: `{}`",
+        handoff.summary_line(),
+        handoff.review_hint()
+    );
+    vec![
+        "pr".to_string(),
+        "create".to_string(),
+        "--draft".to_string(),
+        "--head".to_string(),
+        handoff.branch.clone(),
+        "--title".to_string(),
+        title,
+        "--body".to_string(),
+        body,
+    ]
+}
+
+/// Push the handoff branch and open a draft PR via `gh` (opt-in `--pr` flag).
+///
+/// Degrades gracefully and reports honestly (never pre-announces success):
+/// - `gh` not on PATH → keep the local-branch line, note "skipped PR".
+/// - push fails (no remote, auth, network) → "push failed: <first stderr line>";
+///   the local branch is still the result.
+/// - PR creation fails after a successful push → report the pushed branch and
+///   the failure line.
+///
+/// Uses `std::process::Command` directly (NOT `run_git`, whose `#[cfg(test)]`
+/// destructive-command guard panics on `push` during `cargo test`).
+fn push_and_open_pr(repo_dir: &Path, task: &str, handoff: &SpawnHandoff) {
+    let gh_ok = std::process::Command::new("gh")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !gh_ok {
+        println!("{DIM}  skipped PR: gh not found{RESET}");
+        return;
+    }
+
+    let push = std::process::Command::new("git")
+        .current_dir(repo_dir)
+        .args(["push", "-u", "origin", &handoff.branch])
+        .output();
+    match push {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let first = stderr.lines().next().unwrap_or("unknown error");
+            println!("{YELLOW}  push failed: {first}{RESET}");
+            return;
+        }
+        Err(e) => {
+            println!("{YELLOW}  push failed: {e}{RESET}");
+            return;
+        }
+    }
+
+    let pr_args = build_spawn_pr_args(task, handoff);
+    let pr = std::process::Command::new("gh")
+        .current_dir(repo_dir)
+        .args(&pr_args)
+        .output();
+    match pr {
+        Ok(out) if out.status.success() => {
+            let url = String::from_utf8_lossy(&out.stdout);
+            let url = url.trim();
+            if url.is_empty() {
+                println!("{GREEN}  draft PR opened for {}{RESET}", handoff.branch);
+            } else {
+                println!("{GREEN}  draft PR: {url}{RESET}");
+            }
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let first = stderr.lines().next().unwrap_or("unknown error");
+            println!(
+                "{YELLOW}  pushed {} but PR creation failed: {first}{RESET}",
+                handoff.branch
+            );
+        }
+        Err(e) => {
+            println!(
+                "{YELLOW}  pushed {} but PR creation failed: {e}{RESET}",
+                handoff.branch
+            );
         }
     }
 }
@@ -1490,6 +1620,85 @@ mod tests {
         let args = args.unwrap();
         assert_eq!(args.task, "analyze the architecture");
         assert_eq!(args.output_path, Some("/tmp/output.md".to_string()));
+    }
+
+    #[test]
+    fn test_parse_spawn_args_pr_flag_trailing() {
+        let args = parse_spawn_args("/spawn do thing --pr").unwrap();
+        assert!(args.pr, "--pr should set pr: true");
+        assert_eq!(args.task, "do thing", "task text must not contain the flag");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_pr_flag_leading() {
+        let args = parse_spawn_args("/spawn --pr do thing").unwrap();
+        assert!(args.pr);
+        assert_eq!(args.task, "do thing");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_without_pr_flag_defaults_false() {
+        // Paired negative: no --pr means pr stays false (opt-in only).
+        let args = parse_spawn_args("/spawn do thing").unwrap();
+        assert!(!args.pr, "pr must default to false without --pr");
+        assert_eq!(args.task, "do thing");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_pr_combined_with_other_flags() {
+        let args =
+            parse_spawn_args("/spawn --bg -o out.md --model claude-haiku-4-5 --pr fix the bug")
+                .unwrap();
+        assert!(args.pr);
+        assert!(args.background);
+        assert_eq!(args.output_path, Some("out.md".to_string()));
+        assert_eq!(args.model, Some("claude-haiku-4-5".to_string()));
+        assert_eq!(args.task, "fix the bug");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_pr_between_flags_before_bg() {
+        // --pr appearing before other flags must not break flag extraction.
+        let args = parse_spawn_args("/spawn --pr --bg do the thing").unwrap();
+        assert!(args.pr);
+        assert!(args.background);
+        assert_eq!(args.task, "do the thing");
+    }
+
+    #[test]
+    fn test_build_spawn_pr_args_draft_head_and_title() {
+        let handoff = SpawnHandoff {
+            branch: "spawn/3-12345".to_string(),
+            diffstat: "3 files changed (+42/-7)".to_string(),
+        };
+        let args = build_spawn_pr_args("fix the widget rendering", &handoff);
+        assert_eq!(args[0], "pr");
+        assert_eq!(args[1], "create");
+        assert!(args.contains(&"--draft".to_string()), "PR must be a draft");
+        let head_pos = args.iter().position(|a| a == "--head").expect("--head");
+        assert_eq!(args[head_pos + 1], "spawn/3-12345");
+        let title_pos = args.iter().position(|a| a == "--title").expect("--title");
+        assert_eq!(args[title_pos + 1], "spawn: fix the widget rendering");
+        let body_pos = args.iter().position(|a| a == "--body").expect("--body");
+        assert!(args[body_pos + 1].contains("ready to review"));
+        assert!(args[body_pos + 1].contains("git diff main...spawn/3-12345"));
+    }
+
+    #[test]
+    fn test_build_spawn_pr_args_multibyte_title_truncation() {
+        // A long multi-byte task must truncate at a char boundary, never panic.
+        let task = "✓".repeat(200);
+        let handoff = SpawnHandoff {
+            branch: "spawn/9-777".to_string(),
+            diffstat: "1 file changed (+1/-0)".to_string(),
+        };
+        let args = build_spawn_pr_args(&task, &handoff);
+        let title_pos = args.iter().position(|a| a == "--title").expect("--title");
+        let title = &args[title_pos + 1];
+        assert!(title.starts_with("spawn: "));
+        let desc = title.strip_prefix("spawn: ").unwrap();
+        assert_eq!(desc.chars().count(), HANDOFF_COMMIT_DESC_CHARS);
+        assert!(desc.chars().all(|c| c == '✓'));
     }
 
     // ── spawn tracker tests ─────────────────────────────────────────────
