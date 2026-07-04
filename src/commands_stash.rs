@@ -254,6 +254,58 @@ fn prune_auto_checkpoints() {
     });
 }
 
+/// Description label used for the automatic pre-`/clear` snapshot.
+pub const PRE_CLEAR_LABEL: &str = "pre-clear";
+
+/// Push a pre-clear entry onto `entries`, replacing any existing one.
+///
+/// At most ONE pre-clear snapshot is kept, so repeated `/clear` doesn't grow
+/// the stash. Ordinary entries are preserved untouched. Pure function so it
+/// can be tested against a local `Vec` without touching the global stash.
+fn push_pre_clear_entry(entries: &mut Vec<StashEntry>, entry: StashEntry) {
+    entries.retain(|e| e.description != PRE_CLEAR_LABEL);
+    entries.push(entry);
+}
+
+/// Automatically stash the conversation right before `/clear` wipes it.
+///
+/// Returns `true` if a snapshot was saved (i.e. the conversation was
+/// non-empty and serialization succeeded), `false` for a no-op. Unlike
+/// `/stash push`, this does NOT clear the agent's messages — the caller
+/// (`/clear`) rebuilds the agent itself.
+pub fn stash_pre_clear(agent: &Agent) -> bool {
+    if agent.messages().is_empty() {
+        return false;
+    }
+
+    let messages_json = match agent.save_messages() {
+        Ok(json) => json,
+        Err(_) => return false,
+    };
+
+    let timestamp = {
+        use std::time::SystemTime;
+        let secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let h = (secs % 86400) / 3600;
+        let m = (secs % 3600) / 60;
+        let s = secs % 60;
+        format!("{h:02}:{m:02}:{s:02}")
+    };
+
+    let entry = StashEntry {
+        description: PRE_CLEAR_LABEL.to_string(),
+        messages_json,
+        timestamp,
+    };
+
+    let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
+    push_pre_clear_entry(&mut stash, entry);
+    true
+}
+
 /// Dispatch a `/stash` command.
 pub fn handle_stash(agent: &mut Agent, input: &str) -> String {
     let (subcmd, arg) = parse_stash_subcommand(input);
@@ -448,6 +500,80 @@ mod tests {
             stash.is_empty(),
             "Stash should be empty after non-multiples"
         );
+    }
+
+    #[test]
+    fn test_push_pre_clear_entry_replaces_existing() {
+        let mut entries = vec![
+            StashEntry {
+                description: "ordinary".to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:01".to_string(),
+            },
+            StashEntry {
+                description: PRE_CLEAR_LABEL.to_string(),
+                messages_json: "[\"old\"]".to_string(),
+                timestamp: "00:00:02".to_string(),
+            },
+        ];
+
+        push_pre_clear_entry(
+            &mut entries,
+            StashEntry {
+                description: PRE_CLEAR_LABEL.to_string(),
+                messages_json: "[\"new\"]".to_string(),
+                timestamp: "00:00:03".to_string(),
+            },
+        );
+
+        // Len stays constant: old pre-clear replaced, ordinary preserved.
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].description, "ordinary");
+        assert_eq!(entries[1].description, PRE_CLEAR_LABEL);
+        assert_eq!(entries[1].messages_json, "[\"new\"]");
+    }
+
+    #[test]
+    fn test_push_pre_clear_entry_appends_when_no_existing() {
+        let mut entries = vec![
+            StashEntry {
+                description: "one".to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:01".to_string(),
+            },
+            StashEntry {
+                description: "two".to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:02".to_string(),
+            },
+        ];
+
+        push_pre_clear_entry(
+            &mut entries,
+            StashEntry {
+                description: PRE_CLEAR_LABEL.to_string(),
+                messages_json: "[]".to_string(),
+                timestamp: "00:00:03".to_string(),
+            },
+        );
+
+        // Appends: len grows by 1, ordinary entries preserved.
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].description, "one");
+        assert_eq!(entries[1].description, "two");
+        assert_eq!(entries[2].description, PRE_CLEAR_LABEL);
+    }
+
+    #[test]
+    fn test_stash_pre_clear_noop_on_empty_conversation() {
+        use yoagent::provider::AnthropicProvider;
+        let agent = Agent::new(AnthropicProvider)
+            .with_system_prompt("test")
+            .with_model("test-model")
+            .with_api_key("test-key");
+
+        // No messages → no-op, and the global stash is never touched.
+        assert!(!stash_pre_clear(&agent));
     }
 
     #[test]

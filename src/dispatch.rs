@@ -1014,21 +1014,31 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
                     return CommandResult::Continue;
                 }
             }
+            let stashed = commands::stash_pre_clear(ctx.agent);
             *ctx.agent = ctx.agent_config.build_agent();
             ctx.session_changes.clear();
             ctx.turn_history.clear();
             reset_compact_thrash();
             reset_context_budget_warning();
-            println!("{DIM}  (conversation cleared){RESET}\n");
+            if stashed {
+                println!("{DIM}  (conversation cleared — /stash pop to restore){RESET}\n");
+            } else {
+                println!("{DIM}  (conversation cleared){RESET}\n");
+            }
             CommandResult::Continue
         }
         CommandRoute::ClearForce => {
+            let stashed = commands::stash_pre_clear(ctx.agent);
             *ctx.agent = ctx.agent_config.build_agent();
             ctx.session_changes.clear();
             ctx.turn_history.clear();
             reset_compact_thrash();
             reset_context_budget_warning();
-            println!("{DIM}  (conversation force-cleared){RESET}\n");
+            if stashed {
+                println!("{DIM}  (conversation force-cleared — /stash pop to restore){RESET}\n");
+            } else {
+                println!("{DIM}  (conversation force-cleared){RESET}\n");
+            }
             CommandResult::Continue
         }
         CommandRoute::Context => {

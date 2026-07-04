@@ -47,7 +47,7 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 
 | Command | Description |
 |---------|-------------|
-| `/clear` | Clear conversation history and start fresh |
+| `/clear` | Clear conversation history and start fresh (the conversation is auto-stashed first — `/stash pop` to restore it) |
 | `/compact` | Compress conversation to save context space (see [Context Management](../features/context.md)) |
 | `/retry` | Re-send your last input — useful when a response gets cut off or you want to try again |
 | `/retry --with "..."` | Re-run with additional instructions appended (iterative refinement) |
