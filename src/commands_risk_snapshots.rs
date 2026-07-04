@@ -54,7 +54,10 @@ pub(crate) fn build_risk_snapshot_json(risks: &[FileRisk], day: u32, git_hash: &
 }
 
 /// Append a risk snapshot JSON line to the given path.
-pub(crate) fn write_risk_snapshot_to(path: &std::path::Path, json_line: &str) -> Result<(), std::io::Error> {
+pub(crate) fn write_risk_snapshot_to(
+    path: &std::path::Path,
+    json_line: &str,
+) -> Result<(), std::io::Error> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
