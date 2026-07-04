@@ -740,6 +740,11 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     {
         crate::format::disable_bell();
     }
+    // Opt-in user notification command: inert unless `notify_command` is set
+    // in the config file (product-safe default).
+    crate::format::set_notify_command(crate::config::parse_notify_command_from_config(
+        &file_config,
+    ));
     if !args.iter().any(|a| a == "--no-color")
         && std::io::stdout().is_terminal()
         && crate::config::parse_no_color_from_config(&file_config)

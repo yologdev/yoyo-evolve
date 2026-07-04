@@ -550,6 +550,23 @@ pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, Str
     config_flag(config, "no_color", false)
 }
 
+/// Parse `notify_command` from the config map.
+///
+/// Returns `Some(command)` when a non-empty command string is configured,
+/// or `None` when the key is absent or empty. When set, the command is run
+/// (fire-and-forget) whenever a long prompt finishes — the same threshold
+/// that triggers the terminal bell. Absent means the feature is completely
+/// inert: no process spawn, no PATH probing.
+pub fn parse_notify_command_from_config(
+    config: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    config
+        .get("notify_command")
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+}
+
 /// Keys that `/config set` understands. Each entry is a key name and a
 /// human-readable description used in error messages.
 pub const SETTABLE_KEYS: &[(&str, &str)] = &[
@@ -578,6 +595,10 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     ),
     ("lite", "enable lite mode for small/local LLMs (true/false)"),
     ("no_bell", "suppress terminal bell (true/false)"),
+    (
+        "notify_command",
+        "command to run when a long prompt finishes (empty = disabled)",
+    ),
     ("quiet", "suppress informational output (true/false)"),
     ("no_color", "disable colored output (true/false)"),
 ];
@@ -681,6 +702,11 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
                     "invalid no_bell value '{value}' — use true or false"
                 )),
             }
+        }
+        "notify_command" => {
+            // Any string is a valid command; an empty string clears the setting
+            // (disabling the feature). The command is entirely user-supplied.
+            Ok(value.to_string())
         }
         "quiet" => {
             let lower = value.to_ascii_lowercase();

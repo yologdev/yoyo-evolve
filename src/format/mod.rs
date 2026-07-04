@@ -42,17 +42,91 @@ pub fn bell_enabled() -> bool {
     !*BELL_DISABLED.get_or_init(|| std::env::var("YOYO_NO_BELL").is_ok())
 }
 
+/// Elapsed-seconds threshold that makes a prompt count as "long" for the
+/// terminal bell and the user-configured `notify_command`.
+const LONG_PROMPT_THRESHOLD_SECS: u64 = 3;
+
 /// Ring the terminal bell if enabled and elapsed time exceeds threshold.
 /// The bell character (\x07) causes most terminal emulators to flash the tab
 /// or play a sound, alerting multitasking developers.
-/// Also sends a desktop notification for genuinely long waits (≥10s).
+/// Also sends a desktop notification for genuinely long waits (≥10s), and
+/// runs the user-configured `notify_command` (if any) at the bell threshold.
 pub fn maybe_ring_bell(elapsed: Duration) {
-    if bell_enabled() && elapsed.as_secs() >= 3 {
+    if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
         let _ = io::stdout().write_all(b"\x07");
         let _ = io::stdout().flush();
     }
     if notify_enabled() && should_send_notification(elapsed) {
         send_desktop_notification(elapsed);
+    }
+    if let Some(cmd) = notify_command() {
+        if should_run_notify_command(elapsed, true) {
+            run_notify_command(&cmd, elapsed);
+        }
+    }
+}
+
+// --- User notify_command support (opt-in via `notify_command` config key) ---
+
+/// User-configured command to run when a long prompt finishes.
+/// `None` (the default) means the feature is completely inert — no process
+/// spawn, no PATH probing (product-safe default, issue #448 discipline).
+static NOTIFY_COMMAND: OnceLock<Option<String>> = OnceLock::new();
+
+/// Set the user-configured notify command (from `.yoyo.toml`'s
+/// `notify_command` key). Call once during startup config loading;
+/// subsequent calls are ignored.
+pub fn set_notify_command(cmd: Option<String>) {
+    let _ = NOTIFY_COMMAND.set(cmd);
+}
+
+/// The configured notify command, if any. Unset or empty = `None`.
+fn notify_command() -> Option<String> {
+    NOTIFY_COMMAND
+        .get()
+        .and_then(|c| c.as_deref())
+        .filter(|c| !c.trim().is_empty())
+        .map(|c| c.to_string())
+}
+
+/// Pure decision: should the user's notify command run? Only when one is
+/// configured AND the prompt ran long enough (same threshold as the bell).
+/// Separated from the side-effectful spawn for testability.
+pub fn should_run_notify_command(elapsed: Duration, configured: bool) -> bool {
+    configured && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS
+}
+
+/// Spawn the user's notify command, fire-and-forget.
+///
+/// Runs via `sh -c` (Unix) or `cmd /C` (Windows), detached: stdin/stdout/
+/// stderr are all null and we never wait on the child. Sets `YOYO_EVENT`
+/// and `YOYO_ELAPSED_SECS` env vars so one command can serve future events.
+/// Spawn failure is silent by default (one-line warning in verbose mode) —
+/// never panics, never blocks the REPL.
+pub fn run_notify_command(cmd: &str, elapsed: Duration) {
+    #[cfg(windows)]
+    let mut command = {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(cmd);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(cmd);
+        c
+    };
+    let result = command
+        .env("YOYO_EVENT", "prompt_completed")
+        .env("YOYO_ELAPSED_SECS", elapsed.as_secs().to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Err(e) = result {
+        if crate::cli::is_verbose() {
+            eprintln!("warning: notify_command failed to spawn: {e}");
+        }
     }
 }
 
