@@ -364,7 +364,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
     // `--pr` may also appear after the task text (e.g. `/spawn do thing --pr`).
     // Strip any remaining standalone occurrences so the flag never leaks into
     // the task description.
-    if words.iter().any(|w| *w == "--pr") {
+    if words.contains(&"--pr") {
         pr = true;
         words.retain(|w| *w != "--pr");
     }

@@ -334,7 +334,22 @@ ready to review: branch spawn/3-1712345678 — 3 files changed (+42/-7)
 review with: git diff main...spawn/3-1712345678
 ```
 
-The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. Nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. By default nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+
+**`--pr` — opt-in draft PR on completion**: pass `--pr` to have a finished handoff pushed and opened as a draft pull request:
+
+```
+/spawn --pr fix the flaky retry test in src/prompt_retry.rs
+```
+
+When the handoff commit lands, yoyo runs `git push -u origin spawn/<id>` and then `gh pr create --draft` with the task as the title and the handoff summary as the body, printing the PR URL on success. This is strictly opt-in — without the flag, behavior is unchanged.
+
+Degradation is graceful and reported honestly, and the local branch always remains the result:
+
+- `gh` not on PATH → `skipped PR: gh not found` (local-branch handoff line still shown)
+- push fails (no remote, auth, network) → `push failed: <first line of stderr>`
+- PR creation fails after a successful push → the pushed branch is reported alongside the failure
+- worker made no changes (or no handoff commit) → the PR step is skipped quietly
 
 > **Automatic sub-agent delegation**: In addition to `/spawn`, the model can autonomously delegate subtasks to a built-in `sub_agent` tool. This happens transparently — the model decides when a subtask benefits from a fresh context window (e.g., researching a codebase section, running a series of tests). You'll see a 🐙 indicator when delegation occurs.
 
