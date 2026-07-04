@@ -1,0 +1,173 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "struct SpawnArgs" -A 30 src/commands_spawn.rs | head -60  ▶ $ grep -n "parse_spawn_args\|commit_worktree_handoff\|SpawnHandoff\|complete_with_… ✓ (6ms)
+ ✓ (4ms)
+  ▶ read src/commands_spawn.rs:40..170  ▶ read src/commands_spawn.rs:262..402 ✓ (2ms)
+ ✓ (3ms)
+  ▶ read src/commands_spawn.rs:575..775 ✓ (2ms)
+  ▶ read src/commands_spawn.rs:1110..1240  ▶ read src/commands_spawn.rs:775..875 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ grep -n "try_worktree_handoff\|fn handle_spawn_parallel\|fn spawn_branch_name\|H…📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ sed -n 880,1010p src/commands_spawn.rs ✓ (4ms)
+ ✓ (14ms)
+  9 tools completed in 1m 28s (9 ✓)
+
+Now let me check all SpawnArgs struct literals and the test module area:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "SpawnArgs {" src/commands_spawn.rs; sed -n 1690,1770p src/commands_spaw… ✓ (5ms)
+  ▶ $ sed -n 1455,1500p src/commands_spawn.rs ✓ (3ms)
+  ▶ edit src/commands_spawn.rs (8 → 87 lines)
+            let args = args.unwrap();
+            assert_eq!(args.task, "analyze the architecture");
+            assert_eq!(args.output_path, Some("/tmp/output.md".to_string()));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_pr_flag_trailing() {
+  +         let args = parse_spawn_args("/spawn do thing --pr").unwrap();
+  +         assert!(args.pr, "--pr should set pr: true");
+  +         assert_eq!(args.task, "do thing", "task text must not contain the flag");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_pr_flag_leading() {
+  +         let args = parse_spawn_args("/spawn --pr do thing").unwrap();
+  +         assert!(args.pr);
+  +         assert_eq!(args.task, "do thing");
+  +     }
+  + 
+  +     #[test]
+  ... (63 more lines)
+ ✓ (10.2s)
+            let args = args.unwrap();
+            assert_eq!(args.task, "analyze the architecture");
+            assert_eq!(args.output_path, Some("/tmp/output.md".to_string()));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_spawn_args_pr_flag_trailing() {
+  +         let args = parse_spawn_args("/spawn do thing --pr").unwrap();
+  ... (13 more lines)
+  3 tools completed in 59.2s (3 ✓)
+
+Tests are red as expected. Now the implementation — first the struct field and parser:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (4 → 7 lines)
+        /// If set, multiple tasks to run in parallel (from `--parallel` flag).
+        /// `None` for normal spawn, `Some(tasks)` for parallel dispatch.
+        pub parallel_tasks: Option<Vec<String>>,
+  +     /// Whether to push the handoff branch and open a draft PR on completion
+  +     /// (`--pr` flag). Strictly opt-in — defaults to false.
+  +     pub pr: bool,
+    }
+  ▶ edit src/commands_spawn.rs (3 → 4 lines)
+    /// - `/spawn --model <name> <task>` — use a specific model
+    /// - `/spawn --system <prompt> <task>` — custom system prompt (quoted for multi-word)
+  + /// - `/spawn --pr <task>` — push handoff branch + open a draft PR on completion
+    /// - `/spawn collect <id>` — collect a finished background spawn
+ ✓ (10.1s)
+        /// If set, multiple tasks to run in parallel (from `--parallel` flag).
+        /// `None` for normal spawn, `Some(tasks)` for parallel dispatch.
+        pub parallel_tasks: Option<Vec<String>>,
+  +     /// Whether to push the handoff branch and open a draft PR on completion
+  +     /// (`--pr` flag). Strictly opt-in — defaults to false.
+  +     pub pr: bool,
+    }
+ ✓ (20.1s)
+    /// - `/spawn --model <name> <task>` — use a specific model
+    /// - `/spawn --system <prompt> <task>` — custom system prompt (quoted for multi-word)
+  + /// - `/spawn --pr <task>` — push handoff branch + open a draft PR on completion
+    /// - `/spawn collect <id>` — collect a finished background spawn
+  2 tools completed in 26.5s (2 ✓)
+
+Now the parser changes:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (6 → 7 lines)
+        let mut words: Vec<&str> = rest.split_whitespace().collect();
+        let mut background = false;
+        let mut parallel = false;
+  +     let mut pr = false;
+        let mut output_path = None;
+        let mut model = None;
+        let mut system_prompt = None;
+  ▶ edit src/commands_spawn.rs (7 → 10 lines)
+                words.remove(0);
+            } else if words[0] == "--parallel" {
+                parallel = true;
+  +             words.remove(0);
+  +         } else if words[0] == "--pr" {
+  +             pr = true;
+                words.remove(0);
+            } else if words[0] == "-o" && words.len() > 1 {
+ ✓ (10.1s)
+        let mut words: Vec<&str> = rest.split_whitespace().collect();
+        let mut background = false;
+        let mut parallel = false;
+  +     let mut pr = false;
+        let mut output_path = None;
+        let mut model = None;
+        let mut system_prompt = None;
+ ✓ (20.1s)
+                words.remove(0);
+            } else if words[0] == "--parallel" {
+                parallel = true;
+  +             words.remove(0);
+  +         } else if words[0] == "--pr" {
+  +             pr = true;
+                words.remove(0);
+            } else if words[0] == "-o" && words.len() > 1 {
+  2 tools completed in 25.6s (2 ✓)
+
+The auto-checks raced between concurrent edits. Let me verify actual file state:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 244,265p src/commands_spawn.rs; sed -n 298,325p src/commands_spawn.rs ✓ (5ms)
+  ▶ $ sed -n 298,306p src/commands_spawn.rs | cat -A | grep -n "pr" ; grep -n "let mut… ✓ (5ms)
+  2 tools completed in 13.4s (2 ✓)
+
+Both parallel-edit victims lost. Re-applying sequentially this time:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (4 → 7 lines)
+        /// If set, multiple tasks to run in parallel (from `--parallel` flag).
+        /// `None` for normal spawn, `Some(tasks)` for parallel dispatch.
+        pub parallel_tasks: Option<Vec<String>>,
+  +     /// Whether to push the handoff branch and open a draft PR on completion
+  +     /// (`--pr` flag). Strictly opt-in — defaults to false.
+  +     pub pr: bool,
+    }
+ ✓ (10.1s)
+        /// If set, multiple tasks to run in parallel (from `--parallel` flag).
+        /// `None` for normal spawn, `Some(tasks)` for parallel dispatch.
+        pub parallel_tasks: Option<Vec<String>>,
+  +     /// Whether to push the handoff branch and open a draft PR on completion
+  +     /// (`--pr` flag). Strictly opt-in — defaults to false.
+  +     pub pr: bool,
+    }
+  ▶ edit src/commands_spawn.rs (4 → 5 lines)
+        let mut words: Vec<&str> = rest.split_whitespace().collect();
+        let mut background = false;
+        let mut parallel = false;
+  +     let mut pr = false;
+        let mut output_path = None;
+ ✓ (10.4s)
+        let mut words: Vec<&str> = rest.split_whitespace().collect();
+        let mut background = false;
+        let mut parallel = false;
+  +     let mut pr = false;
+        let mut output_path = None;
+  ▶ edit src/commands_spawn.rs (9 → 10 lines)
+                    model: None,
+                    system_prompt: None,
+                    parallel_tasks: None,
+  +                 pr: false,
+                });
+ ✓ (10.6s)
+                    model: None,
+                    system_prompt: None,
+                    parallel_tasks: None,
+  +                 pr: false,
+                });
+  3 tools completed in 43.1s (3 ✓)
+
+  watch: no files changed this turn — skipping
+

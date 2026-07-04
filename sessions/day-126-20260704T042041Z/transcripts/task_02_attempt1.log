@@ -1,0 +1,74 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'RISK_SNAPSHOT_PATH\|bui…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (9ms)
+ ✓ (43.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | tail -3 … ✓ (131ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | tai… ✓ (40.6s)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1265..1345  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1590..1890 ✓ (1ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:2645..2705  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'parse_validation_events… ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'ParsedSnapshot\|fn test… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (30 lines)  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3084..3174 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3490..3535  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:4398..4593 ✓ (1ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:4826..4853  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3010,3026p' src/commands… ✓ (2ms)
+ ✓ (8ms)
+  15 tools completed in 3m 37s (15 ✓)
+
+Now I have the full picture. Let me verify exact boundaries of each block to move.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1330,1334p;1615,1620p;16…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3079,3084p;3165,3169p;34… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 48.2s (2 ✓)
+
+Boundaries confirmed. Now I'll write a Python script to extract the blocks into the new module and delete them from commands_risk.rs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/e… (53 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 <<'E… (44 lines) ✓ (25ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (1 → 2 lines)
+    mod commands_risk;
+  + mod commands_risk_snapshots;
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (3 → 12 lines)
+    use crate::format::*;
+  + 
+  + // Snapshot/validation persistence lives in `commands_risk_snapshots.rs`.
+  + // Re-exported here so all call sites (watch.rs, commands_git.rs, and this
+  + // module's own scoring/reporting code) remain unchanged.
+  + pub(crate) use crate::commands_risk_snapshots::{
+  +     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  +     load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  +     write_risk_snapshot_to, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  + };
+    
+    /// A single file's risk assessment with score and signal labels.
+ ✓ (9.6s)
+    mod commands_risk;
+  + mod commands_risk_snapshots;
+ ✓ (19.2s)
+    use crate::format::*;
+  + 
+  + // Snapshot/validation persistence lives in `commands_risk_snapshots.rs`.
+  + // Re-exported here so all call sites (watch.rs, commands_git.rs, and this
+  + // module's own scoring/reporting code) remain unchanged.
+  + pub(crate) use crate::commands_risk_snapshots::{
+  +     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  +     load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  ... (4 more lines)
+  4 tools completed in 48.9s (4 ✓)
+
+The expected visibility bump for learn_weights_from_history:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 1 lines)
+  - fn learn_weights_from_history() {
+  + pub(crate) fn learn_weights_from_history() {
+ ✓ (1m 31s)
+  - fn learn_weights_from_history() {
+  + pub(crate) fn learn_weights_from_history() {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -E '^err… ✓ (142ms)
+  2 tools completed in 1m 35s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

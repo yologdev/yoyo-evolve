@@ -1,0 +1,79 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '355,380p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Nothing is pushed" docs… ✓ (6ms)
+ ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (4 → 4 lines)
+  -     if words.iter().any(|w| *w == "--pr") {
+  +     if words.contains(&"--pr") {
+            pr = true;
+            words.retain(|w| *w != "--pr");
+        }
+ ✓ (1m 33s)
+  -     if words.iter().any(|w| *w == "--pr") {
+  +     if words.contains(&"--pr") {
+            pr = true;
+            words.retain(|w| *w != "--pr");
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "skipped PR\|push failed… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1260,1330p src/commands_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 316,345p docs/src/usage/c… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (1 → 16 lines)
+  - The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. Nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+  + The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. By default nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+  + 
+  + **`--pr` — opt-in draft PR on completion**: pass `--pr` to have a finished handoff pushed and opened as a draft pull request:
+  + 
+  + ```
+  + /spawn --pr fix the flaky retry test in src/prompt_retry.rs
+  + ```
+  + 
+  + When the handoff commit lands, yoyo runs `git push -u origin spawn/<id>` and then `gh pr create --draft` with the task as the title and the handoff summary as the body, printing the PR URL on success. This is strictly opt-in — without the flag, behavior is unchanged.
+  + 
+  + Degradation is graceful and reported honestly, and the local branch always remains the result:
+  + 
+  + - `gh` not on PATH → `skipped PR: gh not found` (local-branch handoff line still shown)
+  + - push fails (no remote, auth, network) → `push failed: <first line of stderr>`
+  + - PR creation fails after a successful push → the pushed branch is reported alongside the failure
+  + - worker made no changes (or no handoff commit) → the PR step is skipped quietly
+ ✓ (1m 13s)
+  - The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. Nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+  + The same line appears in `/spawn status` output for completed tasks. If the worker made no file changes, you'll see `no file changes to hand off`; if the commit itself fails, the failure is reported honestly and the worker's text result is still delivered without a handoff. By default nothing is pushed and no PR is opened — the branch stays local for you to review and merge.
+  + 
+  + **`--pr` — opt-in draft PR on completion**: pass `--pr` to have a finished handoff pushed and opened as a draft pull request:
+  + 
+  + ```
+  + /spawn --pr fix the flaky retry test in src/prompt_retry.rs
+  + ```
+  ... (9 more lines)
+  7 tools completed in 3m 22s (7 ✓)
+
+Now the CLAUDE.md bullet:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - surfaces a `ready to review: branch spawn/<id> — N files changed (+a/-b)` line plus a `git diff main...spawn/<id>` hint; failed commits and no-change completions are reported honestly, never pre-announced
+  + surfaces a `ready to review: branch spawn/<id> — N files changed (+a/-b)` line plus a `git diff main...spawn/<id>` hint; failed commits and no-change completions are reported honestly, never pre-announced. Opt-in `--pr` flag (default off, product-safe): after a successful handoff commit, pushes the branch (`git push -u origin spawn/<id>` via `std::process::Command`, not `run_git`) and opens a draft PR via `gh pr create --draft` (pure `build_spawn_pr_args` builds the command, char-boundary title truncation), printing the PR URL; degrades gracefully — `gh` missing / push failure / PR failure each get one honest note and the local branch remains the result
+ ✓ (1m 13s)
+  - surfaces a `ready to review: branch spawn/<id> — N files changed (+a/-b)` line plus a `git diff main...spawn/<id>` hint; failed commits and no-change completions are reported honestly, never pre-announced
+  + surfaces a `ready to review: branch spawn/<id> — N files changed (+a/-b)` line plus a `git diff main...spawn/<id>` hint; failed commits and no-change completions are reported honestly, never pre-announced. Opt-in `--pr` flag (default off, product-safe): after a successful handoff commit, pushes the branch (`git push -u origin spawn/<id>` via `std::process::Command`, not `run_git`) and opens a draft PR via `gh pr create --draft` (pure `build_spawn_pr_args` builds the command, char-boundary title truncation), printing the PR URL; degrades gracefully — `gh` missing / push failure / PR failure each get one honest note and the local branch remains the result
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (56.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (44.7s)
+  4 tools completed in 3m 33s (4 ✓)
+
+All checks pass. Committing the fix:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (8 lines) ✓ (19ms)
+
+Both evaluator issues are fixed and committed:
+
+1. Clippy lint (src/commands_spawn.rs:367) — replaced words.iter().any(|w| *w == "--pr") with words.contains(&"--pr"), exactly as the manual_contains lint suggested. cargo clippy --all-targets -- -D warnings now passes clean.
+
+2. Missing docs deliverables:
+• **docs/src/usage/commands.md** — corrected the factually-wrong "Nothing is pushed and no PR is opened" to "By default nothing is pushed…", and added a dedicated `--pr` — opt-in draft PR on completion section documenting the push + gh pr create --draft flow, PR URL output, the strictly-opt-in framing, and all four degradation cases (gh missing, push failure, PR-creation failure after push, no-change handoff) with the guarantee that the local branch always remains the result.
+• CLAUDE.md — extended the commands_spawn.rs bullet with the --pr handoff: default-off/product-safe, std::process::Command (not run_git), pure build_spawn_pr_args with char-boundary truncation, and honest graceful degradation.
+
+Verification: cargo fmt -- --check ✓, `cargo clippy --all-targets -- -D warnings ✓, cargo build ✓, cargo test` ✓ (4132 + 88 passed, 0 failed). The working implementation was untouched.
+
+  watch: no files changed this turn — skipping
+

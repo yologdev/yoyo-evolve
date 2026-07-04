@@ -1,0 +1,172 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/commands_spawn.rs:300..410  ▶ read src/commands_spawn.rs:900..945 ✓ (2ms)
+ ✓ (3ms)
+  ▶ search 'pub struct SpawnArgs' in src/commands_spawn.rs ✓ (3ms)
+  ▶ read src/commands_spawn.rs:240..270 ✓ (1ms)
+  ▶ edit src/commands_spawn.rs (20 → 22 lines)
+                model,
+                system_prompt,
+                parallel_tasks: Some(tasks),
+  +             pr,
+            });
+        }
+    
+  ···
+            model,
+            system_prompt,
+            parallel_tasks: None,
+  +         pr,
+        })
+  ▶ edit src/commands_spawn.rs (4 → 5 lines)
+                model: args.model.clone(),
+                system_prompt: args.system_prompt.clone(),
+                parallel_tasks: None,
+  +             pr: args.pr,
+            };
+ ✓ (10.6s)
+                model,
+                system_prompt,
+                parallel_tasks: Some(tasks),
+  +             pr,
+            });
+        }
+    
+  ···
+  ... (5 more lines)
+ ✓ (21.0s)
+                model: args.model.clone(),
+                system_prompt: args.system_prompt.clone(),
+                parallel_tasks: None,
+  +             pr: args.pr,
+            };
+  6 tools completed in 49.3s (6 ✓)
+
+The initializer edits landed, but tests reference `build_spawn_pr_args` which was never implemented. Let me check the test expectations and completion path.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:1530..1610  ▶ search 'build_spawn_pr_args|args\.pr|\.pr\b|skipped PR|push failed' in src/commands_spawn.rs ✓ (2ms)
+ ✓ (3ms)
+  ▶ search 'HANDOFF_COMMIT_DESC_CHARS|struct SpawnHandoff|fn commit_work…' in src/commands_spawn.rs ✓ (3ms)
+  3 tools completed in 13.8s (3 ✓)
+
+Search tool seems flaky; using grep directly.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HANDOFF_COMMIT_DESC_CHA… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,80p;1090,1100p;1150,1… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (3.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '368,402p' src/commands_s… ✓ (3ms)
+  4 tools completed in 25.0s (4 ✓)
+
+The first edit didn't persist. Re-applying:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (14 → 16 lines)
+                system_prompt,
+                parallel_tasks: Some(tasks),
+  +             pr,
+            });
+        }
+    
+  ···
+            model,
+            system_prompt,
+            parallel_tasks: None,
+  +         pr,
+        })
+ ✓ (10.6s)
+                system_prompt,
+                parallel_tasks: Some(tasks),
+  +             pr,
+            });
+        }
+    
+  ···
+            model,
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "try_worktree_handoff\|c… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "try_worktree_handoff\|c… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,745p;850,890p' src/c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '800,850p' src/commands_s… ✓ (5ms)
+  ▶ edit src/commands_spawn.rs (22 → 131 lines)
+        worktree: &WorktreeInfo,
+        task: &str,
+        spawn_id: usize,
+  +     open_pr: bool,
+    ) -> Option<SpawnHandoff> {
+        let branch = spawn_branch_name(worktree);
+        match commit_worktree_handoff(&worktree.path, &branch, task) {
+            Ok(Some(handoff)) => {
+                println!("{GREEN}  {}{RESET}", handoff.summary_line());
+                println!("{DIM}  review with: {}{RESET}", handoff.review_hint());
+  +             if open_pr {
+  +                 push_and_open_pr(&worktree.path, task, &handoff);
+  +             }
+                Some(handoff)
+            }
+            Ok(None) => {
+                println!("{DIM}  spawn #{spawn_id}: no file changes to hand off{RESET}");
+  +             if open_pr {
+  +                 println!("{DIM}  skipped PR: no changes to hand off{RESET}");
+  +             }
+  ... (110 more lines)
+ ✓ (10.4s)
+        worktree: &WorktreeInfo,
+        task: &str,
+        spawn_id: usize,
+  +     open_pr: bool,
+    ) -> Option<SpawnHandoff> {
+        let branch = spawn_branch_name(worktree);
+        match commit_worktree_handoff(&worktree.path, &branch, task) {
+            Ok(Some(handoff)) => {
+  ... (13 more lines)
+  ▶ edit src/commands_spawn.rs (1 → 1 lines)
+  -         .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id));
+  +         .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id, args.pr));
+ ✓ (10.3s)
+  -         .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id));
+  +         .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id, args.pr));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '843,850p' src/commands_s… ✓ (3ms)
+  ▶ edit src/commands_spawn.rs (1 → 2 lines)
+        let task_text = args.task.clone();
+  +     let open_pr = args.pr;
+ ✓ (10.9s)
+        let task_text = args.task.clone();
+  +     let open_pr = args.pr;
+  ▶ edit src/commands_spawn.rs (1 → 1 lines)
+  -             .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id));
+  +             .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id, open_pr));
+ ✓ (1m 31s)
+  -             .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id));
+  +             .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id, open_pr));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 10s)
+  11 tools completed in 5m 19s (11 ✓)
+
+One remaining failure: the parser only extracts flags at the front, so trailing --pr (test: /spawn do thing --pr) isn't picked up. Let me check the test:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1614,1640p' src/commands… ✓ (3ms)
+
+The parser only extracts flags from the front. Add a pass that also picks up --pr in the remaining task words:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (1 → 9 lines)
+  +     // `--pr` may also appear after the task text (e.g. `/spawn do thing --pr`).
+  +     // Strip any remaining standalone occurrences so the flag never leaks into
+  +     // the task description.
+  +     if words.iter().any(|w| *w == "--pr") {
+  +         pr = true;
+  +         words.retain(|w| *w != "--pr");
+  +     }
+  + 
+        let task = words.join(" ");
+ ✓ (17.4s)
+  +     // `--pr` may also appear after the task text (e.g. `/spawn do thing --pr`).
+  +     // Strip any remaining standalone occurrences so the flag never leaks into
+  +     // the task description.
+  +     if words.iter().any(|w| *w == "--pr") {
+  +         pr = true;
+  +         words.retain(|w| *w != "--pr");
+  +     }
+  + 
+        let task = words.join(" ");
+
+  watch: no files changed this turn — skipping
+

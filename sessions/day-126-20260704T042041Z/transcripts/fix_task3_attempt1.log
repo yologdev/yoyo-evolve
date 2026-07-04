@@ -1,0 +1,162 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'notify_command' in src  ▶ $ grep -rn "notify_command\|no_bell" docs/src/ | head -20; git status --short ✓ (10ms)
+ ✓ (9ms)
+  ▶ read src/config.rs:540..720  ▶ read src/format/mod.rs:40..140 ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ grep -n "mod tests" src/config.rs src/format/mod.rs; grep -n "parse_no_color_fro…  ▶ $ grep -rn "no_bell\|auto_continue" docs/src/usage/repl.md docs/src/features/sessi… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ sed -n 1657,1720p src/config.rs; echo ---; sed -n 1260,1300p src/config.rs  ▶ $ grep -rn "no_bell\|quiet\|config set" docs/src/usage/repl.md | head; grep -rln "… ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ sed -n 100,145p docs/src/getting-started/installation.md; echo ===; grep -n "no_… ✓ (5ms)
+  ▶ $ grep -n "bell\|notif\|long" docs/src/usage/repl.md | head; wc -l docs/src/usage/… ✓ (4ms)
+  ▶ $ sed -n 25,45p docs/src/usage/repl.md; echo ===; sed -n 900,960p src/format/mod.r… ✓ (5ms)
+  11 tools completed in 47.9s (11 ✓)
+
+Now I'll add the tests. First, config.rs tests after the no_bell test block:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (1 → 66 lines)
+  +     // === notify_command config tests ===
+  + 
+  +     #[test]
+  +     fn notify_command_absent_is_none() {
+  +         let config = std::collections::HashMap::new();
+  +         assert_eq!(parse_notify_command_from_config(&config), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn notify_command_empty_is_none() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("notify_command".to_string(), "".to_string());
+  +         assert_eq!(parse_notify_command_from_config(&config), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn notify_command_whitespace_only_is_none() {
+  +         let mut config = std::collections::HashMap::new();
+  +         config.insert("notify_command".to_string(), "   ".to_string());
+  +         assert_eq!(parse_notify_command_from_config(&config), None);
+  ... (46 more lines)
+ ✓ (1m 43s)
+  +     // === notify_command config tests ===
+  + 
+  +     #[test]
+  +     fn notify_command_absent_is_none() {
+  +         let config = std::collections::HashMap::new();
+  +         assert_eq!(parse_notify_command_from_config(&config), None);
+  +     }
+  + 
+  ... (13 more lines)
+
+Now the format/mod.rs tests for should_run_notify_command and the spawn helper:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (5 → 42 lines)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     // === notify_command decision + spawn tests ===
+  + 
+  +     #[test]
+  +     fn should_run_notify_command_just_below_threshold_is_false() {
+  +         // 2s < LONG_PROMPT_THRESHOLD_SECS (3s) — even when configured.
+  +         assert!(!should_run_notify_command(Duration::from_secs(2), true));
+  +     }
+  + 
+  +     #[test]
+  +     fn should_run_notify_command_at_threshold_is_true() {
+  +         assert!(should_run_notify_command(Duration::from_secs(3), true));
+  +     }
+  + 
+  +     #[test]
+  +     fn should_run_notify_command_above_threshold_is_true() {
+  +         assert!(should_run_notify_command(Duration::from_secs(120), true));
+  ... (21 more lines)
+ ✓ (1m 43s)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     // === notify_command decision + spawn tests ===
+  + 
+  +     #[test]
+  +     fn should_run_notify_command_just_below_threshold_is_false() {
+  ... (13 more lines)
+  ▶ $ sed -n 44,125p docs/src/usage/repl.md ✓ (3ms)
+  ▶ edit docs/src/usage/repl.md (4 → 32 lines)
+    ## Interrupting
+    
+    Press **Ctrl+C** to cancel the current response. The agent will stop and you can type a new prompt. Press Ctrl+C again to exit.
+  + 
+  + ## Completion notifications
+  + 
+  + When a prompt takes more than a few seconds, yoyo rings the terminal bell so you notice the finish even if you switched windows (disable with `no_bell = true` or `--no-bell`).
+  + 
+  + For an actionable desktop alert, set the opt-in `notify_command` config key — a shell command yoyo runs (fire-and-forget) whenever a long prompt finishes, at the same threshold as the bell:
+  + 
+  + ```toml
+  + # .yoyo.toml — Linux
+  + notify_command = "notify-send 'yoyo' 'done'"
+  + 
+  + # macOS
+  + notify_command = "osascript -e 'display notification \"done\" with title \"yoyo\"'"
+  + ```
+  + 
+  + Or set it from inside the REPL:
+  + 
+  ... (12 more lines)
+  ▶ edit docs/src/getting-started/installation.md (4 → 7 lines)
+    no_bell = false
+    quiet = false
+    no_color = false
+  + 
+  + # Run a command when a long prompt finishes (opt-in; empty/absent = disabled)
+  + # notify_command = "notify-send 'yoyo' 'done'"
+ ✓ (1m 24s)
+    no_bell = false
+    quiet = false
+    no_color = false
+  + 
+  + # Run a command when a long prompt finishes (opt-in; empty/absent = disabled)
+  + # notify_command = "notify-send 'yoyo' 'done'"
+ ✓ (2m 48s)
+    ## Interrupting
+    
+    Press **Ctrl+C** to cancel the current response. The agent will stop and you can type a new prompt. Press Ctrl+C again to exit.
+  + 
+  + ## Completion notifications
+  + 
+  + When a prompt takes more than a few seconds, yoyo rings the terminal bell so you notice the finish even if you switched windows (disable with `no_bell = true` or `--no-bell`).
+  + 
+  ... (13 more lines)
+  ▶ $ grep -n "no_bell\|settable\|config set" docs/src/usage/commands.md | head ✓ (3ms)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 ✓ (17.2s)
+  ▶ $ cargo build 2>&1 | tail -2 && cargo test 2>&1 | tail -15 ✓ (1m 8s)
+  ▶ $ cargo test notify 2>&1 | grep -E "notify|test result" | head -20 ✓ (152ms)
+  8 tools completed in 6m 47s (8 ✓)
+
+All checks pass. Both missing deliverables are now complete:
+
+**Tests added (13 new):**
+
+src/config.rs — parser + config-set coverage with paired negative cases:
+• `notify_command_absent_is_none, notify_command_empty_is_none, notify_command_whitespace_only_is_none` (negative cases)
+• `notify_command_set_returns_value, notify_command_value_is_trimmed` (positive cases)
+• validate_notify_command_accepts_any_string — non-empty accepted, empty accepted (clears the setting)
+• notify_command_is_a_settable_key — verifies the /config set path recognizes it via `SETTABLE_KEYS`
+
+src/format/mod.rs — pure threshold decision + one guarded spawn test:
+• `should_run_notify_command_just_below_threshold_is_false (2s), ..._at_threshold_is_true (3s), ..._above_threshold_is_true`, ..._not_configured_is_false
+• run_notify_command_spawns_without_panicking (#[cfg(unix)], uses true and a missing binary — no panic, no blocking)
+
+Docs added:
+• docs/src/usage/repl.md — new "Completion notifications" section: opt-in semantics, notify-send (Linux) and osascript (macOS) examples, /config set usage, `sh -c/cmd /C detached spawn, YOYO_EVENT/YOYO_ELAPSED_SECS` env vars, silent-failure behavior, clearing with empty string.
+• docs/src/getting-started/installation.md — added notify_command to the example .yoyo.toml alongside the other display keys (`no_bell`, etc.).
+
+CLAUDE.md's config.rs bullet doesn't enumerate individual parser keys, so no change needed there.
+
+Verification: cargo fmt ✓, clippy -D warnings ✓, cargo build ✓, `cargo test` ✓ (all suites green, 14 notify-related tests passing). No refactoring of the working implementation — only tests and docs added.
+
+  watch: no files changed this turn — skipping
+

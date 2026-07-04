@@ -1,0 +1,168 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'no_bell|maybe_ring_bell|bell_enabled' (*.rs)  ▶ search 'SETTABLE_KEYS' in src/config.rs ✓ (2ms)
+ ✓ (25ms)
+  ▶ $ pwd && grep -rn "maybe_ring_bell" src/ | head -20 ✓ (9ms)
+  ▶ read src/format/mod.rs:1..151 ✓ (2ms)
+  ▶ read src/config.rs:480..710 ✓ (2ms)
+  ▶ $ grep -rn "parse_no_bell_from_config\|disable_bell\|parse_quiet_from_config" src/… ✓ (10ms)
+  ▶ read src/cli.rs:700..780 ✓ (1ms)
+  ▶ $ grep -rn "no_bell\|notify" docs/src/ | head -20; grep -n "is_verbose" src/format… ✓ (10ms)
+  ▶ $ grep -rn "no_bell\|max_auto_continues\|auto_continue" docs/src/usage/repl.md doc… ✓ (5ms)
+  ▶ $ grep -rn "config set\|SETTABLE\|settable" docs/src/ | head; grep -rln "no_bell" … ✓ (5ms)
+  ▶ $ grep -n "^#" docs/src/usage/repl.md; grep -n "bell\|Bell" docs/src/usage/repl.md ✓ (4ms)
+  ▶ edit src/config.rs (7 → 24 lines)
+    /// when the key is absent — colors are enabled by default.
+    pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+        config_flag(config, "no_color", false)
+  + }
+  + 
+  + /// Parse `notify_command` from the config map.
+  + ///
+  + /// Returns `Some(command)` when a non-empty command string is configured,
+  + /// or `None` when the key is absent or empty. When set, the command is run
+  + /// (fire-and-forget) whenever a long prompt finishes — the same threshold
+  + /// that triggers the terminal bell. Absent means the feature is completely
+  + /// inert: no process spawn, no PATH probing.
+  + pub fn parse_notify_command_from_config(
+  +     config: &std::collections::HashMap<String, String>,
+  + ) -> Option<String> {
+  +     config
+  +         .get("notify_command")
+  +         .map(|v| v.trim())
+  +         .filter(|v| !v.is_empty())
+  +         .map(|v| v.to_string())
+  ... (1 more lines)
+  ▶ edit src/config.rs (1 → 5 lines)
+        ("no_bell", "suppress terminal bell (true/false)"),
+  +     (
+  +         "notify_command",
+  +         "command to run when a long prompt finishes (empty = disabled)",
+  +     ),
+ ✓ (1m 31s)
+    /// when the key is absent — colors are enabled by default.
+    pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+        config_flag(config, "no_color", false)
+  + }
+  + 
+  + /// Parse `notify_command` from the config map.
+  + ///
+  + /// Returns `Some(command)` when a non-empty command string is configured,
+  ... (13 more lines)
+ ✓ (2m 57s)
+        ("no_bell", "suppress terminal bell (true/false)"),
+  +     (
+  +         "notify_command",
+  +         "command to run when a long prompt finishes (empty = disabled)",
+  +     ),
+  ▶ edit src/config.rs (1 → 6 lines)
+  +         "notify_command" => {
+  +             // Any string is a valid command; an empty string clears the setting
+  +             // (disabling the feature). The command is entirely user-supplied.
+  +             Ok(value.to_string())
+  +         }
+            "quiet" => {
+ ✓ (1m 44s)
+  +         "notify_command" => {
+  +             // Any string is a valid command; an empty string clears the setting
+  +             // (disabling the feature). The command is entirely user-supplied.
+  +             Ok(value.to_string())
+  +         }
+            "quiet" => {
+  ▶ $ grep -n "fn set_toml_key" -A 40 src/config.rs | head -60 ✓ (3ms)
+  15 tools completed in 6m 26s (15 ✓)
+
+Now format/mod.rs — the notify command machinery hooked into maybe_ring_bell:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/mod.rs (13 → 87 lines)
+  + /// Elapsed-seconds threshold that makes a prompt count as "long" for the
+  + /// terminal bell and the user-configured `notify_command`.
+  + const LONG_PROMPT_THRESHOLD_SECS: u64 = 3;
+  + 
+    /// Ring the terminal bell if enabled and elapsed time exceeds threshold.
+    /// The bell character (\x07) causes most terminal emulators to flash the tab
+    /// or play a sound, alerting multitasking developers.
+  - /// Also sends a desktop notification for genuinely long waits (≥10s).
+  + /// Also sends a desktop notification for genuinely long waits (≥10s), and
+  + /// runs the user-configured `notify_command` (if any) at the bell threshold.
+    pub fn maybe_ring_bell(elapsed: Duration) {
+  -     if bell_enabled() && elapsed.as_secs() >= 3 {
+  +     if bell_enabled() && elapsed.as_secs() >= LONG_PROMPT_THRESHOLD_SECS {
+            let _ = io::stdout().write_all(b"\x07");
+            let _ = io::stdout().flush();
+        }
+        if notify_enabled() && should_send_notification(elapsed) {
+            send_desktop_notification(elapsed);
+  +     }
+  +     if let Some(cmd) = notify_command() {
+  ... (69 more lines)
+ ✓ (16.4s)
+  + /// Elapsed-seconds threshold that makes a prompt count as "long" for the
+  + /// terminal bell and the user-configured `notify_command`.
+  + const LONG_PROMPT_THRESHOLD_SECS: u64 = 3;
+  + 
+    /// Ring the terminal bell if enabled and elapsed time exceeds threshold.
+    /// The bell character (\x07) causes most terminal emulators to flash the tab
+    /// or play a sound, alerting multitasking developers.
+  - /// Also sends a desktop notification for genuinely long waits (≥10s).
+  ... (13 more lines)
+
+Expected — just needs the cli.rs wiring:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (5 → 10 lines)
+        {
+            crate::format::disable_bell();
+        }
+  +     // Opt-in user notification command: inert unless `notify_command` is set
+  +     // in the config file (product-safe default).
+  +     crate::format::set_notify_command(crate::config::parse_notify_command_from_config(
+  +         &file_config,
+  +     ));
+ ✓ (10.0s)
+        {
+            crate::format::disable_bell();
+        }
+  +     // Opt-in user notification command: inert unless `notify_command` is set
+  +     // in the config file (product-safe default).
+  +     crate::format::set_notify_command(crate::config::parse_notify_command_from_config(
+  +         &file_config,
+  +     ));
+  ▶ $ grep -n "parse_notify_command_from_config" src/config.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (8ms)
+  ▶ $ git status --short; git diff --stat; grep -n "notify_command" src/config.rs | he… ✓ (12ms)
+  ▶ edit src/config.rs (3 → 20 lines)
+    pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+        config_flag(config, "no_color", false)
+  + }
+  + 
+  + /// Parse `notify_command` from the config map.
+  + ///
+  + /// Returns `Some(command)` when a non-empty command string is configured,
+  + /// or `None` when the key is absent or empty. When set, the command is run
+  + /// (fire-and-forget) whenever a long prompt finishes — the same threshold
+  + /// that triggers the terminal bell. Absent means the feature is completely
+  + /// inert: no process spawn, no PATH probing.
+  + pub fn parse_notify_command_from_config(
+  +     config: &std::collections::HashMap<String, String>,
+  + ) -> Option<String> {
+  +     config
+  +         .get("notify_command")
+  +         .map(|v| v.trim())
+  +         .filter(|v| !v.is_empty())
+  +         .map(|v| v.to_string())
+    }
+ ✓ (1m 42s)
+    pub fn parse_no_color_from_config(config: &std::collections::HashMap<String, String>) -> bool {
+        config_flag(config, "no_color", false)
+  + }
+  + 
+  + /// Parse `notify_command` from the config map.
+  + ///
+  + /// Returns `Some(command)` when a non-empty command string is configured,
+  + /// or `None` when the key is absent or empty. When set, the command is run
+  ... (12 more lines)
+  4 tools completed in 2m 16s (4 ✓)
+
+  watch: no files changed this turn — skipping
+
