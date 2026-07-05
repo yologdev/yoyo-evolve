@@ -15,7 +15,7 @@ use yoagent::*;
 
 // PR subcommand handling lives in commands_git_pr.rs; re-exported here so
 // all call sites (dispatch.rs, commands.rs, help completions) are unchanged.
-pub use crate::commands_git_pr::{handle_pr, parse_pr_args, PrSubcommand};
+pub use crate::commands_git_pr::handle_pr;
 
 // ── /diff ────────────────────────────────────────────────────────────────
 
