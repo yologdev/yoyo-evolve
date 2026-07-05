@@ -1695,34 +1695,36 @@ mod tests {
                 }],
                 timestamp: 0,
             }),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text {
-                    text: "first response".into(),
-                }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 1,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text {
+                        text: "first response".into(),
+                    }],
+                    StopReason::Stop,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(1),
+            ),
             AgentMessage::Llm(Message::User {
                 content: vec![Content::Text {
                     text: "followup".into(),
                 }],
                 timestamp: 2,
             }),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text {
-                    text: "second response".into(),
-                }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 3,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text {
+                        text: "second response".into(),
+                    }],
+                    StopReason::Stop,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(3),
+            ),
         ];
         let text = extract_last_assistant_text(&messages).unwrap();
         assert_eq!(text, "second response");

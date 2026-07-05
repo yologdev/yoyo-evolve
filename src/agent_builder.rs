@@ -345,19 +345,18 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         }
         "bedrock" => {
             let url = base_url.unwrap_or("https://bedrock-runtime.us-east-1.amazonaws.com");
-            ModelConfig {
-                id: model.into(),
-                name: model.into(),
-                api: ApiProtocol::BedrockConverseStream,
-                provider: "bedrock".into(),
-                base_url: url.to_string(),
-                reasoning: false,
-                context_window: 200_000,
-                max_tokens: 8192,
-                cost: Default::default(),
-                headers: std::collections::HashMap::new(),
-                compat: None,
-            }
+            // ModelConfig is #[non_exhaustive] as of yoagent 0.9 — build via
+            // custom() and mutate. Bedrock-hosted Claude models get a 200K
+            // context window; max_tokens follows yoagent's default (16K).
+            let mut config = ModelConfig::custom(
+                ApiProtocol::BedrockConverseStream,
+                "bedrock",
+                url,
+                model,
+                model,
+            );
+            config.context_window = 200_000;
+            config
         }
         "github" => {
             // GitHub Models — OpenAI-compatible API at models.github.ai

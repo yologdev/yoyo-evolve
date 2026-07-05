@@ -296,6 +296,9 @@ pub fn context_breakdown(messages: &[AgentMessage]) -> ContextBreakdown {
                                 let raw_bytes = data.len() * 3 / 4;
                                 assistant_messages += (raw_bytes / 750).clamp(85, 16_000);
                             }
+                            // Content is #[non_exhaustive] (yoagent 0.9) —
+                            // count unknown future variants as zero tokens.
+                            _ => {}
                         }
                     }
                     assistant_messages += 4; // message overhead
@@ -341,6 +344,8 @@ fn content_block_tokens(content: &[Content]) -> usize {
             Content::ToolCall {
                 name, arguments, ..
             } => estimate_tokens(name) + estimate_tokens(&arguments.to_string()) + 8,
+            // Unknown future variants (Content is #[non_exhaustive]): 0 tokens.
+            _ => 0,
         })
         .sum()
 }
@@ -474,6 +479,8 @@ fn message_preview(content: &[Content], _role: &str) -> String {
             Content::Image { .. } => {
                 return "[image]".to_string();
             }
+            // Unknown future variants (Content is #[non_exhaustive]): skip.
+            _ => {}
         }
     }
     String::new()
@@ -2502,25 +2509,21 @@ More text.
                 }],
                 timestamp: 0,
             }),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![
-                    Content::Text {
-                        text: "I'll help you with that.".to_string(),
-                    },
-                    Content::ToolCall {
-                        id: "tc1".to_string(),
-                        name: "bash".to_string(),
-                        arguments: serde_json::json!({"command": "ls"}),
-                        provider_metadata: None,
-                    },
-                ],
-                stop_reason: yoagent::StopReason::ToolUse,
-                model: "test".to_string(),
-                provider: "test".to_string(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![
+                        Content::Text {
+                            text: "I'll help you with that.".to_string(),
+                        },
+                        Content::tool_call("tc1", "bash", serde_json::json!({"command": "ls"})),
+                    ],
+                    yoagent::StopReason::ToolUse,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(0),
+            ),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "tc1".to_string(),
                 tool_name: "bash".to_string(),
@@ -2552,23 +2555,21 @@ More text.
 
     #[test]
     fn test_context_breakdown_with_thinking() {
-        let messages: Vec<AgentMessage> = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![
-                Content::Thinking {
-                    thinking: "Let me think about this carefully for a while...".to_string(),
-                    signature: None,
-                },
-                Content::Text {
-                    text: "Here's my answer.".to_string(),
-                },
-            ],
-            stop_reason: yoagent::StopReason::Stop,
-            model: "test".to_string(),
-            provider: "test".to_string(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages: Vec<AgentMessage> = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![
+                    Content::thinking("Let me think about this carefully for a while..."),
+                    Content::Text {
+                        text: "Here's my answer.".to_string(),
+                    },
+                ],
+                yoagent::StopReason::Stop,
+                "test",
+                "test",
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )];
 
         let bd = context_breakdown(&messages);
         assert!(bd.thinking > 0, "thinking tokens should be counted");
@@ -2845,17 +2846,18 @@ More text.
 
     /// Helper: create an Assistant AgentMessage with given text content.
     fn make_assistant_msg(text: &str) -> AgentMessage {
-        AgentMessage::Llm(Message::Assistant {
-            content: vec![Content::Text {
-                text: text.to_string(),
-            }],
-            stop_reason: StopReason::Stop,
-            model: "test".to_string(),
-            provider: "test".to_string(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })
+        AgentMessage::Llm(
+            Message::assistant(
+                vec![Content::Text {
+                    text: text.to_string(),
+                }],
+                StopReason::Stop,
+                "test",
+                "test",
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )
     }
 
     /// Helper: create a ToolResult AgentMessage with given tool name and text content.

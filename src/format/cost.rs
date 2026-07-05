@@ -1313,21 +1313,22 @@ mod tests {
     fn test_extract_turn_costs_single_assistant() {
         use yoagent::{AgentMessage, Content, Message, StopReason, Usage};
 
-        let messages = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![Content::Text { text: "hi".into() }],
-            stop_reason: StopReason::Stop,
-            model: "claude-sonnet-4-20250514".into(),
-            provider: "anthropic".into(),
-            usage: Usage {
-                input: 1000,
-                output: 500,
-                cache_read: 0,
-                cache_write: 0,
-                total_tokens: 1500,
-            },
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![Content::Text { text: "hi".into() }],
+                StopReason::Stop,
+                "claude-sonnet-4-20250514",
+                "anthropic",
+                Usage {
+                    input: 1000,
+                    output: 500,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total_tokens: 1500,
+                },
+            )
+            .with_timestamp(0),
+        )];
         let costs = extract_turn_costs(&messages, "claude-sonnet-4-20250514");
         assert_eq!(costs.len(), 1);
         assert_eq!(costs[0].turn_number, 1);
@@ -1341,21 +1342,22 @@ mod tests {
         use yoagent::{AgentMessage, Content, Message, StopReason, Usage};
 
         let make_assistant = |input: u64, output: u64| {
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text { text: "hi".into() }],
-                stop_reason: StopReason::Stop,
-                model: "claude-sonnet-4-20250514".into(),
-                provider: "anthropic".into(),
-                usage: Usage {
-                    input,
-                    output,
-                    cache_read: 0,
-                    cache_write: 0,
-                    total_tokens: input + output,
-                },
-                timestamp: 0,
-                error_message: None,
-            })
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text { text: "hi".into() }],
+                    StopReason::Stop,
+                    "claude-sonnet-4-20250514",
+                    "anthropic",
+                    Usage {
+                        input,
+                        output,
+                        cache_read: 0,
+                        cache_write: 0,
+                        total_tokens: input + output,
+                    },
+                )
+                .with_timestamp(0),
+            )
         };
         let user_msg = AgentMessage::Llm(Message::User {
             content: vec![Content::Text { text: "q".into() }],
@@ -1765,21 +1767,22 @@ mod tests {
     fn test_estimate_remaining_turns_one_turn() {
         use yoagent::{AgentMessage, Content, Message, StopReason, Usage};
 
-        let messages = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![Content::Text { text: "hi".into() }],
-            stop_reason: StopReason::Stop,
-            model: "test".into(),
-            provider: "test".into(),
-            usage: Usage {
-                input: 1000,
-                output: 500,
-                cache_read: 0,
-                cache_write: 0,
-                total_tokens: 1500,
-            },
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![Content::Text { text: "hi".into() }],
+                StopReason::Stop,
+                "test",
+                "test",
+                Usage {
+                    input: 1000,
+                    output: 500,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total_tokens: 1500,
+                },
+            )
+            .with_timestamp(0),
+        )];
         // Only 1 turn — not enough data
         assert!(estimate_remaining_turns(&messages, 200_000).is_none());
     }
@@ -1789,21 +1792,22 @@ mod tests {
         use yoagent::{AgentMessage, Content, Message, StopReason, Usage};
 
         let make_assistant = |input: u64, output: u64| {
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text { text: "hi".into() }],
-                stop_reason: StopReason::Stop,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage {
-                    input,
-                    output,
-                    cache_read: 0,
-                    cache_write: 0,
-                    total_tokens: input + output,
-                },
-                timestamp: 0,
-                error_message: None,
-            })
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text { text: "hi".into() }],
+                    StopReason::Stop,
+                    "test",
+                    "test",
+                    Usage {
+                        input,
+                        output,
+                        cache_read: 0,
+                        cache_write: 0,
+                        total_tokens: input + output,
+                    },
+                )
+                .with_timestamp(0),
+            )
         };
         let user_msg = AgentMessage::Llm(Message::User {
             content: vec![Content::Text { text: "q".into() }],

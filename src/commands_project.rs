@@ -2426,63 +2426,59 @@ mod tests {
         use yoagent::types::*;
 
         let messages = vec![
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![
-                    Content::ToolCall {
-                        id: "1".into(),
-                        name: "read_file".into(),
-                        arguments: serde_json::json!({"path": "src/main.rs"}),
-                        provider_metadata: None,
-                    },
-                    Content::ToolCall {
-                        id: "2".into(),
-                        name: "edit_file".into(),
-                        arguments: serde_json::json!({"path": "src/tools.rs", "old_text": "a", "new_text": "b"}),
-                        provider_metadata: None,
-                    },
-                    Content::ToolCall {
-                        id: "3".into(),
-                        name: "write_file".into(),
-                        arguments: serde_json::json!({"path": "src/new.rs", "content": "fn main() {}"}),
-                        provider_metadata: None,
-                    },
-                ],
-                stop_reason: StopReason::ToolUse,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            }),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![
-                    Content::ToolCall {
-                        id: "4".into(),
-                        name: "list_files".into(),
-                        arguments: serde_json::json!({"path": "src/"}),
-                        provider_metadata: None,
-                    },
-                    Content::ToolCall {
-                        id: "5".into(),
-                        name: "search".into(),
-                        arguments: serde_json::json!({"pattern": "TODO", "path": "src/"}),
-                        provider_metadata: None,
-                    },
-                    // Duplicate read — should be deduplicated
-                    Content::ToolCall {
-                        id: "6".into(),
-                        name: "read_file".into(),
-                        arguments: serde_json::json!({"path": "src/main.rs"}),
-                        provider_metadata: None,
-                    },
-                ],
-                stop_reason: StopReason::ToolUse,
-                model: "test".into(),
-                provider: "test".into(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![
+                        Content::tool_call(
+                            "1",
+                            "read_file",
+                            serde_json::json!({"path": "src/main.rs"}),
+                        ),
+                        Content::tool_call(
+                            "2",
+                            "edit_file",
+                            serde_json::json!({"path": "src/tools.rs", "old_text": "a", "new_text": "b"}),
+                        ),
+                        Content::tool_call(
+                            "3",
+                            "write_file",
+                            serde_json::json!({"path": "src/new.rs", "content": "fn main() {}"}),
+                        ),
+                    ],
+                    StopReason::ToolUse,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(0),
+            ),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![
+                        Content::tool_call(
+                            "4",
+                            "list_files",
+                            serde_json::json!({"path": "src/"}),
+                        ),
+                        Content::tool_call(
+                            "5",
+                            "search",
+                            serde_json::json!({"pattern": "TODO", "path": "src/"}),
+                        ),
+                        // Duplicate read — should be deduplicated
+                        Content::tool_call(
+                            "6",
+                            "read_file",
+                            serde_json::json!({"path": "src/main.rs"}),
+                        ),
+                    ],
+                    StopReason::ToolUse,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(0),
+            ),
         ];
 
         let result = extract_context_files(&messages);
@@ -2513,28 +2509,19 @@ mod tests {
     fn test_extract_context_files_skips_non_file_tools() {
         use yoagent::types::*;
 
-        let messages = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![
-                Content::ToolCall {
-                    id: "1".into(),
-                    name: "bash".into(),
-                    arguments: serde_json::json!({"command": "ls"}),
-                    provider_metadata: None,
-                },
-                Content::ToolCall {
-                    id: "2".into(),
-                    name: "todo".into(),
-                    arguments: serde_json::json!({"action": "list"}),
-                    provider_metadata: None,
-                },
-            ],
-            stop_reason: StopReason::Stop,
-            model: "test".into(),
-            provider: "test".into(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![
+                    Content::tool_call("1", "bash", serde_json::json!({"command": "ls"})),
+                    Content::tool_call("2", "todo", serde_json::json!({"action": "list"})),
+                ],
+                StopReason::Stop,
+                "test",
+                "test",
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )];
 
         let result = extract_context_files(&messages);
         assert!(result.is_empty(), "Non-file tools should be skipped");
@@ -2545,20 +2532,20 @@ mod tests {
         use yoagent::types::*;
 
         // search tool call with no path (searches cwd) — should not add empty path
-        let messages = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![Content::ToolCall {
-                id: "1".into(),
-                name: "search".into(),
-                arguments: serde_json::json!({"pattern": "TODO"}),
-                provider_metadata: None,
-            }],
-            stop_reason: StopReason::ToolUse,
-            model: "test".into(),
-            provider: "test".into(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![Content::tool_call(
+                    "1",
+                    "search",
+                    serde_json::json!({"pattern": "TODO"}),
+                )],
+                StopReason::ToolUse,
+                "test",
+                "test",
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )];
 
         let result = extract_context_files(&messages);
         // search without a path shouldn't produce an entry
