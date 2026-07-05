@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ ls ~/.cargo/registry/src/*/yoagent-0.9*/src/provider/ 2>/dev/null; ls ~/.cargo/r…  ▶ $ grep -n "base_url" src/agent_builder.rs | head -40 ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ grep -n "base_url\|/v1\|messages" ~/.cargo/registry/src/*/yoagent-0.9.0/src/prov…  ▶ $ grep -rn "base_url" ~/.cargo/registry/src/*/yoagent-0.9.0/src/provider/registry.… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ sed -n 10,60p ~/.cargo/registry/src/*/yoagent-0.9.0/src/provider/anthropic.rs ✓ (4ms)
+  ▶ $ grep -n -B2 -A6 "api.anthropic" ~/.cargo/registry/src/*/yoagent-0.9.0/src/provid…  ▶ read src/agent_builder.rs:230..390 ✓ (2ms)
+ ✓ (4ms)
+  ▶ read src/agent_builder.rs:389..459 ✓ (1ms)
+  8 tools completed in 30.8s (8 ✓)
+
+No `"anthropic" arm exists in create_model_config` anymore — let me see how anthropic + base_url is handled in build_agent:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/agent_builder.rs:590..660 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 -- src/agen… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 2b0232c7~1:src/agent_bu… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 2b0232c7~1:src/agent_bu… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 2b0232c7~1:src/agent_bu… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "base-url\|base_url" do…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 568 2>/dev/null | … ✓ (6ms)
+ ✓ (526ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "create_model_config\|an…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,760p' src/agent_buil… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1280,1310p' src/agent_bu… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AnthropicProvider\|Open… ✓ (6ms)
+  ▶ edit src/agent_builder.rs (4 → 48 lines)
+  - /// Create a ModelConfig for non-Anthropic providers.
+  + /// Normalize a user-supplied `--base-url` for the Anthropic provider.
+  + ///
+  + /// yoagent 0.9's `AnthropicProvider` builds the request URL as
+  + /// `{base_url.trim_end_matches('/')}/messages` — it appends only `/messages`,
+  + /// never `/v1/messages`. The official preset therefore carries
+  + /// `https://api.anthropic.com/v1`, and a proxy URL must also end in the path
+  + /// segment the gateway expects (usually `/v1`).
+  + ///
+  + /// Accepted forms:
+  + /// - `https://proxy.com/v1` → kept as-is (canonical)
+  + /// - `https://proxy.com/v1/` → trailing slash trimmed
+  + /// - `https://proxy.com` → `/v1` appended (the natural bare-host spelling
+  + ///   would otherwise produce `https://proxy.com/messages`, missing `/v1`)
+  + /// - any URL with an explicit path (e.g. a gateway like
+  + ///   `https://opencode.ai/zen/v1`) → kept as-is, only trailing `/` trimmed —
+  + ///   we never second-guess a deliberate path
+  + pub fn normalize_anthropic_base_url(url: &str) -> String {
+  +     let trimmed = url.trim_end_matches('/');
+  +     // Everything after "scheme://"; if no scheme, treat the whole string as
+  ... (29 more lines)
+ ✓ (1m 30s)
+  - /// Create a ModelConfig for non-Anthropic providers.
+  + /// Normalize a user-supplied `--base-url` for the Anthropic provider.
+  + ///
+  + /// yoagent 0.9's `AnthropicProvider` builds the request URL as
+  + /// `{base_url.trim_end_matches('/')}/messages` — it appends only `/messages`,
+  + /// never `/v1/messages`. The official preset therefore carries
+  + /// `https://api.anthropic.com/v1`, and a proxy URL must also end in the path
+  + /// segment the gateway expects (usually `/v1`).
+  ... (13 more lines)
+  12 tools completed in 4m 4s (12 ✓)
+
+Now fix the routing in the three build functions:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (8 → 10 lines)
+  -         if self.provider == "anthropic" && base_url.is_none() {
+  -             // Default Anthropic path
+  -             let mut model_config = anthropic_model_config(&self.model);
+  -             insert_client_headers(&mut model_config);
+  +         if self.provider == "anthropic" {
+  +             // Anthropic path — native protocol; a custom --base-url (proxy or
+  +             // gateway) is honored by yoagent 0.9 and normalized in
+  +             // create_model_config, so it no longer falls through to the
+  +             // OpenAI-compat unknown-provider path.
+  +             let model_config = create_model_config(&self.provider, &self.model, base_url);
+                let context_window = model_config.context_window;
+                let agent = Agent::new(AnthropicProvider).with_model_config(model_config);
+                self.configure_agent(agent, context_window)
+ ✓ (1m 31s)
+  -         if self.provider == "anthropic" && base_url.is_none() {
+  -             // Default Anthropic path
+  -             let mut model_config = anthropic_model_config(&self.model);
+  -             insert_client_headers(&mut model_config);
+  +         if self.provider == "anthropic" {
+  +             // Anthropic path — native protocol; a custom --base-url (proxy or
+  +             // gateway) is honored by yoagent 0.9 and normalized in
+  +             // create_model_config, so it no longer falls through to the
+  ... (5 more lines)
+  ▶ edit src/agent_builder.rs (7 → 6 lines)
+  -         let agent = if self.provider == "anthropic" && base_url.is_none() {
+  -             let mut model_config = anthropic_model_config(&self.model);
+  -             insert_client_headers(&mut model_config);
+  +         let agent = if self.provider == "anthropic" {
+  +             let model_config = create_model_config(&self.provider, &self.model, base_url);
+                Agent::new(AnthropicProvider).with_model_config(model_config)
+            } else if self.provider == "google" {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+ ✓ (1m 29s)
+  -         let agent = if self.provider == "anthropic" && base_url.is_none() {
+  -             let mut model_config = anthropic_model_config(&self.model);
+  -             insert_client_headers(&mut model_config);
+  +         let agent = if self.provider == "anthropic" {
+  +             let model_config = create_model_config(&self.provider, &self.model, base_url);
+                Agent::new(AnthropicProvider).with_model_config(model_config)
+            } else if self.provider == "google" {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+  ▶ edit src/agent_builder.rs (5 → 4 lines)
+  -         let agent = if self.provider == "anthropic" && base_url.is_none() {
+  -             let mut model_config = anthropic_model_config(architect_model);
+  -             insert_client_headers(&mut model_config);
+  +         let agent = if self.provider == "anthropic" {
+  +             let model_config = create_model_config(&self.provider, architect_model, base_url);
+                Agent::new(AnthropicProvider).with_model_config(model_config)
+            } else if self.provider == "google" {
+ ✓ (1m 29s)
+  -         let agent = if self.provider == "anthropic" && base_url.is_none() {
+  -             let mut model_config = anthropic_model_config(architect_model);
+  -             insert_client_headers(&mut model_config);
+  +         let agent = if self.provider == "anthropic" {
+  +             let model_config = create_model_config(&self.provider, architect_model, base_url);
+                Agent::new(AnthropicProvider).with_model_config(model_config)
+            } else if self.provider == "google" {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (128ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch src/agent_builder.rs && ca… ✓ (8.9s)
+  5 tools completed in 5m 9s (5 ✓)
+
+Builds. Now add the regression tests. Let me find the test section near the existing create_model_config tests:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_client_headers_… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+

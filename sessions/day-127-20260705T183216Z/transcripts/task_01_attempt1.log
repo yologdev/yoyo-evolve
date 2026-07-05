@@ -1,0 +1,154 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:490..580 ✓ (1ms)
+ ✓ (9ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Let me look at the reverted diff from the earlier session and the MessageEnd handling:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --all --oneline --grep="…  ▶ search 'MessageEnd|StopReason' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs ✓ (3ms)
+ ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StopReason" src/prompt.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "StopReason" src/ | hea… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "retriable_error\|overfl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|pub fn " src/promp… ✓ (5ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:140..220  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:580..640 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PromptResult\|looks_inc… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:40..160  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1260..1330 ✓ (2ms)
+ ✓ (3ms)
+  11 tools completed in 1m 11s (11 ✓)
+
+Let me see the existing tests around the state machine and the auto-retry loop:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:2035..2135  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:905..955 ✓ (2ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (30 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1400,1460p src/format/cos… ✓ (1ms)
+ ✓ (6ms)
+  ▶ $ grep -n "pub fn assistant\|error_message" ~/.cargo/registry/src/*/yoagent-0.9*/s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '255,290p' src/prompt_ret… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (2 → 40 lines)
+    use crate::format::safe_truncate;
+    use std::time::Duration;
+  + use yoagent::StopReason;
+  + 
+  + /// How the prompt event loop should handle a terminal `stop_reason` at
+  + /// AgentEnd (Day 127, #568).
+  + ///
+  + /// Extracted as a pure classifier so the retry policy per stop reason is
+  + /// unit-testable: `Error` may be transient (rate limit, outage) and enters
+  + /// the error-inspection path (overflow / retriable / fatal), while `Refusal`
+  + /// is deterministic — the provider's safety system declined the request, and
+  + /// re-sending the same prompt burns tokens for the same answer — so it gets
+  + /// an honest user-facing notice and must never enter the retry machinery.
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum StopHandling {
+  +     /// `StopReason::Error` — inspect `error_message`; may be a context
+  +     /// overflow, a retriable API error, or a fatal error.
+  +     InspectError,
+  +     /// `StopReason::Refusal` — print a notice telling the user to rephrase;
+  +     /// deliberately non-retryable.
+  ... (20 more lines)
+ ✓ (16.0s)
+    use crate::format::safe_truncate;
+    use std::time::Duration;
+  + use yoagent::StopReason;
+  + 
+  + /// How the prompt event loop should handle a terminal `stop_reason` at
+  + /// AgentEnd (Day 127, #568).
+  + ///
+  + /// Extracted as a pure classifier so the retry policy per stop reason is
+  ... (13 more lines)
+  7 tools completed in 1m 43s (7 ✓)
+
+Expected — it's dead code until wired into prompt.rs. Now the seam:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (4 → 4 lines)
+    use crate::prompt_retry::{
+  -     build_auto_retry_prompt, build_overflow_retry_prompt, diagnose_api_error, is_overflow_error,
+  -     is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+  +     build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  +     is_overflow_error, is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+ ✓ (16.3s)
+    use crate::prompt_retry::{
+  -     build_auto_retry_prompt, build_overflow_retry_prompt, diagnose_api_error, is_overflow_error,
+  -     is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+  +     build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+  +     is_overflow_error, is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
+    };
+
+Now the actual use in handle_agent_end:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (26 → 49 lines)
+                    accumulate_usage(&mut self.usage, msg_usage);
+    
+  -                 if *stop_reason == StopReason::Error {
+  -                     if let Some(err_msg) = error_message {
+  +                 match classify_stop_reason(stop_reason) {
+  +                     StopHandling::InspectError => {
+  +                         if let Some(err_msg) = error_message {
+  +                             if self.in_text {
+  +                                 println!();
+  +                                 self.in_text = false;
+  +                             }
+  +                             // Check for context overflow first — needs special handling
+  +                             if is_overflow_error(err_msg) {
+  +                                 self.overflow_error = Some(err_msg.clone());
+  +                             } else if is_retriable_error(err_msg) {
+  +                                 // Check if this error is worth retrying
+  +                                 self.retriable_error = Some(err_msg.clone());
+  +                             } else {
+  +                                 eprintln!("\n{RED}  error: {err_msg}{RESET}");
+  +                                 // Show diagnostic help for common errors
+  ... (45 more lines)
+ ✓ (1m 30s)
+                    accumulate_usage(&mut self.usage, msg_usage);
+    
+  -                 if *stop_reason == StopReason::Error {
+  -                     if let Some(err_msg) = error_message {
+  +                 match classify_stop_reason(stop_reason) {
+  +                     StopHandling::InspectError => {
+  +                         if let Some(err_msg) = error_message {
+  +                             if self.in_text {
+  ... (13 more lines)
+
+Now the tests. First in prompt_retry.rs:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '560,615p' src/prompt_ret… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (6 → 43 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn test_classify_stop_reason_refusal_is_not_retryable() {
+  +         // #568: a refusal is deterministic — it must route to the notice path,
+  +         // never the error-inspection path that can mark a turn retriable.
+  +         assert_eq!(
+  +             classify_stop_reason(&StopReason::Refusal),
+  +             StopHandling::RefusalNotice
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_classify_stop_reason_error_enters_inspection() {
+  +         // Negative pair (Day-122 lesson): Error IS eligible for retry
+  +         // classification — the minimum change from Refusal that flips the verdict.
+  +         assert_eq!(
+  +             classify_stop_reason(&StopReason::Error),
+  ... (23 more lines)
+ ✓ (1m 18s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn test_classify_stop_reason_refusal_is_not_retryable() {
+  +         // #568: a refusal is deterministic — it must route to the notice path,
+  +         // never the error-inspection path that can mark a turn retriable.
+  ... (13 more lines)
+  2 tools completed in 1m 27s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

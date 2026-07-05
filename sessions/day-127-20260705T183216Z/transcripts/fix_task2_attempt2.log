@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && grep -n …  ▶ search 'test_build_agent_anthropic_with_base_url_uses_openai_compat' in src ✓ (8ms)
+ ✓ (11ms)
+  ▶ read src/agent_builder.rs:280..390  ▶ read src/agent_builder.rs:1690..1740 ✓ (1ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "create_model_config\|fn… ✓ (5ms)
+  ▶ read src/agent_builder.rs:640..680 ✓ (1ms)
+  6 tools completed in 23.4s (6 ✓)
+
+Now I'll fix the stale test and add the regression tests. First, update the stale test:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (13 → 14 lines)
+        #[test]
+    
+  -     fn test_build_agent_anthropic_with_base_url_uses_openai_compat() {
+  -         // When Anthropic is used with a custom base_url, it should go through
+  -         // the OpenAI-compatible path (not the default Anthropic path)
+  +     fn test_build_agent_anthropic_with_base_url_stays_native() {
+  +         // Since yoagent 0.9, Anthropic with a custom base_url stays on the
+  +         // native Anthropic path (it no longer falls through to OpenAI-compat);
+  +         // the URL is honored and normalized by create_model_config.
+            let config = AgentConfig {
+                base_url: Some("https://custom-api.example.com/v1".to_string()),
+                ..test_agent_config("anthropic", "claude-opus-4-6")
+            };
+  -         // Should not panic — the OpenAI-compat path handles anthropic + base_url
+  +         // Should not panic — the native Anthropic path handles the base_url
+            let agent = config.build_agent();
+            assert_eq!(agent.messages().len(), 0);
+        }
+ ✓ (1m 30s)
+        #[test]
+    
+  -     fn test_build_agent_anthropic_with_base_url_uses_openai_compat() {
+  -         // When Anthropic is used with a custom base_url, it should go through
+  -         // the OpenAI-compatible path (not the default Anthropic path)
+  +     fn test_build_agent_anthropic_with_base_url_stays_native() {
+  +         // Since yoagent 0.9, Anthropic with a custom base_url stays on the
+  +         // native Anthropic path (it no longer falls through to OpenAI-compat);
+  ... (10 more lines)
+  ▶ read src/agent_builder.rs:1330..1355 ✓ (1ms)
+  ▶ edit src/agent_builder.rs (5 → 102 lines)
+            assert!(
+                !config.headers.contains_key("X-Title"),
+                "Anthropic config should NOT have X-Title"
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // normalize_anthropic_base_url tests (#568 checklist item 4)
+  +     //
+  +     // yoagent 0.9's AnthropicProvider builds the request URL as
+  +     // `{base_url.trim_end_matches('/')}/messages` — it appends only
+  +     // `/messages`, never `/v1/messages`. These tests pin both sides of the
+  +     // boundary so proxy users get `.../v1/messages` regardless of whether
+  +     // they typed the /v1 themselves.
+  +     // -----------------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_normalize_anthropic_base_url_with_trailing_v1_kept_verbatim() {
+  +         // Explicit /v1 path is the canonical form — no double-/v1.
+  +         assert_eq!(
+  ... (82 more lines)
+ ✓ (1m 30s)
+            assert!(
+                !config.headers.contains_key("X-Title"),
+                "Anthropic config should NOT have X-Title"
+  +         );
+  +     }
+  + 
+  +     // -----------------------------------------------------------------------
+  +     // normalize_anthropic_base_url tests (#568 checklist item 4)
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (55.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test normalize_anthropic 2… ✓ (265ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test agent_builder:: 2>&1 … ✓ (137ms)
+  7 tools completed in 5m 6s (7 ✓)
+
+All checks pass. Let me commit the fix:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add src/… (17 lines) ✓ (16ms)
+  2 tools completed in 21.3s (2 ✓)
+
+Done. Both evaluator issues are fixed and committed:
+
+1. Missing regression tests (scope item 4) — added 8 tests in src/agent_builder.rs:
+• `test_normalize_anthropic_base_url_with_trailing_v1_kept_verbatim — https://my-proxy.com/v1` → unchanged (no double-/v1)
+• `test_normalize_anthropic_base_url_trailing_slash_trimmed — /v1/ → /v1`
+• test_normalize_anthropic_base_url_bare_host_gets_v1_appended — `https://my-proxy.com → .../v1`
+• test_normalize_anthropic_base_url_bare_host_trailing_slash — `https://my-proxy.com/ → .../v1`
+• test_normalize_anthropic_base_url_explicit_path_respected — gateway paths like /zen/v1 or `/anthropic` never second-guessed
+• test_normalize_anthropic_base_url_schemeless_host — localhost:8080 → localhost:8080/v1
+• `test_create_model_config_anthropic_normalizes_base_url` — the anthropic arm applies normalization end-to-end and client headers survive
+• test_create_model_config_non_anthropic_base_url_unaffected — openai/google take --base-url verbatim (no `/v1` appended, trailing slash preserved)
+
+2. Stale test — renamed `test_build_agent_anthropic_with_base_url_uses_openai_compat → test_build_agent_anthropic_with_base_url_stays_native`, with the comment updated to describe the actual 0.9 behavior (native Anthropic path, no OpenAI-compat fall-through).
+
+Verification: cargo fmt clean, `cargo clippy --all-targets -- -D warnings clean, cargo build ok, full cargo test green (all 66 agent_builder tests pass, cargo test normalize_anthropic now matches 6 tests). Committed as 9485a14e`.
+
+  watch: no files changed this turn — skipping
+

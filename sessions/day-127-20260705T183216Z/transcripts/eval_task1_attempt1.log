@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib prompt_retry::t…  ▶ search 'Refusal' in src ✓ (11ms)
+ ✓ (132ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test classify_stop_reason … ✓ (132ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "retriable_error" src/pr… ✓ (6ms)
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (1m 8s)
+  5 tools completed in 1m 42s (5 ✓)
+
+Verdict written: PASS.
+
+Verification summary:
+1. Diff matches the task — scope item 1 (Refusal arm with honest stderr notice using existing YELLOW/DIM constants), item 2 (non-retryable classification via a new pure classify_stop_reason helper, exhaustive match with no wildcard so future StopReason variants force a compile-time decision), and item 4 (positive test + Day-122 negative pair + normal-stops test) are all present.
+2. **Tests pass** — all 3 new classify_stop_reason tests green; full build/test reported PASS.
+3. **Feature actually works** — traced the code path: RefusalNotice deliberately sets neither retriable_error nor overflow_error, so into_result() returns Done and the auto-retry machinery cannot fire. That's the core guarantee the task asked for.
+4. Scope item 3 (REPL auto-continue) — untouched, which the task explicitly allowed since stop_reason isn't visible at the `looks_incomplete` decision point; no signature replumbing (the thing that sank the reverted version).
+5. Docs — CLAUDE.md's prompt_retry.rs description already says "error classification," which covers the new helper; no update needed.
+
+No red flags: task is product-kind and the change is a defensive behavior fix, not an evolve-loop convenience leaking into product defaults.
+
+  watch: no files changed this turn — skipping
+
