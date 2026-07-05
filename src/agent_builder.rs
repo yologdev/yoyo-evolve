@@ -260,6 +260,43 @@ pub(crate) fn insert_client_headers(config: &mut ModelConfig) {
     }
 }
 
+/// Look up a yoagent 0.9 fleet preset for an Anthropic model name.
+///
+/// The fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+/// claude-haiku-4-5) ship with authoritative pricing, context-window, and
+/// max-output defaults inside yoagent's presets — that's where truth lives,
+/// so we start from the preset instead of a hand-rolled config. Dated
+/// variants (e.g. "claude-opus-4-8-20260301") match by prefix and keep the
+/// requested id so the API receives the exact name the user asked for.
+///
+/// Returns `None` for non-fleet models — callers fall back to
+/// `ModelConfig::anthropic` (yoagent's generic Anthropic defaults).
+pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
+    let mut config = if model.starts_with("claude-fable-5") {
+        ModelConfig::claude_fable_5()
+    } else if model.starts_with("claude-opus-4-8") {
+        ModelConfig::claude_opus_4_8()
+    } else if model.starts_with("claude-sonnet-5") {
+        ModelConfig::claude_sonnet_5()
+    } else if model.starts_with("claude-haiku-4-5") {
+        ModelConfig::claude_haiku_4_5()
+    } else {
+        return None;
+    };
+    if config.id != model {
+        config.id = model.to_string();
+        config.name = model.to_string();
+    }
+    Some(config)
+}
+
+/// Build the ModelConfig for the default Anthropic path: fleet preset when
+/// the model name matches one, generic Anthropic config otherwise.
+/// Callers still apply `insert_client_headers` afterwards.
+pub fn anthropic_model_config(model: &str) -> ModelConfig {
+    anthropic_preset(model).unwrap_or_else(|| ModelConfig::anthropic(model, model))
+}
+
 /// Create a ModelConfig for non-Anthropic providers.
 pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) -> ModelConfig {
     let mut config = match provider {
@@ -564,7 +601,7 @@ impl AgentConfig {
 
         if self.provider == "anthropic" && base_url.is_none() {
             // Default Anthropic path
-            let mut model_config = ModelConfig::anthropic(&self.model, &self.model);
+            let mut model_config = anthropic_model_config(&self.model);
             insert_client_headers(&mut model_config);
             let context_window = model_config.context_window;
             let agent = Agent::new(AnthropicProvider).with_model_config(model_config);
@@ -632,7 +669,7 @@ impl AgentConfig {
             Be concise and direct. This is a one-shot question — answer it completely in one response.";
 
         let agent = if self.provider == "anthropic" && base_url.is_none() {
-            let mut model_config = ModelConfig::anthropic(&self.model, &self.model);
+            let mut model_config = anthropic_model_config(&self.model);
             insert_client_headers(&mut model_config);
             Agent::new(AnthropicProvider).with_model_config(model_config)
         } else if self.provider == "google" {
@@ -673,7 +710,7 @@ impl AgentConfig {
         let base_url = self.base_url.as_deref();
 
         let agent = if self.provider == "anthropic" && base_url.is_none() {
-            let mut model_config = ModelConfig::anthropic(architect_model, architect_model);
+            let mut model_config = anthropic_model_config(architect_model);
             insert_client_headers(&mut model_config);
             Agent::new(AnthropicProvider).with_model_config(model_config)
         } else if self.provider == "google" {
