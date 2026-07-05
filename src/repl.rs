@@ -277,14 +277,199 @@ pub fn parse_bang_command(line: &str) -> Option<&str> {
     line.trim().strip_prefix('!').map(str::trim)
 }
 
-/// Run a shell command directly for `!` passthrough, inheriting stdout/stderr
-/// so output streams live to the terminal. Prints the exit code only when
-/// non-zero. Never panics on spawn failure — prints the error and returns.
+/// Parse a `!?` follow-through line.
+///
+/// Returns `Some(question)` when the trimmed line starts with `!?`: the
+/// question is everything after the `!?`, trimmed (bare `!?` returns
+/// `Some("")` so the caller can substitute a default question). Lines not
+/// starting with `!?` — including plain `!` passthrough lines — return `None`.
+/// Callers MUST check this BEFORE [`parse_bang_command`], otherwise `!?`
+/// would be executed as the shell command `?`.
+pub fn parse_bang_query(line: &str) -> Option<&str> {
+    line.trim().strip_prefix("!?").map(str::trim)
+}
+
+/// Result of the most recent `!` passthrough command, kept so `!?` can feed
+/// it into the conversation on demand.
+#[derive(Clone, Debug)]
+pub struct BangResult {
+    pub command: String,
+    /// `None` when the command was terminated by a signal (or the exit
+    /// status was unavailable).
+    pub exit_code: Option<i32>,
+    /// Combined stdout+stderr tail, capped by [`tail_for_capture`].
+    pub output_tail: String,
+}
+
+/// The last `!` command's captured result. Read (non-consuming) by `!?` so
+/// the user can ask follow-up questions more than once.
+static LAST_BANG_RESULT: std::sync::Mutex<Option<BangResult>> = std::sync::Mutex::new(None);
+
+/// Snapshot of the last `!` command's result, if any.
+pub fn last_bang_result() -> Option<BangResult> {
+    crate::sync_util::lock_or_recover(&LAST_BANG_RESULT).clone()
+}
+
+/// Max bytes of `!` output kept for `!?` follow-through (~8KB tail).
+const BANG_CAPTURE_MAX_BYTES: usize = 8 * 1024;
+/// Max lines of `!` output kept for `!?` follow-through.
+const BANG_CAPTURE_MAX_LINES: usize = 200;
+/// In-flight capture buffer high-water mark; when exceeded, the front is
+/// drained down to roughly the final tail size so a chatty command can't
+/// grow memory unboundedly while it runs.
+const BANG_CAPTURE_HIGH_WATER: usize = 32 * 1024;
+
+/// Return the last `max_lines` lines of `s`, further capped to the last
+/// `max_bytes` bytes. UTF-8 safe: line cuts land just after `\n` (always a
+/// char boundary) and the byte cut is advanced to the nearest char boundary
+/// (see the byte-indexing rule in CLAUDE.md — #250).
+pub fn tail_for_capture(s: &str, max_bytes: usize, max_lines: usize) -> String {
+    if max_bytes == 0 || max_lines == 0 {
+        return String::new();
+    }
+    // Line cap: walk newlines from the end. A trailing '\n' terminates the
+    // last line rather than starting a new one, so skip it when counting.
+    let body = s.strip_suffix('\n').unwrap_or(s);
+    let mut start = 0;
+    let mut newlines = 0;
+    for (i, b) in body.as_bytes().iter().enumerate().rev() {
+        if *b == b'\n' {
+            newlines += 1;
+            if newlines == max_lines {
+                start = i + 1;
+                break;
+            }
+        }
+    }
+    let tail = &s[start..];
+    // Byte cap on what's left.
+    if tail.len() <= max_bytes {
+        return tail.to_string();
+    }
+    let mut cut = tail.len() - max_bytes;
+    while cut < tail.len() && !tail.is_char_boundary(cut) {
+        cut += 1;
+    }
+    tail[cut..].to_string()
+}
+
+/// Build the conversation prompt for a `!?` follow-through. A bare `!?`
+/// (empty `question`) gets a default question shaped by the exit status:
+/// failures ask for an explanation and fix, successes ask for a summary.
+pub fn build_bang_followup_prompt(res: &BangResult, question: &str) -> String {
+    let exit_desc = match res.exit_code {
+        Some(0) => "exited successfully (exit 0)".to_string(),
+        Some(c) => format!("failed with exit code {c}"),
+        None => "was terminated by a signal".to_string(),
+    };
+    let question = if question.is_empty() {
+        match res.exit_code {
+            Some(0) => "Summarize this output and point out anything notable.",
+            _ => "This command failed. Explain what went wrong and how to fix it.",
+        }
+    } else {
+        question
+    };
+    let output = if res.output_tail.trim().is_empty() {
+        "(no output)".to_string()
+    } else {
+        format!("```\n{}\n```", res.output_tail.trim_end())
+    };
+    format!(
+        "I ran this shell command in my terminal (via `!` passthrough):\n\n    $ {}\n\nIt {}. Output (tail):\n\n{}\n\n{}",
+        res.command, exit_desc, output, question
+    )
+}
+
+/// Tee a child stream to the terminal while accumulating a bounded capture
+/// buffer. Terminal write failures are deliberately ignored (a closed pipe
+/// on our side shouldn't kill the capture); capture continues regardless.
+fn tee_stream<R: std::io::Read, W: std::io::Write>(
+    mut src: R,
+    mut dst: W,
+    capture: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+) {
+    let mut buf = [0u8; 8192];
+    loop {
+        match src.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if dst.write_all(&buf[..n]).is_ok() {
+                    let _ = dst.flush();
+                }
+                let mut cap = crate::sync_util::lock_or_recover(&capture);
+                cap.extend_from_slice(&buf[..n]);
+                if cap.len() > BANG_CAPTURE_HIGH_WATER {
+                    let drop_bytes = cap.len() - BANG_CAPTURE_MAX_BYTES;
+                    cap.drain(..drop_bytes);
+                }
+            }
+        }
+    }
+}
+
+/// Run a shell command directly for `!` passthrough. Output streams live to
+/// the terminal (tee'd, not redirected away) while a bounded tail is captured
+/// for `!?` follow-through. On non-zero exit, prints the exit code plus a
+/// one-line `!?` hint; success stays silent. Never panics on spawn failure —
+/// prints the error and returns.
 fn run_bang_command(cmd: &str) {
+    use std::process::Stdio;
+
     #[cfg(not(windows))]
-    let status = std::process::Command::new("sh").args(["-c", cmd]).status();
+    let spawned = std::process::Command::new("sh")
+        .args(["-c", cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
     #[cfg(windows)]
-    let status = std::process::Command::new("cmd").args(["/C", cmd]).status();
+    let spawned = std::process::Command::new("cmd")
+        .args(["/C", cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{RED}failed to run command: {e}{RESET}");
+            return;
+        }
+    };
+
+    let capture = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut readers = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        let cap = std::sync::Arc::clone(&capture);
+        readers.push(std::thread::spawn(move || {
+            tee_stream(out, std::io::stdout(), cap)
+        }));
+    }
+    if let Some(err) = child.stderr.take() {
+        let cap = std::sync::Arc::clone(&capture);
+        readers.push(std::thread::spawn(move || {
+            tee_stream(err, std::io::stderr(), cap)
+        }));
+    }
+
+    let status = child.wait();
+    for r in readers {
+        let _ = r.join(); // reader threads never panic; join keeps output ordered before the exit line
+    }
+
+    let captured = {
+        let cap = crate::sync_util::lock_or_recover(&capture);
+        String::from_utf8_lossy(&cap).into_owned()
+    };
+    let exit_code = match &status {
+        Ok(s) => s.code(),
+        Err(_) => None,
+    };
+    *crate::sync_util::lock_or_recover(&LAST_BANG_RESULT) = Some(BangResult {
+        command: cmd.to_string(),
+        exit_code,
+        output_tail: tail_for_capture(&captured, BANG_CAPTURE_MAX_BYTES, BANG_CAPTURE_MAX_LINES),
+    });
 
     match status {
         Ok(s) if s.success() => {}
@@ -293,7 +478,9 @@ fn run_bang_command(cmd: &str) {
                 .code()
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "terminated by signal".to_string());
-            eprintln!("{DIM}(exit {code}){RESET}");
+            eprintln!(
+                "{DIM}command failed (exit {code}) — type !? to ask yoyo about the output{RESET}"
+            );
         }
         Err(e) => {
             eprintln!("{RED}failed to run command: {e}{RESET}");
@@ -824,6 +1011,26 @@ pub async fn run_repl(
             input.to_string()
         };
         let input = input.trim();
+
+        // `!?` follow-through: feed the last `!` command's output into the
+        // conversation. Checked BEFORE the generic `!` passthrough, otherwise
+        // `!?` would be executed as the shell command `?`.
+        let bang_followup: Option<String> = match parse_bang_query(input) {
+            Some(question) => match last_bang_result() {
+                Some(res) => Some(build_bang_followup_prompt(&res, question)),
+                None => {
+                    println!(
+                        "{DIM}no `!` command has run yet — run one first (e.g. `!cargo test`), then ask with !?{RESET}"
+                    );
+                    continue;
+                }
+            },
+            None => None,
+        };
+        let input = match &bang_followup {
+            Some(prompt) => prompt.as_str(),
+            None => input,
+        };
 
         // `!` shell passthrough: run the command directly, no API call, no cost.
         if let Some(cmd) = parse_bang_command(input) {
@@ -1573,6 +1780,122 @@ mod tests {
         // Must not panic on multi-byte chars (char-safe ops only, no byte indexing)
         assert_eq!(parse_bang_command("!echo héllo ✓"), Some("echo héllo ✓"));
         assert_eq!(parse_bang_command("!héllo"), Some("héllo"));
+    }
+
+    #[test]
+    fn test_parse_bang_query_positive() {
+        assert_eq!(parse_bang_query("!?"), Some(""));
+        assert_eq!(parse_bang_query("!?   "), Some(""));
+        assert_eq!(
+            parse_bang_query("!? why did the second test fail"),
+            Some("why did the second test fail")
+        );
+        assert_eq!(parse_bang_query("  !? question  "), Some("question"));
+    }
+
+    #[test]
+    fn test_parse_bang_query_negative() {
+        // Paired near-misses (Day 122 lesson: test both sides of the boundary)
+        assert_eq!(parse_bang_query("! ls"), None);
+        assert_eq!(parse_bang_query("!ls"), None);
+        assert_eq!(parse_bang_query("!"), None);
+        assert_eq!(parse_bang_query("?"), None);
+        assert_eq!(parse_bang_query("hello"), None);
+        assert_eq!(parse_bang_query(""), None);
+    }
+
+    #[test]
+    fn test_parse_bang_query_ordering_matters() {
+        // `!?` also matches the generic `!` parse (as command `?`), which is
+        // why the REPL loop MUST check parse_bang_query first. This test
+        // documents the hazard so the ordering isn't "simplified" away.
+        assert_eq!(parse_bang_command("!?"), Some("?"));
+        assert_eq!(parse_bang_query("!?"), Some(""));
+    }
+
+    #[test]
+    fn test_tail_for_capture_under_caps_unchanged() {
+        assert_eq!(tail_for_capture("a\nb\nc\n", 1024, 10), "a\nb\nc\n");
+        assert_eq!(tail_for_capture("no newline", 1024, 10), "no newline");
+        assert_eq!(tail_for_capture("", 1024, 10), "");
+    }
+
+    #[test]
+    fn test_tail_for_capture_line_cap_keeps_tail() {
+        let s = "one\ntwo\nthree\nfour\n";
+        assert_eq!(tail_for_capture(s, 1024, 2), "three\nfour\n");
+        // Without trailing newline the last partial line still counts
+        let s = "one\ntwo\nthree\nfour";
+        assert_eq!(tail_for_capture(s, 1024, 2), "three\nfour");
+    }
+
+    #[test]
+    fn test_tail_for_capture_byte_cap_multibyte_boundary() {
+        // ✓ is 3 bytes; a cut landing mid-char must advance to a boundary
+        // instead of panicking (CLAUDE.md byte-indexing rule, #250).
+        let s = "✓".repeat(100); // 300 bytes, one line
+        for cap in 1..=10 {
+            let tail = tail_for_capture(&s, cap, 10);
+            assert!(tail.len() <= cap);
+            assert!(tail.chars().all(|c| c == '✓'));
+        }
+        // Exact boundary keeps whole chars
+        assert_eq!(tail_for_capture(&s, 6, 10), "✓✓");
+    }
+
+    #[test]
+    fn test_tail_for_capture_zero_caps() {
+        assert_eq!(tail_for_capture("abc", 0, 10), "");
+        assert_eq!(tail_for_capture("abc", 10, 0), "");
+    }
+
+    #[test]
+    fn test_build_bang_followup_prompt_failure_with_question() {
+        let res = BangResult {
+            command: "cargo test".to_string(),
+            exit_code: Some(101),
+            output_tail: "test foo ... FAILED".to_string(),
+        };
+        let prompt = build_bang_followup_prompt(&res, "why did foo fail");
+        assert!(prompt.contains("$ cargo test"));
+        assert!(prompt.contains("failed with exit code 101"));
+        assert!(prompt.contains("test foo ... FAILED"));
+        assert!(prompt.contains("why did foo fail"));
+    }
+
+    #[test]
+    fn test_build_bang_followup_prompt_bare_defaults() {
+        let failed = BangResult {
+            command: "npm test".to_string(),
+            exit_code: Some(2),
+            output_tail: "boom".to_string(),
+        };
+        let prompt = build_bang_followup_prompt(&failed, "");
+        assert!(prompt.contains("This command failed. Explain what went wrong and how to fix it."));
+
+        // Bare `!?` after a *successful* command asks for a summary instead
+        let ok = BangResult {
+            command: "ls".to_string(),
+            exit_code: Some(0),
+            output_tail: "src\ndocs".to_string(),
+        };
+        let prompt = build_bang_followup_prompt(&ok, "");
+        assert!(prompt.contains("exited successfully (exit 0)"));
+        assert!(prompt.contains("Summarize this output"));
+        assert!(!prompt.contains("This command failed"));
+    }
+
+    #[test]
+    fn test_build_bang_followup_prompt_signal_and_empty_output() {
+        let res = BangResult {
+            command: "sleep 100".to_string(),
+            exit_code: None,
+            output_tail: "   ".to_string(),
+        };
+        let prompt = build_bang_followup_prompt(&res, "what happened");
+        assert!(prompt.contains("was terminated by a signal"));
+        assert!(prompt.contains("(no output)"));
+        assert!(!prompt.contains("```"));
     }
 
     #[test]
