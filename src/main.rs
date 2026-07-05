@@ -47,6 +47,7 @@ mod commands_dev;
 mod commands_file;
 mod commands_fork;
 mod commands_git;
+mod commands_git_pr;
 mod commands_git_review;
 mod commands_goal;
 mod commands_info;
