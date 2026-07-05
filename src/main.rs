@@ -61,6 +61,7 @@ mod commands_rename;
 mod commands_retry;
 mod commands_revisit;
 mod commands_risk;
+mod commands_risk_accuracy;
 mod commands_risk_emerging;
 mod commands_risk_report;
 mod commands_risk_snapshots;
