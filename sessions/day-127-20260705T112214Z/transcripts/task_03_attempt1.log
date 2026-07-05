@@ -1,0 +1,73 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AccuracyTrend\|Accuracy…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk" src/main… ✓ (2ms)
+ ✓ (5ms)
+  ▶ read src/commands_risk.rs:1260..1460  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 src/commands_risk_snaps… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_accuracy_report…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "compute_accuracy_stats… ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,15p src/commands_risk_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3595,3850p' src/commands… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (50.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Test category 7\|test_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1640,1660p;1700,1760p' s… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3836,3848p' src/commands… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3836,3844p' src/commands… ✓ (3ms)
+  13 tools completed in 2m 12s (13 ✓)
+
+The output is being compressed. Let me read those lines directly.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk.rs:3826..3851 ✓ (0ms)
+  ▶ read src/commands_risk.rs:1413..1433 ✓ (1ms)
+  2 tools completed in 29.0s (2 ✓)
+
+Line 1421 contains special chars that get filtered from display. I'll do the move mechanically with Python to guarantee verbatim relocation.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (46 lines) ✓ (18ms)
+
+Now wire the module in main.rs and add the re-export in commands_risk.rs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (2 → 3 lines)
+    mod commands_risk;
+  + mod commands_risk_accuracy;
+    mod commands_risk_emerging;
+  ▶ edit src/commands_risk.rs (1 → 10 lines)
+    pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+  + 
+  + // Prediction-accuracy stats live in `commands_risk_accuracy.rs`.
+  + // Re-exported here so all call sites (commands_risk_report.rs and this
+  + // module's own accuracy/effectiveness code) remain unchanged.
+  + // (`AccuracyStats` and the private trend helper are only used inside the
+  + // accuracy module itself, so they aren't re-exported.)
+  + pub(crate) use crate::commands_risk_accuracy::{
+  +     compute_accuracy_stats, format_accuracy_report, AccuracyTrend,
+  + };
+ ✓ (1m 28s)
+    mod commands_risk;
+  + mod commands_risk_accuracy;
+    mod commands_risk_emerging;
+ ✓ (2m 38s)
+    pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+  + 
+  + // Prediction-accuracy stats live in `commands_risk_accuracy.rs`.
+  + // Re-exported here so all call sites (commands_risk_report.rs and this
+  + // module's own accuracy/effectiveness code) remain unchanged.
+  + // (`AccuracyStats` and the private trend helper are only used inside the
+  + // accuracy module itself, so they aren't re-exported.)
+  + pub(crate) use crate::commands_risk_accuracy::{
+  +     compute_accuracy_stats, format_accuracy_report, AccuracyTrend,
+  + };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20 ✓ (116ms)
+  3 tools completed in 2m 49s (3 ✓)
+
+0.09s is suspicious — let me verify with a clean check.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && touch src/main.rs && cargo build… ✓ (19.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (686ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_snapshots… ✓ (3ms)
+  4 tools completed in 1m 57s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,107 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enum CommandRoute" -A 6…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "match route" src/dispat… ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 90,180p src/dispatch.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 180,340p src/dispatch.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for l in 324 395 470 549 602 770…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "_ => None" src/dispatch… ✓ (4ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 996,1080p src/dispatch.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "KNOWN_COMMANDS" src/com… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/dispatch.rs && … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tempfile\|tempdir" Carg… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "KNOWN_COMMANDS" src/ t… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1240,1260p src/help.rs &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1390,1470p src/help_data.… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'strip_prefix("~' src/ … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 985,1000p src/config.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 276,300p src/dispatch.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (3 → 55 lines)
+  + /// Resolve the target directory for `/cd`.
+  + ///
+  + /// Expands a leading `~` / `~/` via `$HOME`, resolves relative paths against
+  + /// `current`, and validates that the target exists and is a directory.
+  + /// Returns a clear error message otherwise. The path logic is delegated to
+  + /// [`resolve_cd_target_with_home`] so it can be unit-tested without mutating
+  + /// process-global state (env vars or the cwd).
+  + pub(crate) fn resolve_cd_target(
+  +     current: &std::path::Path,
+  +     arg: &str,
+  + ) -> Result<std::path::PathBuf, String> {
+  +     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+  +     resolve_cd_target_with_home(current, arg, home.as_deref())
+  + }
+  + 
+  + /// Inner, fully testable variant of [`resolve_cd_target`]: `home` is passed
+  + /// in explicitly so tests never need to set `$HOME` (env vars are
+  + /// process-global and racy across test threads).
+  + fn resolve_cd_target_with_home(
+  +     current: &std::path::Path,
+  ... (35 more lines)
+ ✓ (12.8s)
+  + /// Resolve the target directory for `/cd`.
+  + ///
+  + /// Expands a leading `~` / `~/` via `$HOME`, resolves relative paths against
+  + /// `current`, and validates that the target exists and is a directory.
+  + /// Returns a clear error message otherwise. The path logic is delegated to
+  + /// [`resolve_cd_target_with_home`] so it can be unit-tested without mutating
+  + /// process-global state (env vars or the cwd).
+  + pub(crate) fn resolve_cd_target(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/dispatch… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (8 → 111 lines)
+    mod tests {
+        use super::*;
+  + 
+  +     // ── resolve_cd_target tests ──
+  + 
+  +     #[test]
+  +     fn test_resolve_cd_absolute_path() {
+  +         let tmp = tempfile::TempDir::new().unwrap();
+  +         let current = std::path::Path::new("/somewhere/else");
+  +         let result = resolve_cd_target_with_home(current, tmp.path().to_str().unwrap(), None);
+  +         assert_eq!(result.unwrap(), tmp.path().canonicalize().unwrap());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_resolve_cd_relative_path() {
+  +         let tmp = tempfile::TempDir::new().unwrap();
+  +         let sub = tmp.path().join("sub");
+  +         std::fs::create_dir(&sub).unwrap();
+  +         let result = resolve_cd_target_with_home(tmp.path(), "sub", None);
+  +         assert_eq!(result.unwrap(), sub.canonicalize().unwrap());
+  ... (88 more lines)
+ ✓ (8.1s)
+    mod tests {
+        use super::*;
+  + 
+  +     // ── resolve_cd_target tests ──
+  + 
+  +     #[test]
+  +     fn test_resolve_cd_absolute_path() {
+  +         let tmp = tempfile::TempDir::new().unwrap();
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (2 → 3 lines)
+        Risk,
+        Effort,
+  +     Cd,
+ ✓ (8.0s)
+        Risk,
+        Effort,
+  +     Cd,
+  20 tools completed in 3m 54s (20 ✓)
+
+E0004 fired at exactly one site — line 1049 in dispatch_command, the arm that was missed last time. The other 7 matches have _ => None wildcards. Now the routing entry and the real handler arm:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (2 → 3 lines)
+                "quick" => CommandRoute::Quick,
+                "effort" => CommandRoute::Effort,
+  +             "cd" => CommandRoute::Cd,
+ ✓ (8.0s)
+                "quick" => CommandRoute::Quick,
+                "effort" => CommandRoute::Effort,
+  +             "cd" => CommandRoute::Cd,
+
+  watch: no files changed this turn — skipping
+

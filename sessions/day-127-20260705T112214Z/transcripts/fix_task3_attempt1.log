@@ -1,0 +1,43 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'commands_risk_snapshots' in CLAUDE.md  ▶ search 'commands_risk_accuracy' in CLAUDE.md ✓ (2ms)
+ ✓ (2ms)
+  ▶ $ grep -n "pub" src/commands_risk_accuracy.rs | head -10; echo ---; grep -n "comma… ✓ (6ms)
+  ▶ $ sed -n 33,45p src/commands_risk.rs; grep -n "format_accuracy_report" src/command… ✓ (4ms)
+  4 tools completed in 17.2s (4 ✓)
+
+Now I'll add the CLAUDE.md entry after the snapshots line, matching its style:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot`, `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_accuracy.rs` — prediction-accuracy stats for /risk: `AccuracyTrend`, `AccuracyStats`, `compute_accuracy_stats`, `format_accuracy_report`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+ ✓ (56.7s)
+    - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot`, `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_accuracy.rs` — prediction-accuracy stats for /risk: `AccuracyTrend`, `AccuracyStats`, `compute_accuracy_stats`, `format_accuracy_report`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+
+Now run the full verification suite:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo b… ✓ (1m 9s)
+  ▶ $ cargo fmt -- --check && echo "fmt OK"; git status --short; git diff --stat ✓ (682ms)
+  2 tools completed in 1m 21s (2 ✓)
+
+All checks pass. Committing the fix so the evaluator sees it in the diff:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git add CLAUDE.md && git commit -m "docs: add commands_risk_… (5 lines) ✓ (11ms)
+
+Done. The evaluator's only complaint was the missing CLAUDE.md entry — the code extraction itself was already correct and committed.
+
+**What I fixed:**
+• Added the commands_risk_accuracy.rs entry to CLAUDE.md's multi-file agent list, right after the commands_risk_snapshots.rs sibling and matching its exact style: names the moved items (AccuracyTrend, AccuracyStats, compute_accuracy_stats, format_accuracy_report), notes the re-export via commands_risk so call sites are unchanged, and marks it as "extracted from commands_risk.rs".
+
+Verified:
+• cargo fmt -- --check — clean
+• `cargo clippy --all-targets -- -D warnings` — clean
+• cargo build — OK
+• cargo test — 4178 + 88 passed, 0 failed (test count unchanged, moved accuracy tests included)
+
+Committed as a4a98319 so the fix is in the evaluated diff, not left uncommitted.
+
+  watch: no files changed this turn — skipping
+

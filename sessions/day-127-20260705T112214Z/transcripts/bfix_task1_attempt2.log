@@ -1,0 +1,59 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1180,1200p src/cli.rs && …  ▶ search '"/cd"' in src ✓ (6ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/context\b" src/help.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 455,470p src/help.rs && s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "command_short_descripti…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 758,766p src/help.rs ✓ (2ms)
+ ✓ (6ms)
+  6 tools completed in 29.2s (6 ✓)
+
+help_data.rs already has /cd entries; only the two help-text listings are missing. Adding /cd next to /context in both:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (4 → 8 lines)
+        let _ = writeln!(
+            s,
+            "    /context           Show loaded project context files"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /cd <path>         Change the working directory (~ and relative paths)"
+        );
+ ✓ (1m 14s)
+        let _ = writeln!(
+            s,
+            "    /context           Show loaded project context files"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "    /cd <path>         Change the working directory (~ and relative paths)"
+        );
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 760,772p src/help.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"  /context' src/help.r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 2 lines)
+        out.push_str("  /context [system|tokens|files]  Show loaded project context files\n");
+  +     out.push_str("  /cd <path>         Change the working directory (~ and relative paths)\n");
+ ✓ (1m 13s)
+        out.push_str("  /context [system|tokens|files]  Show loaded project context files\n");
+  +     out.push_str("  /cd <path>         Change the working directory (~ and relative paths)\n");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (788ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -5 ✓ (38.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (50.0s)
+  7 tools completed in 4m 53s (7 ✓)
+
+All tests pass now. The fix was minimal:
+
+Root cause: Two regression-guard tests require every entry in KNOWN_COMMANDS to appear in the help output. /cd was added to `KNOWN_COMMANDS (as the task required), and help_data.rs` already had its per-command help, but the two listing functions in src/help.rs were missing it:
+
+1. cli_help_text() (backs --help, checked by cli::tests::help_text_documents_all_repl_commands) — added `/cd <path>  Change the working directory (~ and relative paths) next to /context`.
+2. help_text() (backs /help, checked by `help::tests::all_help_commands_in_help_text) — added the same line next to /context`.
+
+Verification:
+• cargo build ✓
+• cargo test — 4177 passed, 0 failed ✓
+• cargo clippy --all-targets -- -D warnings ✓
+• cargo fmt -- --check ✓
+
+  watch: no files changed this turn — skipping
+

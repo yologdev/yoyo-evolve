@@ -1,0 +1,105 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "Cd" src/dispatch.rs | head -20; echo ---; grep -n '"/cd"' src/commands.… ✓ (6ms)
+  ▶ $ sed -n '1330,1400p' src/dispatch.rs; echo ===; grep -n "resolve_cd_target" src/d…  ▶ $ grep -n '"context"' src/help_data.rs | head; grep -n '"context"' src/help.rs | h… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ sed -n '1355,1380p' src/dispatch.rs  ▶ $ sed -n '650,700p' src/help_data.rs ✓ (3ms)
+ ✓ (4ms)
+  ▶ read src/dispatch.rs:1348..1383  ▶ read src/dispatch.rs:278..323 ✓ (1ms)
+ ✓ (1ms)
+  7 tools completed in 25.9s (7 ✓)
+
+Now let me check how grouped /help is assembled and where alphabetically /cd would go.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"cd"' src/help.rs src/help_data.rs src/commands.rs; echo ---; grep -n '… ✓ (6ms)
+  ▶ $ sed -n '1050,1075p' src/help_data.rs; echo ===; sed -n '1316,1320p' src/help_dat…  ▶ $ grep -n '/cd' docs/src/usage/commands.md src/help.rs docs/src/usage/repl.md 2>/d… ✓ (5ms)
+ ✓ (4ms)
+  3 tools completed in 13.3s (3 ✓)
+
+Curious — task 1's commit says "no help/docs", but help entries exist. Let me check where they came from.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git log --oneline -3 -- src/help_data.rs; echo ---; git show 4730b831 --stat; ec… ✓ (11ms)
+
+Task 1 already landed the help entries (commit message understated its scope). What remains: docs/src/usage/commands.md and possibly tests. Let me check both.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n '"cd"\|/cd' src/help_data.rs | head; grep -n 'mod tests' src/help_data.r…  ▶ $ grep -n '^##\|^###\|/context\|passthrough\|^| ' docs/src/usage/commands.md | hea… ✓ (3ms)
+ ✓ (6ms)
+  ▶ $ grep -n '`/context' docs/src/usage/commands.md | head; echo ---; sed -n '36,46p'… ✓ (5ms)
+  ▶ edit docs/src/usage/commands.md (5 → 10 lines)
+    | `/quit`, `/exit` | Exit yoyo |
+    | `/help` | Show available commands |
+    | `/help <command>` | Show detailed help for a specific command |
+  + | `/cd <path>` | Change the working directory (`~` expansion and relative paths supported); `/cd` alone prints the current directory |
+  + 
+  + Note: `/cd` changes the directory used for subsequent commands and tool calls,
+  + but project context (YOYO.md, CLAUDE.md, etc.) loaded at startup is **not**
+  + reloaded — use `/context` to review what was loaded.
+    
+    ## Conversation
+ ✓ (57.6s)
+    | `/quit`, `/exit` | Exit yoyo |
+    | `/help` | Show available commands |
+    | `/help <command>` | Show detailed help for a specific command |
+  + | `/cd <path>` | Change the working directory (`~` expansion and relative paths supported); `/cd` alone prints the current directory |
+  + 
+  + Note: `/cd` changes the directory used for subsequent commands and tool calls,
+  + but project context (YOYO.md, CLAUDE.md, etc.) loaded at startup is **not**
+  + reloaded — use `/context` to review what was loaded.
+    
+    ## Conversation
+  ▶ $ sed -n '1648,1675p' src/help.rs ✓ (3ms)
+  ▶ edit src/help.rs (4 → 4 lines)
+            let recent = [
+                "/spawn", "/retry", "/bg", "/review", "/map", "/grep", "/blame", "/outline", "/fork",
+  -             "/watch", "/apply", "/open", "/goal", "/skill", "/doctor",
+  +             "/watch", "/apply", "/open", "/goal", "/skill", "/doctor", "/cd",
+            ];
+ ✓ (1m 17s)
+            let recent = [
+                "/spawn", "/retry", "/bg", "/review", "/map", "/grep", "/blame", "/outline", "/fork",
+  -             "/watch", "/apply", "/open", "/goal", "/skill", "/doctor",
+  +             "/watch", "/apply", "/open", "/goal", "/skill", "/doctor", "/cd",
+            ];
+  ▶ $ sed -n '1507,1525p' src/help_data.rs ✓ (2ms)
+  ▶ edit src/help_data.rs (3 → 18 lines)
+        fn test_command_help_returns_none_for_empty() {
+            assert!(command_help("").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_cd_help_documents_key_behaviors() {
+  +         let help = command_help("cd").expect("cd should have detailed help");
+  +         assert!(help.contains("~"), "cd help should mention ~ expansion");
+  +         assert!(
+  +             help.contains("NOT reloaded"),
+  +             "cd help should warn that project context is not reloaded"
+  +         );
+  +         let short = command_short_description("cd").expect("cd should have a short description");
+  +         assert!(
+  +             short.to_lowercase().contains("working directory"),
+  +             "cd short description should mention the working directory"
+  +         );
+        }
+ ✓ (1m 13s)
+        fn test_command_help_returns_none_for_empty() {
+            assert!(command_help("").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_cd_help_documents_key_behaviors() {
+  +         let help = command_help("cd").expect("cd should have detailed help");
+  +         assert!(help.contains("~"), "cd help should mention ~ expansion");
+  ... (10 more lines)
+  ▶ $ cargo build 2>&1 | tail -3 && cargo test 2>&1 | tail -5 ✓ (36.6s)
+  ▶ $ cargo test help 2>&1 | tail -4; cargo clippy --all-targets -- -D warnings 2>&1 |… ✓ (13.8s)
+  10 tools completed in 5m 28s (10 ✓)
+
+All checks green. Let me verify the new tests specifically ran and pass:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test test_cd_help_documents_key_behaviors help_text_contains_recently_adde… ✓ (11ms)
+  ▶ $ cargo test -- test_cd_help_documents_key_behaviors help_text_contains_recently_a… ✓ (127ms)
+  2 tools completed in 5.1s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
