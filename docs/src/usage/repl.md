@@ -75,6 +75,26 @@ Prefix a line with `!` to run a shell command directly — no API call, no token
 
 Output streams live to your terminal (via `sh -c` on Unix, `cmd /C` on Windows), and the exit code is shown only when non-zero. A bare `!` prints a usage hint.
 
+### `!?` — ask about the last command's output
+
+`!` commands never enter the conversation, but sometimes you *want* yoyo to look at what just happened. Type `!?` to feed the last `!` command — its command line, exit code, and output tail (last ~200 lines / 8KB, captured as a tee while it streamed) — into the conversation:
+
+```
+🐙 › !cargo test
+   ... (output streams live) ...
+   exit 101
+   command failed (exit 101) — type !? to ask yoyo about the output
+🐙 › !? why did the second test fail
+```
+
+- Bare `!?` uses a default question: after a failure, "explain what went wrong and how to fix it"; after a success, "summarize this output".
+- `!? <question>` asks your own question about the output.
+- Works after successful commands too (the failure hint just doesn't appear).
+- If no `!` command has run yet, `!?` prints a one-liner and does nothing.
+- The capture is non-consuming — you can ask `!?` follow-ups about the same output more than once.
+
+This is fully opt-in: nothing enters the conversation (and no tokens are spent) unless you type `!?`.
+
 ## Tool output
 
 When yoyo uses tools, you'll see status indicators:
