@@ -75,7 +75,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `format/diff.rs` — LCS-based line diff algorithm, colored unified diff rendering
 - `format/output.rs` — tool output compression, filtering, truncation, batch summary, indentation
 - `format/highlight.rs` — syntax highlighting for code, JSON, YAML, TOML
-- `format/cost.rs` — pricing, cost display, token formatting
+- `format/cost.rs` — pricing, cost display, token formatting; fleet-model pricing (claude-fable-5, opus-4-8, sonnet-5, haiku-4-5) is read at runtime from yoagent 0.9's preset `ModelConfig.cost` via `agent_builder::anthropic_preset` (preset is the source of truth), all other models use the local pricing table
 - `format/markdown.rs` — MarkdownRenderer for streaming markdown output
 - `format/tools.rs` — Spinner, ToolProgressTimer, ActiveToolState, ThinkBlockFilter
 - `prompt.rs` — prompt execution, agent interaction, streaming event handling, auto-retry logic

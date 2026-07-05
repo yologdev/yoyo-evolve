@@ -15,6 +15,20 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
         .or_else(|| model.strip_prefix("meta-llama/"))
         .unwrap_or(model);
 
+    // Fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+    // claude-haiku-4-5): read pricing from yoagent 0.9's preset ModelConfig at
+    // runtime — the preset is the source of truth, not this table. This must
+    // run BEFORE the substring matching below, otherwise e.g. claude-opus-4-8
+    // would fall into the legacy opus branch and show the wrong price.
+    if let Some(preset) = crate::agent_builder::anthropic_preset(model) {
+        return Some((
+            preset.cost.input_per_million,
+            preset.cost.cache_write_per_million,
+            preset.cost.cache_read_per_million,
+            preset.cost.output_per_million,
+        ));
+    }
+
     // ── Anthropic ─────────────────────────────────────────────────────
     // https://docs.anthropic.com/en/about-claude/pricing
     if model.contains("opus") {
@@ -764,6 +778,89 @@ mod tests {
         };
         // A truly unknown model should return None
         assert!(estimate_cost(&usage, "unknown-model-xyz").is_none());
+    }
+
+    #[test]
+    fn test_estimate_cost_fable_5() {
+        // Pricing comes from yoagent 0.9's claude_fable_5() preset:
+        // input $10/MTok, output $50/MTok, cache read $1/MTok, cache write $12.5/MTok
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "claude-fable-5").unwrap();
+        // 1M * 10/M + 100k * 50/M = 10.0 + 5.0 = 15.0
+        assert!((cost - 15.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cost_breakdown_fable_5_cache() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 500_000,
+            cache_write: 200_000,
+            total_tokens: 0,
+        };
+        let (input, cw, cr, output) = cost_breakdown(&usage, "claude-fable-5").unwrap();
+        // input: 1M * 10/M = 10.0
+        assert!((input - 10.0).abs() < 0.001);
+        // output: 100k * 50/M = 5.0
+        assert!((output - 5.0).abs() < 0.001);
+        // cache_read: 500k * 1.0/M = 0.5
+        assert!((cr - 0.5).abs() < 0.001);
+        // cache_write: 200k * 12.5/M = 2.5
+        assert!((cw - 2.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_cost_opus_4_8_uses_preset_not_legacy() {
+        // claude-opus-4-8 must resolve to the yoagent 0.9 preset ($5/$25),
+        // NOT the legacy opus branch ($15/$75). Regression guard for #568.
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "claude-opus-4-8").unwrap();
+        // 1M * 5/M + 100k * 25/M = 5.0 + 2.5 = 7.5
+        assert!((cost - 7.5).abs() < 0.001);
+        // Explicitly not the legacy price: 1M * 15/M + 100k * 75/M = 22.5
+        assert!((cost - 22.5).abs() > 1.0);
+    }
+
+    #[test]
+    fn test_estimate_cost_sonnet_5_preset() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // Sonnet 5 preset: input $3/MTok, output $15/MTok
+        let cost = estimate_cost(&usage, "claude-sonnet-5").unwrap();
+        assert!((cost - 4.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_cost_fleet_model_openrouter_prefix() {
+        // Provider prefixes are stripped before the preset lookup
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let prefixed = estimate_cost(&usage, "anthropic/claude-fable-5").unwrap();
+        let direct = estimate_cost(&usage, "claude-fable-5").unwrap();
+        assert!((prefixed - direct).abs() < 0.001);
     }
 
     #[test]
