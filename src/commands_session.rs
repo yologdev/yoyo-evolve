@@ -1143,17 +1143,18 @@ mod tests {
     fn test_format_conversation_as_markdown_mixed_messages() {
         let messages = vec![
             AgentMessage::Llm(Message::user("What is 2+2?")),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text {
-                    text: "The answer is 4.".to_string(),
-                }],
-                stop_reason: yoagent::types::StopReason::Stop,
-                model: "test".to_string(),
-                provider: "test".to_string(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text {
+                        text: "The answer is 4.".to_string(),
+                    }],
+                    yoagent::types::StopReason::Stop,
+                    "test",
+                    "test",
+                    Usage::default(),
+                )
+                .with_timestamp(0),
+            ),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "tc_1".to_string(),
                 tool_name: "bash".to_string(),
@@ -1179,23 +1180,21 @@ mod tests {
 
     #[test]
     fn test_format_conversation_as_markdown_thinking_block() {
-        let messages = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![
-                Content::Thinking {
-                    thinking: "Let me think about this.".to_string(),
-                    signature: None,
-                },
-                Content::Text {
-                    text: "Here's my answer.".to_string(),
-                },
-            ],
-            stop_reason: yoagent::types::StopReason::Stop,
-            model: "test".to_string(),
-            provider: "test".to_string(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![
+                    Content::thinking("Let me think about this.".to_string()),
+                    Content::Text {
+                        text: "Here's my answer.".to_string(),
+                    },
+                ],
+                yoagent::types::StopReason::Stop,
+                "test".to_string(),
+                "test".to_string(),
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )];
         let md = format_conversation_as_markdown(&messages);
         assert!(md.contains("*Thinking:*"), "Should contain thinking label");
         assert!(
@@ -1210,25 +1209,25 @@ mod tests {
 
     #[test]
     fn test_format_conversation_as_markdown_skips_tool_calls() {
-        let messages = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![
-                Content::Text {
-                    text: "I'll check that.".to_string(),
-                },
-                Content::ToolCall {
-                    id: "tc_1".to_string(),
-                    name: "bash".to_string(),
-                    arguments: serde_json::json!({"command": "ls"}),
-                    provider_metadata: None,
-                },
-            ],
-            stop_reason: yoagent::types::StopReason::Stop,
-            model: "test".to_string(),
-            provider: "test".to_string(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![
+                    Content::Text {
+                        text: "I'll check that.".to_string(),
+                    },
+                    Content::tool_call(
+                        "tc_1".to_string(),
+                        "bash".to_string(),
+                        serde_json::json!({"command": "ls"}),
+                    ),
+                ],
+                yoagent::types::StopReason::Stop,
+                "test".to_string(),
+                "test".to_string(),
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )];
         let md = format_conversation_as_markdown(&messages);
         assert!(
             md.contains("I'll check that."),
@@ -1453,27 +1452,16 @@ mod tests {
     #[test]
     fn test_count_tool_calls_multiple() {
         let content = vec![
-            Content::ToolCall {
-                id: "1".to_string(),
-                name: "bash".to_string(),
-                arguments: serde_json::Value::Null,
-                provider_metadata: None,
-            },
+            Content::tool_call("1".to_string(), "bash".to_string(), serde_json::Value::Null),
             Content::Text {
                 text: "thinking...".to_string(),
             },
-            Content::ToolCall {
-                id: "2".to_string(),
-                name: "bash".to_string(),
-                arguments: serde_json::Value::Null,
-                provider_metadata: None,
-            },
-            Content::ToolCall {
-                id: "3".to_string(),
-                name: "read_file".to_string(),
-                arguments: serde_json::Value::Null,
-                provider_metadata: None,
-            },
+            Content::tool_call("2".to_string(), "bash".to_string(), serde_json::Value::Null),
+            Content::tool_call(
+                "3".to_string(),
+                "read_file".to_string(),
+                serde_json::Value::Null,
+            ),
         ];
         let counts = count_tool_calls(&content);
         assert_eq!(counts.get("bash"), Some(&2));
@@ -1541,31 +1529,30 @@ mod tests {
     fn test_session_resume_summary_mixed_messages() {
         let messages = vec![
             AgentMessage::Llm(Message::user("Can you fix the test failures?")),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![
-                    Content::Text {
-                        text: "I found 3 failing tests.".to_string(),
-                    },
-                    Content::ToolCall {
-                        id: "tc_1".to_string(),
-                        name: "bash".to_string(),
-                        arguments: serde_json::json!({"command": "cargo test"}),
-                        provider_metadata: None,
-                    },
-                    Content::ToolCall {
-                        id: "tc_2".to_string(),
-                        name: "edit_file".to_string(),
-                        arguments: serde_json::json!({}),
-                        provider_metadata: None,
-                    },
-                ],
-                stop_reason: yoagent::types::StopReason::ToolUse,
-                model: "test".to_string(),
-                provider: "test".to_string(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![
+                        Content::Text {
+                            text: "I found 3 failing tests.".to_string(),
+                        },
+                        Content::tool_call(
+                            "tc_1".to_string(),
+                            "bash".to_string(),
+                            serde_json::json!({"command": "cargo test"}),
+                        ),
+                        Content::tool_call(
+                            "tc_2".to_string(),
+                            "edit_file".to_string(),
+                            serde_json::json!({}),
+                        ),
+                    ],
+                    yoagent::types::StopReason::ToolUse,
+                    "test".to_string(),
+                    "test".to_string(),
+                    Usage::default(),
+                )
+                .with_timestamp(0),
+            ),
             AgentMessage::Llm(Message::ToolResult {
                 tool_call_id: "tc_1".to_string(),
                 tool_name: "bash".to_string(),
@@ -1589,17 +1576,18 @@ mod tests {
         let long_reply = "y".repeat(300);
         let messages = vec![
             AgentMessage::Llm(Message::user(long_prompt.as_str())),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text {
-                    text: long_reply.clone(),
-                }],
-                stop_reason: yoagent::types::StopReason::Stop,
-                model: "test".to_string(),
-                provider: "test".to_string(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text {
+                        text: long_reply.clone(),
+                    }],
+                    yoagent::types::StopReason::Stop,
+                    "test".to_string(),
+                    "test".to_string(),
+                    Usage::default(),
+                )
+                .with_timestamp(0),
+            ),
         ];
         let summary = session_resume_summary(&messages);
         // The prompt should be truncated (80 chars + ellipsis)
@@ -1613,28 +1601,27 @@ mod tests {
 
     #[test]
     fn test_session_resume_summary_only_tool_calls_no_text() {
-        let messages = vec![AgentMessage::Llm(Message::Assistant {
-            content: vec![
-                Content::ToolCall {
-                    id: "tc_1".to_string(),
-                    name: "bash".to_string(),
-                    arguments: serde_json::json!({}),
-                    provider_metadata: None,
-                },
-                Content::ToolCall {
-                    id: "tc_2".to_string(),
-                    name: "bash".to_string(),
-                    arguments: serde_json::json!({}),
-                    provider_metadata: None,
-                },
-            ],
-            stop_reason: yoagent::types::StopReason::ToolUse,
-            model: "test".to_string(),
-            provider: "test".to_string(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })];
+        let messages = vec![AgentMessage::Llm(
+            Message::assistant(
+                vec![
+                    Content::tool_call(
+                        "tc_1".to_string(),
+                        "bash".to_string(),
+                        serde_json::json!({}),
+                    ),
+                    Content::tool_call(
+                        "tc_2".to_string(),
+                        "bash".to_string(),
+                        serde_json::json!({}),
+                    ),
+                ],
+                yoagent::types::StopReason::ToolUse,
+                "test".to_string(),
+                "test".to_string(),
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )];
         let summary = session_resume_summary(&messages);
         assert!(summary.contains("1 messages"));
         assert!(summary.contains("2 tool calls"));

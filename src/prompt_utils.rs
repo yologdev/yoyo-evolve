@@ -638,20 +638,20 @@ mod tests {
 
     /// Helper: build an assistant message with a single tool call.
     fn assistant_with_tool(name: &str, path: &str) -> AgentMessage {
-        AgentMessage::Llm(Message::Assistant {
-            content: vec![Content::ToolCall {
-                id: "tc_1".into(),
-                name: name.into(),
-                arguments: serde_json::json!({ "path": path }),
-                provider_metadata: None,
-            }],
-            stop_reason: StopReason::ToolUse,
-            model: "test".into(),
-            provider: "test".into(),
-            usage: Usage::default(),
-            timestamp: 0,
-            error_message: None,
-        })
+        AgentMessage::Llm(
+            Message::assistant(
+                vec![Content::tool_call(
+                    "tc_1",
+                    name,
+                    serde_json::json!({ "path": path }),
+                )],
+                StopReason::ToolUse,
+                "test",
+                "test",
+                Usage::default(),
+            )
+            .with_timestamp(0),
+        )
     }
 
     #[test]

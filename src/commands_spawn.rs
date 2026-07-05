@@ -1842,17 +1842,18 @@ mod tests {
     fn test_summarize_conversation_includes_roles() {
         let messages = vec![
             AgentMessage::Llm(Message::user("What is Rust?")),
-            AgentMessage::Llm(Message::Assistant {
-                content: vec![Content::Text {
-                    text: "Rust is a systems programming language.".to_string(),
-                }],
-                stop_reason: yoagent::types::StopReason::Stop,
-                model: "test".to_string(),
-                provider: "test".to_string(),
-                usage: Usage::default(),
-                timestamp: 0,
-                error_message: None,
-            }),
+            AgentMessage::Llm(
+                Message::assistant(
+                    vec![Content::Text {
+                        text: "Rust is a systems programming language.".to_string(),
+                    }],
+                    yoagent::types::StopReason::Stop,
+                    "test".to_string(),
+                    "test".to_string(),
+                    Usage::default(),
+                )
+                .with_timestamp(0),
+            ),
         ];
         let summary = summarize_conversation_for_spawn(&messages);
         assert!(summary.contains("[user]"));
