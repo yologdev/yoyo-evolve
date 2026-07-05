@@ -1656,7 +1656,7 @@ mod tests {
         // Commands added in recent evolution days
         let recent = [
             "/spawn", "/retry", "/bg", "/review", "/map", "/grep", "/blame", "/outline", "/fork",
-            "/watch", "/apply", "/open", "/goal", "/skill", "/doctor",
+            "/watch", "/apply", "/open", "/goal", "/skill", "/doctor", "/cd",
         ];
         for cmd in &recent {
             assert!(

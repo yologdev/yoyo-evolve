@@ -1509,6 +1509,21 @@ mod tests {
     }
 
     #[test]
+    fn test_cd_help_documents_key_behaviors() {
+        let help = command_help("cd").expect("cd should have detailed help");
+        assert!(help.contains("~"), "cd help should mention ~ expansion");
+        assert!(
+            help.contains("NOT reloaded"),
+            "cd help should warn that project context is not reloaded"
+        );
+        let short = command_short_description("cd").expect("cd should have a short description");
+        assert!(
+            short.to_lowercase().contains("working directory"),
+            "cd short description should mention the working directory"
+        );
+    }
+
+    #[test]
     fn test_command_short_description_returns_none_for_empty() {
         assert!(command_short_description("").is_none());
     }

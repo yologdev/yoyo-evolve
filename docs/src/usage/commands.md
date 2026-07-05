@@ -42,6 +42,11 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 | `/quit`, `/exit` | Exit yoyo |
 | `/help` | Show available commands |
 | `/help <command>` | Show detailed help for a specific command |
+| `/cd <path>` | Change the working directory (`~` expansion and relative paths supported); `/cd` alone prints the current directory |
+
+Note: `/cd` changes the directory used for subsequent commands and tool calls,
+but project context (YOYO.md, CLAUDE.md, etc.) loaded at startup is **not**
+reloaded — use `/context` to review what was loaded.
 
 ## Conversation
 
