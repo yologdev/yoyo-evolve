@@ -44,6 +44,9 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
 pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
     match provider {
         "anthropic" => &[
+            "claude-fable-5",
+            "claude-opus-4-8",
+            "claude-sonnet-5",
             "claude-opus-4-7",
             "claude-opus-4-6",
             "claude-sonnet-4-7",
@@ -270,6 +273,18 @@ mod tests {
             models.contains(&"gemini-2.5-flash-lite"),
             "google should include gemini-2.5-flash-lite"
         );
+    }
+
+    #[test]
+    fn test_anthropic_known_models_includes_fleet_models() {
+        // yoagent 0.9 fleet presets (issue #568)
+        let models = known_models_for_provider("anthropic");
+        for fleet in ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"] {
+            assert!(
+                models.contains(&fleet),
+                "anthropic should include fleet model {fleet}"
+            );
+        }
     }
 
     #[test]
