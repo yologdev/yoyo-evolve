@@ -297,9 +297,53 @@ pub fn anthropic_model_config(model: &str) -> ModelConfig {
     anthropic_preset(model).unwrap_or_else(|| ModelConfig::anthropic(model, model))
 }
 
-/// Create a ModelConfig for non-Anthropic providers.
+/// Normalize a user-supplied `--base-url` for the Anthropic provider.
+///
+/// yoagent 0.9's `AnthropicProvider` builds the request URL as
+/// `{base_url.trim_end_matches('/')}/messages` — it appends only `/messages`,
+/// never `/v1/messages`. The official preset therefore carries
+/// `https://api.anthropic.com/v1`, and a proxy URL must also end in the path
+/// segment the gateway expects (usually `/v1`).
+///
+/// Accepted forms:
+/// - `https://proxy.com/v1` → kept as-is (canonical)
+/// - `https://proxy.com/v1/` → trailing slash trimmed
+/// - `https://proxy.com` → `/v1` appended (the natural bare-host spelling
+///   would otherwise produce `https://proxy.com/messages`, missing `/v1`)
+/// - any URL with an explicit path (e.g. a gateway like
+///   `https://opencode.ai/zen/v1`) → kept as-is, only trailing `/` trimmed —
+///   we never second-guess a deliberate path
+pub fn normalize_anthropic_base_url(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    // Everything after "scheme://"; if no scheme, treat the whole string as
+    // the host part (e.g. "localhost:8080").
+    let after_scheme = trimmed
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    if after_scheme.is_empty() || after_scheme.contains('/') {
+        // Has an explicit path (or is degenerate) — respect it verbatim.
+        trimmed.to_string()
+    } else {
+        // Bare host: append the /v1 the Anthropic Messages API expects.
+        format!("{trimmed}/v1")
+    }
+}
+
+/// Create a ModelConfig for a provider, honoring an optional custom base URL.
 pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) -> ModelConfig {
     let mut config = match provider {
+        "anthropic" => {
+            // Fleet preset (pricing/context truth) or generic Anthropic config.
+            // yoagent 0.9 honors ModelConfig.base_url (0.8 ignored it), so a
+            // proxy/gateway URL now works on the native Anthropic protocol —
+            // normalized so bare hosts don't lose the /v1 path (#568 item 4).
+            let mut config = anthropic_model_config(model);
+            if let Some(url) = base_url {
+                config.base_url = normalize_anthropic_base_url(url);
+            }
+            config
+        }
         "openai" => {
             let mut config = ModelConfig::openai(model, model);
             if let Some(url) = base_url {
@@ -599,10 +643,12 @@ impl AgentConfig {
     pub fn build_agent(&self) -> Agent {
         let base_url = self.base_url.as_deref();
 
-        if self.provider == "anthropic" && base_url.is_none() {
-            // Default Anthropic path
-            let mut model_config = anthropic_model_config(&self.model);
-            insert_client_headers(&mut model_config);
+        if self.provider == "anthropic" {
+            // Anthropic path — native protocol; a custom --base-url (proxy or
+            // gateway) is honored by yoagent 0.9 and normalized in
+            // create_model_config, so it no longer falls through to the
+            // OpenAI-compat unknown-provider path.
+            let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
             let agent = Agent::new(AnthropicProvider).with_model_config(model_config);
             self.configure_agent(agent, context_window)
@@ -668,9 +714,8 @@ impl AgentConfig {
         let side_prompt = "You are a helpful assistant answering a quick side question. \
             Be concise and direct. This is a one-shot question — answer it completely in one response.";
 
-        let agent = if self.provider == "anthropic" && base_url.is_none() {
-            let mut model_config = anthropic_model_config(&self.model);
-            insert_client_headers(&mut model_config);
+        let agent = if self.provider == "anthropic" {
+            let model_config = create_model_config(&self.provider, &self.model, base_url);
             Agent::new(AnthropicProvider).with_model_config(model_config)
         } else if self.provider == "google" {
             let model_config = create_model_config(&self.provider, &self.model, base_url);
@@ -709,9 +754,8 @@ impl AgentConfig {
     pub fn build_architect_agent(&self, architect_model: &str) -> Agent {
         let base_url = self.base_url.as_deref();
 
-        let agent = if self.provider == "anthropic" && base_url.is_none() {
-            let mut model_config = anthropic_model_config(architect_model);
-            insert_client_headers(&mut model_config);
+        let agent = if self.provider == "anthropic" {
+            let model_config = create_model_config(&self.provider, architect_model, base_url);
             Agent::new(AnthropicProvider).with_model_config(model_config)
         } else if self.provider == "google" {
             let model_config = create_model_config(&self.provider, architect_model, base_url);
