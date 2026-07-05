@@ -460,6 +460,10 @@ pub fn cli_help_text() -> String {
         s,
         "    /context           Show loaded project context files"
     );
+    let _ = writeln!(
+        s,
+        "    /cd <path>         Change the working directory (~ and relative paths)"
+    );
     let _ = writeln!(s, "    /doctor            Run environment diagnostics");
     let _ = writeln!(
         s,
@@ -761,6 +765,7 @@ pub fn help_text() -> String {
     out.push_str("                     /explain <path>:<start>-<end> for specific line ranges\n");
     out.push_str("  /apply <file>      Apply a diff or patch file (--check for dry-run)\n");
     out.push_str("  /context [system|tokens|files]  Show loaded project context files\n");
+    out.push_str("  /cd <path>         Change the working directory (~ and relative paths)\n");
     out.push_str("  /doctor            Run environment diagnostics (git, API key, config, etc.)\n");
     out.push_str("  /init              Scan project and generate a YOYO.md context file\n");
     out.push_str(

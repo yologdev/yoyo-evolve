@@ -122,6 +122,7 @@ pub(crate) enum CommandRoute {
     Tips,
     Risk,
     Effort,
+    Cd,
     /// Input starts with `/` but doesn't match any known command.
     UnknownSlash,
     /// Input is not a slash command at all.
@@ -266,11 +267,64 @@ fn route_command_prefix(input: &str) -> CommandRoute {
             "side" => CommandRoute::Side,
             "quick" => CommandRoute::Quick,
             "effort" => CommandRoute::Effort,
+            "cd" => CommandRoute::Cd,
             _ => CommandRoute::UnknownSlash,
         }
     } else {
         CommandRoute::NotACommand
     }
+}
+
+/// Resolve the target directory for `/cd`.
+///
+/// Expands a leading `~` / `~/` via `$HOME`, resolves relative paths against
+/// `current`, and validates that the target exists and is a directory.
+/// Returns a clear error message otherwise. The path logic is delegated to
+/// [`resolve_cd_target_with_home`] so it can be unit-tested without mutating
+/// process-global state (env vars or the cwd).
+pub(crate) fn resolve_cd_target(
+    current: &std::path::Path,
+    arg: &str,
+) -> Result<std::path::PathBuf, String> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    resolve_cd_target_with_home(current, arg, home.as_deref())
+}
+
+/// Inner, fully testable variant of [`resolve_cd_target`]: `home` is passed
+/// in explicitly so tests never need to set `$HOME` (env vars are
+/// process-global and racy across test threads).
+fn resolve_cd_target_with_home(
+    current: &std::path::Path,
+    arg: &str,
+    home: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return Err("usage: /cd <path>".to_string());
+    }
+    let expanded: std::path::PathBuf = if arg == "~" {
+        home.ok_or_else(|| "cannot expand ~: $HOME is not set".to_string())?
+            .to_path_buf()
+    } else if let Some(rest) = arg.strip_prefix("~/") {
+        home.ok_or_else(|| "cannot expand ~: $HOME is not set".to_string())?
+            .join(rest)
+    } else {
+        std::path::PathBuf::from(arg)
+    };
+    let target = if expanded.is_absolute() {
+        expanded
+    } else {
+        current.join(expanded)
+    };
+    if !target.exists() {
+        return Err(format!("no such directory: {}", target.display()));
+    }
+    if !target.is_dir() {
+        return Err(format!("not a directory: {}", target.display()));
+    }
+    // Canonicalize to normalize `..` segments and symlinks; fall back to the
+    // joined path if canonicalization fails (e.g. permission issues).
+    Ok(target.canonicalize().unwrap_or(target))
 }
 
 /// Result of dispatching a slash command in the REPL.
@@ -1291,6 +1345,38 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::Memories
         | CommandRoute::Forget => unreachable!("handled by dispatch_utility_command"),
 
+        CommandRoute::Cd => {
+            let arg = ctx.input.strip_prefix("/cd").unwrap_or("").trim();
+            if arg.is_empty() {
+                // `/cd` with no args behaves like pwd.
+                match std::env::current_dir() {
+                    Ok(cwd) => println!("  {}\n", cwd.display()),
+                    Err(e) => {
+                        eprintln!("{RED}  ✗ cannot determine current directory: {e}{RESET}\n")
+                    }
+                }
+            } else {
+                let current =
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                match resolve_cd_target(&current, arg) {
+                    Ok(target) => match std::env::set_current_dir(&target) {
+                        Ok(()) => {
+                            println!("  {}", target.display());
+                            println!(
+                                "{DIM}  (project context was loaded from the original \
+                                 directory and is not reloaded — use /context to review){RESET}\n"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}  ✗ cannot cd to {}: {e}{RESET}\n", target.display())
+                        }
+                    },
+                    Err(msg) => eprintln!("{RED}  ✗ {msg}{RESET}\n"),
+                }
+            }
+            CommandResult::Continue
+        }
+
         CommandRoute::NotACommand => CommandResult::NotACommand,
     }
 }
@@ -1298,6 +1384,109 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── resolve_cd_target tests ──
+
+    #[test]
+    fn test_resolve_cd_absolute_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let current = std::path::Path::new("/somewhere/else");
+        let result = resolve_cd_target_with_home(current, tmp.path().to_str().unwrap(), None);
+        assert_eq!(result.unwrap(), tmp.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_cd_relative_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let result = resolve_cd_target_with_home(tmp.path(), "sub", None);
+        assert_eq!(result.unwrap(), sub.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_cd_relative_parent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        // `..` from the subdir resolves (and canonicalizes) back to the tempdir
+        let result = resolve_cd_target_with_home(&sub, "..", None);
+        assert_eq!(result.unwrap(), tmp.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_cd_tilde_expansion() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let current = std::path::Path::new("/somewhere/else");
+        // Bare `~` resolves to the provided home
+        let result = resolve_cd_target_with_home(current, "~", Some(tmp.path()));
+        assert_eq!(result.unwrap(), tmp.path().canonicalize().unwrap());
+        // `~/sub` joins under home
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let result = resolve_cd_target_with_home(current, "~/sub", Some(tmp.path()));
+        assert_eq!(result.unwrap(), sub.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_cd_tilde_without_home() {
+        let current = std::path::Path::new("/somewhere");
+        let err = resolve_cd_target_with_home(current, "~", None).unwrap_err();
+        assert!(err.contains("$HOME"), "error should mention $HOME: {err}");
+        let err = resolve_cd_target_with_home(current, "~/sub", None).unwrap_err();
+        assert!(err.contains("$HOME"), "error should mention $HOME: {err}");
+    }
+
+    #[test]
+    fn test_resolve_cd_nonexistent_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let err = resolve_cd_target_with_home(tmp.path(), "no_such_dir_xyz", None).unwrap_err();
+        assert!(
+            err.contains("no such directory"),
+            "error should say 'no such directory': {err}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cd_target_is_a_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = tmp.path().join("file.txt");
+        std::fs::write(&file, "hello").unwrap();
+        let err = resolve_cd_target_with_home(tmp.path(), "file.txt", None).unwrap_err();
+        assert!(
+            err.contains("not a directory"),
+            "error should say 'not a directory': {err}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cd_empty_arg() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let err = resolve_cd_target_with_home(tmp.path(), "  ", None).unwrap_err();
+        assert!(err.contains("usage"), "error should show usage: {err}");
+    }
+
+    #[test]
+    fn test_resolve_cd_target_reads_home_env() {
+        // The public wrapper only differs by reading $HOME; verify it agrees
+        // with the inner variant on a path that needs no expansion.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let arg = tmp.path().to_str().unwrap();
+        assert_eq!(
+            resolve_cd_target(std::path::Path::new("/"), arg).unwrap(),
+            tmp.path().canonicalize().unwrap()
+        );
+    }
+
+    // ── /cd routing tests ──
+
+    #[test]
+    fn test_route_cd() {
+        assert_eq!(route_command("/cd"), CommandRoute::Cd);
+        assert_eq!(route_command("/cd /tmp"), CommandRoute::Cd);
+        assert_eq!(route_command("/cd ~/projects"), CommandRoute::Cd);
+        assert_eq!(route_command("/cd .."), CommandRoute::Cd);
+    }
 
     #[test]
     fn test_route_quit() {

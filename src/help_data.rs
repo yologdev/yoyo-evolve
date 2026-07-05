@@ -1047,6 +1047,20 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /checkpoint restore before-refactor\n\
              \x20 /checkpoint diff before-refactor",
         ),
+        "cd" => Some(
+            "/cd <path> — Change the working directory\n\n\
+             Usage:\n\
+             \x20 /cd <path>    Change to the given directory\n\
+             \x20 /cd           Print the current working directory (like pwd)\n\n\
+             Supports ~ expansion and relative paths. The new directory is\n\
+             used for subsequent commands and tool calls. Project context\n\
+             (YOYO.md, CLAUDE.md, etc.) loaded at startup is NOT reloaded —\n\
+             use /context to review what was loaded.\n\n\
+             Examples:\n\
+             \x20 /cd ~/projects/myapp\n\
+             \x20 /cd ../sibling\n\
+             \x20 /cd /tmp",
+        ),
         "changes" => Some(
             "/changes — Show files modified during this session\n\n\
              Lists all files that were written or edited by the AI during\n\
@@ -1301,6 +1315,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "ast" => Some("Structural code search via ast-grep"),
         "bg" => Some("Manage background shell processes"),
         "blame" => Some("Show git blame with colored output"),
+        "cd" => Some("Change the working directory (~ and relative paths supported)"),
         "changes" => Some("Show files modified during this session"),
         "changelog" => Some("Show recent git commit history"),
         "checkpoint" => Some("Named file-state snapshots (save, list, restore, diff, delete)"),

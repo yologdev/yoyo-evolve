@@ -55,6 +55,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/apply",
     "/architect",
     "/bg",
+    "/cd",
     "/checkpoint",
     "/fork",
     "/help",
