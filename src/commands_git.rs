@@ -1724,7 +1724,6 @@ pub fn wants_ai_commit(input: &str) -> bool {
     parse_commit_args(arg).ai
 }
 
-
 // ── /git ─────────────────────────────────────────────────────────────────
 
 pub fn handle_git(input: &str) {
@@ -1954,7 +1953,6 @@ mod tests {
     }
 
     // ── parse_pr_args tests ─────────────────────────────────────────────
-
 
     // ── DiffStatEntry / DiffStatSummary equality ────────────────────────
 
@@ -2266,7 +2264,6 @@ mod tests {
     }
 
     // ── PR tests (moved from commands.rs) ───────────────────────────────
-
 
     #[test]
     fn test_init_command_recognized() {
