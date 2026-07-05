@@ -6,6 +6,44 @@
 
 use crate::format::safe_truncate;
 use std::time::Duration;
+use yoagent::StopReason;
+
+/// How the prompt event loop should handle a terminal `stop_reason` at
+/// AgentEnd (Day 127, #568).
+///
+/// Extracted as a pure classifier so the retry policy per stop reason is
+/// unit-testable: `Error` may be transient (rate limit, outage) and enters
+/// the error-inspection path (overflow / retriable / fatal), while `Refusal`
+/// is deterministic — the provider's safety system declined the request, and
+/// re-sending the same prompt burns tokens for the same answer — so it gets
+/// an honest user-facing notice and must never enter the retry machinery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopHandling {
+    /// `StopReason::Error` — inspect `error_message`; may be a context
+    /// overflow, a retriable API error, or a fatal error.
+    InspectError,
+    /// `StopReason::Refusal` — print a notice telling the user to rephrase;
+    /// deliberately non-retryable.
+    RefusalNotice,
+    /// Normal completions (`Stop`, `Length`, `ToolUse`, `Aborted`) — no
+    /// error handling needed.
+    Ignore,
+}
+
+/// Classify a terminal `stop_reason` for AgentEnd handling.
+///
+/// The match is deliberately exhaustive (no wildcard): if yoagent adds a new
+/// `StopReason` variant, this fails to compile and forces an explicit retry
+/// decision instead of silently ignoring it.
+pub fn classify_stop_reason(stop_reason: &StopReason) -> StopHandling {
+    match stop_reason {
+        StopReason::Error => StopHandling::InspectError,
+        StopReason::Refusal => StopHandling::RefusalNotice,
+        StopReason::Stop | StopReason::Length | StopReason::ToolUse | StopReason::Aborted => {
+            StopHandling::Ignore
+        }
+    }
+}
 
 /// Build a retry prompt that includes error context from a previous failed attempt.
 ///
@@ -525,6 +563,43 @@ fn infer_provider_from_model(model: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_classify_stop_reason_refusal_is_not_retryable() {
+        // #568: a refusal is deterministic — it must route to the notice path,
+        // never the error-inspection path that can mark a turn retriable.
+        assert_eq!(
+            classify_stop_reason(&StopReason::Refusal),
+            StopHandling::RefusalNotice
+        );
+    }
+
+    #[test]
+    fn test_classify_stop_reason_error_enters_inspection() {
+        // Negative pair (Day-122 lesson): Error IS eligible for retry
+        // classification — the minimum change from Refusal that flips the verdict.
+        assert_eq!(
+            classify_stop_reason(&StopReason::Error),
+            StopHandling::InspectError
+        );
+    }
+
+    #[test]
+    fn test_classify_stop_reason_normal_stops_untouched() {
+        // Stop/Length/ToolUse/Aborted get no error handling at all.
+        for sr in [
+            StopReason::Stop,
+            StopReason::Length,
+            StopReason::ToolUse,
+            StopReason::Aborted,
+        ] {
+            assert_eq!(
+                classify_stop_reason(&sr),
+                StopHandling::Ignore,
+                "{sr:?} should be ignored"
+            );
+        }
+    }
 
     #[test]
     fn test_retry_delay_exponential_backoff_ranges() {

@@ -96,8 +96,8 @@ pub struct PromptOutcome {
 // Extracted into `prompt_retry` module (Day 64). Callers import directly
 // from `crate::prompt_retry`.
 use crate::prompt_retry::{
-    build_auto_retry_prompt, build_overflow_retry_prompt, diagnose_api_error, is_overflow_error,
-    is_retriable_error, retry_delay, MAX_AUTO_RETRIES,
+    build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+    is_overflow_error, is_retriable_error, retry_delay, StopHandling, MAX_AUTO_RETRIES,
 };
 // MAX_RETRIES is pub(crate), so import without re-exporting.
 use crate::prompt_retry::MAX_RETRIES;
@@ -530,29 +530,52 @@ impl PromptEventState {
             {
                 accumulate_usage(&mut self.usage, msg_usage);
 
-                if *stop_reason == StopReason::Error {
-                    if let Some(err_msg) = error_message {
+                match classify_stop_reason(stop_reason) {
+                    StopHandling::InspectError => {
+                        if let Some(err_msg) = error_message {
+                            if self.in_text {
+                                println!();
+                                self.in_text = false;
+                            }
+                            // Check for context overflow first — needs special handling
+                            if is_overflow_error(err_msg) {
+                                self.overflow_error = Some(err_msg.clone());
+                            } else if is_retriable_error(err_msg) {
+                                // Check if this error is worth retrying
+                                self.retriable_error = Some(err_msg.clone());
+                            } else {
+                                eprintln!("\n{RED}  error: {err_msg}{RESET}");
+                                // Show diagnostic help for common errors
+                                if let Some(diagnostic) = diagnose_api_error(err_msg, model) {
+                                    eprintln!(
+                                        "{YELLOW}  💡 {}{RESET}",
+                                        diagnostic
+                                            .replace('\n', &format!("\n{YELLOW}     {RESET}"))
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    StopHandling::RefusalNotice => {
+                        // #568: a refusal is deterministic — retrying the same
+                        // prompt burns tokens for the same answer. retriable_error
+                        // is deliberately NOT set here, so into_result() returns
+                        // Done and the auto-retry machinery never fires.
                         if self.in_text {
                             println!();
                             self.in_text = false;
                         }
-                        // Check for context overflow first — needs special handling
-                        if is_overflow_error(err_msg) {
-                            self.overflow_error = Some(err_msg.clone());
-                        } else if is_retriable_error(err_msg) {
-                            // Check if this error is worth retrying
-                            self.retriable_error = Some(err_msg.clone());
-                        } else {
-                            eprintln!("\n{RED}  error: {err_msg}{RESET}");
-                            // Show diagnostic help for common errors
-                            if let Some(diagnostic) = diagnose_api_error(err_msg, model) {
-                                eprintln!(
-                                    "{YELLOW}  💡 {}{RESET}",
-                                    diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))
-                                );
+                        eprintln!(
+                            "\n{YELLOW}  ⚠ the model refused this request (safety system). \
+                             Rephrase and try again — auto-retry is skipped for refusals.{RESET}"
+                        );
+                        if let Some(err_msg) = error_message {
+                            if !err_msg.is_empty() {
+                                eprintln!("{DIM}    reason: {err_msg}{RESET}");
                             }
                         }
                     }
+                    StopHandling::Ignore => {}
                 }
             }
         }
