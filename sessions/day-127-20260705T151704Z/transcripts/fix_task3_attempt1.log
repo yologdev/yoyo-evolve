@@ -1,0 +1,158 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ ls -d ~/.cargo/registry/src/*/yoagent-0.9* 2>/dev/null; grep -n yoagent /home/ru… ✓ (4ms)
+ ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.9.0 && grep -rn "fable_5\|opus_4_8\|sonnet_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD --stat && git show… ✓ (6ms)
+ ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.9.0 && grep -n "fable_5\|opus_4_8\|sonnet_5… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.9.0 && sed -n 25,70p src/provider/model.rs … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model_pricing\|fn estim… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (230 lines) ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 255,305p src/agent_builde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fable\|opus\|sonnet\|ha… ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,60p src/providers.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "opus\|sonnet\|haiku\|fa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cost\b\|CostConfig" ~/.… ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 45,80p docs/src/features/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 55,64p docs/src/features/… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/features/cost-tracking.md:55..65 ✓ (0ms)
+  16 tools completed in 1m 24s (16 ✓)
+
+Now I have everything. Implementing step 1 — preset-read in model_pricing:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (2 → 16 lines)
+            .or_else(|| model.strip_prefix("meta-llama/"))
+            .unwrap_or(model);
+  + 
+  +     // Fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+  +     // claude-haiku-4-5): read pricing from yoagent 0.9's preset ModelConfig at
+  +     // runtime — the preset is the source of truth, not this table. This must
+  +     // run BEFORE the substring matching below, otherwise e.g. claude-opus-4-8
+  +     // would fall into the legacy opus branch and show the wrong price.
+  +     if let Some(preset) = crate::agent_builder::anthropic_preset(model) {
+  +         return Some((
+  +             preset.cost.input_per_million,
+  +             preset.cost.cache_write_per_million,
+  +             preset.cost.cache_read_per_million,
+  +             preset.cost.output_per_million,
+  +         ));
+  +     }
+ ✓ (1m 32s)
+            .or_else(|| model.strip_prefix("meta-llama/"))
+            .unwrap_or(model);
+  + 
+  +     // Fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+  +     // claude-haiku-4-5): read pricing from yoagent 0.9's preset ModelConfig at
+  +     // runtime — the preset is the source of truth, not this table. This must
+  +     // run BEFORE the substring matching below, otherwise e.g. claude-opus-4-8
+  +     // would fall into the legacy opus branch and show the wrong price.
+  ... (8 more lines)
+
+Step 3 — providers.rs known-model list:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/providers.rs (2 → 5 lines)
+            "anthropic" => &[
+  +             "claude-fable-5",
+  +             "claude-opus-4-8",
+  +             "claude-sonnet-5",
+                "claude-opus-4-7",
+ ✓ (1m 32s)
+            "anthropic" => &[
+  +             "claude-fable-5",
+  +             "claude-opus-4-8",
+  +             "claude-sonnet-5",
+                "claude-opus-4-7",
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 725,815p src/format/cost.… ✓ (4ms)
+  2 tools completed in 1m 45s (2 ✓)
+
+Now add the fleet-model tests right after test_estimate_cost_unknown_model:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (3 → 86 lines)
+            // A truly unknown model should return None
+            assert!(estimate_cost(&usage, "unknown-model-xyz").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_estimate_cost_fable_5() {
+  +         // Pricing comes from yoagent 0.9's claude_fable_5() preset:
+  +         // input $10/MTok, output $50/MTok, cache read $1/MTok, cache write $12.5/MTok
+  +         let usage = yoagent::Usage {
+  +             input: 1_000_000,
+  +             output: 100_000,
+  +             cache_read: 0,
+  +             cache_write: 0,
+  +             total_tokens: 0,
+  +         };
+  +         let cost = estimate_cost(&usage, "claude-fable-5").unwrap();
+  +         // 1M * 10/M + 100k * 50/M = 10.0 + 5.0 = 15.0
+  +         assert!((cost - 15.0).abs() < 0.001);
+  +     }
+  + 
+  ... (66 more lines)
+ ✓ (1m 33s)
+            // A truly unknown model should return None
+            assert!(estimate_cost(&usage, "unknown-model-xyz").is_none());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_estimate_cost_fable_5() {
+  +         // Pricing comes from yoagent 0.9's claude_fable_5() preset:
+  +         // input $10/MTok, output $50/MTok, cache read $1/MTok, cache write $12.5/MTok
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 270,300p src/providers.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/providers.rs (2 → 14 lines)
+  +     #[test]
+  +     fn test_anthropic_known_models_includes_fleet_models() {
+  +         // yoagent 0.9 fleet presets (issue #568)
+  +         let models = known_models_for_provider("anthropic");
+  +         for fleet in ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"] {
+  +             assert!(
+  +                 models.contains(&fleet),
+  +                 "anthropic should include fleet model {fleet}"
+  +             );
+  +         }
+  +     }
+  + 
+        #[test]
+        fn test_anthropic_known_models_includes_new_variants() {
+ ✓ (1m 33s)
+  +     #[test]
+  +     fn test_anthropic_known_models_includes_fleet_models() {
+  +         // yoagent 0.9 fleet presets (issue #568)
+  +         let models = known_models_for_provider("anthropic");
+  +         for fleet in ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"] {
+  +             assert!(
+  +                 models.contains(&fleet),
+  +                 "anthropic should include fleet model {fleet}"
+  ... (6 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/features/cost-tracking.md (5 → 12 lines)
+    ### Anthropic
+  + 
+  + Fleet models (Fable 5, Opus 4.8, Sonnet 5, Haiku 4.5) read their pricing
+  + directly from yoagent's model presets at runtime, so their rows below are
+  + informational — the preset is the source of truth:
+    
+    | Model | Input | Cache Write | Cache Read | Output |
+    |-------|-------|-------------|------------|--------|
+  + | Fable 5 | $10/MTok | $12.50/MTok | $1/MTok | $50/MTok |
+  + | Opus 4.8 | $5/MTok | $6.25/MTok | $0.50/MTok | $25/MTok |
+  + | Sonnet 5 | $3/MTok | $3.75/MTok | $0.30/MTok | $15/MTok |
+    | Opus 4.5/4.6 | $5/MTok | $6.25/MTok | $0.50/MTok | $25/MTok |
+ ✓ (57.3s)
+    ### Anthropic
+  + 
+  + Fleet models (Fable 5, Opus 4.8, Sonnet 5, Haiku 4.5) read their pricing
+  + directly from yoagent's model presets at runtime, so their rows below are
+  + informational — the preset is the source of truth:
+    
+    | Model | Input | Cache Write | Cache Read | Output |
+    |-------|-------|-------------|------------|--------|
+  ... (4 more lines)
+  4 tools completed in 4m 31s (4 ✓)
+
+Update the CLAUDE.md bullet since the truth source changed for fleet models:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `format/cost.rs` — pricing, cost display, token formatting
+  + - `format/cost.rs` — pricing, cost display, token formatting; fleet-model pricing (claude-fable-5, opus-4-8, sonnet-5, haiku-4-5) is read at runtime from yoagent 0.9's preset `ModelConfig.cost` via `agent_builder::anthropic_preset` (preset is the source of truth), all other models use the local pricing table

@@ -1,0 +1,122 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n "yoagent" Cargo.toml📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ ls ~/.cargo/registry/src/*/ | grep -i yoagent || true ✓ (3ms)
+ ✓ (15ms)
+  ▶ $ sed -i 's/yoagent = { version = "0.8"/yoagent = { version = "0.9"/' Cargo.toml &… ✓ (1.8s)
+  3 tools completed in 11.3s (3 ✓)
+
+Version resolved cleanly — the openapi feature still exists in 0.9.0. Now let the compiler enumerate the breakage:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -80 ✓ (37.2s)
+
+Four errors in the first batch. Let me study the new yoagent 0.9.0 APIs before fixing:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '1,120p' ~/.cargo/registry/src/*/yoagent-0.9.0/src/types.rs  ▶ $ grep -n "pub struct ModelConfig" -A 60 ~/.cargo/registry/src/*/yoagent-0.9.0/src… ✓ (5ms)
+ ✓ (4ms)
+  ▶ $ grep -rn "struct ModelConfig" ~/.cargo/registry/src/*/yoagent-0.9.0/src/ && grep… ✓ (7ms)
+  ▶ $ sed -n '250,420p' ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent… ✓ (5ms)
+  ▶ $ sed -n '320,400p' src/agent_builder.rs ✓ (4ms)
+  ▶ edit src/agent_builder.rs (14 → 13 lines)
+                let url = base_url.unwrap_or("https://bedrock-runtime.us-east-1.amazonaws.com");
+  -             ModelConfig {
+  -                 id: model.into(),
+  -                 name: model.into(),
+  -                 api: ApiProtocol::BedrockConverseStream,
+  -                 provider: "bedrock".into(),
+  -                 base_url: url.to_string(),
+  -                 reasoning: false,
+  -                 context_window: 200_000,
+  -                 max_tokens: 8192,
+  -                 cost: Default::default(),
+  -                 headers: std::collections::HashMap::new(),
+  -                 compat: None,
+  -             }
+  +             // ModelConfig is #[non_exhaustive] as of yoagent 0.9 — build via
+  +             // custom() and mutate. Bedrock-hosted Claude models get a 200K
+  +             // context window; max_tokens follows yoagent's default (16K).
+  +             let mut config = ModelConfig::custom(
+  +                 ApiProtocol::BedrockConverseStream,
+  +                 "bedrock",
+  ... (6 more lines)
+ ✓ (16.7s)
+                let url = base_url.unwrap_or("https://bedrock-runtime.us-east-1.amazonaws.com");
+  -             ModelConfig {
+  -                 id: model.into(),
+  -                 name: model.into(),
+  -                 api: ApiProtocol::BedrockConverseStream,
+  -                 provider: "bedrock".into(),
+  -                 base_url: url.to_string(),
+  -                 reasoning: false,
+  ... (13 more lines)
+  ▶ $ cargo check --all-targets 2>&1 | grep -E "^error" -A 3 | grep -E "^\s+-->" | sor… ✓ (9.3s)
+  ▶ $ cargo check --all-targets 2>&1 | grep -E "error\[|-->" | head -60 ✓ (9.2s)
+  ▶ $ cargo check --all-targets 2>&1 | grep -E "error\[|error:|-->" | grep -v "yoagent… ✓ (9.2s)
+  ▶ $ cargo check --all-targets 2>&1 | grep -B1 -- "--> src/" | grep -v "yoagent" | gr… ✓ (9.2s)
+  ▶ $ grep -- "-->" /tmp/errs.txt | sed 's/.*--> //' | sort -u -t: -k1,1 -k2,2n ✓ (5ms)
+  11 tools completed in 2m 5s (11 ✓)
+
+Let me look at the match sites in commands_info.rs first, then handle the construction sites:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '275,300p;330,345p;455,480p' src/commands_info.rs ✓ (4ms)
+  ▶ $ sed -n '281,300p' src/commands_info.rs ✓ (3ms)
+  ▶ read src/commands_info.rs:278..303 ✓ (1ms)
+  ▶ edit src/commands_info.rs (7 → 10 lines)
+                                    let raw_bytes = data.len() * 3 / 4;
+                                    assistant_messages += (raw_bytes / 750).clamp(85, 16_000);
+                                }
+  +                             // Content is #[non_exhaustive] (yoagent 0.9) —
+  +                             // count unknown future variants as zero tokens.
+  +                             _ => {}
+                            }
+                        }
+                        assistant_messages += 4; // message overhead
+ ✓ (10.6s)
+                                    let raw_bytes = data.len() * 3 / 4;
+                                    assistant_messages += (raw_bytes / 750).clamp(85, 16_000);
+                                }
+  +                             // Content is #[non_exhaustive] (yoagent 0.9) —
+  +                             // count unknown future variants as zero tokens.
+  +                             _ => {}
+                            }
+                        }
+                        assistant_messages += 4; // message overhead
+  ▶ edit src/commands_info.rs (5 → 7 lines)
+                Content::ToolCall {
+                    name, arguments, ..
+                } => estimate_tokens(name) + estimate_tokens(&arguments.to_string()) + 8,
+  +             // Unknown future variants (Content is #[non_exhaustive]): 0 tokens.
+  +             _ => 0,
+            })
+            .sum()
+ ✓ (10.5s)
+                Content::ToolCall {
+                    name, arguments, ..
+                } => estimate_tokens(name) + estimate_tokens(&arguments.to_string()) + 8,
+  +             // Unknown future variants (Content is #[non_exhaustive]): 0 tokens.
+  +             _ => 0,
+            })
+            .sum()
+  ▶ edit src/commands_info.rs (7 → 9 lines)
+                Content::Image { .. } => {
+                    return "[image]".to_string();
+                }
+  +             // Unknown future variants (Content is #[non_exhaustive]): skip.
+  +             _ => {}
+            }
+        }
+        String::new()
+ ✓ (10.6s)
+                Content::Image { .. } => {
+                    return "[image]".to_string();
+                }
+  +             // Unknown future variants (Content is #[non_exhaustive]): skip.
+  +             _ => {}
+            }
+        }
+        String::new()
+  6 tools completed in 58.7s (6 ✓)
+
+  watch: no files changed this turn — skipping
+

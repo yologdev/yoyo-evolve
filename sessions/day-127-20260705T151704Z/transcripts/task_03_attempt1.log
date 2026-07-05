@@ -1,0 +1,100 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep -n 'yoagent' Cargo.toml && grep -n 'name = "yoagent"' -A2 Cargo.lock | head…  ▶ $ ls ~/.cargo/registry/src/*/ | grep yoagent ✓ (4ms)
+ ✓ (10ms)
+  2 tools completed in 5.6s (2 ✓)
+
+Task 1 landed — yoagent 0.9.0 is in. Let me read the new presets.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "fable\|opus_4_8\|sonnet_5" ~/.cargo/registry/src/*/yoagent-0.9.0/src/ … ✓ (5ms)
+  ▶ $ sed -n '250,470p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (5ms)
+  2 tools completed in 12.3s (2 ✓)
+
+The presets expose public cost: CostConfig fields — pricing can be read from the preset at runtime. Let me check CostConfig and yoyo's current pricing table.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "struct CostConfig" -A 20 /home/runner/.cargo/registry/src/index.crates.…📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -n "fable\|opus-4-8\|sonnet-5\|opus_4_8\|sonnet_5" src/format/cost.rs src/a… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ sed -n '1,140p' src/format/cost.rs  ▶ $ grep -n "create_model_config" src/agent_builder.rs | head ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ sed -n '264,420p' src/agent_builder.rs ✓ (4ms)
+  ▶ $ sed -n '555,700p' src/agent_builder.rs ✓ (5ms)
+  ▶ $ grep -n '"anthropic"' src/agent_builder.rs | head -20; grep -n "ModelConfig::ant… ✓ (8ms)
+  ▶ $ sed -n '1240,1280p' src/agent_builder.rs; grep -n '"anthropic" =>' src/agent_bui… ✓ (5ms)
+  8 tools completed in 51.4s (8 ✓)
+
+Now I have the full picture. Let me check what other Anthropic presets yoagent 0.9 exposes, and look at providers.rs.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub fn claude\|pub fn gpt\|pub fn anthropic\b" /home/runner/.cargo/regi…  ▶ $ grep -n "claude\|KNOWN_MODELS\|DEFAULT" src/providers.rs | head -40 ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ sed -n '140,210p' src/format/cost.rs; grep -n "fn estimate_cost\|fn cost_breakdo… ✓ (5ms)
+  ▶ $ sed -n '250,266p' src/agent_builder.rs; grep -n "^use\|^pub use" src/agent_build…  ▶ $ sed -n '38,60p' src/providers.rs; grep -n "model_pricing\|fleet" src/format/cost… ✓ (6ms)
+ ✓ (7ms)
+  5 tools completed in 56.1s (5 ✓)
+
+Now implementing. First, the preset helpers in agent_builder.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (2 → 39 lines)
+  + /// Look up a yoagent 0.9 fleet preset for an Anthropic model name.
+  + ///
+  + /// The fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+  + /// claude-haiku-4-5) ship with authoritative pricing, context-window, and
+  + /// max-output defaults inside yoagent's presets — that's where truth lives,
+  + /// so we start from the preset instead of a hand-rolled config. Dated
+  + /// variants (e.g. "claude-opus-4-8-20260301") match by prefix and keep the
+  + /// requested id so the API receives the exact name the user asked for.
+  + ///
+  + /// Returns `None` for non-fleet models — callers fall back to
+  + /// `ModelConfig::anthropic` (yoagent's generic Anthropic defaults).
+  + pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
+  +     let mut config = if model.starts_with("claude-fable-5") {
+  +         ModelConfig::claude_fable_5()
+  +     } else if model.starts_with("claude-opus-4-8") {
+  +         ModelConfig::claude_opus_4_8()
+  +     } else if model.starts_with("claude-sonnet-5") {
+  +         ModelConfig::claude_sonnet_5()
+  +     } else if model.starts_with("claude-haiku-4-5") {
+  +         ModelConfig::claude_haiku_4_5()
+  ... (19 more lines)
+ ✓ (16.6s)
+  + /// Look up a yoagent 0.9 fleet preset for an Anthropic model name.
+  + ///
+  + /// The fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+  + /// claude-haiku-4-5) ship with authoritative pricing, context-window, and
+  + /// max-output defaults inside yoagent's presets — that's where truth lives,
+  + /// so we start from the preset instead of a hand-rolled config. Dated
+  + /// variants (e.g. "claude-opus-4-8-20260301") match by prefix and keep the
+  + /// requested id so the API receives the exact name the user asked for.
+  ... (13 more lines)
+  ▶ $ grep -n "ModelConfig::anthropic(" src/agent_builder.rs ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (26ms)
+  ▶ $ grep -n "fn build_editor_agent" -A 15 src/agent_builder.rs | head -20 ✓ (4ms)
+  4 tools completed in 35.9s (4 ✓)
+
+Good — build_editor_agent delegates to build_agent, so it's covered. Now the cost.rs runtime preset read:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (4 → 18 lines)
+            .or_else(|| model.strip_prefix("meta-llama/"))
+            .unwrap_or(model);
+  + 
+  +     // Fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
+  +     // claude-haiku-4-5): read pricing from yoagent 0.9's presets at runtime.
+  +     // The preset is the single source of truth — no hardcoded copy here that
+  +     // could drift when yoagent updates its prices (Day 89 lesson).
+  +     if let Some(preset) = crate::agent_builder::anthropic_preset(model) {
+  +         let c = &preset.cost;
+  +         return Some((
+  +             c.input_per_million,
+  +             c.cache_write_per_million,
+  +             c.cache_read_per_million,
+  +             c.output_per_million,
+  +         ));
+  +     }
+    
+        // https://docs.anthropic.com/en/about-claude/pricing
+ ✗ (2ms)
+    │ old_text not found in src/format/cost.rs.
+
+  watch: no files changed this turn — skipping
+

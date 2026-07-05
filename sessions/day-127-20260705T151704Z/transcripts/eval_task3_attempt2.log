@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ grep yoagent Cargo.toml && ls ~/.cargo/registry/src/*/ | grep yoagent  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet 2>&1 | tail -… ✓ (8ms)
+ ✓ (58.0s)
+  2 tools completed in 1m 6s (2 ✓)
+
+Tests pass (4184 + 89). Now verify the preset pricing claims against yoagent 0.9's actual source:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn -A 20 "fn claude_fable_5\|fn claude_opus_4_8\|fn claude_sonnet_5\|fn cl… ✓ (5ms)
+  ▶ $ sed -n 360,432p ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (162ms)
+  3 tools completed in 23.2s (3 ✓)
+
+All checks green. Writing the verdict:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (58.0s)
+
+**Verdict: PASS**
+
+Verification summary:
+
+1. Diff matches the task — pricing is read at runtime from yoagent 0.9 presets (the task's preferred approach), not hardcoded. I confirmed against yoagent-0.9.0's actual source (provider/model.rs): fable-5 = $10/$50 in/out, $1/$12.5 cache; opus-4-8 = $5/$25; sonnet-5 = $3/$15 — the tests and docs table match exactly.
+2. Critical correctness detail handled — the preset lookup runs before the legacy substring matching, so claude-opus-4-8 no longer falls into the old opus branch ($15/$75); there's an explicit regression test for this.
+3. Tests pass — 4184 + 89 tests green, clippy clean with -D warnings.
+4. Wiring — `anthropic_model_config replaces ModelConfig::anthropic` in all three Anthropic build paths (main, side, architect); custom/base-url path unchanged. The task named create_model_config, but that function only serves non-Anthropic providers — the implementation put the wiring where model selection actually happens.
+5. providers.rs — fleet models added to the known list with a test; negative case (unknown model → None, no panic) covered by the existing `test_estimate_cost_unknown_model`.
+6. Docs + CLAUDE.md — both updated to note the preset-is-truth model, as the task required.
+7. Scope respected — no queue-inspection API adoption, dependency on task 1 (yoagent 0.9 bump) confirmed present in Cargo.toml.
+
+  watch: no files changed this turn — skipping
+
