@@ -1346,6 +1346,103 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // normalize_anthropic_base_url tests (#568 checklist item 4)
+    //
+    // yoagent 0.9's AnthropicProvider builds the request URL as
+    // `{base_url.trim_end_matches('/')}/messages` — it appends only
+    // `/messages`, never `/v1/messages`. These tests pin both sides of the
+    // boundary so proxy users get `.../v1/messages` regardless of whether
+    // they typed the /v1 themselves.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_normalize_anthropic_base_url_with_trailing_v1_kept_verbatim() {
+        // Explicit /v1 path is the canonical form — no double-/v1.
+        assert_eq!(
+            normalize_anthropic_base_url("https://my-proxy.com/v1"),
+            "https://my-proxy.com/v1"
+        );
+    }
+
+    #[test]
+    fn test_normalize_anthropic_base_url_trailing_slash_trimmed() {
+        // Trailing slash after /v1 is trimmed (provider would otherwise
+        // still work, but keep the config canonical).
+        assert_eq!(
+            normalize_anthropic_base_url("https://my-proxy.com/v1/"),
+            "https://my-proxy.com/v1"
+        );
+    }
+
+    #[test]
+    fn test_normalize_anthropic_base_url_bare_host_gets_v1_appended() {
+        // A bare host would produce `https://my-proxy.com/messages`
+        // (missing /v1) — append the path the Messages API expects.
+        assert_eq!(
+            normalize_anthropic_base_url("https://my-proxy.com"),
+            "https://my-proxy.com/v1"
+        );
+    }
+
+    #[test]
+    fn test_normalize_anthropic_base_url_bare_host_trailing_slash() {
+        assert_eq!(
+            normalize_anthropic_base_url("https://my-proxy.com/"),
+            "https://my-proxy.com/v1"
+        );
+    }
+
+    #[test]
+    fn test_normalize_anthropic_base_url_explicit_path_respected() {
+        // A deliberate non-/v1 gateway path is never second-guessed.
+        assert_eq!(
+            normalize_anthropic_base_url("https://opencode.ai/zen/v1"),
+            "https://opencode.ai/zen/v1"
+        );
+        assert_eq!(
+            normalize_anthropic_base_url("https://gateway.example.com/anthropic"),
+            "https://gateway.example.com/anthropic"
+        );
+    }
+
+    #[test]
+    fn test_normalize_anthropic_base_url_schemeless_host() {
+        // No scheme: the whole string is the host part; still gets /v1.
+        assert_eq!(
+            normalize_anthropic_base_url("localhost:8080"),
+            "localhost:8080/v1"
+        );
+    }
+
+    #[test]
+    fn test_create_model_config_anthropic_normalizes_base_url() {
+        // The anthropic arm applies normalization: bare host gains /v1 ...
+        let bare = create_model_config("anthropic", "claude-opus-4-6", Some("https://proxy.com"));
+        assert_eq!(bare.base_url, "https://proxy.com/v1");
+        // ... and an explicit /v1 is not doubled.
+        let with_v1 =
+            create_model_config("anthropic", "claude-opus-4-6", Some("https://proxy.com/v1"));
+        assert_eq!(with_v1.base_url, "https://proxy.com/v1");
+        // Client headers are still applied on the normalized config.
+        assert_eq!(
+            with_v1.headers.get("User-Agent").unwrap(),
+            &yoyo_user_agent()
+        );
+    }
+
+    #[test]
+    fn test_create_model_config_non_anthropic_base_url_unaffected() {
+        // Non-anthropic providers take the base_url verbatim — no /v1
+        // appended, no trimming beyond what the user typed.
+        let openai = create_model_config("openai", "gpt-4o", Some("https://proxy.com"));
+        assert_eq!(openai.base_url, "https://proxy.com");
+        let openai_slash = create_model_config("openai", "gpt-4o", Some("https://proxy.com/"));
+        assert_eq!(openai_slash.base_url, "https://proxy.com/");
+        let google = create_model_config("google", "gemini-2.5-pro", Some("https://proxy.com"));
+        assert_eq!(google.base_url, "https://proxy.com");
+    }
+
     #[test]
 
     fn test_client_headers_openai() {
@@ -1705,14 +1802,15 @@ mod tests {
 
     #[test]
 
-    fn test_build_agent_anthropic_with_base_url_uses_openai_compat() {
-        // When Anthropic is used with a custom base_url, it should go through
-        // the OpenAI-compatible path (not the default Anthropic path)
+    fn test_build_agent_anthropic_with_base_url_stays_native() {
+        // Since yoagent 0.9, Anthropic with a custom base_url stays on the
+        // native Anthropic path (it no longer falls through to OpenAI-compat);
+        // the URL is honored and normalized by create_model_config.
         let config = AgentConfig {
             base_url: Some("https://custom-api.example.com/v1".to_string()),
             ..test_agent_config("anthropic", "claude-opus-4-6")
         };
-        // Should not panic — the OpenAI-compat path handles anthropic + base_url
+        // Should not panic — the native Anthropic path handles the base_url
         let agent = config.build_agent();
         assert_eq!(agent.messages().len(), 0);
     }
