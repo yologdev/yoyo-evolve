@@ -1,0 +1,88 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && grep -n "c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use crate::commands… ✓ (3ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub use\|^use " src/com… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 src/commands_risk_emerg… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_report\|c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,35p src/commands_risk.r… ✓ (3ms)
+  6 tools completed in 31.2s (6 ✓)
+
+Missing the re-export block for the new module. Adding it:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (4 → 11 lines)
+    pub(crate) use crate::commands_risk_report::{
+        file_risk_summary, format_risk_context, format_risk_report, prediction_accuracy_summary,
+        risk_context_for_files,
+  + };
+  + 
+  + // Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.
+  + // Re-exported here so all call sites (commands_project.rs and this module's
+  + // own report code) remain unchanged.
+  + pub(crate) use crate::commands_risk_emerging::{
+  +     detect_emerging_risks, format_emerging_risks, EmergingRisk,
+    };
+ ✓ (16.6s)
+    pub(crate) use crate::commands_risk_report::{
+        file_risk_summary, format_risk_context, format_risk_report, prediction_accuracy_summary,
+        risk_context_for_files,
+  + };
+  + 
+  + // Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.
+  + // Re-exported here so all call sites (commands_project.rs and this module's
+  + // own report code) remain unchanged.
+  ... (3 more lines)
+
+EmergingRisk isn't referenced by name outside the new module — drop it from the re-export:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (3 → 1 lines)
+  - pub(crate) use crate::commands_risk_emerging::{
+  -     detect_emerging_risks, format_emerging_risks, EmergingRisk,
+  - };
+  + pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+ ✓ (1m 44s)
+  - pub(crate) use crate::commands_risk_emerging::{
+  -     detect_emerging_risks, format_emerging_risks, EmergingRisk,
+  - };
+  + pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (990ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (58.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (1m 15s)
+  4 tools completed in 4m 22s (4 ✓)
+
+All checks pass. Verifying the CLAUDE.md doc update from the task wasn't missed:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_emerging"… ✓ (8ms)
+
+CLAUDE.md is missing the module entry required by the task. Adding it:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `commands_risk_report.rs` — report/context formatting for /risk: `format_risk_report`, `format_risk_context`, `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_emerging.rs` — emerging-risk / anticipatory detection for /risk: `EmergingRisk`, `detect_emerging_risks`, `format_emerging_risks`, momentum helpers; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+ ✓ (1m 9s)
+    - `commands_risk_report.rs` — report/context formatting for /risk: `format_risk_report`, `format_risk_context`, `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_emerging.rs` — emerging-risk / anticipatory detection for /risk: `EmergingRisk`, `detect_emerging_risks`, `format_emerging_risks`, momentum helpers; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "#\[test\]" src/commands… ✓ (146ms)
+  2 tools completed in 1m 24s (2 ✓)
+
+Fixed. The extraction itself was complete (module created with `EmergingRisk, detect_emerging_risks, format_emerging_risks`, helpers, and 11 moved tests; registered in main.rs) — what was missing was step 3 of the task: the re-export block in commands_risk.rs.
+
+Changes made:
+1. Added the re-export to src/commands_risk.rs, mirroring the existing report/snapshots blocks:
+   ```rust
+   pub(crate) use crate::commands_risk_emerging::{detect_emerging_risks, format_emerging_risks};
+   ```
+   (`EmergingRisk` was initially included but dropped — no external call site names the type, and clippy -D warnings flagged it as unused.)
+2. Added the `commands_risk_emerging.rs` line to CLAUDE.md's module list, mirroring the prior extraction entries.
+
+Verification — all green:
+• `cargo build` ✓
+• cargo test ✓ — 4167 + 88 passed, 0 failed (11 moved tests intact, none deleted)
+• `cargo clippy --all-targets -- -D warnings` ✓
+• cargo fmt -- --check ✓
+
+Net diff on commands_risk.rs is +6/−397 — pure relocation plus module wiring, as the task required.
+
+  watch: no files changed this turn — skipping
+

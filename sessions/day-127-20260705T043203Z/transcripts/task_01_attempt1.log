@@ -1,0 +1,132 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'parse_bang_command|bang' in src/repl.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git log --… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "bang" src/repl.rs | hea… ✓ (3ms)
+  ▶ read src/repl.rs:260..350 ✓ (1ms)
+  ▶ read src/repl.rs:800..880  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,40p src/sync_util.rs &&… ✓ (2ms)
+ ✓ (5ms)
+  ▶ read src/repl.rs:879..949 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "last_input" src/repl.rs… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '860,900p' src/repl.rs ✓ (3ms)
+  9 tools completed in 2m 23s (9 ✓)
+
+Now I understand the flow. Let me check where ! is documented (help text, docs) so I update everything consistently.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "passthrough\|zero toke… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,110p' docs/src/usage/… ✓ (3ms)
+  2 tools completed in 9.2s (2 ✓)
+
+Now I'll implement. First, the core logic in src/repl.rs — replacing run_bang_command with a tee-capture version and adding the pure helpers:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (27 → 212 lines)
+        line.trim().strip_prefix('!').map(str::trim)
+    }
+    
+  - /// Run a shell command directly for `!` passthrough, inheriting stdout/stderr
+  - /// so output streams live to the terminal. Prints the exit code only when
+  - /// non-zero. Never panics on spawn failure — prints the error and returns.
+  + /// Parse a `!?` follow-through line.
+  + ///
+  + /// Returns `Some(question)` when the trimmed line starts with `!?`: the
+  + /// question is everything after the `!?`, trimmed (bare `!?` returns
+  + /// `Some("")` so the caller can substitute a default question). Lines not
+  + /// starting with `!?` — including plain `!` passthrough lines — return `None`.
+  + /// Callers MUST check this BEFORE [`parse_bang_command`], otherwise `!?`
+  + /// would be executed as the shell command `?`.
+  + pub fn parse_bang_query(line: &str) -> Option<&str> {
+  +     line.trim().strip_prefix("!?").map(str::trim)
+  + }
+  + 
+  + /// Result of the most recent `!` passthrough command, kept so `!?` can feed
+  + /// it into the conversation on demand.
+  ... (193 more lines)
+ ✓ (16.6s)
+        line.trim().strip_prefix('!').map(str::trim)
+    }
+    
+  - /// Run a shell command directly for `!` passthrough, inheriting stdout/stderr
+  - /// so output streams live to the terminal. Prints the exit code only when
+  - /// non-zero. Never panics on spawn failure — prints the error and returns.
+  + /// Parse a `!?` follow-through line.
+  + ///
+  ... (13 more lines)
+
+Expected — the helpers aren't wired into the loop yet. Now the REPL loop change:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (2 → 22 lines)
+  +         // `!?` follow-through: feed the last `!` command's output into the
+  +         // conversation. Checked BEFORE the generic `!` passthrough, otherwise
+  +         // `!?` would be executed as the shell command `?`.
+  +         let bang_followup: Option<String> = match parse_bang_query(input) {
+  +             Some(question) => match last_bang_result() {
+  +                 Some(res) => Some(build_bang_followup_prompt(&res, question)),
+  +                 None => {
+  +                     println!(
+  +                         "{DIM}no `!` command has run yet — run one first (e.g. `!cargo test`), then ask with !?{RESET}"
+  +                     );
+  +                     continue;
+  +                 }
+  +             },
+  +             None => None,
+  +         };
+  +         let input = match &bang_followup {
+  +             Some(prompt) => prompt.as_str(),
+  +             None => input,
+  +         };
+  + 
+  ... (2 more lines)
+ ✓ (1m 34s)
+  +         // `!?` follow-through: feed the last `!` command's output into the
+  +         // conversation. Checked BEFORE the generic `!` passthrough, otherwise
+  +         // `!?` would be executed as the shell command `?`.
+  +         let bang_followup: Option<String> = match parse_bang_query(input) {
+  +             Some(question) => match last_bang_result() {
+  +                 Some(res) => Some(build_bang_followup_prompt(&res, question)),
+  +                 None => {
+  +                     println!(
+  ... (13 more lines)
+
+Now add the tests. Let me look at the existing bang tests to place new ones alongside:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_parse_bang_command… ✓ (5ms)
+  ▶ edit src/repl.rs (5 → 118 lines)
+            // Must not panic on multi-byte chars (char-safe ops only, no byte indexing)
+            assert_eq!(parse_bang_command("!echo héllo ✓"), Some("echo héllo ✓"));
+            assert_eq!(parse_bang_command("!héllo"), Some("héllo"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_bang_query_positive() {
+  +         assert_eq!(parse_bang_query("!?"), Some(""));
+  +         assert_eq!(parse_bang_query("!?   "), Some(""));
+  +         assert_eq!(parse_bang_query("!? why did the second test fail"), Some("why did the second test fail"));
+  +         assert_eq!(parse_bang_query("  !? question  "), Some("question"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_bang_query_negative() {
+  +         // Paired near-misses (Day 122 lesson: test both sides of the boundary)
+  +         assert_eq!(parse_bang_query("! ls"), None);
+  +         assert_eq!(parse_bang_query("!ls"), None);
+  +         assert_eq!(parse_bang_query("!"), None);
+  +         assert_eq!(parse_bang_query("?"), None);
+  ... (97 more lines)
+ ✓ (1m 33s)
+            // Must not panic on multi-byte chars (char-safe ops only, no byte indexing)
+            assert_eq!(parse_bang_command("!echo héllo ✓"), Some("echo héllo ✓"));
+            assert_eq!(parse_bang_command("!héllo"), Some("héllo"));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_bang_query_positive() {
+  +         assert_eq!(parse_bang_query("!?"), Some(""));
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (46.1s)
+  5 tools completed in 4m 35s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

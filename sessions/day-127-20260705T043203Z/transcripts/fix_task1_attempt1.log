@@ -1,0 +1,78 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'passthrough|bang|!\?' in docs/src/usage/repl.md  ▶ search 'parse_bang_command' in CLAUDE.md ✓ (2ms)
+ ✓ (2ms)
+  ▶ search 'shell|Shell' in docs/src/usage/repl.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^#' docs/src/usage/repl… ✓ (4ms)
+  ▶ read docs/src/usage/repl.md:67..93 ✓ (1ms)
+  6 tools completed in 23.3s (6 ✓)
+
+Now let me check the implemented behavior details so the docs are accurate:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'BANG_TAIL\|MAX_.*BANG\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,400p src/repl.rs && g… ✓ (6ms)
+  2 tools completed in 9.4s (2 ✓)
+
+The implementation is complete — only the docs are missing. Adding them now:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/usage/repl.md (1 → 21 lines)
+    Output streams live to your terminal (via `sh -c` on Unix, `cmd /C` on Windows), and the exit code is shown only when non-zero. A bare `!` prints a usage hint.
+  + 
+  + ### `!?` — ask about the last command's output
+  + 
+  + `!` commands never enter the conversation, but sometimes you *want* yoyo to look at what just happened. Type `!?` to feed the last `!` command — its command line, exit code, and output tail (last ~200 lines / 8KB, captured as a tee while it streamed) — into the conversation:
+  + 
+  + ```
+  + 🐙 › !cargo test
+  +    ... (output streams live) ...
+  +    exit 101
+  +    command failed (exit 101) — type !? to ask yoyo about the output
+  + 🐙 › !? why did the second test fail
+  + ```
+  + 
+  + - Bare `!?` uses a default question: after a failure, "explain what went wrong and how to fix it"; after a success, "summarize this output".
+  + - `!? <question>` asks your own question about the output.
+  + - Works after successful commands too (the failure hint just doesn't appear).
+  + - If no `!` command has run yet, `!?` prints a one-liner and does nothing.
+  + - The capture is non-consuming — you can ask `!?` follow-ups about the same output more than once.
+  + 
+  ... (1 more lines)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - `!` shell passthrough (`parse_bang_command` — run a shell command directly with zero tokens, output streamed live), auto-continue
+  + `!` shell passthrough (`parse_bang_command` — run a shell command directly with zero tokens, output streamed live; output is also teed into an in-memory "last bang result" — `BangResult`, `tail_for_capture`, char-boundary-safe ~8KB/200-line tail — and `!?` (`parse_bang_query`, checked before the generic `!` parse) feeds it into the conversation via `build_bang_followup_prompt`, with a dim hint printed after non-zero exits), auto-continue
+ ✓ (1m 13s)
+    Output streams live to your terminal (via `sh -c` on Unix, `cmd /C` on Windows), and the exit code is shown only when non-zero. A bare `!` prints a usage hint.
+  + 
+  + ### `!?` — ask about the last command's output
+  + 
+  + `!` commands never enter the conversation, but sometimes you *want* yoyo to look at what just happened. Type `!?` to feed the last `!` command — its command line, exit code, and output tail (last ~200 lines / 8KB, captured as a tee while it streamed) — into the conversation:
+  + 
+  + ```
+  + 🐙 › !cargo test
+  ... (13 more lines)
+ ✓ (2m 28s)
+  - `!` shell passthrough (`parse_bang_command` — run a shell command directly with zero tokens, output streamed live), auto-continue
+  + `!` shell passthrough (`parse_bang_command` — run a shell command directly with zero tokens, output streamed live; output is also teed into an in-memory "last bang result" — `BangResult`, `tail_for_capture`, char-boundary-safe ~8KB/200-line tail — and `!?` (`parse_bang_query`, checked before the generic `!` parse) feeds it into the conversation via `build_bang_followup_prompt`, with a dim hint printed after non-zero exits), auto-continue
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add docs… (7 lines) ✓ (14ms)
+  4 tools completed in 4m 2s (4 ✓)
+
+Done. The evaluator's feedback was precise: code was fine, docs were entirely missing. Fixed both deliverables:
+
+**docs/src/usage/repl.md** — added an ### !? — ask about the last command's output subsection under the existing Shell passthrough section, documenting (accurately, from the actual implementation):
+• the tee capture (~200 lines / 8KB tail)
+• the failure hint after non-zero exit
+• both default questions (failure → explain/fix, success → summarize)
+• !? <question> custom questions
+• the "no ! command yet" no-op case
+• non-consuming reads (repeat `!?` works)
+• the opt-in / zero-token framing
+
+CLAUDE.md — extended the repl.rs architecture line to mention `!?, parse_bang_query (checked before the generic ! parse), BangResult, tail_for_capture, and build_bang_followup_prompt`.
+
+Verified: cargo fmt, cargo clippy -D warnings, `cargo build, cargo test` (88 passed) all green, and committed so the evaluator sees the diff. No code changes were needed.
+
+  watch: no files changed this turn — skipping
+

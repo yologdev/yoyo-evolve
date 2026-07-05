@@ -1,0 +1,98 @@
+warning: Unknown model 'claude-fable-5' for provider 'anthropic'. Known models: claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-7, claude-sonnet-4-6, claude-sonnet-4-5. Proceeding anyway (custom models are valid).
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (2 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod commands_risk" src/… ✓ (5ms)
+ ✓ (2.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EmergingRisk\|detect_em… ✓ (5ms)
+  ▶ read src/commands_risk.rs:1..81 ✓ (2ms)
+  ▶ read src/commands_risk.rs:890..1170 ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "revert_history\|comput… ✓ (16ms)
+  ▶ read src/commands_risk.rs:4290..4580 ✓ (4ms)
+  7 tools completed in 54.9s (7 ✓)
+
+Baseline test count first, then I'll do the extraction.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 0s)
+
+Baseline: 4255 tests. Now creating the new module:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/commands_risk_emerging.rs (410 lines) ✓ (1m 13s)
+
+Now remove the moved code from commands_risk.rs and add the re-exports:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (4 → 11 lines)
+    pub(crate) use crate::commands_risk_report::{
+        file_risk_summary, format_risk_context, format_risk_report, prediction_accuracy_summary,
+        risk_context_for_files,
+  + };
+  + 
+  + // Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.
+  + // Re-exported here so all call sites (watch.rs, commands_project.rs, and this
+  + // module's own `handle_risk`) remain unchanged.
+  + pub(crate) use crate::commands_risk_emerging::{
+  +     detect_emerging_risks, format_emerging_risks, EmergingRisk,
+    };
+  ▶ edit src/commands_risk.rs (16 → 1 lines)
+  - /// A file whose risk trajectory is accelerating — not yet in the top-N by
+  - /// absolute score, but changing faster recently than its own baseline.
+  - /// This is an *anticipatory* signal: the file is **about to become** fragile.
+  - pub(crate) struct EmergingRisk {
+  -     /// File path.
+  -     pub path: String,
+  -     /// Momentum: ratio of daily change rate in the last 7 days vs. last 30 days.
+  -     /// Values > 1.0 mean the file is changing faster recently.
+  -     pub momentum: f64,
+  -     /// Current rank in the absolute risk list (0-indexed).
+  -     pub current_rank: usize,
+  -     /// Human-readable signals driving the acceleration.
+  -     pub signals: Vec<String>,
+  - }
+  - 
+    /// Min-max normalize a slice of values to the 0.0–1.0 range.
+ ✓ (10.3s)
+    pub(crate) use crate::commands_risk_report::{
+        file_risk_summary, format_risk_context, format_risk_report, prediction_accuracy_summary,
+        risk_context_for_files,
+  + };
+  + 
+  + // Emerging-risk / anticipatory detection lives in `commands_risk_emerging.rs`.
+  + // Re-exported here so all call sites (watch.rs, commands_project.rs, and this
+  + // module's own `handle_risk`) remain unchanged.
+  ... (3 more lines)
+ ✓ (20.7s)
+  - /// A file whose risk trajectory is accelerating — not yet in the top-N by
+  - /// absolute score, but changing faster recently than its own baseline.
+  - /// This is an *anticipatory* signal: the file is **about to become** fragile.
+  - pub(crate) struct EmergingRisk {
+  -     /// File path.
+  -     pub path: String,
+  -     /// Momentum: ratio of daily change rate in the last 7 days vs. last 30 days.
+  -     /// Values > 1.0 mean the file is changing faster recently.
+  ... (8 more lines)
+  2 tools completed in 28.0s (2 ✓)
+
+Mid-refactor errors expected. Continuing — register the module and remove old code:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (2 → 3 lines)
+    mod commands_risk;
+  + mod commands_risk_emerging;
+    mod commands_risk_report;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "compute_momentum\|detec… ✓ (10.4s)
+    mod commands_risk;
+  + mod commands_risk_emerging;
+    mod commands_risk_report;
+ ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '880,890p;994,1010p;1035,… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (40 lines) ✓ (22ms)
+  4 tools completed in 45.4s (4 ✓)
+
+Now remove the 11 moved tests from commands_risk.rs:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (34 lines) ✓ (3.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -E "^err… ✓ (3.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -B2 -A8 … ✓ (3.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/commands_risk… ✓ (3ms)
+  4 tools completed in 32.0s (4 ✓)
+
+  watch: no files changed this turn — skipping
+
