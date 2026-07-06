@@ -80,6 +80,10 @@ pub struct SpawnTask {
     pub background: bool,
     /// Committed worktree changes ready for review, if any.
     pub handoff: Option<SpawnHandoff>,
+    /// Whether a post-turn completion notification has already been surfaced
+    /// for this (background) spawn. Ensures each finish is announced exactly
+    /// once. Non-consuming: the result stays collectable via `/spawn collect`.
+    pub notified: bool,
 }
 
 /// Thread-safe tracker for multiple spawn tasks.
@@ -121,6 +125,7 @@ impl SpawnTracker {
             output_path,
             background,
             handoff: None,
+            notified: false,
         });
         id
     }
@@ -214,6 +219,51 @@ impl SpawnTracker {
             }
             _ => Ok(None), // Still running
         }
+    }
+
+    /// Return one-line review hints for background spawns that have finished
+    /// (Completed or Failed) since the last check, marking them notified so
+    /// each is surfaced exactly once. Non-consuming: the result stays
+    /// collectable via `/spawn collect <id>`.
+    ///
+    /// Foreground spawns are never reported here — the user already blocked on
+    /// them, so there is nothing to notify.
+    pub fn newly_finished_background(&self) -> Vec<String> {
+        let mut inner = lock_or_recover(&self.inner);
+        let mut out = Vec::new();
+        for t in inner.iter_mut() {
+            if t.background && !t.notified {
+                match &t.status {
+                    SpawnStatus::Completed => {
+                        t.notified = true;
+                        out.push(format!(
+                            "✓ background spawn #{} finished — `/spawn collect {}` to review",
+                            t.id, t.id
+                        ));
+                    }
+                    SpawnStatus::Failed(msg) => {
+                        t.notified = true;
+                        // char-boundary-safe truncation (CLAUDE.md safety rule;
+                        // byte slicing caused #250 crashes on multi-byte chars).
+                        let mut end = msg.len().min(120);
+                        while end > 0 && !msg.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        let truncated = if end < msg.len() {
+                            format!("{}…", &msg[..end])
+                        } else {
+                            msg.clone()
+                        };
+                        out.push(format!(
+                            "✗ background spawn #{} failed: {}",
+                            t.id, truncated
+                        ));
+                    }
+                    SpawnStatus::Running => {}
+                }
+            }
+        }
+        out
     }
 }
 
@@ -1581,6 +1631,54 @@ mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
     use yoagent::types::{Content, Message, Usage};
+
+    #[test]
+    fn test_newly_finished_background_reports_completed_once() {
+        let tracker = SpawnTracker::new();
+        let id = tracker.register_with_bg("bg task", None, true);
+        tracker.complete(id, "done".to_string());
+
+        let first = tracker.newly_finished_background();
+        assert_eq!(first.len(), 1);
+        assert!(first[0].contains(&format!("#{id}")));
+        assert!(first[0].contains("collect"));
+
+        // Notified-once invariant: a second call reports nothing.
+        let second = tracker.newly_finished_background();
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn test_newly_finished_background_skips_running() {
+        let tracker = SpawnTracker::new();
+        tracker.register_with_bg("bg task", None, true);
+        // Still Running — no hint.
+        assert!(tracker.newly_finished_background().is_empty());
+    }
+
+    #[test]
+    fn test_newly_finished_background_reports_failed() {
+        let tracker = SpawnTracker::new();
+        let id = tracker.register_with_bg("bg task", None, true);
+        tracker.fail(id, "boom".to_string());
+
+        let first = tracker.newly_finished_background();
+        assert_eq!(first.len(), 1);
+        assert!(first[0].contains("failed"));
+        assert!(first[0].contains(&format!("#{id}")));
+
+        // Reported only once.
+        assert!(tracker.newly_finished_background().is_empty());
+    }
+
+    #[test]
+    fn test_newly_finished_background_ignores_foreground() {
+        let tracker = SpawnTracker::new();
+        // background: false — user already blocked on it, nothing to notify.
+        let id = tracker.register_with_bg("fg task", None, false);
+        tracker.complete(id, "done".to_string());
+        assert!(tracker.newly_finished_background().is_empty());
+    }
 
     // ── spawn args parsing tests ────────────────────────────────────────
 

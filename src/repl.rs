@@ -679,6 +679,7 @@ struct PostPromptContext<'a> {
     effective_input: &'a str,
     turn_count: usize,
     turns_since_slash_command: usize,
+    spawn_tracker: &'a commands::SpawnTracker,
 }
 
 /// Post-prompt handling: bell, error tracking, fallback retry, turn snapshots,
@@ -793,6 +794,11 @@ async fn handle_post_prompt(mut ctx: PostPromptContext<'_>) {
         };
         if let Some(hint) = crate::format::contextual_hint(&hint_ctx) {
             eprintln!("{DIM}  {hint}{RESET}");
+        }
+
+        // Surface any background spawns that finished since the last turn.
+        for line in ctx.spawn_tracker.newly_finished_background() {
+            eprintln!("{DIM}  {line}{RESET}");
         }
     }
 
@@ -1269,6 +1275,7 @@ pub async fn run_repl(
             effective_input: &effective_input,
             turn_count,
             turns_since_slash_command,
+            spawn_tracker: &spawn_tracker,
         })
         .await;
 
@@ -1340,6 +1347,7 @@ pub async fn run_repl(
                     effective_input: cont_prompt,
                     turn_count,
                     turns_since_slash_command,
+                    spawn_tracker: &spawn_tracker,
                 })
                 .await;
             }
