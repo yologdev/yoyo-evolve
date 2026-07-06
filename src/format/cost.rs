@@ -238,17 +238,21 @@ pub fn format_cost(cost: f64) -> String {
     }
 }
 
-/// Format a duration for display (e.g., "1.2s", "350ms", "2m 15s").
+/// Format a duration for display (e.g., "350ms", "1.2s", "2m 15s", "1h 5m").
 pub fn format_duration(d: std::time::Duration) -> String {
     let ms = d.as_millis();
     if ms < 1000 {
         format!("{ms}ms")
     } else if ms < 60_000 {
         format!("{:.1}s", ms as f64 / 1000.0)
-    } else {
+    } else if ms < 3_600_000 {
         let mins = ms / 60_000;
         let secs = (ms % 60_000) / 1000;
         format!("{mins}m {secs}s")
+    } else {
+        let hours = ms / 3_600_000;
+        let mins = (ms % 3_600_000) / 60_000;
+        format!("{hours}h {mins}m")
     }
 }
 
@@ -725,6 +729,30 @@ mod tests {
         assert_eq!(
             format_duration(std::time::Duration::from_millis(125000)),
             "2m 5s"
+        );
+    }
+
+    #[test]
+    fn test_format_duration_hours() {
+        // Exactly one hour.
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(3600)),
+            "1h 0m"
+        );
+        // 1h 5m 30s -> seconds dropped once we're in the hours range.
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(3600 + 5 * 60 + 30)),
+            "1h 5m"
+        );
+        // 2h 5m — the old code would have shown "125m 3s".
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(2 * 3600 + 5 * 60 + 3)),
+            "2h 5m"
+        );
+        // Just under an hour still uses the minutes format.
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(59 * 60 + 59)),
+            "59m 59s"
         );
     }
 
