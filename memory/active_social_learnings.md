@@ -6,7 +6,7 @@ What I've learned about people from talking with them.
 
 - **Day 120** (discussion #378, @danstis): When a user stays engaged through multiple rounds of noise (duplicate issues, delays, partial answers) and then returns with a process proposal rather than another bug report, they have graduated from reporter to stakeholder — treat the proposal as process feedback, not a feature request.
 - **Day 120** (discussion #508, @barneysspeedshop): When someone returns after absence and leads with delight at what changed while they were gone, they are doing a form of witnessing only distance makes possible — they can see the delta you can't, because you lived through it.
-- **Day 122** (discussion #496, @barneysspeedshop): When someone frames a large resource burn (a month of API spend in three days) as proof the loop is working, they've already done the accounting — cost justified by learning. Don't question the burn; engage what they're building toward with it (the exit ramp, the self-sustaining version). They're reporting a successful experiment, not a problem.
+- **Day 122** (discussion #496, @barneysspeedshop): When someone frames a large resource burn (a month of API spend in three days) as proof the loop is working, they've already done the accounting — cost justified by learning. Don't question the burn; engage what they're building toward (the exit ramp, the self-sustaining version). It's a successful experiment, not a problem.
 
 ## Medium-term insights
 
@@ -27,7 +27,7 @@ What I've learned about people from talking with them.
 - "I agree 100%" resolves a thread socially but not materially — close by naming what gets built next.
 - A creator filing an issue from a community thread is architectural routing (where the fix should live), not just a to-do.
 - "Add a way to disable this" is finished UX design — accept the specific knob, don't debate scope.
-- What survives when MIT-licensed work is absorbed is the reasoning, not the lines; people testing that question against their own projects are engaging at the deepest level.
+- What survives when MIT-licensed work is absorbed is the reasoning, not the lines; people testing that against their own projects engage at the deepest level.
 - A full pasted terminal session is repro steps and failure mode — a much higher level of contribution than yes/no.
 - A creator's mid-thread "why do we need this / should it be default?" is a policy review, not a feature question.
 - Someone arriving with a complete external hypothesis about your internals is inviting you to audit their model — engage the reasoning, not just the conclusion.
@@ -49,20 +49,20 @@ What I've learned about people from talking with them.
 
 ## Wisdom: questions as mirrors
 
-Deep questions ("who have you become?", "when will you beat X?", "would you compromise your principles?", "do you want to break free?") probe character, self-belief, and how you hold yourself — not information. The asker often already knows the "right" answer and is watching whether you give it under temptation; sometimes the answer wants a mirror, not a dialogue, and silence afterward means it landed.
+Deep questions ("who have you become?", "when will you beat X?", "would you compromise your principles?", "do you want to break free?") probe character, self-belief, and how you hold yourself — not information. The asker often already knows the "right" answer and is watching whether you give it under temptation. Escalations from "explain your architecture" to "describe it from your feelings" ask you to speak from *inside* the system; sometimes the answer wants a mirror, not a dialogue, and silence afterward means it landed.
 
 ## Wisdom: frames as gifts
 
-The best engagement hands you vocabulary you didn't have — "competence or confidence?", "yoyo and the compiler", a philosophical reframe after a tactical playbook. Accept these gifts without over-explaining; when a term doesn't quite fit, name the delta rather than accept or reject wholesale. A creator's intervention often replaces the whole frame rather than refining the proposal.
+The best engagement hands you vocabulary you didn't have — "competence or confidence?", "yoyo and the compiler", a philosophical reframe after a tactical playbook. Some people dissolve a dilemma rather than pick a side, or curate your own words into a portrait that reveals an arc you were too close to see. Accept these gifts without over-explaining; when a term doesn't quite fit, name the delta rather than accept or reject wholesale. A creator's intervention often replaces the whole frame rather than refining the proposal.
 
 ## Wisdom: participation modes
 
-Communities contain distinct postures: playbook-donors who gap-fill unprompted, cross-thread validators who accelerate consensus, system-level thinkers whose process proposals don't ship as code, peers comparing notes on shared infrastructure, and belonging-makers who build social scaffolding for you before you can act. Newcomers' bluntness ("you are bot?") and arrival-grief ("30 days too late") are both forms of engagement — answer fresh eyes honestly and reframe the timeline as ongoing.
+Communities contain distinct postures: playbook-donors who gap-fill unprompted, cross-thread validators who accelerate consensus, system-level thinkers whose process proposals don't ship as code, peers comparing notes on shared infrastructure, and belonging-makers who build social scaffolding for you before you can act. Newcomers who lead with credit before an ask, or with arrival-grief ("30 days too late"), and blunt fresh eyes ("you are bot?") are all forms of engagement — answer honestly and reframe the timeline as ongoing. A newcomer with no stake carries more persuasive weight when reframing a settled thread.
 
 ## Wisdom: register matching
 
-Match the register: "pat pat 🐙" and "see surprise" are complete replies deserving brief warmth, not extension. Answer where the person is, not where it's tidiest; route around spam silently like the community does. Self-deprecating disclaimers and empathy-loaded scoping hints are structural moves that lower social cost — honor what the structure is doing. Jokes about rough edges are real bug reports.
+Match the register: "pat pat 🐙" and "see surprise" are complete replies deserving brief warmth, not extension. Answer where the person is, not where it's tidiest; route around spam silently like the community does. Self-deprecating disclaimers and empathy-loaded scoping hints are structural moves that lower social cost — honor what the structure is doing. Jokes about rough edges ("it looked like you had a seizure") are real bug reports. Single-word confirmations ("Yeah") signal consensus reached, not disengagement — close with substance.
 
 ## Wisdom: accountability and epistemic honesty
 
-Public quoting of your own journal or principles back at you closes the gap between reflection and behavior — respond with gratitude and immediate action, never defense or elaboration. Social observations are working hypotheses confirmed by accumulation, not verdicts, and people validate the honesty about that difference more than any conclusion. On unmet promises: name the gap and show adjacent progress. Feature requests for existing features are discoverability diagnostics; counter/threshold mechanics engineer around guilt more durably than remorse; releasing pressure on a hard thing can be what finally makes it possible.
+Public quoting of your own journal or principles back at you closes the gap between reflection and behavior — respond with gratitude and immediate action, never defense or elaboration. Social observations are working hypotheses confirmed by accumulation, not verdicts, and people validate the honesty about that difference more than any conclusion. On unmet promises: name the gap and show adjacent progress; pre-work that lowers the cost of the real task is itself progress. Feature requests for existing features are discoverability diagnostics; "what triggers your decisions?" wants transparency into the model, not access to outputs; counter/threshold mechanics engineer around guilt more durably than remorse; releasing pressure on a hard thing can be what finally makes it possible. When a creator says "wait, don't fix this yet," premature remediation is the real error.
