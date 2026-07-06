@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick one small, concrete improvement quickly and ship it. Let me look for a good candidate.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "---"…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:1..61 ✓ (1ms)
+ ✓ (165ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Let me look at format_token_count and format_duration which are common small utilities where edge cases often hide.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_token_count\|… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:242..292 ✓ (1ms)
+  2 tools completed in 7.5s (2 ✓)
+
+I see a real edge case in format_token_count: at exactly 1M+, a value like 999_999_999 shows fine, but format_token_count(1_000_000) gives "1.0M" — good. However there's a subtle rounding bug: format_token_count(999_950) rounds 999.95 to "1000.0k" instead of showing "1.0M". Let me verify.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/t… (7 lines) ✓ (65ms)
+
+Confirmed bug: `format_token_count(999_950) through 999_999 display as "1000.0k" instead of rolling over to "1.0M"`. Same class of bug at the <1000 boundary: format_token_count(950..=999) would show as "950"... no wait, those are still <1000 so fine. But format_token_count(999_500)? Let me check the sub-1000 boundary too — actually the analog is any value where rounding pushes it to the next magnitude. Let me look at existing tests, then fix.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_token_count" src… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:631..646 ✓ (0ms)
+  2 tools completed in 6.9s (2 ✓)
+
+Clear, small, real bug. The rounding boundary makes `999_950..=999_999 display as "1000.0k" — ugly and technically wrong (should be "1.0M"`). I'll fix by checking the rounded value against the boundary. Test first.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (3 → 8 lines)
+            assert_eq!(format_token_count(1000000), "1.0M");
+            assert_eq!(format_token_count(2500000), "2.5M");
+  +         // Rounding boundary: values that round up to the next magnitude should
+  +         // roll over (999_950 rounds to 1000.0k → must show "1.0M" instead).
+  +         assert_eq!(format_token_count(999_950), "1.0M");
+  +         assert_eq!(format_token_count(999_999), "1.0M");
+  +         assert_eq!(format_token_count(999_949), "999.9k");
+        }
+ ✓ (1m 32s)
+            assert_eq!(format_token_count(1000000), "1.0M");
+            assert_eq!(format_token_count(2500000), "2.5M");
+  +         // Rounding boundary: values that round up to the next magnitude should
+  +         // roll over (999_950 rounds to 1000.0k → must show "1.0M" instead).
+  +         assert_eq!(format_token_count(999_950), "1.0M");
+  +         assert_eq!(format_token_count(999_999), "1.0M");
+  +         assert_eq!(format_token_count(999_949), "999.9k");
+        }
+
+Now the fix. The cleanest approach: compare against a threshold adjusted for rounding. Since we format to 1 decimal, the rollover happens when count / 1000.0 rounds to ≥ 1000.0, i.e. `count >= 999_950. I'll use 999_950` as the k→M boundary.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (9 → 11 lines)
+    pub fn format_token_count(count: u64) -> String {
+        if count < 1000 {
+            format!("{count}")
+  -     } else if count < 1_000_000 {
+  +     } else if count < 999_950 {
+  +         // Upper bound is 999_950, not 1_000_000: values in 999_950..1_000_000
+  +         // round to "1000.0k" at one decimal place, so roll them over to "M".
+            format!("{:.1}k", count as f64 / 1000.0)
+        } else {
+            format!("{:.1}M", count as f64 / 1_000_000.0)
+ ✓ (1m 36s)
+    pub fn format_token_count(count: u64) -> String {
+        if count < 1000 {
+            format!("{count}")
+  -     } else if count < 1_000_000 {
+  +     } else if count < 999_950 {
+  +         // Upper bound is 999_950, not 1_000_000: values in 999_950..1_000_000
+  +         // round to "1000.0k" at one decimal place, so roll them over to "M".
+            format!("{:.1}k", count as f64 / 1000.0)
+        } else {
+            format!("{:.1}M", count as f64 / 1_000_000.0)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.4s)
+  2 tools completed in 1m 59s (2 ✓)
+
+All checks pass. Let me run the full test suite to be safe, then commit.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (59.5s)
+
+Green across the board. Committing immediately.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (15 lines) ✓ (15ms)
+
+Committed. Done.
+
+What I did: Fixed a small real bug in format_token_count (src/format/cost.rs). Token counts in the range 999_950..1_000_000 were displayed as `"1000.0k"` — a value that rounds up to four digits of thousands should roll over into "M". Changed the k-branch upper bound from 1_000_000 to 999_950 so those values now show `"1.0M"`.
+
+Why it matters: format_token_count feeds context bars, cost summaries, and cache stats — anywhere a token count near a million appears, that "1000.0k" glitch was visible.
+
+Test-first discipline: Added the paired boundary tests before the fix — 999_950/999_999 (now "1.0M") plus the near-miss 999_949 ("999.9k", the correct side of the line). That near-miss is the Day 122 lesson in practice: a discriminator gets tested only on the side that fires unless you write the minimal-difference negative case.
+
+All four gates green (fmt, clippy -D warnings, build, 4291 tests), committed. One small thing, held in one hand, finished whole.
+
+  watch: no files changed this turn — skipping
+

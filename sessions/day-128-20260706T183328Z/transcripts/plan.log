@@ -1,0 +1,86 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the recent context since no assessment is available, then write the session plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -10 && echo "-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 1.7s (2 ✓)
+
+No community issues. Let me check the source structure and CI status to understand what's actionable.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (703ms)
+ ✓ (58.6s)
+  2 tools completed in 59.8s (2 ✓)
+
+Build clean, tests green, no open issues. Let me check the CI failures from the trajectory (there was a `test_load_project_context_includes_recently_changed` failure) and the DREAM milestone status.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --all-targets 2>&1 | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_load_project_conte… ✓ (3ms)
+ ✓ (46.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,640p' src/context.rs ✓ (4ms)
+  3 tools completed in 52.0s (3 ✓)
+
+The context test now passes locally and is hermetic (already fixed). The CI failure in the trajectory was from before that fix. Tests are green. Now let me focus on the DREAM milestone and think about self-driven work.
+
+The DREAM's next milestone is allostatic measurement: verify whether the risk reflex reduces failures on high-risk files vs baseline, and if not, move from reactive to anticipatory risk prediction. Let me check the current state of that measurement infrastructure.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l .yoyo/risk_snapshots.jsonl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_emerging_risks\|… ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The DREAM infrastructure is substantial: emerging-risk (anticipatory momentum) is built, accuracy-tracking is built. The blocker per Day 125 lesson is accumulation — only 1 snapshot in risk_snapshots.jsonl (day 125). This milestone is accumulation-blocked; building more here is "progress-shaped procrastination."
+
+Let me look at what's genuinely actionable. Let me check the snapshot cadence — why only 1 snapshot? And look for real self-discovered improvements.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_risk_snapshot\|ris… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '79,130p' src/commands_ri… ✓ (3ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Now I understand the DREAM state. auto_risk_snapshot() writes a snapshot on git commit, but there's only 1 snapshot (day 125) despite many commits since. Let me check when it fires — this could be a real bug: the snapshot mechanism may not be firing, which would silently block the DREAM's accumulation.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1385,1400p' src/commands… ✓ (5ms)
+
+The snapshot only fires when yoyo uses its own /commit command interactively. During evolution, commits go through evolve.sh (raw git commit), so the snapshot never fires. That's why there's only 1 snapshot — from a rare interactive commit on day 125. **This is the actual blocker for the DREAM milestone**: the accumulation meter isn't running because it's wired to the wrong trigger.
+
+Let me confirm the DREAM's core need: it wants snapshots accumulating per session so accuracy can be measured over time. The fix is to make the snapshot fire during evolution sessions. Let me check .gitignore and how the file is tracked.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk_snapshot\|risk_val… ✓ (7ms)
+
+`risk_snapshots.jsonl` is tracked (committed to the repo), so a snapshot appended during a session would persist. The DREAM's accumulation is blocked because snapshots only fire on interactive /commit. 
+
+The cleanest fix: have the harness capture a snapshot once per evolution session. But scripts/evolve.sh is a protected file. However, I can add a lightweight yoyo subcommand (yoyo risk snapshot or similar) that the harness could call — but that requires evolve.sh changes.
+
+Let me check if there's already a subcommand path, and whether the snapshot could be triggered another way that's product-safe and evolve-usable.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "snapshot\|\"risk\"" src… ✓ (5ms)
+
+There's already a /risk snapshot REPL subcommand. Let me verify it and check whether it's reachable as a CLI subcommand (yoyo risk snapshot) so the harness could invoke it non-interactively.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '950,980p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"risk\"\|try_dispatch_… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"risk"\|"status"\|"toke… ✓ (4ms)
+  3 tools completed in 6.7s (3 ✓)
+
+There's no risk CLI subcommand. That's the gap: yoyo risk snapshot isn't wired as a non-interactive subcommand, so the harness can't call it to accumulate snapshots each session. This directly serves the DREAM milestone — it makes the accumulation meter runnable without interactive commits.
+
+This is a well-scoped, self-driven task that advances the DREAM. Let me verify what handle_risk_snapshot prints and check the pattern for adding a subcommand.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_risk_snapshot… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1254,1290p' src/commands… ✓ (5ms)
+  2 tools completed in 7.8s (2 ✓)
+
+I have a clear, DREAM-advancing self-driven task: wire yoyo risk <subcommand> as a CLI subcommand so the harness (and users) can capture risk snapshots non-interactively — this unblocks the accumulation the DREAM milestone needs. handle_risk is already `pub(crate)` and takes an input string, so I can route to it.
+
+Let me verify how other subcommands that print-then-exit return, and confirm the task fits in ≤3 files.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '138,168p' src/dispatch_s… ✓ (3ms)
+
+The pattern is straightforward. yoyo risk snapshot → handle_risk("/risk snapshot"). This is a clean ≤2-file task (dispatch_sub.rs + a test, plus help_data/help.rs docs).
+
+I now have enough for a solid plan. This is the one self-driven DREAM-advancing task. Given the Day 128 lesson ("prefer one genuinely-small task done whole"), and that the codebase is all-green with no issues, I'll plan **one tightly-scoped task** plus optionally a second small one. Let me write the plan.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"risk"\|risk' src/help_… ✓ (5ms)
+  2 tools completed in 2.4s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
