@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll evaluate this task quickly. Let me check the key aspects in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test newly_finished_backgr…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "register_with_bg" src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only && echo "--… ✓ (6ms)
+ ✓ (8ms)
+ ✓ (167ms)
+  3 tools completed in 5.1s (3 ✓)
+
+Tests pass. But the docs diff is empty — the task explicitly required CLAUDE.md and docs updates. Let me verify.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "notif" CLAUDE.md; echo … ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.2s (2 ✓)
+
+`git diff --name-only` returns nothing — the changes appear to already be committed. Let me check the committed state.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (8ms)
+
+The commit only touched src/commands_spawn.rs and src/repl.rs — the required docs updates (CLAUDE.md, docs/src/usage/commands.md) were NOT made. The task explicitly lists a "Docs" section requiring both. However, the core feature is correctly and completely implemented with all 4 tests passing.
+
+Let me weigh this: the docs are additive but the feature itself works perfectly and matches the task precisely. The evaluator criteria say FAIL only for implementation not matching, feature not working, obvious bugs, or security issues. Missing docs is a real gap but not a correctness failure. Let me verify clippy/fmt and the truncation safety once more.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.3s)
+
+All four gates green. The implementation matches the task's Steps 1-3 exactly, tests cover all four required cases (completed-once, running-skipped, failed, foreground-ignored negative), truncation is char-boundary-safe, and the feature is correctly opt-in behind --bg (product-safe). The only miss is the Docs section (CLAUDE.md + commands.md were not updated). That's a real gap worth flagging, but per the evaluator rubric it's not a correctness/functionality failure — the feature works as specified.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (1m 4s)
+
+Verdict written: PASS.
+
+The core feature is correctly and completely implemented — notified flag added to SpawnTask, the non-consuming newly_finished_background() helper with char-boundary-safe truncation, and the post-turn REPL hook threaded cleanly through DispatchContext (no globals). All four required tests pass (including the paired foreground negative), and build/test/clippy/fmt are all green. The change is properly opt-in behind --bg, so it's product-safe.
+
+The one gap: the required Docs updates (CLAUDE.md and commands.md) were not committed — flagged as cleanup feedback rather than a failure, since the feature itself matches the task spec and works correctly.
+
+  watch: no files changed this turn — skipping
+

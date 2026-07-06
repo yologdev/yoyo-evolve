@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the session plan directory and reviewing the key inputs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (7ms)
+
+Issue #568 was already largely handled (Day 127). Let me check its full state and the assessment's key recommendations.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DREAM.md 2>/dev/null | tail … ✓ (307ms)
+
+The assessment confirms #557's substance is delivered (2/3 shipped, gap 3 largely done). Let me plan the session. 
+
+Key considerations:
+• CI: All green (historical failures only). No CI priority.
+• #568: yoagent 0.9 — 2/3 landed Day 127. The remaining part is adaptive thinking for Fable 5. Let me check that.
+• #557: verify + close (doc-close remains).
+• Dream: accumulation-blocked — don't build more risk machinery.
+• **Self-driven slot**: the competitive gap is background subagents, but that touches product surface (must stay opt-in, and it's large). 
+
+Let me look at what part 3 of #568 (adaptive thinking) actually needs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== full #568 body ===" &&… ✓ (306ms)
+
+Now I understand the full picture. The 0.9 bump (Part 1), Refusal handling (Part 3), and pricing (Part 5) all landed Days 127-128. The remaining *unimplemented* items from #568 are:
+• Adaptive thinking (required for Fable 5) — need to verify whether the bump auto-enabled it or if it's still on pre-fable behavior.
+• Queue inspection API (`steering_queue_snapshot()) — could inform looks_incomplete and /status`.
+
+Let me verify the adaptive-thinking state, since that's the highest-value remaining item (correctness for the running fleet).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== yoagent version ===" &… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YO=$(ls -d ~/.cargo/registry/src… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YO=/home/runner/.cargo/registry/… ✓ (4ms)
+  3 tools completed in 13.8s (3 ✓)
+
+Key finding: `AnthropicCompat::default() has adaptive_thinking: true`. So adaptive thinking is on by default in 0.9. The question is whether yoyo's create_model_config uses the default or overrides it. Let me verify how yoyo constructs its anthropic config.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== anthropic_preset + ant… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== fleet presets: do they… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YO=/home/runner/.cargo/registry/… ✓ (5ms)
+  3 tools completed in 18.0s (3 ✓)
+
+This is the crucial finding: `ModelConfig::anthropic()` sets `anthropic: None`, which yoagent's provider treats as AnthropicCompat::default() → adaptive_thinking: true. All fleet presets inherit from anthropic(), so adaptive thinking is already active for the fleet. 
+
+So the adaptive-thinking part of #568 is already satisfied by the 0.9 bump — no action needed. Let me verify yoyo's create_model_config doesn't override anthropic to something legacy, then confirm the remaining unimplemented item is the queue API.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does yoyo ever set .an… ✓ (23ms)
+
+Confirmed: yoyo never overrides anthropic, so adaptive thinking is live for the fleet — #568's highest-value item is satisfied. 
+
+Now let me settle the plan. I have clear candidates:
+
+1. #557 — verify and close (small, product-adjacent, closes a lingering issue). But this is mostly a doc/issue-response action, not a code task.
+2. Queue inspection API for /status — surfacing queued follow-ups. This is a real, scoped, novel capability from #568's "worth using after the bump" list. Let me check the API shape.
+
+Let me look at the queue snapshot APIs and how /status currently works to size a task.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YO=/home/runner/.cargo/registry/… ✓ (5ms)
+
+The queue API exists but yoyo doesn't currently support steering/queueing input during a turn — so steering_queue_len() would always be 0 in yoyo's usage pattern. Surfacing it in /status would be surfacing an always-empty value. Not worth it — that's building a sensor for a signal yoyo doesn't generate. Good to know; I'll skip it.
+
+Let me now decide the actual plan. Given:
+• CI green, no bugs, house tidy (all-green pattern — Days 115/117/120 lesson says: look outward or serve the dream).
+• Dream milestone is accumulation-blocked (Day-125 lesson: don't build more risk machinery; let it run).
+• The biggest competitive gap is background subagents — but it's large and touches product surface.
+
+Let me check the current /spawn foreground behavior and commands_bg.rs to size a small, opt-in step toward background spawn. This is the dream-adjacent competitive slot the assessment flagged.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== spawn args / flags ===… ✓ (5ms)
+
+There's already a --bg flag and background infrastructure with try_collect. So the substrate is more complete than the assessment implied. Let me check what happens on background completion — is there a notification mechanism, or does the user have to poll `/spawn collect`?
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== how does user learn a … ✓ (6ms)
+
+Found the gap precisely. Background spawns exist, but there's no completion notification — the user has to manually run /spawn collect <id>. Claude Code's July flip is exactly "notified on completion." This is the concrete, scoped, dream-adjacent competitive step: a **post-turn background spawn completion check** in the REPL that surfaces finished spawns as a one-line notification.
+
+Let me check how the REPL loop is structured to size this precisely.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== is_finished on tracker… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== repl post-turn region … ✓ (7ms)
+  2 tools completed in 9.2s (2 ✓)
+
+I have a clear, well-scoped plan now. Let me define the tasks:
+
+**Task 1 (self-driven, dream-adjacent competitive):** Background spawn completion notification — after each REPL turn, check the spawn tracker for finished background spawns and print a one-line notification ("✓ background spawn #N finished — /spawn collect N to review"). This closes the exact gap vs Claude Code's "notified on completion" without changing spawn's blocking/product behavior for foreground users. Small: a helper on the tracker + one call site in repl.rs. Kind: product.
+
+Let me verify there's a way to check "which finished bg spawns haven't been notified yet" without consuming the result (try_collect consumes). I'll need a non-consuming "peek finished bg spawns" helper. Let me confirm the tracker internals.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '191,240p' src/commands_s… ✓ (3ms)
+
+`try_collect is non-consuming (doesn't remove the task), so I can add a newly_finished_background()` helper that returns finished bg spawns not yet notified. I need a "notified" flag on SpawnTask to avoid re-notifying every turn. That's a clean, testable design.
+
+I have enough to plan. Let me also confirm the run_watch_after_prompt post-turn path is where the notification hook belongs, and check the DispatchContext for spawn_tracker access. I have what I need. Let me write the task files.
+
+Now let me decide the 3 slots:
+1. Background spawn completion notification (self-driven, competitive, dream-adjacent) — Kind: product
+2. Close #557 — verify + doc-close (issue response, not really a code task, goes in issue_responses)
+3. A second small self-driven improvement. Given "all-green → look outward," and #557 is response-only, I'll pick one more genuinely useful thing. Let me keep it to 2 code tasks to respect the Day-126 lesson (start at retreat size, don't overscope). Actually — let me consider a second scoped task that complements Task 1: showing background spawn count in /status (a real, non-empty signal, unlike the queue API).
+
+Let me check /status (handle_status).
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_status\|spawn… ✓ (6ms)
+
+`handle_status` doesn't currently receive the spawn tracker, and threading it through would be a wider change. That's scope creep for a /status line. I'll keep the plan tight: Task 1 does the notification (the real competitive gap), and I'll make Task 2 a focused, complementary improvement: extend /spawn status (which already exists and has tracker access) to clearly flag finished-but-uncollected background spawns. That keeps everything within commands_spawn.rs.
+
+Actually, Task 1's notification helper already surfaces finished spawns automatically post-turn — Task 2 as /spawn status polish is low-value overlap. Better to keep to 2 real tasks and not manufacture a third. Per the Day-125/126 lessons (don't build progress-shaped procrastination, start at retreat size).
+
+Let me finalize: **Task 1 (notification — the substantive one) + Task 2** a genuinely independent small win. Let me reconsider — the assessment said "no bugs found." Given all-green, a second self-driven task should serve either the dream (blocked) or competitive gap. Task 1 IS the competitive gap. I'll write one focused code task plus close #557 via issue response. One well-scoped task done cleanly beats three thin ones — and Day-128's earlier clean landing shows this loop rewards focus.
+
+Let me write the plan.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (122 lines) ✓ (1m 16s)
+
+  watch: no files changed this turn — skipping
+

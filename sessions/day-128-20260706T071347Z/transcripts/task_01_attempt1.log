@@ -1,0 +1,141 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing spawn code structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct SpawnTask\|backg… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:40..210 ✓ (2ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now let me look at the rest of the tracker methods and any struct-literal construction sites in tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SpawnTask {" src/comman… ✓ (3ms)
+
+Only one construction site. Now let me look at the repl.rs post-prompt region.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "contextual_hint\|run_wa… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:776..821 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Now let me find where ctx is defined and whether it carries spawn_tracker.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn_tracker\|struct.*… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:668..713 ✓ (3ms)
+  2 tools completed in 4.8s (2 ✓)
+
+`PostPromptContext does NOT carry spawn_tracker`. I need to thread it in. Let me look at the two construction sites (1258, 1329) and where spawn_tracker is available there.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1258..1288 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1329..1359 ✓ (1ms)
+  2 tools completed in 4.1s (2 ✓)
+
+`spawn_tracker is in scope in run_repl` (defined at line 955). Both construction sites are inside run_repl's loop. I'll thread spawn_tracker: &SpawnTracker into PostPromptContext. The notified flag makes it idempotent so calling in both places (main + auto-continue) is safe.
+
+Let me check the imports at top of repl.rs and the SpawnTracker/SpawnStatus imports in commands_spawn.rs tests section.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use\|SpawnTracker\|com… ✓ (6ms)
+
+I have everything I need. Let me implement. First, Step 1 — add the notified field:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (5 → 9 lines)
+        pub background: bool,
+        /// Committed worktree changes ready for review, if any.
+        pub handoff: Option<SpawnHandoff>,
+  +     /// Whether a post-turn completion notification has already been surfaced
+  +     /// for this (background) spawn. Ensures each finish is announced exactly
+  +     /// once. Non-consuming: the result stays collectable via `/spawn collect`.
+  +     pub notified: bool,
+    }
+ ✓ (9.9s)
+        pub background: bool,
+        /// Committed worktree changes ready for review, if any.
+        pub handoff: Option<SpawnHandoff>,
+  +     /// Whether a post-turn completion notification has already been surfaced
+  +     /// for this (background) spawn. Ensures each finish is announced exactly
+  +     /// once. Non-consuming: the result stays collectable via `/spawn collect`.
+  +     pub notified: bool,
+    }
+
+Expected. Fix the construction site:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 3 lines) ✓ (9.9s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 4 lines)
+                background,
+                handoff: None,
+  +             notified: false,
+            });
+ ✓ (16.5s)
+                background,
+                handoff: None,
+  +             notified: false,
+            });
+  2 tools completed in 38.3s (2 ✓)
+
+Good — now let me add Step 2, the newly_finished_background method that reads the field. I'll add it right after try_collect (before the `impl SpawnTracker block at line 221, but same impl block is fine). Let me place it after the fail` method area. I'll add it right after try_collect closes.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:213..243 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (4 → 49 lines)
+                _ => Ok(None), // Still running
+  +         }
+  +     }
+  + 
+  +     /// Return one-line review hints for background spawns that have finished
+  +     /// (Completed or Failed) since the last check, marking them notified so
+  +     /// each is surfaced exactly once. Non-consuming: the result stays
+  +     /// collectable via `/spawn collect <id>`.
+  +     ///
+  +     /// Foreground spawns are never reported here — the user already blocked on
+  +     /// them, so there is nothing to notify.
+  +     pub fn newly_finished_background(&self) -> Vec<String> {
+  +         let mut inner = lock_or_recover(&self.inner);
+  +         let mut out = Vec::new();
+  +         for t in inner.iter_mut() {
+  +             if t.background && !t.notified {
+  +                 match &t.status {
+  +                     SpawnStatus::Completed => {
+  +                         t.notified = true;
+  +                         out.push(format!(
+  ... (29 more lines)
+ ✓ (16.3s)
+                _ => Ok(None), // Still running
+  +         }
+  +     }
+  + 
+  +     /// Return one-line review hints for background spawns that have finished
+  +     /// (Completed or Failed) since the last check, marking them notified so
+  +     /// each is surfaced exactly once. Non-consuming: the result stays
+  +     /// collectable via `/spawn collect <id>`.
+  ... (13 more lines)
+  2 tools completed in 32.7s (2 ✓)
+
+The dead-code errors will resolve once I wire it into repl.rs. Now Step 3 — thread spawn_tracker into `PostPromptContext` and call the method. First add the field:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (3 → 4 lines)
+        turn_count: usize,
+        turns_since_slash_command: usize,
+  +     spawn_tracker: &'a commands::SpawnTracker,
+    }
+ ✓ (9.9s)
+        turn_count: usize,
+        turns_since_slash_command: usize,
+  +     spawn_tracker: &'a commands::SpawnTracker,
+    }
+
+Now add the field to both construction sites:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (6 → 6 lines) ✓ (10.0s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (5 → 6 lines)
+                effective_input: &effective_input,
+                turn_count,
+                turns_since_slash_command,
+  +             spawn_tracker: &spawn_tracker,
+            })
+ ✓ (10.2s)
+                effective_input: &effective_input,
+                turn_count,
+                turns_since_slash_command,
+  +             spawn_tracker: &spawn_tracker,
+            })
+  2 tools completed in 24.0s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
