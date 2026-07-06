@@ -1290,13 +1290,13 @@ pub async fn run_repl(
 
             while auto_continue_count < max_continues
                 && !had_error
-                && looks_incomplete(&last_text)
+                && should_auto_continue(&last_text, agent.follow_up_queue_len())
                 && !crate::prompt_budget::session_budget_exhausted(30)
             {
                 auto_continue_count += 1;
                 eprintln!(
                     "\n{DIM}  ⚡ auto-continuing ({auto_continue_count}/{max_continues} \
-                     — response appears incomplete)...{RESET}"
+                     — more work pending)...{RESET}"
                 );
 
                 // Snapshot state for the continuation turn
@@ -1415,6 +1415,16 @@ pub(crate) fn get_max_auto_continues(
     } else {
         base
     }
+}
+
+/// Decide whether the auto-continue loop should run another turn.
+/// `queue_pending` is the yoagent follow-up-queue length; when > 0 there is
+/// authoritative pending work (user-injected messages queued while the agent
+/// worked) and we continue regardless of the text heuristic. An empty queue
+/// tells us nothing about whether the model finished, so we fall back to the
+/// `looks_incomplete` text heuristic — never treat empty-queue as "done".
+pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
+    queue_pending > 0 || looks_incomplete(text)
 }
 
 /// Heuristic check: does the agent's response text suggest it stopped mid-work
@@ -2314,6 +2324,29 @@ mod tests {
         assert!(!looks_incomplete(""));
         assert!(!looks_incomplete("ok"));
         assert!(!looks_incomplete("short response"));
+    }
+
+    #[test]
+    fn should_auto_continue_true_when_queue_pending() {
+        // A non-empty follow-up queue overrides the text heuristic: "ok" is a
+        // string looks_incomplete() returns false for, but pending work wins.
+        assert!(!looks_incomplete("ok"));
+        assert!(should_auto_continue("ok", 1));
+    }
+
+    #[test]
+    fn should_auto_continue_falls_back_to_heuristic_when_queue_empty_incomplete() {
+        // Empty queue → fall back to the heuristic, which fires on this phrase.
+        let incomplete = "I've fixed the first file. Next, I'll update the remaining tests.";
+        assert!(looks_incomplete(incomplete));
+        assert!(should_auto_continue(incomplete, 0));
+    }
+
+    #[test]
+    fn should_auto_continue_false_when_queue_empty_and_complete() {
+        // Paired negative (Day 122): empty queue + complete-looking text → false.
+        assert!(!looks_incomplete("short response"));
+        assert!(!should_auto_continue("short response", 0));
     }
 
     #[test]
