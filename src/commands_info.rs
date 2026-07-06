@@ -145,6 +145,7 @@ fn count_session_file_changes() -> Option<(usize, usize)> {
     Some((modified, added))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_status(
     model: &str,
     cwd: &str,
@@ -153,6 +154,7 @@ pub fn handle_status(
     turns: usize,
     context_used: u64,
     context_max: u64,
+    follow_up_pending: usize,
 ) {
     println!("{DIM}  model:   {model}");
     if let Some(branch) = git_branch() {
@@ -184,6 +186,11 @@ pub fn handle_status(
     // Show active watch command(s)
     if let Some(cmd) = crate::watch::get_watch_command() {
         println!("  watch:   {cmd}");
+    }
+    // Show queued follow-up messages (input steered/queued while agent was working)
+    if follow_up_pending > 0 {
+        let plural = if follow_up_pending == 1 { "" } else { "s" };
+        println!("  queued:  {follow_up_pending} follow-up{plural} pending");
     }
     println!(
         "  session: {} elapsed, {turns} turn{}",
@@ -1646,6 +1653,7 @@ mod tests {
             0,
             0,
             0,
+            0,
         );
         handle_status(
             "test-model",
@@ -1655,6 +1663,7 @@ mod tests {
             1,
             5000,
             200_000,
+            0,
         );
         handle_status(
             "test-model",
@@ -1664,6 +1673,7 @@ mod tests {
             42,
             180_000,
             200_000,
+            0,
         );
     }
 
@@ -1679,6 +1689,7 @@ mod tests {
             3,
             45_231,
             200_000,
+            0,
         );
     }
 
@@ -1692,6 +1703,7 @@ mod tests {
             &Usage::default(),
             Duration::from_secs(60),
             3,
+            0,
             0,
             0,
         );
@@ -2827,6 +2839,7 @@ More text.
             2,
             10_000,
             200_000,
+            0,
         );
     }
 

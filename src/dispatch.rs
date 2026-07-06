@@ -391,6 +391,7 @@ async fn dispatch_info_command(
                 ctx.turn_count,
                 ctx_used,
                 ctx_max,
+                ctx.agent.follow_up_queue_len(),
             );
             Some(CommandResult::Continue)
         }
