@@ -260,7 +260,9 @@ pub fn format_duration(d: std::time::Duration) -> String {
 pub fn format_token_count(count: u64) -> String {
     if count < 1000 {
         format!("{count}")
-    } else if count < 1_000_000 {
+    } else if count < 999_950 {
+        // Upper bound is 999_950, not 1_000_000: values in 999_950..1_000_000
+        // round to "1000.0k" at one decimal place, so roll them over to "M".
         format!("{:.1}k", count as f64 / 1000.0)
     } else {
         format!("{:.1}M", count as f64 / 1_000_000.0)
@@ -638,6 +640,11 @@ mod tests {
         assert_eq!(format_token_count(150000), "150.0k");
         assert_eq!(format_token_count(1000000), "1.0M");
         assert_eq!(format_token_count(2500000), "2.5M");
+        // Rounding boundary: values that round up to the next magnitude should
+        // roll over (999_950 rounds to 1000.0k → must show "1.0M" instead).
+        assert_eq!(format_token_count(999_950), "1.0M");
+        assert_eq!(format_token_count(999_999), "1.0M");
+        assert_eq!(format_token_count(999_949), "999.9k");
     }
 
     #[test]
