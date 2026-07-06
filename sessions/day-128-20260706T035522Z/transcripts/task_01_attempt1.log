@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick the first real improvement I find and implement its smallest correct version. Let me start by looking for a concrete gap.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && cargo bu… ✓ (159ms)
+
+Let me look at a small, self-contained utility function that might have an edge case gap. Let me check `format_token_count` or similar formatting helpers.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_token_count\|… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:242..292 ✓ (1ms)
+  2 tools completed in 5.4s (2 ✓)
+
+I notice format_duration doesn't handle hours — a very long session (>60 min) shows e.g. "125m 3s" instead of "2h 5m 3s". Let me check tests and improve this cleanly.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_duration" src/fo… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:716..746 ✓ (1ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Now I'll add hours support. Test first, then the implementation.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (5 → 29 lines)
+            assert_eq!(
+                format_duration(std::time::Duration::from_millis(125000)),
+                "2m 5s"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_duration_hours() {
+  +         // Exactly one hour.
+  +         assert_eq!(
+  +             format_duration(std::time::Duration::from_secs(3600)),
+  +             "1h 0m"
+  +         );
+  +         // 1h 5m 30s -> seconds dropped once we're in the hours range.
+  +         assert_eq!(
+  +             format_duration(std::time::Duration::from_secs(3600 + 5 * 60 + 30)),
+  +             "1h 5m"
+  +         );
+  +         // 2h 5m — the old code would have shown "125m 3s".
+  +         assert_eq!(
+  ... (9 more lines)
+ ✓ (1m 29s)
+            assert_eq!(
+                format_duration(std::time::Duration::from_millis(125000)),
+                "2m 5s"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_duration_hours() {
+  ... (13 more lines)
+
+Test added (expected to fail until impl). Now the implementation:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (5 → 9 lines)
+  -     } else {
+  +     } else if ms < 3_600_000 {
+            let mins = ms / 60_000;
+            let secs = (ms % 60_000) / 1000;
+            format!("{mins}m {secs}s")
+  +     } else {
+  +         let hours = ms / 3_600_000;
+  +         let mins = (ms % 3_600_000) / 60_000;
+  +         format!("{hours}h {mins}m")
+        }
+ ✓ (1m 34s)
+  -     } else {
+  +     } else if ms < 3_600_000 {
+            let mins = ms / 60_000;
+            let secs = (ms % 60_000) / 1000;
+            format!("{mins}m {secs}s")
+  +     } else {
+  +         let hours = ms / 3_600_000;
+  +         let mins = (ms % 3_600_000) / 60_000;
+  +         format!("{hours}h {mins}m")
+        }
+
+Update the doc comment too, then run all checks.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '238,243p' src/format/cos… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (1 → 1 lines)
+  - /// Format a duration for display (e.g., "1.2s", "350ms", "2m 15s").
+  + /// Format a duration for display (e.g., "350ms", "1.2s", "2m 15s", "1h 5m").
+ ✓ (1m 35s)
+  - /// Format a duration for display (e.g., "1.2s", "350ms", "2m 15s").
+  + /// Format a duration for display (e.g., "350ms", "1.2s", "2m 15s", "1h 5m").
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.8s)
+  3 tools completed in 1m 59s (3 ✓)
+
+All new tests pass. Full test + build to be safe:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (59.2s)
+
+All green. Committing immediately.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (8 lines) ✓ (13ms)
+
+Committed. One small, concrete improvement done:
+
+`format_duration` now handles hours. Previously any session over an hour rendered as e.g. 125m 3s — correct but hard to parse. Now durations ≥1h show as Nh Mm (seconds dropped at that scale as noise), with the shorter formats unchanged.
+
+• Wrote the test first (covering the exact old misbehavior, the exactly-1h case, and the just-under-an-hour boundary so the new branch can't accidentally swallow the minutes case — following the Day 122 "test both sides of every discriminator boundary" lesson).
+• `cargo fmt && clippy -D warnings && build && test` all green (4197 tests).
+• Committed. Stopping here — one committed improvement is the whole task.
+
+  watch: no files changed this turn — skipping
+

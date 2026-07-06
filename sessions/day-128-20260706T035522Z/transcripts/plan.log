@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reviewing the current state and then write the session plan based on the assessment.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (7ms)
+
+Let me check the #568 status details and the #557 issue mentioned in the assessment.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== adaptive grep ==="; gr… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== yoagent version ==="; … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,280p' ~/.cargo/regis… ✓ (4ms)
+  3 tools completed in 6.7s (3 ✓)
+
+Key finding: adaptive_thinking: true is the default in AnthropicCompat::Default. So when the fleet uses ModelConfig::claude_fable_5(), does it already get adaptive thinking? Let me verify the fable_5 preset and how thinking is applied.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "claude_fable_5\|anthrop… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '371,410p' ~/.cargo/regis… ✓ (6ms)
+  2 tools completed in 10.7s (2 ✓)
+
+Critical finding: adaptive thinking only kicks in if config.thinking_level != ThinkingLevel::Off. Let me check what thinking level yoyo runs with by default in the evolve loop, and whether `anthropic_model_config` sets the compat correctly.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '260,320p' src/agent_buil… ✓ (3ms)
+
+So the fleet presets use Self::anthropic(...) as base — which leaves `anthropic: None, meaning AnthropicCompat::default() with adaptive_thinking: true`. Good — that means when thinking is on, fable-5 correctly gets adaptive thinking. The wiring appears correct at the model-config layer. 
+
+The real question for #568's adaptive-thinking sub-item: does yoyo's evolve loop actually run with thinking enabled? If thinking is Off, adaptive never fires and there's no functional difference. Let me check the default thinking level and the fleet default model.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== default thinking ===";… ✓ (8ms)
+
+The evolve loop defaults to claude-opus-4-6 (a pre-fable model), and default thinking is Off (cli.rs:948). So adaptive thinking is a non-issue for the current evolve loop — it's correctly wired for whenever fable-5 IS used with thinking on. The #568 adaptive sub-item is effectively already handled correctly by yoagent's defaults.
+
+Now let me verify #557's status (auto-watch follow-up) which the assessment says appears DONE.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #557 item 1: warn on u… ✓ (5ms)
+
+#557 is fully done. Now I have a clear picture. Let me consider the highest-leverage self-driven work. The assessment strongly points to two directions:
+
+1. Persistent repo map (Aider-style) — clearest structural competitive gap
+2. Anticipatory risk — the dream's next milestone (move from reactive to anticipatory risk prediction)
+
+Let me examine the repo map / auto_context surface to scope a small first task, and check the risk emerging module for the anticipatory direction.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== index command (existin… ✓ (5ms)
+
+There's already a build_project_index primitive and emerging-risk (anticipatory) detection exists. Let me look at what `build_project_index` produces and whether it's injected into prompts (the "persistent, always-in-context" gap).
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '310,380p' src/commands_s… ✓ (3ms)
+
+I have enough understanding. There's a /index command that builds a project index (path + lines + first-line summary), but it's on-demand only — not a persistent repo map with symbols that's always available. Aider's repo map is richer: it includes **symbols per file** (yoyo has symbols.rs / extract_symbols), ranked by relevance.
+
+Now I'll plan. Given the guidance:
+• Self-driven slot 1 → the dream milestone or the biggest competitive gap. The dream is accumulation-blocked per Day 125 lesson (only 1 snapshot line). Building another risk meter = procrastination. The genuinely-new direction is either anticipatory risk (already partly built via detect_emerging_risks) or the repo map competitive gap.
+• I'll allocate one slot to a scoped, product-safe repo map task (competitive gap, tier 1) — that's the clearest structural gap and genuinely new.
+• One slot to advancing the dream toward anticipatory risk in a small, verifiable way.
+• The community issue #568 is already handled/replied — I'll verify & respond, not spend a task slot.
+
+Let me check the symbols extraction to scope the repo map task precisely.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn extract_symbols\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -40 src/commands_map.rs; ec… ✓ (5ms)
+  2 tools completed in 3.8s (2 ✓)
+
+There's already a /map command with build_repo_map AND format_repo_map "as plain text for the system prompt". So the repo map primitive exists. The question is: is it injected into the prompt automatically? Let me check.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_repo_map\|build… ✓ (9ms)
+
+The repo map IS injected into the system prompt via generate_repo_map_for_prompt() at cli.rs:912. Let me look at that function to understand what's there and whether it's persistent/complete — that determines whether the "repo map gap" is actually already closed.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn generate_repo_map_fo… ✓ (7ms)
+
+This is a significant finding. **The Aider-style persistent repo map already exists and is injected** — the assessment's "clearest structural gap" is actually already closed. The map has relevance-ranked truncation using recently_modified_files. 
+
+So the repo map gap is NOT the biggest gap. This changes my plan. The genuinely-new, dream-aligned direction is the better bet. Let me look at whether the repo map's relevance ranking could be enhanced with **PageRank-style symbol importance** (Aider's actual differentiator) — but that's more speculative. 
+
+Let me refocus: the dream milestone. The dream says either (a) let risk data accumulate, or (b) move to **anticipatory risk**. Emerging-risk detection (detect_emerging_risks) exists. Is it wired into the reflex surfaces (auto-context, watch fix, edit notes)? That's the concrete next step.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== where is detect_emergi… ✓ (14ms)
+
+The anticipatory-risk (emerging) detection is already wired into auto-context (commands_project.rs) and watch (watch.rs). Both the reactive AND anticipatory risk reflexes are wired. The dream milestone is genuinely accumulation-blocked — the machinery is all there; it needs data and time.
+
+Per the Day 125 lesson strongly cited in the assessment: "Once the meter exists, more building is progress-shaped procrastination." So I should NOT build another risk meter. The dream slot this session should be a deliberate measurement/tracking step OR look outward (Day 120 lesson: consecutive all-green → look outward).
+
+Given:
+• Repo map: already done
+• Risk reflexes (reactive + anticipatory): already wired, accumulation-blocked
+• Codebase: healthy, no bugs
+
+The honest planning move: pick genuinely-new competitive capability. Let me check what's actually thin in the repo map vs Aider — Aider's key differentiator is **PageRank over the symbol dependency graph** (which symbols are referenced most). Let me verify the current relevance_score is just recency-based.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn relevance_score" src… ✓ (7ms)
+
+Now I have a genuinely-new, high-leverage, scoped competitive improvement: **Aider's actual repo-map differentiator is graph-based symbol importance (PageRank over references)**. yoyo's relevance ranking is recency + density + size — it doesn't account for **how referenced a symbol/file is**. A file whose symbols are called across the codebase is more important to keep in the map than an isolated leaf, regardless of recency.
+
+This is a real gap, product-safe, and scoped. Let me verify there's a way to count references (search infrastructure exists).
+
+Now I have enough to plan. Let me write the session plan.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (4ms)
+
+  watch: no files changed this turn — skipping
+
