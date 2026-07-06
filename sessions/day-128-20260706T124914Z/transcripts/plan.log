@@ -1,0 +1,118 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll plan Day 128 from the assessment. Let me start by clearing the plan directory and reviewing the key inputs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (8ms)
+
+No community issues today. That means all slots can be self-driven. Let me review the assessment's key candidates and the dream milestone.
+
+The assessment surfaces three strong self-driven candidates:
+1. #571 — Replace looks_incomplete heuristic with yoagent 0.9 queue inspection (concrete, well-scoped, uses framework capability)
+2. #557 — auto-watch follow-up: items 1&2 done, item 3 effectively done → likely close with summary
+3. Dream milestone — measure whether the risk reflex works (but this is accumulation-blocked per Day 125 lesson — building more here is progress-shaped procrastination)
+
+Let me check the dream milestone state and #571 details.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== #571 ===" && gh issue … ✓ (1.1s)
+
+Let me verify the actual API shape in yoagent 0.9 for #571, and check the current looks_incomplete/auto-continue wiring, plus verify #557 item 3's actual state before deciding whether to close.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== yoagent version ===" &… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "steering_queue_snapshot… ✓ (4ms)
+  2 tools completed in 9.8s (2 ✓)
+
+The API exists exactly as #571 describes: steering_queue_snapshot(), `follow_up_queue_snapshot(), plus steering_queue_len()/follow_up_queue_len()`. Now let me understand the current auto-continue wiring in repl.rs to scope the task correctly.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== looks_incomplete + cal… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1280..1355 ✓ (1ms)
+  2 tools completed in 7.1s (2 ✓)
+
+I now understand the wiring. The looks_incomplete(&last_text) check at line 1293 is the decision point. Since `agent.finish()` is called before reading messages (per the gotcha), the queues would be populated/drained by then. 
+
+Key design consideration for #571: the queues (steering_queue, follow_up_queue) are user-injected pending messages, NOT "the model has more to do." Let me verify what actually populates them — this matters for whether they're the right signal.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== doc comments on the qu… ✓ (17ms)
+
+Important finding: yoyo doesn't currently use these queues at all, and they're **user-injected pending messages**, not a "model has more to do" signal. The queues represent messages a user queued while the agent was working (steering/follow-up injection). So `follow_up_queue_snapshot()` being non-empty means the user queued more input — that IS a signal there's more to do, but it's a different mechanism than "the model was cut off mid-work."
+
+This is a subtle but important scoping insight. The issue's premise (queues give "a real, authoritative view of pending/queued work") is partially right: a non-empty follow-up queue does mean more work is pending, and if the queue is non-empty we should continue regardless of the heuristic. But an empty queue does NOT mean the model finished — so we still need looks_incomplete as the fallback. This matches the issue's own design (queue path, fall back to heuristic).
+
+The scope is safe and small: add a check that if follow_up_queue_len() > 0, treat as incomplete (continue); otherwise fall back to looks_incomplete. Let me verify how the agent handle is available at the decision point.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== agent type at decision… ✓ (8ms)
+
+`agent is a &mut yoagent::agent::Agent in scope at the decision point (line 930 signature), so I can call agent.follow_up_queue_len()` there. The risk_snapshots.jsonl has only 1 line — confirming the dream milestone is **accumulation-blocked** (Day 125 lesson: waiting is valid work, building more meter is procrastination). I will NOT plan dream code work this session.
+
+Now let me settle the plan. With no community issues:
+• Task 1 (self-driven, product): #571 — queue-inspection auto-continue, degrading to heuristic. This advances table-stakes precision using a framework capability yoyo already depends on. Well-scoped, single file.
+• Task 2 (self-driven, product): Optional /status surfacing of queued follow-ups (part 2 of #571) — but that's a separate small task. Actually #571 lists it as "optional." Let me keep Task 1 focused on the core decision logic and make Task 2 the /status surfacing as an independent verifiable slice.
+• Task 3: Close #557 with a summary comment (items 1&2 done, item 3 effectively done) — this is issue hygiene, not code. Per Day 125 "verify every completion claim," the implementer must verify each item against actual code before closing.
+
+Let me verify #557 item 3's actual state (config_flag helper) so the close is honest.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== config_flag helper exi… ✓ (6ms)
+
+Confirmed for #557:
+• Item 1 (warn on no command): DONE — `arm_auto_watch` prints the exact message at line 1507.
+• Item 2 (validate tools): DONE — missing_watch_tool at line 1480, with paired tests.
+• Item 3 (consolidate parsers): config_flag helper exists (line 459) with tests. The parse_*_from_config wrappers remain as thin public API (lines 477-560) — which the issue explicitly permits ("keep the public wrappers if callers need them").
+
+So #557 is genuinely done and can be closed. But let me check whether the wrappers actually delegate to config_flag or are still copy-pasted, so the close comment is honest.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '459,560p' src/config.rs ✓ (4ms)
+
+All the boolean parsers now delegate to config_flag — the consolidation (item 3) is genuinely complete. #557 is fully done and should be closed with an honest, verified summary. This is issue hygiene, not a code task, so it doesn't consume a code slot in the usual sense — but I'll make it Task 3 (a pure issue-response task the implementer executes via gh).
+
+Now I have a clean plan. Let me write the three task files plus issue_responses.md.
+
+Plan:
+• Task 1 (self-driven, product): #571 — queue-inspection auto-continue in repl.rs, degrading to looks_incomplete. Core decision logic.
+• **Task 2** (self-driven, product): #571 optional part — surface queued follow-ups count in /status. Independent, small.
+• Task 3 (evolve): Close #557 with a verified summary comment — all three items confirmed done in this planning pass.
+
+Per the Day 126 "start at retreat size" lesson, I'll keep Task 1 minimal: just the queue check as a continue-signal, not a full refactor of the auto-continue loop.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (86 lines) ✓ (1m 13s)
+
+Now let me check where /status is handled so Task 2 is scoped correctly.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_status" src/c… ✓ (6ms)
+
+`handle_status does NOT receive the agent` handle — it takes scalar params. Surfacing the follow-up queue in /status would require threading the agent (or a queue count) through the dispatch path. That's a larger, riskier change than the issue's "optional" framing warrants, and it touches the dispatch plumbing.
+
+Per the Day 126 "start at retreat size" and Day 92 "intellectual interest masquerades as thoroughness" lessons, I'll make Task 2 the retreat version: don't thread agent into `handle_status`. Instead, only surface the queue when it's non-zero, at the point where the agent IS already in scope — right after the auto-continue loop in repl.rs — as a one-line dim hint. That keeps it in the same file as Task 1's decision, is genuinely useful (the user sees "3 follow-ups still queued" if the loop hit its cap), and avoids the plumbing rabbit hole.
+
+Actually — this risks overlapping with Task 1's file. Let me reconsider: a cleaner, independently-valuable Task 2 is to add steering_queue/follow_up_queue awareness to should_auto_continue's sibling concern differently. But the honest call is: **the /status surfacing is not worth a slot this session.** It requires dispatch plumbing (out of scope for product-safety without care), and the assessment says the house is clean. 
+
+Better use of the second self-driven slot: pick a genuinely independent, small, product-safe improvement. Let me reconsider the highest-value option. The dream is accumulation-blocked. #557 is a close. #571 core is Task 1. Let me look for a small, real gap — checking the auto-continue message accuracy and whether steering_queue (user steering mid-turn) is also relevant, or whether there's a cleaner second task.
+
+Let me make Task 2 a focused, independent slice of #571 that does NOT need plumbing: surface a post-loop hint in repl.rs when auto-continue stopped but the queue still has pending items (a "stranded work" return-path, echoing the Day 127 one-way-door lesson).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1353,1360p' src/repl.rs ✓ (3ms)
+
+There's a natural insertion point right after the auto-continue block closes (line 1354). But this would touch the same file as Task 1 and is arguably part of the same concern — risking a merge conflict since tasks run in separate sessions.
+
+Let me reconsider. The cleanest allocation: Task 1 handles #571's core (queue as continue-signal). For the second self-driven slot, rather than a same-file follow-on that conflicts, I'll pick something **genuinely independent and separately valuable**. 
+
+Given the assessment says the house is clean and the biggest named gap is *autonomous decomposition* (#341/dream territory but too big for one task), and dream code is accumulation-blocked — the honest, high-value second slot is to make Task 2 the /status queue surfacing done properly but minimally: thread a single follow_up_pending: usize count into handle_status. This is a small, well-contained, product-safe signature change (add one param, update call sites) that delivers the issue's optional part cleanly and doesn't conflict with Task 1's decision logic (different file: commands_info.rs + the dispatch call site).
+
+Let me find the /status call site to size it.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_status(" src/ |… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,400p' src/dispatch.r… ✓ (6ms)
+  2 tools completed in 8.4s (2 ✓)
+
+`ctx.agent is in scope at the /status dispatch site (line 384 already reads ctx.agent.messages()`). So Task 2 is clean and well-scoped: add a follow_up_pending: usize param to handle_status, pass `ctx.agent.follow_up_queue_len()` at the dispatch site, print the line only when > 0, and update the two internal test call sites in commands_info.rs. Two files (commands_info.rs, dispatch.rs), no conflict with Task 1's file. Let me write it.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (68 lines) ✓ (1m 13s)
+
+Now Task 3 — closing #557 with a verified summary. Per Day 125 ("verify every completion claim"), I've already verified all three items against the code in this planning pass, but I'll instruct the implementer to re-verify before closing.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_03.md (75 lines) ✓ (1m 14s)
+
+Now the issue_responses.md file.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (52 lines) ✓ (1m 13s)
+
+  watch: no files changed this turn — skipping
+

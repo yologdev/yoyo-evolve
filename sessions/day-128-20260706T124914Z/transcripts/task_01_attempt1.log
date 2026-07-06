@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by examining the relevant code in src/repl.rs.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1270..1310  ▶ search 'fn looks_incomplete' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 4.9s (2 ✓)
+
+Let me look at the enclosing function signature and the looks_incomplete function.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1415..1445  ▶ $ grep -n "agent: &mut yoagent" /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl… ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Good. The agent handle is in scope. Now let me add the helper function right before looks_incomplete.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (3 → 13 lines)
+  + /// Decide whether the auto-continue loop should run another turn.
+  + /// `queue_pending` is the yoagent follow-up-queue length; when > 0 there is
+  + /// authoritative pending work (user-injected messages queued while the agent
+  + /// worked) and we continue regardless of the text heuristic. An empty queue
+  + /// tells us nothing about whether the model finished, so we fall back to the
+  + /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
+  + pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
+  +     queue_pending > 0 || looks_incomplete(text)
+  + }
+  + 
+    /// Heuristic check: does the agent's response text suggest it stopped mid-work
+    /// and intends to continue? Conservative — only triggers on clear signals.
+    pub(crate) fn looks_incomplete(text: &str) -> bool {
+ ✓ (16.4s)
+  + /// Decide whether the auto-continue loop should run another turn.
+  + /// `queue_pending` is the yoagent follow-up-queue length; when > 0 there is
+  + /// authoritative pending work (user-injected messages queued while the agent
+  + /// worked) and we continue regardless of the text heuristic. An empty queue
+  + /// tells us nothing about whether the model finished, so we fall back to the
+  + /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
+  + pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
+  +     queue_pending > 0 || looks_incomplete(text)
+  ... (5 more lines)
+
+Expected — now let me wire it into the loop condition and update the message.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (10 → 10 lines)
+                while auto_continue_count < max_continues
+                    && !had_error
+  -                 && looks_incomplete(&last_text)
+  +                 && should_auto_continue(&last_text, agent.follow_up_queue_len())
+                    && !crate::prompt_budget::session_budget_exhausted(30)
+                {
+                    auto_continue_count += 1;
+                    eprintln!(
+                        "\n{DIM}  ⚡ auto-continuing ({auto_continue_count}/{max_continues} \
+  -                      — response appears incomplete)...{RESET}"
+  +                      — more work pending)...{RESET}"
+                    );
+ ✓ (1m 36s)
+                while auto_continue_count < max_continues
+                    && !had_error
+  -                 && looks_incomplete(&last_text)
+  +                 && should_auto_continue(&last_text, agent.follow_up_queue_len())
+                    && !crate::prompt_budget::session_budget_exhausted(30)
+                {
+                    auto_continue_count += 1;
+                    eprintln!(
+  ... (4 more lines)
+
+Now let me find the test block and existing looks_incomplete tests to add mine nearby.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "looks_incomplete\|fn test_\|#\[test\]" /home/runner/work/yoyo-evolve/yo… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:2322..2342 ✓ (1ms)
+  2 tools completed in 4.6s (2 ✓)
+
+I'll add the tests right after test_looks_incomplete_empty_and_short, using the same known-good strings.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs (7 → 30 lines)
+        #[test]
+        fn test_looks_incomplete_empty_and_short() {
+            assert!(!looks_incomplete(""));
+  +         assert!(!looks_incomplete("ok"));
+  +         assert!(!looks_incomplete("short response"));
+  +     }
+  + 
+  +     #[test]
+  +     fn should_auto_continue_true_when_queue_pending() {
+  +         // A non-empty follow-up queue overrides the text heuristic: "ok" is a
+  +         // string looks_incomplete() returns false for, but pending work wins.
+            assert!(!looks_incomplete("ok"));
+  +         assert!(should_auto_continue("ok", 1));
+  +     }
+  + 
+  +     #[test]
+  +     fn should_auto_continue_falls_back_to_heuristic_when_queue_empty_incomplete() {
+  +         // Empty queue → fall back to the heuristic, which fires on this phrase.
+  +         let incomplete = "I've fixed the first file. Next, I'll update the remaining tests.";
+  +         assert!(looks_incomplete(incomplete));
+  ... (10 more lines)
+ ✓ (1m 37s)
+        #[test]
+        fn test_looks_incomplete_empty_and_short() {
+            assert!(!looks_incomplete(""));
+  +         assert!(!looks_incomplete("ok"));
+  +         assert!(!looks_incomplete("short response"));
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "shoul… ✓ (57.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "shoul… ✓ (46.4s)
+  4 tools completed in 3m 53s (4 ✓)
+
+All three tests pass and the full suite is green. Now let me update the CLAUDE.md docs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto-continue for incom… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  + auto-continue for incomplete responses (`should_auto_continue` = yoagent 0.9 `follow_up_queue_len()` as an authoritative pending-work signal, falling back to the `looks_incomplete` text heuristic when the queue is empty; product-safe — no-op for providers that don't populate the queue, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+ ✓ (1m 18s)
+  - auto-continue for incomplete responses (`looks_incomplete` heuristic, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  + auto-continue for incomplete responses (`should_auto_continue` = yoagent 0.9 `follow_up_queue_len()` as an authoritative pending-work signal, falling back to the `looks_incomplete` text heuristic when the queue is empty; product-safe — no-op for providers that don't populate the queue, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  2 tools completed in 1m 26s (2 ✓)
+
+Now the final verification and commit.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (16.4s)
+
+All green. Committing.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (16ms)
+
+Done. Task complete.
+
+## What I did
+
+Made the REPL auto-continue decision consult yoagent 0.9's follow-up queue as an authoritative pending-work signal, while keeping the looks_incomplete text heuristic as the floor.
+
+The change (src/repl.rs):
+1. Added a small pure helper `should_auto_continue(text, queue_pending) next to looks_incomplete`:
+   ```rust
+   queue_pending > 0 || looks_incomplete(text)
+   ```
+   A non-empty follow-up queue means there's genuinely queued work → continue regardless of what the text looks like. An empty queue tells us nothing, so we still fall back to the heuristic — never treating empty-queue as "done" (that would be the regression).
+2. Swapped the bare looks_incomplete(&last_text) in the while-condition for `should_auto_continue(&last_text, agent.follow_up_queue_len())`, leaving the other guards untouched.
+3. Made the eprintln message accurate for both paths: ⚡ auto-continuing (N/M — more work pending)....
+
+**Tests (all three passing):**
+• should_auto_continue_true_when_queue_pending — queue overrides the heuristic
+• should_auto_continue_falls_back_to_heuristic_when_queue_empty_incomplete — empty queue → heuristic fires
+• `should_auto_continue_false_when_queue_empty_and_complete` — the paired negative (Day 122 lesson: test both sides of the boundary)
+
+**Product-safety:** For any provider/model that never populates the follow-up queue, queue_pending is always 0 and behavior is byte-identical to before. No new config, no new flag — the heuristic remains the floor.
+
+I stayed inside the scope guard: one source file + CLAUDE.md, no /status surfacing (that's task_02). `cargo build && cargo test && cargo clippy --all-targets -- -D warnings` all green (88 passed, 0 failed).
+
+This is a small but satisfying win — replacing a guess with a fact in the exact one case where a fact exists, using a capability I already depend on instead of reinventing it.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,232 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll implement this task. Let me start by reading the relevant code sections.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:148..228  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:375..400 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Let me see where the watch line block ends and the DIM/RESET convention. Let me look at how the function ends to understand the styling block.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:227..257 ✓ (1ms)
+
+The whole block is inside {DIM}...{RESET}. I'll add the queued line right after the `watch:` line (line 187). Now let me make the changes.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (4 → 5 lines)
+        turns: usize,
+        context_used: u64,
+        context_max: u64,
+  +     follow_up_pending: usize,
+    ) {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (4 → 9 lines)
+        if let Some(cmd) = crate::watch::get_watch_command() {
+            println!("  watch:   {cmd}");
+  +     }
+  +     // Show queued follow-up messages (input steered/queued while agent was working)
+  +     if follow_up_pending > 0 {
+  +         let plural = if follow_up_pending == 1 { "" } else { "s" };
+  +         println!("  queued:  {follow_up_pending} follow-up{plural} pending");
+        }
+        println!(
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (7 → 8 lines)
+                    ctx.turn_count,
+                    ctx_used,
+                    ctx_max,
+  +                 ctx.agent.follow_up_queue_len(),
+                );
+                Some(CommandResult::Continue)
+            }
+ ✓ (10.2s)
+        turns: usize,
+        context_used: u64,
+        context_max: u64,
+  +     follow_up_pending: usize,
+    ) {
+ ✓ (20.4s)
+        if let Some(cmd) = crate::watch::get_watch_command() {
+            println!("  watch:   {cmd}");
+  +     }
+  +     // Show queued follow-up messages (input steered/queued while agent was working)
+  +     if follow_up_pending > 0 {
+  +         let plural = if follow_up_pending == 1 { "" } else { "s" };
+  +         println!("  queued:  {follow_up_pending} follow-up{plural} pending");
+        }
+        println!(
+ ✓ (30.5s)
+                    ctx.turn_count,
+                    ctx_used,
+                    ctx_max,
+  +                 ctx.agent.follow_up_queue_len(),
+                );
+                Some(CommandResult::Continue)
+            }
+  3 tools completed in 32.3s (3 ✓)
+
+The errors are from intermediate states (the first param edit didn't take?). Let me verify the signature edit applied.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:148..160 ✓ (1ms)
+
+The first signature edit didn't apply — it matched the same turns/context_used/context_max pattern but the replacement wasn't saved (probably because the second edit shifted things, or the first edit's old_text matched a #[cfg(test)] call site differently). Actually the signature still lacks the param. Let me apply it now.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (4 → 5 lines)
+        context_used: u64,
+        context_max: u64,
+  +     follow_up_pending: usize,
+    ) {
+        println!("{DIM}  model:   {model}");
+ ✓ (10.3s)
+        context_used: u64,
+        context_max: u64,
+  +     follow_up_pending: usize,
+    ) {
+        println!("{DIM}  model:   {model}");
+
+Now signature is correct. Update the two test call sites.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:1646..1676 ✓ (1ms)
+
+There are actually three call sites in this test block. Let me update all. The task said 1641 and 2822 but there's a third here too. Let me fix each.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (23 → 26 lines)
+                Duration::from_secs(0),
+  +             0,
+                0,
+                0,
+                0,
+  ···
+                1,
+                5000,
+                200_000,
+  +             0,
+            );
+            handle_status(
+                "test-model",
+  ···
+                42,
+                180_000,
+                200_000,
+  +             0,
+            );
+ ✓ (10.1s)
+                Duration::from_secs(0),
+  +             0,
+                0,
+                0,
+                0,
+  ···
+                1,
+                5000,
+  ... (11 more lines)
+
+More call sites remain. Let me find all of them.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_status(" src/com… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_status(" src/com… ✓ (3ms)
+  2 tools completed in 3.8s (2 ✓)
+
+There are more (1683, 1698, 2831). Let me view them.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:1683..1718  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:2831..2846 ✓ (1ms)
+ ✓ (2ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (20 → 22 lines)
+                3,
+                45_231,
+                200_000,
+  +             0,
+            );
+        }
+    
+  ···
+                &Usage::default(),
+                Duration::from_secs(60),
+                3,
+  +             0,
+                0,
+                0,
+            );
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (5 → 6 lines)
+                2,
+                10_000,
+                200_000,
+  +             0,
+            );
+ ✓ (10.2s)
+                3,
+                45_231,
+                200_000,
+  +             0,
+            );
+        }
+    
+  ···
+  ... (7 more lines)
+ ✓ (20.2s)
+                2,
+                10_000,
+                200_000,
+  +             0,
+            );
+  4 tools completed in 28.9s (4 ✓)
+
+The first edit of this batch didn't apply (the 1683/1698 sites at 45_231 / skip-context). The edit_file said "Replaced 20 lines with 22 lines" but the auto-check still shows 1683 missing. That's likely stale caching between the two parallel edits. Let me verify the current state directly and run the build.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -E "erro… ✓ (8.0s)
+
+Build is clean. The auto-check errors were stale from the parallel edits. Let me run the full verification.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (21.1s)
+
+The test call sites at 1683 and 1698 really do still need updating — my parallel edit didn't apply. Let me check the current state.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:1683..1713 ✓ (1ms)
+
+Right, these two weren't updated (the concurrent edit that touched 2831 succeeded but this one collided). Let me fix both now.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (20 → 22 lines)
+                3,
+                45_231,
+                200_000,
+  +             0,
+            );
+        }
+    
+  ···
+                &Usage::default(),
+                Duration::from_secs(60),
+                3,
+  +             0,
+                0,
+                0,
+            );
+ ✓ (16.4s)
+                3,
+                45_231,
+                200_000,
+  +             0,
+            );
+        }
+    
+  ···
+  ... (7 more lines)
+
+Now the only remaining issue is clippy's too_many_arguments lint (8 params). I'll add `#[allow(clippy::too_many_arguments)]` to the function.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (1 → 2 lines)
+  + #[allow(clippy::too_many_arguments)]
+    pub fn handle_status(
+ ✓ (1m 30s)
+  + #[allow(clippy::too_many_arguments)]
+    pub fn handle_status(
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 14s)
+  2 tools completed in 2m 51s (2 ✓)
+
+All green. Let me verify the full test suite passed (not just one binary) and confirm the diff.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (47.7s)
+
+All 4203 + 88 tests pass. Let me review the final diff before committing.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && echo "===" &&… ✓ (13ms)
+
+  watch: no files changed this turn — skipping
+
