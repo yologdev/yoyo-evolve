@@ -12,7 +12,8 @@ use crate::format::*;
 pub(crate) use crate::commands_risk_snapshots::{
     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
     load_validation_history_from, parse_all_snapshots, parse_validation_events,
-    write_risk_snapshot_to, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+    write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
+    RISK_VALIDATION_PATH,
 };
 
 // Report/context formatting lives in `commands_risk_report.rs`.
@@ -2220,6 +2221,32 @@ fn handle_risk_validate() {
     let result = compute_validation(&top_10, &broke_files, Some(&all_ranked), commit_count);
     let report = format_validation_report(&result, day, &git_hash);
     print!("{report}");
+
+    // 6. Persist a validation event so the CLI `/risk validate` path turns the
+    //    prediction meter's crank the same way the watch-failure path does.
+    //    hits = predicted files that broke; surprises = files that broke but
+    //    weren't predicted. Only record when there was something to validate.
+    let hits: Vec<String> = result.hits.clone();
+    let surprises: Vec<String> = result.surprises.iter().map(|(f, _)| f.clone()).collect();
+    if !hits.is_empty() || !surprises.is_empty() {
+        let total_changed = hits.len() + surprises.len();
+        let accuracy_pct = if total_changed > 0 {
+            (hits.len() as f64 / total_changed as f64) * 100.0
+        } else {
+            0.0
+        };
+        let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+        if let Err(e) = crate::commands_risk::write_validation_event(
+            std::path::Path::new(RISK_VALIDATION_PATH),
+            day as u32,
+            "cli",
+            &hits,
+            &surprises,
+            accuracy_pct_rounded,
+        ) {
+            eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
+        }
+    }
 }
 
 #[cfg(test)]

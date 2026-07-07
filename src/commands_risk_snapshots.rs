@@ -141,6 +141,62 @@ fn auto_risk_snapshot_to(path: &std::path::Path) {
 /// Default path for risk validation JSONL file.
 pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 
+/// Append a validation event to the given JSONL path. Reused by both the
+/// watch-failure auto-validate path (`trigger: "watch_failure"`) and the CLI
+/// `/risk validate` path (`trigger: "cli"`), so both accumulate the validation
+/// half of the prediction meter in the same shape.
+///
+/// The JSON line carries `ts`, `day`, `trigger`, `hits`, `surprises`,
+/// `predicted_count` (always 10), and `accuracy_pct` — exactly the fields the
+/// accuracy readers (`parse_validation_events`, `parse_rich_validation_events`)
+/// consume.
+pub(crate) fn write_validation_event(
+    validation_path: &std::path::Path,
+    day: u32,
+    trigger: &str,
+    hits: &[String],
+    surprises: &[String],
+    accuracy_pct: f64,
+) -> std::io::Result<()> {
+    let ts = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let event = serde_json::json!({
+        "ts": ts,
+        "day": day,
+        "trigger": trigger,
+        "hits": hits,
+        "surprises": surprises,
+        "predicted_count": 10,
+        "accuracy_pct": accuracy_pct,
+    });
+
+    if let Some(parent) = validation_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let json_str = serde_json::to_string(&event).map_err(std::io::Error::other)?;
+
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(validation_path)?;
+    writeln!(file, "{json_str}")
+}
+
 /// Automatically validate risk predictions against files that were changed
 /// in the current session. Called after watch failures (or successes) to
 /// close the prediction-validation loop.
@@ -215,50 +271,17 @@ fn auto_validate_after_failure_to(
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
-    let ts = std::process::Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".to_string());
-
-    // Build validation event JSON
-    let event = serde_json::json!({
-        "ts": ts,
-        "day": day,
-        "trigger": "watch_failure",
-        "hits": hits,
-        "surprises": surprises,
-        "predicted_count": 10,
-        "accuracy_pct": accuracy_pct_rounded,
-    });
-
-    // Append to validation JSONL
-    if let Some(parent) = validation_path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("  {DIM}(warning: could not create risk validation dir: {e}){RESET}");
-            return;
-        }
-    }
-    if let Ok(json_str) = serde_json::to_string(&event) {
-        use std::io::Write;
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(validation_path)
-        {
-            if let Err(e) = writeln!(file, "{json_str}") {
-                eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
-            }
-        }
+    // Append the validation event via the shared writer (same shape the CLI
+    // `/risk validate` path uses).
+    if let Err(e) = write_validation_event(
+        validation_path,
+        day,
+        "watch_failure",
+        &hits,
+        &surprises,
+        accuracy_pct_rounded,
+    ) {
+        eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
 
     // Brief stderr summary (2-3 lines)
@@ -775,5 +798,68 @@ mod tests {
         assert_eq!(events[0].day, 100);
         assert_eq!(events[0].hit_count, 1);
         assert_eq!(events[0].total_changed, 1);
+    }
+
+    #[test]
+    fn test_write_validation_event_cli_trigger_roundtrip() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("nested").join("validations.jsonl");
+
+        let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
+        let surprises = vec!["src/prompt.rs".to_string()];
+        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7)
+            .expect("write validation event");
+
+        let contents = std::fs::read_to_string(&path).expect("read validation file");
+        // Raw JSON shape check: trigger and predicted_count.
+        let raw: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+        assert_eq!(raw["trigger"], "cli");
+        assert_eq!(raw["predicted_count"], 10);
+
+        // Reader roundtrip.
+        let events = parse_validation_events(&contents);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].day, 129);
+        assert_eq!(events[0].hit_count, 2);
+        assert_eq!(events[0].total_changed, 3);
+        assert!((events[0].accuracy_pct - 66.7).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_write_validation_event_watch_failure_trigger() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+
+        let hits = vec!["src/tools.rs".to_string()];
+        let surprises: Vec<String> = vec![];
+        write_validation_event(&path, 100, "watch_failure", &hits, &surprises, 100.0)
+            .expect("write validation event");
+
+        let contents = std::fs::read_to_string(&path).expect("read validation file");
+        let raw: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+        assert_eq!(raw["trigger"], "watch_failure");
+
+        let events = parse_validation_events(&contents);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].hit_count, 1);
+        assert_eq!(events[0].total_changed, 1);
+    }
+
+    #[test]
+    fn test_write_validation_event_appends() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+
+        let hits = vec!["src/main.rs".to_string()];
+        let surprises: Vec<String> = vec![];
+        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0).expect("first write");
+        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0).expect("second write");
+
+        let events = load_validation_history_from(&path);
+        assert_eq!(events.len(), 2, "appending twice yields two lines");
+        assert_eq!(events[0].day, 1);
+        assert_eq!(events[1].day, 2);
     }
 }
