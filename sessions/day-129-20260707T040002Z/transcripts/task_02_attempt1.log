@@ -1,0 +1,131 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll implement this task. Let me start by reading the relevant file to understand the current structure.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs ✓ (5ms)
+
+Let me see the section around the test module start and lines 99-130 to understand the structure.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:98..138 ✓ (1ms)
+
+Now I have a clear picture. Let me add the pure helper last_snapshot_git_hash and wire the dedup guard into auto_risk_snapshot(). Let me first check the test module opening to know where to add tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:348..378 ✓ (0ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Now let me add the pure helper function right before write_risk_snapshot_to (or after it, near the snapshot logic). I'll add it right before auto_risk_snapshot.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (22 → 46 lines)
+  + /// Returns the `git_hash` of the last snapshot line in the given JSONL content,
+  + /// or None if the content is empty / unparseable.
+  + fn last_snapshot_git_hash(content: &str) -> Option<String> {
+  +     let last = content.lines().rev().find(|l| !l.trim().is_empty())?;
+  +     let v: serde_json::Value = serde_json::from_str(last).ok()?;
+  +     v.get("git_hash")?.as_str().map(|s| s.to_string())
+  + }
+  + 
+    /// Automatically capture a risk snapshot after a successful commit.
+    ///
+    /// Called from `commands_git.rs` after each successful `/commit`.
+    /// Silently skips on error (prints a dim note to stderr).
+  + ///
+  + /// Idempotency guard: a snapshot records "predictions AS OF this HEAD", so
+  + /// re-recording the same HEAD adds no information. If the last snapshot in the
+  + /// file already has this `git_hash` (and it's a real hash, not "unknown"), we
+  + /// skip the write — one snapshot per distinct commit-state keeps accumulation
+  + /// clean for the accuracy-trend math.
+    pub(crate) fn auto_risk_snapshot() {
+  -     let risks = compute_file_risk_scores();
+  ... (20 more lines)
+ ✓ (1m 35s)
+  + /// Returns the `git_hash` of the last snapshot line in the given JSONL content,
+  + /// or None if the content is empty / unparseable.
+  + fn last_snapshot_git_hash(content: &str) -> Option<String> {
+  +     let last = content.lines().rev().find(|l| !l.trim().is_empty())?;
+  +     let v: serde_json::Value = serde_json::from_str(last).ok()?;
+  +     v.get("git_hash")?.as_str().map(|s| s.to_string())
+  + }
+  + 
+  ... (13 more lines)
+
+Now let me add the tests in the test module.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (6 → 68 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn test_last_snapshot_git_hash_basic() {
+  +         let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n{\"day\":101,\"git_hash\":\"bbb222\",\"top_10\":[]}";
+  +         assert_eq!(
+  +             last_snapshot_git_hash(jsonl),
+  +             Some("bbb222".to_string()),
+  +             "should return the last line's git_hash"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_last_snapshot_git_hash_empty() {
+  +         assert_eq!(last_snapshot_git_hash(""), None);
+  +     }
+  + 
+  +     #[test]
+  ... (48 more lines)
+ ✓ (1m 33s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn test_last_snapshot_git_hash_basic() {
+  +         let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n{\"day\":101,\"git_hash\":\"bbb222\",\"top_10\":[]}";
+  +         assert_eq!(
+  ... (13 more lines)
+
+Now let me update CLAUDE.md's bullet for commands_risk_snapshots.rs.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot`, `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot` (dedups by git hash — one snapshot per distinct HEAD, keeps accumulation clean; skips re-recording the same commit-state via `last_snapshot_git_hash`), `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+ ✓ (1m 15s)
+  - - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot`, `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot` (dedups by git hash — one snapshot per distinct HEAD, keeps accumulation clean; skips re-recording the same commit-state via `last_snapshot_git_hash`), `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+
+Now let me verify all checks pass.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test last_snapshot_git_has… ✓ (137ms)
+  2 tools completed in 21.5s (2 ✓)
+
+All 6 new tests pass. Let me run the full test suite to make sure nothing is broken.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (59.6s)
+
+All checks pass. Let me commit.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Done. The task is complete and committed.
+
+## What I did
+
+Added an idempotency guard to auto_risk_snapshot() in `src/commands_risk_snapshots.rs`:
+
+1. Pure helper `last_snapshot_git_hash(content)` — reads the last non-blank JSONL line and extracts its git_hash field, returning None for empty/malformed/missing-field content. Small and fully testable without touching the real repo.
+
+2. **Dedup guard in `auto_risk_snapshot()** — I moved the git_hash` computation to the top, then before writing: if the hash is a real one (not "unknown") and matches the last snapshot's hash, it returns early with a dim skip note. "unknown" states are never deduped, since two failed rev-parses may genuinely differ.
+
+3. **6 unit tests** covering the basic case, empty content, trailing-blank-line handling, malformed last line, missing field, and the same-hash-vs-different-hash dedup decision.
+
+4. CLAUDE.md — updated the commands_risk_snapshots.rs bullet to note the dedup behavior.
+
+## Why it matters
+
+A snapshot means "predictions AS OF this HEAD" — so re-recording the same HEAD is pure double-counting. In the evolve loop (multiple commits per session: safety commits + per-task commits), the old unconditional append would have polluted the accumulation the DREAM.md milestone depends on. Now every accumulated point represents a distinct commit-state, so when the accuracy trend finally has enough data to read, it reflects real prediction quality rather than write frequency. That's the allostatic self-model needing clean signal to measure whether the reflex actually works.
+
+All four checks green (build, test, clippy -D warnings, fmt), 88 tests pass.
+
+  watch: no files changed this turn — skipping
+

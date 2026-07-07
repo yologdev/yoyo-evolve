@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the key aspects in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "input.strip_prefix(\"/r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib dispatch_sub 2>… ✓ (8ms)
+ ✓ (131ms)
+  2 tools completed in 1.2s (2 ✓)
+
+It's a binary. Let me run the specific tests properly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test risk_bare risk_near_m… ✓ (704ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_try_dispatch_sub… ✓ (686ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Both new tests pass. Let me verify the CLI actually works end-to-end and confirm no product-surface violation.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo run --quiet -- risk predic… ✓ (604ms)
+
+`yoyo risk predict` runs successfully. The implementation matches the task exactly: adds a "risk" arm to try_dispatch_subcommand, correct input reconstruction, tests (bare + near-miss negative, avoiding snapshot write path), help text update, and CLAUDE.md doc update. This is opt-in CLI surface (a new subcommand, no changed defaults), so no #448 violation.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (2 lines) ✓ (1m 16s)
+
+Verdict: PASS
+
+The implementation is correct and complete:
+• Dispatch arm: The "risk" arm correctly reconstructs /risk <args> from args[2..] and calls handle_risk, which strips its own /risk prefix (verified at line 953). Returns Some(None) as expected.
+• Tests: Both new tests pass — bare risk returns Some(None), near-miss risky correctly falls through to None. The snapshot/validate write-path is avoided as instructed.
+• End-to-end: yoyo risk predict runs successfully against the real binary.
+• Docs: CLAUDE.md dispatch description and cli_help_text() both updated (with a matching test-list entry).
+• No #448 concern: This adds a new opt-in CLI subcommand — no changed defaults, flags, or startup behavior.
+
+Build and tests pass. Verdict written to `session_plan/eval_task_1.md`.
+
+  watch: no files changed this turn — skipping
+

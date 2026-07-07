@@ -1,0 +1,155 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by understanding the existing structure of the files I'll be working with.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs ✓ (8ms)
+
+Let me look at the `lint and review` arms to model my new arm correctly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search '"lint" =>|"review" =>|"blame" =>' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs ✓ (2ms)
+  ▶ search '"lint"|"review"|"blame"|return Some\(None\)' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"lint"\|"review"\|"blam… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:138..208 ✓ (1ms)
+  4 tools completed in 10.7s (4 ✓)
+
+Now let me verify handle_risk's signature and prefix stripping.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '948,970p' src/commands_r… ✓ (5ms)
+
+Confirmed. handle_risk is pub(crate) and strips /risk. Now let me add the risk arm. I'll place it after the blame arm.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (5 → 22 lines)
+                "blame" => {
+                    let input = quote_args_as_command(args);
+                    crate::commands_git_review::handle_blame(&input);
+  +                 return Some(None);
+  +             }
+  +             "risk" => {
+  +                 // Reconstruct the `/risk <args>` input string that handle_risk
+  +                 // expects. args[0] = binary, args[1] = "risk", args[2..] = risk
+  +                 // subcommand + flags. This makes the whole risk subsystem
+  +                 // (snapshot/validate/history/predict/accuracy/effectiveness/--all)
+  +                 // reachable from any non-interactive context — the prerequisite
+  +                 // for the harness (or a human) to record daily risk snapshots
+  +                 // where the DREAM measurement data actually accumulates.
+  +                 let rest = args[2..].join(" ");
+  +                 let input = if rest.is_empty() {
+  +                     "/risk".to_string()
+  +                 } else {
+  +                     format!("/risk {rest}")
+  +                 };
+  +                 crate::commands_risk::handle_risk(&input);
+  ... (2 more lines)
+ ✓ (1m 34s)
+                "blame" => {
+                    let input = quote_args_as_command(args);
+                    crate::commands_git_review::handle_blame(&input);
+  +                 return Some(None);
+  +             }
+  +             "risk" => {
+  +                 // Reconstruct the `/risk <args>` input string that handle_risk
+  +                 // expects. args[0] = binary, args[1] = "risk", args[2..] = risk
+  ... (13 more lines)
+
+Now let me look at existing test_try_dispatch_subcommand_* tests to mirror them.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn test_try_dispatch_su… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:958..988 ✓ (0ms)
+  2 tools completed in 3.6s (2 ✓)
+
+Now let me look at the unknown-subcommand fall-through test to model my near-miss test:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:827..841 ✓ (0ms)
+
+Now I'll add the risk tests after the blame test (line 966).
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (2 → 2 lines) ✓ (1m 38s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (6 → 33 lines)
+                "expected Some(None) for bare `blame` subcommand"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_try_dispatch_subcommand_risk_bare() {
+  +         // `yoyo risk` (bare, read-only) dispatches to handle_risk, which reads
+  +         // the source tree and prints risk scores. Assert only the routing
+  +         // decision — don't invoke the snapshot-writing path here.
+  +         let args = vec!["yoyo".into(), "risk".into()];
+  +         let result = try_dispatch_subcommand(&args);
+  +         assert!(
+  +             matches!(result, Some(None)),
+  +             "expected Some(None) for bare `risk` subcommand"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_try_dispatch_subcommand_risk_near_miss_falls_through() {
+  +         // Paired negative: the discriminator must stay silent on a near-miss.
+  ... (11 more lines)
+ ✓ (1m 35s)
+                "expected Some(None) for bare `blame` subcommand"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_try_dispatch_subcommand_risk_bare() {
+  +         // `yoyo risk` (bare, read-only) dispatches to handle_risk, which reads
+  +         // the source tree and prints risk scores. Assert only the routing
+  ... (13 more lines)
+  2 tools completed in 3m 22s (2 ✓)
+
+The task also asked for a test_try_dispatch_subcommand_risk_snapshot test, but the task guidance explicitly warns against invoking the snapshot-writing path in tests (it writes to `.yoyo/risk_snapshots.jsonl`). I'll follow the "simplest safe approach" the task recommends: bare + near-miss only. Now let me check if CLI subcommands are enumerated in cli_help_text.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'blame\|yoyo lint\|yoyo … ✓ (4ms)
+
+The CLI subcommands are enumerated in cli_help_text. Let me view that section around line 252-290.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:248..298 ✓ (1ms)
+
+I'll add a risk entry after blame.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (4 → 8 lines)
+        let _ = writeln!(
+            s,
+            "  blame             Show git blame (e.g. yoyo blame src/main.rs 10-20)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  risk              Show file risk scores (e.g. yoyo risk, yoyo risk predict)"
+        );
+ ✓ (1m 34s)
+        let _ = writeln!(
+            s,
+            "  blame             Show git blame (e.g. yoyo blame src/main.rs 10-20)"
+  +     );
+  +     let _ = writeln!(
+  +         s,
+  +         "  risk              Show file risk scores (e.g. yoyo risk, yoyo risk predict)"
+        );
+
+Let me check if there's a test that asserts specific subcommands are listed (around line 1589):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:1580..1610 ✓ (1ms)
+
+This is a test asserting each subcommand appears in the help text. I'll add "risk" to keep the test meaningful and coverage complete.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (2 → 3 lines)
+                "blame",
+  +             "risk",
+                "grep",
+ ✓ (1m 39s)
+                "blame",
+  +             "risk",
+                "grep",
+
+Now let me update CLAUDE.md's dispatch_sub description.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `dispatch_sub.rs` — CLI subcommand routing (`try_dispatch_subcommand` for `yoyo <subcmd>`), `flag_value`, `FlagValueCheck`, `require_flag_value`
+  + - `dispatch_sub.rs` — CLI subcommand routing (`try_dispatch_subcommand` for `yoyo <subcmd>`), `flag_value`, `FlagValueCheck`, `require_flag_value`. Routes `yoyo risk [snapshot|validate|history|predict|accuracy|effectiveness|--all]` to `commands_risk::handle_risk`, making the risk subsystem callable from any non-interactive context (the prerequisite for the harness or a human to record daily risk snapshots where the DREAM.md measurement data actually accumulates).
+ ✓ (1m 16s)
+  - - `dispatch_sub.rs` — CLI subcommand routing (`try_dispatch_subcommand` for `yoyo <subcmd>`), `flag_value`, `FlagValueCheck`, `require_flag_value`
+  + - `dispatch_sub.rs` — CLI subcommand routing (`try_dispatch_subcommand` for `yoyo <subcmd>`), `flag_value`, `FlagValueCheck`, `require_flag_value`. Routes `yoyo risk [snapshot|validate|history|predict|accuracy|effectiveness|--all]` to `commands_risk::handle_risk`, making the risk subsystem callable from any non-interactive context (the prerequisite for the harness or a human to record daily risk snapshots where the DREAM.md measurement data actually accumulates).
+
+  watch: no files changed this turn — skipping
+
