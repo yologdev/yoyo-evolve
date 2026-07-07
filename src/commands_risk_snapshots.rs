@@ -72,17 +72,41 @@ pub(crate) fn write_risk_snapshot_to(
     Ok(())
 }
 
+/// Returns the `git_hash` of the last snapshot line in the given JSONL content,
+/// or None if the content is empty / unparseable.
+fn last_snapshot_git_hash(content: &str) -> Option<String> {
+    let last = content.lines().rev().find(|l| !l.trim().is_empty())?;
+    let v: serde_json::Value = serde_json::from_str(last).ok()?;
+    v.get("git_hash")?.as_str().map(|s| s.to_string())
+}
+
 /// Automatically capture a risk snapshot after a successful commit.
 ///
 /// Called from `commands_git.rs` after each successful `/commit`.
 /// Silently skips on error (prints a dim note to stderr).
+///
+/// Idempotency guard: a snapshot records "predictions AS OF this HEAD", so
+/// re-recording the same HEAD adds no information. If the last snapshot in the
+/// file already has this `git_hash` (and it's a real hash, not "unknown"), we
+/// skip the write — one snapshot per distinct commit-state keeps accumulation
+/// clean for the accuracy-trend math.
 pub(crate) fn auto_risk_snapshot() {
-    let risks = compute_file_risk_scores();
-
     let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
         .unwrap_or_else(|_| "unknown".to_string())
         .trim()
         .to_string();
+
+    // Dedup by git hash: skip if the last snapshot already recorded this HEAD.
+    // Never dedup on "unknown" — two "unknown" states may genuinely differ.
+    if git_hash != "unknown" {
+        let content = std::fs::read_to_string(RISK_SNAPSHOT_PATH).unwrap_or_default();
+        if last_snapshot_git_hash(&content).as_deref() == Some(git_hash.as_str()) {
+            eprintln!("  {DIM}(risk snapshot skipped: already recorded for {git_hash}){RESET}");
+            return;
+        }
+    }
+
+    let risks = compute_file_risk_scores();
 
     let day: u32 = std::fs::read_to_string("DAY_COUNT")
         .ok()
@@ -351,6 +375,68 @@ pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_last_snapshot_git_hash_basic() {
+        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n{\"day\":101,\"git_hash\":\"bbb222\",\"top_10\":[]}";
+        assert_eq!(
+            last_snapshot_git_hash(jsonl),
+            Some("bbb222".to_string()),
+            "should return the last line's git_hash"
+        );
+    }
+
+    #[test]
+    fn test_last_snapshot_git_hash_empty() {
+        assert_eq!(last_snapshot_git_hash(""), None);
+    }
+
+    #[test]
+    fn test_last_snapshot_git_hash_trailing_blank() {
+        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n\n";
+        assert_eq!(
+            last_snapshot_git_hash(jsonl),
+            Some("aaa111".to_string()),
+            "trailing blank lines should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_last_snapshot_git_hash_malformed_last_line() {
+        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\ngarbage";
+        assert_eq!(
+            last_snapshot_git_hash(jsonl),
+            None,
+            "malformed last line → None"
+        );
+    }
+
+    #[test]
+    fn test_last_snapshot_git_hash_dedup_decision() {
+        let jsonl = "{\"day\":100,\"git_hash\":\"aaa111\",\"top_10\":[]}\n{\"day\":101,\"git_hash\":\"bbb222\",\"top_10\":[]}";
+        // Same hash as last → would dedup.
+        assert_eq!(
+            last_snapshot_git_hash(jsonl).as_deref(),
+            Some("bbb222"),
+            "same-hash case detected"
+        );
+        // A different hash would NOT match the last line's hash.
+        assert_ne!(
+            last_snapshot_git_hash(jsonl).as_deref(),
+            Some("ccc333"),
+            "different-hash case detected"
+        );
+    }
+
+    #[test]
+    fn test_last_snapshot_git_hash_missing_field() {
+        let jsonl = "{\"day\":100,\"top_10\":[]}";
+        assert_eq!(
+            last_snapshot_git_hash(jsonl),
+            None,
+            "missing git_hash field → None"
+        );
+    }
 
     #[test]
     fn test_risk_snapshot_serialization() {
