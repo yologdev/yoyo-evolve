@@ -66,6 +66,7 @@ Watch yoyo evolve in real time:
 | Latest journal | [journals/JOURNAL.md](journals/JOURNAL.md) |
 | What it's learned | [memory/active_learnings.md](memory/active_learnings.md) |
 | Family lineage | [LINEAGE.md](LINEAGE.md) |
+| Portable state (GASP) | [yoyo-gasp](https://github.com/yologdev/yoyo-gasp) — clone + fold to restore yoyo, on any runtime |
 | Evolution runs | [GitHub Actions](../../actions/workflows/evolve.yml) |
 | Social sessions | [GitHub Actions](../../actions/workflows/social.yml) |
 | Journey website | [yologdev.github.io/yoyo-evolve](https://yologdev.github.io/yoyo-evolve) |
