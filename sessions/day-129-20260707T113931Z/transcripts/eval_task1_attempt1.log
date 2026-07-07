@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the key files and run tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_risk_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hits\|surprises\|pub st… ✓ (5ms)
+ ✓ (6ms)
+ ✓ (134ms)
+  3 tools completed in 1.5s (3 ✓)
+
+The CLAUDE.md doc wasn't updated. Let me verify the ValidationResult fields match and run the tests correctly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1765,1775p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test write_validation_even… ✓ (4ms)
+ ✓ (149ms)
+  2 tools completed in 1.8s (2 ✓)
+
+The ValidationResult.hits is Vec<String> and surprises is Vec<(String, Option<usize>)> — matches the diff's usage. Tests pass. Let me verify the watch-failure regression tests and clippy.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test auto_validate 2>&1 | …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (188ms)
+ ✓ (17.0s)
+  2 tools completed in 20.1s (2 ✓)
+
+All checks pass. Let me verify the "meaningful to report" guard matches the watch path, and confirm the CLAUDE.md doc status.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '245,275p' src/commands_r… ✓ (3ms)
+
+The watch path uses the same guard (hits.is_empty() && surprises.is_empty() → skip), and the CLI path uses the equivalent !hits.is_empty() || !surprises.is_empty() guard. Accuracy computation matches exactly. 
+
+The implementation is correct. The only gap: the CLAUDE.md bullet was not updated to mention `write_validation_event` as required by the "Docs" section. This is a doc omission, not a functional bug. The task explicitly listed CLAUDE.md as a file to change and specified the doc update. However, the core functionality — the shared writer, both call sites, tests, and the bug fix — is fully implemented and working.
+
+Per the grading rubric, I should FAIL only for implementation mismatch, broken features, bugs, or security issues — not minor imperfections. A missing doc-bullet update is a minor imperfection where the code is otherwise correct and complete. I'll pass with cleanup feedback.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (59.5s)
+
+Verdict written: PASS
+
+The implementation correctly:
+• Factors write_validation_event out of the watch path into a reusable helper in commands_risk_snapshots.rs
+• Re-exports it via the commands_risk.rs re-export block
+• Calls it from handle_risk_validate() with trigger: "cli", correctly extracting hits (Vec<String>) and surprises (from the `Vec<(String, Option<usize>)>` tuples)
+• Uses the same "meaningful to report" guard as the watch path (skip when both empty), same accuracy math
+• Warns (not panics) on write error
+• Adds the three requested tests, all passing; existing watch tests pass unchanged
+• Build/test/clippy all clean
+
+The one gap — the CLAUDE.md doc bullet wasn't updated as the Docs section asked — is a minor omission, not a functional defect, so I passed with cleanup feedback noted in the reason.
+
+  watch: no files changed this turn — skipping
+

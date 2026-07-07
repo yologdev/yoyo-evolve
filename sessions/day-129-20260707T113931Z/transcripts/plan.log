@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The assessment is clear: the single most dream-relevant finding is the DREAM ACCUMULATION GAP. The dream's milestone is "let the meter run," but the meter isn't running in the loop that matters. Let me plan around that as my self-driven slot.
+
+Let me set up the session plan directory and write my tasks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (11ms)
+
+The evidence confirms the assessment: only 1 committed snapshot line, no validation file. The meter is starved. Let me think about the honest, product-safe, dream-advancing task.
+
+The key constraint: `scripts/evolve.sh and .github/workflows/` are DO-NOT-MODIFY. So I can't wire it into the automated loop directly. But I can* make the meter run during normal REPL use — which is where the dream said accumulation happens. The gap is that even interactive use only snapshots on /commit.
+
+Let me look at what surfaces I control to make snapshotting happen more naturally, without breaking product users.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_risk_snapshot" src… ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (160 lines) ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+Now I understand the mechanism well. The key insight: the CLI subcommand yoyo risk snapshot exists (Day 129), but nothing automated calls it, and the interactive path only fires on /commit.
+
+The honest, dream-advancing, product-safe move: add a yoyo risk validate CLI subcommand (mirroring the snapshot one from Day 129) so that BOTH halves of the meter — snapshot AND validate — are callable non-interactively. That's the prerequisite for a human-approved cron follow-up to run them. Let me check what the CLI subcommand currently supports.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" src/dispatch_sub.… ✓ (3ms)
+
+The yoyo risk <args> subcommand already routes all risk args to handle_risk. So yoyo risk snapshot and yoyo risk validate should already work if handle_risk supports those subcommands. Let me verify what handle_risk accepts.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "snapshot\|validate\|\"h… ✓ (5ms)
+
+Both snapshot and validate subcommands already exist in handle_risk and route through the CLI. So `yoyo risk snapshot and yoyo risk validate both already work. Let me check what handle_risk_validate` does — does it need changed files?
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1253,1340p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_risk_validate… ✓ (8ms)
+  2 tools completed in 6.2s (2 ✓)
+
+This is the key discovery. handle_risk_validate() already:
+1. Loads the last snapshot
+2. Uses `git log {git_hash}..HEAD` to find files that changed since the snapshot
+3. Validates predictions against actual changes
+
+So the full meter — snapshot AND validate — is already callable via yoyo risk snapshot and `yoyo risk validate`. The Day 129 assessment slightly understated this: both halves work non-interactively.
+
+The real gap: nothing runs them in a cadence. The dream needs two snapshots at *different HEADs* plus commits between them, then a validate. During the automated evolve loop (which commits raw), the meter never fires.
+
+Since scripts/evolve.sh and .github/workflows/* are DO-NOT-MODIFY, the honest path is a **REPL-lifecycle hook** that yoyo controls: capture a snapshot at REPL startup (opt-in, product-safe, silent by default). This makes the meter accumulate during any interactive session — human or otherwise — not just on /commit. Let me verify the REPL entry point and how startup hooks work.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_save_on_exit\|fn r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1365,1380p' src/repl.rs;… ✓ (5ms)
+  2 tools completed in 3.8s (2 ✓)
+
+I have a clear picture. There's an existing auto_save_on_exit hook point in the REPL exit path. This is the natural place to add an opt-in risk snapshot.
+
+Now let me design the tasks. The critical dream-advancing insight: **the meter needs to fire during automated sessions, and I control the REPL lifecycle.** An opt-in env-gated snapshot at REPL exit (mirroring the `YOYO_SESSION_BUDGET_SECS` pattern) is product-safe (off by default, no effect on product users) and lets a human-approved cron/wrapper set the flag to accumulate the meter.
+
+Let me write the plan. Three tasks:
+
+1. Self-driven (dream): Opt-in `YOYO_RISK_AUTOSNAPSHOT env flag that triggers auto_risk_snapshot()` on REPL exit. Product-safe (off by default), dedup-guarded (already exists). This makes the meter accumulate during any session where the flag is set — the missing automated cadence, under yoyo's control, without touching DO-NOT-MODIFY files.
+
+2. Self-driven / doc: File an agent-help-wanted issue documenting the exact cron/wrapper invocation a human can approve to run `yoyo risk snapshot/validate` in the automated loop — plus update CLAUDE.md's dream section to record that both meter halves are already CLI-callable.
+
+Let me keep it to the highest-value, genuinely-small task per the wisdom ("prefer one genuinely-small task done whole"). Let me check the exit hook signature and test patterns first.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '380,420p' src/commands_s… ✓ (4ms)
+
+I have everything I need. Now let me write the session plan. The centerpiece task is the opt-in risk snapshot on REPL exit — the dream's missing "meter runs in the loop" piece, built product-safe.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (90 lines) ✓ (1m 21s)
+
+Now the second task — the human-facing follow-up. Since the opt-in flag is the mechanism yoyo controls, the natural companion is filing an agent-help-wanted issue documenting the exact wrapper a human can approve to actually turn the meter's crank in an automated cadence. But per the instructions, filing an issue is done in the issue_responses / directly, not as a task file that touches source. Let me instead make the second task a genuinely-small self-driven improvement that's independently valuable and dream-adjacent: verify+close #571 is done in issue responses.
+
+Let me reconsider slot allocation. The wisdom says prefer *one genuinely-small task done whole*. Task 01 is well-scoped. For the remaining slots, I have no open community issues to implement and #571 is a verify/close. Let me add one more small self-driven task that hardens the meter, then handle #571 via issue_responses. Let me check the validate path — does it record even on success (all-hits), or only failures?
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2200,2290p' src/commands… ✓ (4ms)
+
+I notice handle_risk_validate() prints a report but does NOT persist a validation event to `.yoyo/risk_validations.jsonl. Only auto_validate_after_failure() (the watch path) persists. So yoyo risk validate` shows the result on screen but doesn't record it — meaning the CLI-driven meter reads out but doesn't accumulate the validation half.
+
+That's a real, dream-critical gap and a genuinely small fix. Let me confirm.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_.*validation\|app… ✓ (7ms)
+
+Confirmed. handle_risk_validate() computes and prints but never persists a validation event. So yoyo risk validate (the CLI path built Day 129) reads the meter but doesn't turn its crank — the accuracy-trend math (compute_accuracy_stats, effectiveness report) reads from `.yoyo/risk_validations.jsonl`, which the CLI validate never writes to. This is the accumulation bug for the dream. Let me look at how auto_validate_after_failure_to persists, so the fix reuses that machinery.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '160,320p' src/commands_r… ✓ (4ms)
+
+Now I have full clarity. This is the highest-value, dream-critical, genuinely-small fix: **make handle_risk_validate() persist its result** to `.yoyo/risk_validations.jsonl (with trigger: "cli"`), so the CLI-driven validate half actually turns the meter's crank — feeding the accuracy-trend math that the dream needs.
+
+This is a better Task 01 than the exit-hook, because it fixes an *actual data-loss bug in the meter itself* rather than adding a new trigger. Let me restructure: make the persist-on-validate the primary task, keep the opt-in exit snapshot as task 02, both dream-advancing.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (102 lines)
+  - Title: Opt-in risk snapshot on REPL exit (feed the dream's meter)
+  + Title: Persist `/risk validate` result to JSONL (turn the meter's crank)
+    Kind: evolve
+  - Files: src/repl.rs, src/commands_risk_snapshots.rs, CLAUDE.md
+  + Files: src/commands_risk.rs, src/commands_risk_snapshots.rs, CLAUDE.md
+    Issue: none
+    
+  - ## Why (the dream)
+  + ## Why (the dream — highest-value finding)
+    
+  - The dream's current milestone is "let the meter run" — accumulate enough risk
+  - snapshots + validations to see whether prediction accuracy climbs on files
+  - where the risk reflex fires. The assessment (Day 129) found the meter is
+  - **architecturally starved**: `auto_risk_snapshot()` fires only on `/commit` in
+  - the interactive REPL, and `auto_validate_after_failure()` only on `/watch`
+  - failure. Neither runs during the automated evolve loop (`scripts/evolve.sh`
+  - commits via raw `git commit`, never through yoyo's `/commit`). Evidence:
+  - `.yoyo/risk_snapshots.jsonl` has only **1 committed line** (last touched Day 127),
+  - and no `.yoyo/risk_validations.jsonl` exists at all.
+  + The dream's milestone is "let the meter run": accumulate risk snapshots +
+  ... (151 more lines)
+ ✓ (1m 16s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (92 lines) ✓ (1m 17s)
+  2 tools completed in 2m 59s (2 ✓)
+
+Now the third slot. I have no community issues to implement (backlog empty, no open agent-self). Per the wisdom "prefer one genuinely-small task done whole" and "a perfect streak means reach for something that could plausibly fail," I could add a competitive task (named Plan subagent). But that's large/aspirational. 
+
+The most honest use of slot 3, given the dream theme, is closing the loop on the human follow-up: file an agent-help-wanted issue documenting the exact automated-cadence invocation (this doesn't touch source — it's an issue). That belongs in issue_responses, not a task file. 
+
+Let me keep task 3 small and dream-adjacent but genuinely independent: I'll leave it at 2 tasks. Two focused, dream-critical tasks done whole beats padding with a risky third. Let me write the issue_responses file.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (55 lines) ✓ (1m 21s)
+
+  watch: no files changed this turn — skipping
+

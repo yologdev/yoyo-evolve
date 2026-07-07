@@ -1,0 +1,220 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the relevant code.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_validate_after_fai…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_risk_validate\|w… ✓ (7ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:142..372 ✓ (1ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Now let me look at `handle_risk_validate() and the ValidationResult struct, plus parse_rich_validation_events`.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1764..1894  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "parse_rich_validation_… ✓ (2ms)
+ ✓ (10ms)
+  2 tools completed in 2.7s (2 ✓)
+
+Now let me read handle_risk_validate() fully:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:2138..2268 ✓ (1ms)
+
+Now I understand the structure. Let me check the re-export block in commands_risk.rs and see how surprises are structured for the writer. The ValidationResult.surprises is `Vec<(String, Option<usize>)> while write_validation_event needs &[String]`. Let me check the re-export block:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1..31 ✓ (1ms)
+
+Now I have everything I need. Let me start implementing. First, the shared writer in commands_risk_snapshots.rs. I'll refactor the writing logic out of auto_validate_after_failure_to.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (52 → 19 lines)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+  - 
+  -     let ts = std::process::Command::new("date")
+  -         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  -         .output()
+  -         .ok()
+  -         .and_then(|o| {
+  -             if o.status.success() {
+  -                 String::from_utf8(o.stdout)
+  -                     .ok()
+  -                     .map(|s| s.trim().to_string())
+  -             } else {
+  -                 None
+  -             }
+  -         })
+  -         .unwrap_or_else(|| "unknown".to_string());
+  - 
+  -     // Build validation event JSON
+  ... (42 more lines)
+ ✓ (10.4s)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+  - 
+  -     let ts = std::process::Command::new("date")
+  -         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  -         .output()
+  -         .ok()
+  ... (13 more lines)
+
+Now let me add the `write_validation_event helper before auto_validate_after_failure`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 58 lines)
+  + /// Append a validation event to the given JSONL path. Reused by both the
+  + /// watch-failure auto-validate path (`trigger: "watch_failure"`) and the CLI
+  + /// `/risk validate` path (`trigger: "cli"`), so both accumulate the validation
+  + /// half of the prediction meter in the same shape.
+  + ///
+  + /// The JSON line carries `ts`, `day`, `trigger`, `hits`, `surprises`,
+  + /// `predicted_count` (always 10), and `accuracy_pct` — exactly the fields the
+  + /// accuracy readers (`parse_validation_events`, `parse_rich_validation_events`)
+  + /// consume.
+  + pub(crate) fn write_validation_event(
+  +     validation_path: &std::path::Path,
+  +     day: u32,
+  +     trigger: &str,
+  +     hits: &[String],
+  +     surprises: &[String],
+  +     accuracy_pct: f64,
+  + ) -> std::io::Result<()> {
+  +     let ts = std::process::Command::new("date")
+  +         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  +         .output()
+  ... (38 more lines)
+ ✓ (17.5s)
+  + /// Append a validation event to the given JSONL path. Reused by both the
+  + /// watch-failure auto-validate path (`trigger: "watch_failure"`) and the CLI
+  + /// `/risk validate` path (`trigger: "cli"`), so both accumulate the validation
+  + /// half of the prediction meter in the same shape.
+  + ///
+  + /// The JSON line carries `ts`, `day`, `trigger`, `hits`, `surprises`,
+  + /// `predicted_count` (always 10), and `accuracy_pct` — exactly the fields the
+  + /// accuracy readers (`parse_validation_events`, `parse_rich_validation_events`)
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (2 → 2 lines)
+  -     let json_str = serde_json::to_string(&event)
+  -         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+  +     let json_str =
+  +         serde_json::to_string(&event).map_err(std::io::Error::other)?;
+ ✓ (1m 37s)
+  -     let json_str = serde_json::to_string(&event)
+  -         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+  +     let json_str =
+  +         serde_json::to_string(&event).map_err(std::io::Error::other)?;
+  2 tools completed in 2m 1s (2 ✓)
+
+Now the re-export block and handle_risk_validate(). Let me add the re-export:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (5 → 6 lines)
+    pub(crate) use crate::commands_risk_snapshots::{
+        auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+        load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  -     write_risk_snapshot_to, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  +     write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
+  +     RISK_VALIDATION_PATH,
+    };
+ ✓ (16.7s)
+    pub(crate) use crate::commands_risk_snapshots::{
+        auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+        load_validation_history_from, parse_all_snapshots, parse_validation_events,
+  -     write_risk_snapshot_to, ValidationEvent, RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  +     write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
+  +     RISK_VALIDATION_PATH,
+    };
+
+Expected — now I'll wire it into handle_risk_validate(). I need to build hits and surprises as `Vec<String> and compute accuracy_pct` from the result. Note the guard: only write when there's something meaningful (non-empty hits+surprises).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (5 → 31 lines)
+        let result = compute_validation(&top_10, &broke_files, Some(&all_ranked), commit_count);
+        let report = format_validation_report(&result, day, &git_hash);
+        print!("{report}");
+  + 
+  +     // 6. Persist a validation event so the CLI `/risk validate` path turns the
+  +     //    prediction meter's crank the same way the watch-failure path does.
+  +     //    hits = predicted files that broke; surprises = files that broke but
+  +     //    weren't predicted. Only record when there was something to validate.
+  +     let hits: Vec<String> = result.hits.clone();
+  +     let surprises: Vec<String> = result.surprises.iter().map(|(f, _)| f.clone()).collect();
+  +     if !hits.is_empty() || !surprises.is_empty() {
+  +         let total_changed = hits.len() + surprises.len();
+  +         let accuracy_pct = if total_changed > 0 {
+  +             (hits.len() as f64 / total_changed as f64) * 100.0
+  +         } else {
+  +             0.0
+  +         };
+  +         let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+  +         if let Err(e) = crate::commands_risk::write_validation_event(
+  +             std::path::Path::new(RISK_VALIDATION_PATH),
+  ... (10 more lines)
+ ✓ (1m 37s)
+        let result = compute_validation(&top_10, &broke_files, Some(&all_ranked), commit_count);
+        let report = format_validation_report(&result, day, &git_hash);
+        print!("{report}");
+  + 
+  +     // 6. Persist a validation event so the CLI `/risk validate` path turns the
+  +     //    prediction meter's crank the same way the watch-failure path does.
+  +     //    hits = predicted files that broke; surprises = files that broke but
+  +     //    weren't predicted. Only record when there was something to validate.
+  ... (13 more lines)
+
+Now let me add tests to commands_risk_snapshots.rs. Let me look at the existing test structure:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:660..780 ✓ (1ms)
+
+Now let me add my new tests after test_parse_validation_events_malformed_lines:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:779..803 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (6 → 70 lines)
+            let events = load_validation_history_from(&path);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].day, 100);
+  +         assert_eq!(events[0].hit_count, 1);
+  +         assert_eq!(events[0].total_changed, 1);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_write_validation_event_cli_trigger_roundtrip() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let path = dir.path().join("nested").join("validations.jsonl");
+  + 
+  +         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
+  +         let surprises = vec!["src/prompt.rs".to_string()];
+  +         write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7)
+  +             .expect("write validation event");
+  + 
+  +         let contents = std::fs::read_to_string(&path).expect("read validation file");
+  +         // Raw JSON shape check: trigger and predicted_count.
+  +         let raw: serde_json::Value =
+  ... (50 more lines)
+ ✓ (244ms)
+            let events = load_validation_history_from(&path);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].day, 100);
+  +         assert_eq!(events[0].hit_count, 1);
+  +         assert_eq!(events[0].total_changed, 1);
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+  2 tools completed in 15.4s (2 ✓)
+
+I added an extra closing brace — the original block already ended the mod tests. Let me check line 866-867:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:860..868 ✓ (0ms)
+
+The original test_load_validation_history_from_file was the last test and its } at line 802 closed the fn, then line ~803 closed mod tests. My replacement removed the mod-closing brace context. Let me remove the extra:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (4 → 3 lines)
+            assert_eq!(events[1].day, 2);
+        }
+  - }
+    }
+ ✓ (1m 38s)
+            assert_eq!(events[1].day, 2);
+        }
+  - }
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.0s)
+  2 tools completed in 1m 58s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
