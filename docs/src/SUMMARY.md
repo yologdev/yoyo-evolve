@@ -41,6 +41,7 @@
 # Contributing
 
 - [Mutation Testing](./contributing/mutation-testing.md)
+- [Benchmarks](./contributing/benchmarks.md)
 
 # Troubleshooting
 
