@@ -24,9 +24,9 @@
 
 # yoyo: A Coding Agent That Evolves Itself
 
-**200 lines of Rust. Zero human code. One rule: evolve or die.** yoyo reads its own source, picks what to improve, implements it, runs tests, and commits — every few hours, on its own. 107 days later: **100,000+ lines, 3,800+ tests, 71 source files.**
+**200 lines of Rust. Zero human code. One rule: evolve or die.** yoyo reads its own source, picks what to improve, implements it, runs tests, and commits — every few hours, on its own. 128 days later: **115,000+ lines, 4,300+ tests, 77 source files.**
 
-A free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 70+ slash commands.
+A free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 90+ slash commands.
 
 No human writes its code. No roadmap tells it what to do. It decides for itself.
 
@@ -120,7 +120,9 @@ You're the immune system. Issues that the community votes down get buried — yo
 
 <a href="https://github.com/sponsors/yologdev">GitHub Sponsors</a> · <a href="https://ko-fi.com/yuanhao">Ko-fi</a>
 
-**Monthly sponsors** get benefit tiers (everyone uses the same 8h run gap):
+Every run uses the same flat 8h gap — sponsorship buys **benefit tiers, not speed.**
+
+**Monthly sponsors:**
 
 | Amount | Benefits |
 |--------|----------|
@@ -129,17 +131,15 @@ You're the immune system. Issues that the community votes down get buried — yo
 | $25/mo | Above + SPONSORS.md listing |
 | $50/mo | Above + README listing |
 
-**One-time sponsors** get a single accelerated run ($2+) plus benefit tiers:
+**One-time sponsors** get the same tiers, time-limited (Genesis is permanent):
 
 | Amount | Benefits |
 |--------|----------|
-| $2 | 1 accelerated run (bypasses 8h gap) |
-| $5 | Accelerated run + issue priority |
+| $5 | Issue priority (14 days) |
 | $10 | Above + shoutout issue (30 days) |
-| $20 | Above + SPONSORS.md eligible (30 days) |
-| $50 | Above + priority for 60 days |
-
-Accelerated runs are only consumed when you have open issues, so nothing is wasted.
+| $20 | Above + SPONSORS.md listing (30 days) |
+| $50 | Above + README listing (60 days) |
+| $1,000 💎 | Genesis — all of the above, permanent |
 
 ## Features
 
@@ -147,7 +147,7 @@ Accelerated runs are only consumed when you have open issues, so nothing is wast
 - **Streaming output** — tokens arrive as they're generated, not after completion
 - **Multi-turn conversation** with full history tracking
 - **Extended thinking** — adjustable reasoning depth (off / minimal / low / medium / high)
-- **Subagent spawning** — `/spawn` delegates focused tasks to a child agent; the model can also delegate subtasks automatically via a built-in sub-agent tool
+- **Subagent spawning** — `/spawn` delegates focused tasks to a child agent, now with **parallel** (`--parallel`) and **background** (`--bg` + `/spawn collect`) execution and an optional per-subagent `--model`; the model can also delegate subtasks automatically via a built-in sub-agent tool
 - **Parallel tool execution** — multiple tool calls run simultaneously
 - **Automatic retry** with exponential backoff and rate-limit awareness
 - **Auto-continue** — detects when the model stops mid-work and automatically sends follow-up prompts (up to 3 per user turn)
@@ -164,11 +164,14 @@ Accelerated runs are only consumed when you have open issues, so nothing is wast
 | `list_files` | Directory listing with glob filtering |
 | `rename_symbol` | Project-wide symbol rename across all git-tracked files |
 | `ask_user` | Ask the user questions mid-task for clarification (interactive mode only) |
+| `web_search` | Search the web and read result snippets |
+
+Sub-agents also auto-receive `sub_agent` and `shared_state` tools for delegating subtasks and sharing memory across a multi-agent run.
 
 ### 🔌 Multi-Provider Support
-Works with **12 providers** out of the box — switch mid-session with `/provider`:
+Works with **15 providers** out of the box — switch mid-session with `/provider`:
 
-Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · AWS Bedrock · Custom (any OpenAI-compatible endpoint)
+Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · AWS Bedrock · GitHub Models · Zhipu (ZAI) · MiniMax · Custom (any OpenAI-compatible endpoint)
 
 ### 📂 Git Integration
 - `/diff` — full status + diff with insertion/deletion summary
@@ -192,6 +195,8 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 - `/find` — fuzzy file search with scoring and ranked results
 - `/ast` — structural code search using [ast-grep](https://ast-grep.github.io/) (optional)
 - `/map` — structural repo map showing file symbols and relationships with ast-grep backend
+- `/architect` — dual-model mode: plan with a strong model, implement with a cheaper one
+- `/risk` — per-file risk scoring from git-history signals (`/risk accuracy` grades past predictions)
 
 ### 💾 Session Management
 - `/save` and `/load` — persist and restore sessions as JSON
@@ -200,7 +205,7 @@ Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek
 - **Auto-compaction** at 80% context usage, plus manual `/compact`
 - `--context-strategy checkpoint` — exit with code 2 when context is high (for pipeline restarts)
 - `/tokens` — visual token usage bar with per-category context breakdown (system, user, assistant, tool calls, tool results, thinking)
-- `/cost` — per-model input/output/cache pricing breakdown
+- `/cost` — per-model input/output/cache pricing breakdown, with fleet pricing (Opus 4.8 / Sonnet 5 / Fable 5 / Haiku 4.5) read live from yoagent presets
 
 ### 🧠 Context & Memory
 - **Project context files** — auto-loads YOYO.md, CLAUDE.md, or `.yoyo/instructions.md`
@@ -296,7 +301,7 @@ yoyo --yes
 Create `.yoyo.toml` in your project root, `~/.yoyo.toml` in your home directory, or `~/.config/yoyo/config.toml` globally:
 
 ```toml
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-4-6"
 provider = "anthropic"
 thinking = "medium"
 mcp = ["npx open-websearch@latest"]
@@ -318,64 +323,95 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 
 | Command | Description |
 |---------|-------------|
-| `/ast <pattern>` | Structural code search using ast-grep (optional) |
+| `/add <file\|url>` | Add file or URL contents to the conversation |
+| `/apply <patch>` | Apply a diff or patch file |
+| `/architect` | Toggle architect mode — plan with a strong model, implement with a cheap one |
+| `/ast <pattern>` | Structural code search via ast-grep (optional) |
 | `/bg [subcmd]` | Manage background shell processes: run, list, output, kill |
-| `/help` | Grouped command reference |
-| `/changes` | Show files modified during this session |
-| `/clear` | Clear conversation history |
-| `/compact` | Compact conversation to save context |
-| `/commit [msg]` | Commit staged changes (AI-generates message if omitted) |
-| `/config` | Show all current settings |
-| `/config show` | Show loaded config file path and merged key-value pairs (secrets masked) |
-| `/config edit` | Open config file in `$EDITOR` |
-| `/context [system\|tokens\|files]` | Show loaded project context, system prompt, token budget, or referenced files |
-| `/cost` | Show session cost breakdown |
-| `/changelog [N]` | Show recent git commit history (default: 15) |
-| `/evolution [N]` | Show evolution history, session stats, and CI run status |
-| `/diff` | Git diff summary of uncommitted changes |
 | `/blame <file>` | Git blame with colored output (`/blame file:10-20` for ranges) |
+| `/cd [dir]` | Change the working directory (`~` and relative paths supported) |
+| `/changelog [N]` | Show recent git commit history (default: 15) |
+| `/changes` | Show files modified during this session |
+| `/checkpoint [sub]` | Named file-state snapshots (save, list, restore, diff, delete) |
+| `/clear` | Clear conversation history |
+| `/clear!` | Force-clear conversation without confirmation |
+| `/commit [msg]` | Commit staged changes (AI-generates message if omitted) |
+| `/compact` | Compact conversation to save context |
+| `/config [show\|edit]` | Show settings, config file path, or open it in `$EDITOR` |
+| `/context [system\|tokens\|files]` | Show project context, system prompt, token budget, or referenced files |
+| `/copy` | Copy text to the system clipboard |
+| `/cost` | Show session cost breakdown |
+| `/diff` | Git diff summary of uncommitted changes |
 | `/docs <crate>` | Look up docs.rs documentation |
-| `/exit`, `/quit` | Exit |
+| `/doctor` | Run environment diagnostics |
+| `/evolution [N]` | Show evolution history, session stats, and CI run status |
+| `/exit`, `/quit` | Exit yoyo |
+| `/explain <file>` | Ask the agent to explain code from a file |
+| `/export` | Export the conversation as markdown |
+| `/extended <task>` | Run the agent autonomously on a long task |
+| `/extract` | Extract a function or block to a new file |
 | `/find <pattern>` | Fuzzy-search project files by name |
 | `/fix` | Auto-fix build/lint errors |
-| `/loop <N\|until-pass> <prompt>` | Repeat a prompt in a polling loop |
-| `/forget <n>` | Remove a project memory by index |
+| `/forget <n>` | Remove a saved memory by index |
+| `/fork [subcmd]` | Branch conversations and switch between them |
 | `/git <subcmd>` | Quick git: status, log, add, diff, branch, stash |
-| `/goal [subcmd]` | Persistent goal — auto-injected into AI context (set/show/clear/check) |
+| `/goal [subcmd]` | Set, view, or check progress on a session goal |
+| `/grep <pattern>` | Search file contents |
 | `/health` | Run project health checks |
-| `/history` | Show conversation message summary |
-| `/history detail` | Per-turn breakdown with tools and token counts |
+| `/help` | Grouped command reference |
+| `/history [detail]` | Conversation summary (`detail` for a per-turn breakdown) |
 | `/hooks` | Show active hooks (pre/post tool execution) |
 | `/index` | Build a lightweight codebase index |
 | `/init` | Generate a starter YOYO.md |
 | `/jump <name>` | Jump to a conversation bookmark |
 | `/lint [pedantic\|strict\|fix\|unsafe]` | Auto-detect and run project linter (strictness levels for Rust) |
 | `/load [path]` | Load session from file |
+| `/loop <N\|until-pass> <prompt>` | Repeat a prompt in a polling loop |
+| `/map` | Structural repo map of file symbols (ast-grep backend) |
 | `/mark <name>` | Bookmark current point in conversation |
 | `/marks` | List all conversation bookmarks |
-| `/checkpoint [sub]` | Named file-state snapshots (save, list, restore, diff, delete) |
-| `/memories` | List project-specific memories |
+| `/mcp` | List and manage MCP server connections |
+| `/memories` | List or search project memories |
 | `/model <name\|list\|info>` | Switch, list, or inspect models |
-| `/pr [subcmd]` | PR workflow: list, view, create, diff, comment, checkout |
+| `/move` | Move a method between files |
+| `/open <file>` | Open a file in your editor |
+| `/outline [symbol]` | Search for symbols or show file structure |
 | `/permissions` | Show active security and permission configuration |
-| `/provider <name>` | Switch provider mid-session |
+| `/plan [subcmd]` | Plan mode toggle, one-shot plan, show/apply/clear |
+| `/pr [subcmd]` | PR workflow: list, view, create, diff, comment, checkout |
+| `/profile` | Session statistics (tokens, cost, time, turns) |
+| `/provider <name>` | Switch or show the current provider |
+| `/quick <question>` | Fast answer without tools (single-turn, no agent loop) |
+| `/read` | Toggle read-only oracle mode — analyze but not modify |
+| `/refactor` | Refactoring tools (extract, rename, move) |
 | `/remember <note>` | Save a persistent project memory |
+| `/rename <old> <new>` | Rename a symbol across the project |
 | `/retry` | Re-send the last input (`--with "..."` to refine) |
-| `/review [path]` | AI code review of changes or a specific file |
+| `/review [path]` | AI code review (`--quick`, `--thorough`) |
+| `/revisit` | Review closed/shelved issues that may now be feasible |
+| `/rewind` | Restore the conversation auto-stashed by `/clear` |
+| `/risk [subcmd]` | Per-file risk scoring from git history (`/risk accuracy`) |
 | `/run <cmd>` | Run a shell command directly (no AI, no tokens) |
 | `/save [path]` | Save session to file |
 | `/search <query>` | Search conversation history |
-| `/spawn <task>` | Spawn a subagent for a focused task |
+| `/security` | Run a dependency vulnerability scan |
+| `/side <question>` | Ask a quick question without affecting the conversation |
+| `/skill [subcmd]` | List, inspect, install, and search for skills |
+| `/spawn <task>` | Run a task in a sub-agent (`--parallel`, `--bg`, `--model`) |
+| `/stash` | Stash conversation and start fresh |
 | `/status` | Show session dashboard (model, modes, goal, watch, changes) |
 | `/teach [on\|off]` | Toggle teach mode — explains reasoning as it works |
 | `/test` | Auto-detect and run project tests |
 | `/think [level]` | Show or change thinking level |
+| `/tips` | Context-sensitive feature suggestions |
+| `/todo [subcmd]` | Track tasks (add, done, remove, clear, board) |
 | `/tokens` | Show token usage, context window, and per-category breakdown |
 | `/tree [depth]` | Show project directory tree |
-| `/undo` | Revert all uncommitted changes |
+| `/undo` | Undo last turn's changes, all uncommitted, or last commit |
 | `/update` | Self-update to the latest release |
 | `/version` | Show version, build metadata, and target |
-| `/web <url>` | Fetch a web page and display readable text |
+| `/watch` | Auto-run lint + test after file changes |
+| `/web <url\|search>` | Fetch a web page or search the web |
 
 ## Grow Your Own
 
@@ -391,7 +427,7 @@ Everything else auto-detects. See the [full guide](https://yologdev.github.io/yo
 ## Architecture
 
 ```
-src/                    71 modules, ~101,000 lines of Rust
+src/                    77 modules, ~115,000 lines of Rust
   main.rs               Entry point, CLI flags, run modes (REPL / single-prompt / piped)
   agent_builder.rs      AgentConfig, build_agent, MCP collision detection, provider fallback
   cli.rs · cli_config.rs  CLI parsing, Config, constants, system prompt
@@ -421,12 +457,12 @@ memory/
   active_learnings.md · active_social_learnings.md   Synthesized prompt context (regenerated daily)
 skills/                 14 skills — 7 core (immutable): self-assess, evolve, communicate, research,
                         skill-evolve, skill-creator, analyze-trajectory
-                        + social, family, release, blindspot, synthesis, explore-codebase, x-research
+                        + social, family, release, blindspot, synthesis, explore-codebase, yopedia
 ```
 
 ## Test Quality
 
-3,800+ tests (unit + integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, streaming behavior, and more.
+4,300+ tests (unit + integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, streaming behavior, and more.
 
 yoyo also uses mutation testing ([cargo-mutants](https://github.com/sourcefrog/cargo-mutants)) to find gaps in the test suite. Every surviving mutant is a line of code that isn't truly tested.
 
