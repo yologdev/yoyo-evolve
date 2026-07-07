@@ -83,7 +83,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `watch.rs` — watch mode: set/get/clear watch command(s), run watch command with streaming output, multi-phase watch (lint → fix → test → fix), auto-fix loop after prompts with command-type-aware fix prompts and structured Rust compiler error parsing (`CompilerError`, `parse_rust_errors`, category-specific hints) (extracted from `prompt.rs`), `/watch` command handler and project-type detection for auto-watch; the post-prompt watch cycle is skipped entirely when the prompt changed zero files (`should_run_watch_after_prompt` gate)
 - `prompt_budget.rs` — session wall-clock budget + audit log helpers (extracted from `prompt.rs`)
 - `prompt_retry.rs` — error diagnosis and retry logic: retry prompt construction, exponential backoff, error classification, API error diagnosis (extracted from `prompt.rs`)
-- `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview (extracted from `prompt.rs`)
+- `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview, fenced code block extraction (`extract_code_blocks` — line-based, multi-byte-safe, triple-backtick only) (extracted from `prompt.rs`)
 - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
 - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
 - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply

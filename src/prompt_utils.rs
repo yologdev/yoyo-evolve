@@ -374,6 +374,78 @@ pub fn summarize_message(msg: &AgentMessage) -> (&str, String) {
     }
 }
 
+/// A fenced code block extracted from markdown / model output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+// Wired ahead of its callers: the benchmark adapter (task 01) and apply-patch
+// will pull code out of model responses via this helper. Tests below exercise it.
+#[allow(dead_code)]
+pub(crate) struct CodeBlock {
+    /// The info-string language tag after the opening fence (e.g. "rust",
+    /// "python"), lowercased and trimmed; empty string if none was given.
+    pub lang: String,
+    /// The block body (everything between the opening and closing fence),
+    /// with the trailing newline before the closing fence stripped.
+    pub body: String,
+}
+
+/// Extract all triple-backtick fenced code blocks from `text`, in order.
+///
+/// Tolerant of: leading indentation on the fence line, an info string, no info
+/// string, and an unterminated final fence (takes body to end of text).
+///
+/// The scan is entirely line-based — it never byte-indexes into `text` to find
+/// fences — so it is safe on multi-byte UTF-8 content (Day 123 byte-boundary /
+/// Day 250 multi-byte panic learnings).
+///
+/// Limitations (deliberately kept small and total): only recognizes the common
+/// triple-backtick (```` ``` ````) fence. It does NOT handle `~~~` fences,
+/// quad-backtick / nested fences, or inline single-backtick spans.
+// Wired ahead of its callers (see CodeBlock note); exercised by unit tests.
+#[allow(dead_code)]
+pub(crate) fn extract_code_blocks(text: &str) -> Vec<CodeBlock> {
+    let mut blocks = Vec::new();
+    let mut in_block = false;
+    let mut lang = String::new();
+    let mut body: Vec<&str> = Vec::new();
+
+    for line in text.lines() {
+        let is_fence = line.trim_start().starts_with("```");
+        if is_fence {
+            if in_block {
+                // Closing fence: finalize the current block.
+                blocks.push(CodeBlock {
+                    lang: std::mem::take(&mut lang),
+                    body: body.join("\n"),
+                });
+                body.clear();
+                in_block = false;
+            } else {
+                // Opening fence: the remainder after the backticks is the info
+                // string. Work on the trimmed-start form so leading indentation
+                // doesn't leak into the language tag.
+                let after = line.trim_start().trim_start_matches('`');
+                lang = after.trim().to_lowercase();
+                in_block = true;
+            }
+        } else if in_block {
+            body.push(line);
+        }
+    }
+
+    // Unterminated final block: no closing fence was seen — take what we have.
+    if in_block {
+        blocks.push(CodeBlock {
+            lang,
+            body: body.join("\n"),
+        });
+    }
+
+    blocks
+}
+
+// TODO: callers like commands_file.rs:2169 could use extract_code_blocks
+// instead of ad-hoc byte-indexed fence slicing (separate follow-up).
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -810,5 +882,70 @@ mod tests {
         let result = highlight_matches(text, "café");
         assert!(result.contains("café"));
         assert!(result.contains("résumé"));
+    }
+
+    // --- extract_code_blocks -------------------------------------------------
+
+    #[test]
+    fn test_extract_code_blocks_with_lang() {
+        let text = "before\n```rust\nfn main() {}\n```\nafter";
+        let blocks = extract_code_blocks(text);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].lang, "rust");
+        assert_eq!(blocks[0].body, "fn main() {}");
+    }
+
+    #[test]
+    fn test_extract_code_blocks_without_lang() {
+        let text = "```\nplain code\n```";
+        let blocks = extract_code_blocks(text);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].lang, "");
+        assert_eq!(blocks[0].body, "plain code");
+    }
+
+    #[test]
+    fn test_extract_code_blocks_no_fences() {
+        let text = "just some prose\nwith two lines and no fences";
+        assert!(extract_code_blocks(text).is_empty());
+    }
+
+    #[test]
+    fn test_extract_code_blocks_two_blocks_in_order() {
+        let text = "```python\nx = 1\n```\nmiddle\n```js\nlet y = 2;\n```";
+        let blocks = extract_code_blocks(text);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].lang, "python");
+        assert_eq!(blocks[0].body, "x = 1");
+        assert_eq!(blocks[1].lang, "js");
+        assert_eq!(blocks[1].body, "let y = 2;");
+    }
+
+    #[test]
+    fn test_extract_code_blocks_unterminated_final() {
+        // No closing fence — body should run to the end of the text, no panic.
+        let text = "```rust\nline1\nline2";
+        let blocks = extract_code_blocks(text);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].lang, "rust");
+        assert_eq!(blocks[0].body, "line1\nline2");
+    }
+
+    #[test]
+    fn test_extract_code_blocks_inline_backtick_not_a_fence() {
+        // Negative / near-miss: single-backtick inline spans must NOT be
+        // mistaken for a fence (Day 122 — test the side that stays silent).
+        let text = "here is `inline code` and more `spans` but no fence";
+        assert!(extract_code_blocks(text).is_empty());
+    }
+
+    #[test]
+    fn test_extract_code_blocks_multibyte_body_no_panic() {
+        // Multi-byte content inside a block must be preserved without panic
+        // (Day 250 byte-boundary crash — the regression guard for line-based impl).
+        let text = "```\nstatus: ✓ done — 日本語 🐙\n```";
+        let blocks = extract_code_blocks(text);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].body, "status: ✓ done — 日本語 🐙");
     }
 }
