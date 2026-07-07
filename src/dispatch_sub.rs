@@ -186,6 +186,23 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 crate::commands_git_review::handle_blame(&input);
                 return Some(None);
             }
+            "risk" => {
+                // Reconstruct the `/risk <args>` input string that handle_risk
+                // expects. args[0] = binary, args[1] = "risk", args[2..] = risk
+                // subcommand + flags. This makes the whole risk subsystem
+                // (snapshot/validate/history/predict/accuracy/effectiveness/--all)
+                // reachable from any non-interactive context — the prerequisite
+                // for the harness (or a human) to record daily risk snapshots
+                // where the DREAM measurement data actually accumulates.
+                let rest = args[2..].join(" ");
+                let input = if rest.is_empty() {
+                    "/risk".to_string()
+                } else {
+                    format!("/risk {rest}")
+                };
+                crate::commands_risk::handle_risk(&input);
+                return Some(None);
+            }
             "grep" => {
                 let input = quote_args_as_command(args);
                 crate::commands_search::handle_grep(&input);
@@ -945,6 +962,33 @@ mod tests {
         assert!(
             matches!(result, Some(None)),
             "expected Some(None) for bare `blame` subcommand"
+        );
+    }
+
+    #[test]
+    fn test_try_dispatch_subcommand_risk_bare() {
+        // `yoyo risk` (bare, read-only) dispatches to handle_risk, which reads
+        // the source tree and prints risk scores. Assert only the routing
+        // decision — don't invoke the snapshot-writing path here.
+        let args = vec!["yoyo".into(), "risk".into()];
+        let result = try_dispatch_subcommand(&args);
+        assert!(
+            matches!(result, Some(None)),
+            "expected Some(None) for bare `risk` subcommand"
+        );
+    }
+
+    #[test]
+    fn test_try_dispatch_subcommand_risk_near_miss_falls_through() {
+        // Paired negative: the discriminator must stay silent on a near-miss.
+        // `risky` differs from `risk` by one char and must NOT be swallowed —
+        // it falls through to flag parsing (returns None), so a stray token
+        // never silently exits yoyo.
+        let args = vec!["yoyo".into(), "risky".into()];
+        let result = try_dispatch_subcommand(&args);
+        assert!(
+            result.is_none(),
+            "expected None for near-miss `risky` (must not be swallowed by the risk arm)"
         );
     }
 

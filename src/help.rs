@@ -279,6 +279,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  risk              Show file risk scores (e.g. yoyo risk, yoyo risk predict)"
+    );
+    let _ = writeln!(
+        s,
         "  grep              Search files for a pattern (e.g. yoyo grep TODO src/)"
     );
     let _ = writeln!(
@@ -1587,6 +1591,7 @@ mod tests {
             "commit",
             "review",
             "blame",
+            "risk",
             "grep",
             "find",
             "index",
