@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current state of the relevant files, then write tests first per the evolve skill rules.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -30 src/prompt_utils.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)" src/prompt_u…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2160,2185p' src/commands… ✓ (3ms)
+ ✓ (7ms)
+ ✓ (4ms)
+  3 tools completed in 1.3s (3 ✓)
+
+Let me look at the end of the file structure and the test module start to place things correctly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,395p' src/prompt_uti…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_code_blocks\|Co… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.3s (2 ✓)
+
+Good — no existing symbols. Now let me add the function before the test module (#[cfg(test)] at line 377) and the tests inside the test module.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_utils.rs (6 → 78 lines)
+            AgentMessage::Extension(ext) => ("ext", truncate_with_ellipsis(&ext.role, 60)),
+  +     }
+  + }
+  + 
+  + /// A fenced code block extracted from markdown / model output.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + // Wired ahead of its callers: the benchmark adapter (task 01) and apply-patch
+  + // will pull code out of model responses via this helper. Tests below exercise it.
+  + #[allow(dead_code)]
+  + pub(crate) struct CodeBlock {
+  +     /// The info-string language tag after the opening fence (e.g. "rust",
+  +     /// "python"), lowercased and trimmed; empty string if none was given.
+  +     pub lang: String,
+  +     /// The block body (everything between the opening and closing fence),
+  +     /// with the trailing newline before the closing fence stripped.
+  +     pub body: String,
+  + }
+  + 
+  + /// Extract all triple-backtick fenced code blocks from `text`, in order.
+  + ///
+  ... (58 more lines)
+ ✓ (1m 34s)
+            AgentMessage::Extension(ext) => ("ext", truncate_with_ellipsis(&ext.role, 60)),
+  +     }
+  + }
+  + 
+  + /// A fenced code block extracted from markdown / model output.
+  + #[derive(Debug, Clone, PartialEq, Eq)]
+  + // Wired ahead of its callers: the benchmark adapter (task 01) and apply-patch
+  + // will pull code out of model responses via this helper. Tests below exercise it.
+  ... (13 more lines)
+
+Now add the 7 test cases at the end of the test module. Let me insert before the final closing brace.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_utils.rs (8 → 73 lines)
+            let result = highlight_matches(text, "café");
+            assert!(result.contains("café"));
+            assert!(result.contains("résumé"));
+  +     }
+  + 
+  +     // --- extract_code_blocks -------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_extract_code_blocks_with_lang() {
+  +         let text = "before\n```rust\nfn main() {}\n```\nafter";
+  +         let blocks = extract_code_blocks(text);
+  +         assert_eq!(blocks.len(), 1);
+  +         assert_eq!(blocks[0].lang, "rust");
+  +         assert_eq!(blocks[0].body, "fn main() {}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_extract_code_blocks_without_lang() {
+  +         let text = "```\nplain code\n```";
+  +         let blocks = extract_code_blocks(text);
+  ... (50 more lines)
+ ✓ (1m 34s)
+            let result = highlight_matches(text, "café");
+            assert!(result.contains("café"));
+            assert!(result.contains("résumé"));
+  +     }
+  + 
+  +     // --- extract_code_blocks -------------------------------------------------
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Now update CLAUDE.md's prompt_utils.rs bullet.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview (extracted from `prompt.rs`)
+  + - `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview, fenced code block extraction (`extract_code_blocks` — line-based, multi-byte-safe, triple-backtick only) (extracted from `prompt.rs`)
+ ✓ (1m 16s)
+  - - `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview (extracted from `prompt.rs`)
+  + - `prompt_utils.rs` — message search, highlighting, summarization, output file writing, tool result preview, fenced code block extraction (`extract_code_blocks` — line-based, multi-byte-safe, triple-backtick only) (extracted from `prompt.rs`)
+
+Now run all checks.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.4s)
+
+Clippy clean — no dead-code fired (tests reference the fn, so it's "used"). Now build and test.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (285ms)
+
+All 7 tests pass. Let me run the full test suite to confirm nothing broke.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (59.1s)
+
+Full suite green. Finishing checklist:
+
+• [x] tests written FIRST, all 7 cases present (incl. negative inline-backtick + multi-byte)
+• [x] NO byte-indexing to find fences — line-based only (text.lines(), `trim_start().starts_with(""))
+• [x] doc comment names limitations (triple-backtick only, no ~~~/nesting)
+• [x] CLAUDE.md bullet updated
+• [x] clippy clean (dead-code didn't fire — tests reference it; #[allow(dead_code)] left as honest receipt for wired-ahead-of-use)
+• [x] cargo build && cargo test green
+
+Commit.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Committed. 
+
+What I built: a pure, line-based `extract_code_blocks(text) -> Vec<CodeBlock> helper in src/prompt_utils.rs`. It scans line by line — never byte-indexing into the string to find fences — which is the whole point: the ad-hoc code_block_start + 8 math in commands_file.rs is exactly the kind of one-off byte slicing that panics on multi-byte content. The line-based scan can't.
+
+**The discipline I held:**
+• Tests first, all 7 cases including the two that catch the failure modes my own archive warned about — the negative case (inline single-backticks must not register as a fence — Day 122, test the side that stays silent) and the multi-byte case (`✓ 日本語 🐙` inside a block — Day 250 byte-boundary crash, the regression guard that justifies going line-based at all).
+• One hand only: added the helper + tests, left a // TODO pointing at the commands_file.rs caller but changed no other file's logic. The refactor of the existing byte-math is a separate follow-up.
+• The #[allow(dead_code)] is honest — an explicit receipt for "wired ahead of its callers," not a facade, since the tests exercise it. Clippy stayed clean either way.
+
+Build, clippy (-D warnings), and all 88 tests green.
+
+  watch: no files changed this turn — skipping
+

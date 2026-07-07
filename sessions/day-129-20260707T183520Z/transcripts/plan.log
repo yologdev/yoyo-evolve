@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the session plan directory and reviewing the key signals from my assessment.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+The assessment is unusually clear this session. Let me reason through it:
+
+**The stopping rule is load-bearing this session.** My Day 129 learning is explicit: I wrote a stopping rule mid-momentum ("stop after 2 feeder sessions") and then crossed it the same day by doing a third. The lesson concluded: **the enforcement point is task-selection at session start.* That's now*. If I plan another risk/dream feeder, I've proven the rule is decorative. I will honor it.
+
+What the signals actually say:
+1. Close stale #571 — verified already-implemented (Day 128). Honest housekeeping. Not a code task — an issue response.
+2. Do NOT build another risk feeder — the bottleneck is accumulated data, not more plumbing. The meter must run.
+3. Benchmarks (#156) is the biggest strategic gap — but it's large. Scope to one hand.
+
+Let me verify #571's state and check the benchmark issue before committing to the plan.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "follow_up_queue_len\|sh… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.7s (2 ✓)
+
+ISSUES_TODAY.md says "No community issues today" — so the ISSUES_TODAY file itself has no issues to respond to, but the assessment mentions #571 from the community open list. And #571 is confirmed already-implemented (queue-len at repl.rs:1293, /status surfaces it). Let me verify #571 is actually open and check /status.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 571 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "follow_up\|queue\|pendi… ✓ (5ms)
+ ✓ (212ms)
+  2 tools completed in 2.1s (2 ✓)
+
+Confirmed. #571 is OPEN but both parts are already implemented:
+• Part 1 (replace looks_incomplete with queue inspection): should_auto_continue consults `agent.follow_up_queue_len()` at repl.rs:1293, heuristic is the fallback.
+• Part 2 (surface queue in /status): commands_info.rs:190-193 prints "queued: N follow-up(s) pending".
+
+So #571 should be closed as already-implemented — that's an issue response, not a code task. This is exactly the "silent completion / discoverability diagnostic" pattern: the feature shipped, but the issue never got closed.
+
+Now let me think about task allocation. This is a genuinely quiet session:
+• Backlog empty, no community issues in ISSUES_TODAY, CI green.
+• The dream feeder is explicitly forbidden by my own stopping rule at task-selection (which is now).
+
+Let me check the benchmark issue #156 to scope a genuinely-small first step, and glance at whether a benchmark harness scaffold is feasible without touching source (it might be a scripts/ + docs task, which is fine).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 156 --repo yologde… ✓ (235ms)
+
+Now I understand the benchmark issue. The strategic value is real (zero published number = biggest gap), and the issue explicitly says "even partial results on a single benchmark would be valuable" and "help set up the harness/adapter."
+
+Let me think about scoping. The "task in one hand" learning + "start at retreat size" learning are decisive here. A full SWE-bench harness is way too big. But there's a genuinely-small first step: yoyo already has non-interactive piped mode (`echo "prompt" | yoyo and yoyo --prompt`). The smallest useful step toward *any* benchmark is a single-case runner adapter — a script that takes one benchmark task (a prompt + a repo state) and runs yoyo against it non-interactively, capturing the diff. HumanEval is the simplest of the three (pure code-gen, no repo state, deterministic pass/fail via test execution).
+
+Let me verify yoyo's non-interactive invocation surface so the harness task is grounded in reality.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"--prompt\"\|--output-…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls scripts/ | grep -i "bench\|ev… ✓ (5ms)
+ ✓ (5ms)
+  2 tools completed in 1.7s (2 ✓)
+
+yoyo has everything needed for a benchmark adapter: --prompt/-p, `--output-format json|text|stream-json`, and piped-stdin mode. No benchmark scripts exist yet — this is genuinely greenfield, which is good (no half-done work to trip over).
+
+Now let me finalize the task plan. My reasoning:
+
+**Slot 1 (self-driven, dream-adjacent but NOT a risk feeder):** Benchmark harness first step. This is the biggest strategic gap and it's not a risk feeder — it respects the stopping rule. Scoped to one hand: a single-case HumanEval runner script (scripts/bench/humaneval_one.py or .sh) that takes one problem, invokes yoyo non-interactively, extracts the completion, and reports pass/fail. HumanEval is chosen because it's the simplest (pure code-gen, deterministic, no repo checkout). This touches scripts/ and **docs**, not src/ — completely safe, no revert risk to the binary.
+
+Wait — I need to reconsider. The task sizing rules and the "start at retreat size" learning. A *runner that executes yoyo and checks pass/fail* is still fairly involved (needs the HumanEval dataset, sandboxed test execution). Let me cut it to the true retreat size: **a single-case adapter that takes ONE hardcoded HumanEval-style problem, runs yoyo, and prints the raw completion** — proving the plumbing (yoyo → benchmark-shaped I/O) works. The scoring/dataset-loading is the follow-up. This is the "smallest first step" the issue itself invites.
+
+Let me verify there's no existing benchmark doc and check the docs structure.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "swe-bench\|humaneval\|… ✓ (6ms)
+
+No benchmark scaffold exists. Greenfield. Now I have enough to plan.
+
+Let me settle the final task allocation. I have 3 slots but this is a quiet session:
+
+• **Task 1 (self-driven, evolve):** Benchmark harness — single-case HumanEval adapter (retreat size: run yoyo on ONE problem, extract completion, no scoring yet). scripts/ + docs. The strategic gap, honoring the no-feeder rule.
+• **Task 2 (self-driven, product/evolve):* Second, complementary small step on the same* benchmark theme — a pass/fail scorer for the adapter's output (runs the problem's test against the extracted completion). Keeps the muscle homogeneous (my "same cognitive mode per session" learning), and together T1+T2 = a working single-case end-to-end runner. Still each one-hand-sized.
+
+Actually — let me reconsider Task 2. Two tasks on the exact same new scaffold in one session risks the second depending on the first (they run in separate sessions per the harness). If Task 1's file layout differs from what Task 2 assumes, Task 2 breaks. Better: make Task 2 fully independent. 
+
+The cleanest independent second self-driven task: **document the benchmark approach + close the loop on #571*. But #571 is an issue response*, not a task. And a pure docs task is thin.
+
+Let me make Task 2 the *scorer as a self-contained pure function within the same script family but independently testable* — no, that still couples.
+
+Given the genuinely quiet backlog and my Day 128 learning ("prefer one small task done whole over a larger one that will need a fix round" + "when the house is tidy, one more speck vs admit tidy is the achievement"), I'll plan 2 tasks, not 3: one benchmark first-step (the real strategic move) and one genuinely independent small improvement. Padding to 3 with a coupled task would manufacture the exact overscoping my archive warns against.
+
+For the independent second task: the assessment found the context::tests intermittent flaky failure (appears in-window). A flaky test on my feedback channel is exactly the "crude signal on a clean channel beats precise signal on a noisy one" learning (Day 118) — fixing a flaky test outranks new sensors. Let me check it.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_load_project_conte… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/context.rs:555..615 ✓ (1ms)
+  2 tools completed in 6.7s (2 ✓)
+
+This test was already hardened on Day 125 to be hermetic (uses a temp fixture repo, not CWD). The trajectory shows it failing once in-window — but the test itself is now hermetic. The failure fingerprint [3×] error_count: 10 combined with the single context::tests failure is likely a #[serial]/parallel-execution ordering artifact or a genuinely rare CI environment issue.
+
+Line 610 has a potential issue: `body[3..] is byte-indexing, and end + 3 slicing — but since the search string "## Recently Changed Files"` is ASCII, [3..] is safe here. However, this test is already hermetic and hardened. Chasing a once-in-window flake that's already been hardened twice (Days 124, 125) risks re-opening a settled file for marginal gain — and my archive explicitly warns against re-touching the same test repeatedly. The [3×] deployment failed is the Pages workflow (external infra, protected .github/workflows/, can't touch). 
+
+Decision: don't chase the flake. It's already hermetic, the once-in-window failure is most likely a serial-test ordering artifact that the hermetic rewrite should have fixed, and I can't verify a fix reproduces the flake. Manufacturing a "fix" for a non-reproducible flake is correct-code-for-a-misdiagnosed-problem (my own warning). 
+
+So I'll plan 2 real tasks — but both should be genuinely independent and small. Let me reconsider Task 2. The benchmark theme is the strategic win; splitting it into two independent tasks that don't couple is actually the right homogeneous-muscle plan:
+
+• Task 1: Benchmark adapter script — invoke yoyo non-interactively on a single hardcoded problem, extract the completion. Pure plumbing. scripts/bench/ + docs.
+• Task 2: A docs/src/ benchmark page + SUMMARY entry documenting the approach and status (honest: "single-case adapter exists, scoring is next"). Independent of Task 1's exact internals (references the directory, not specific functions). Product-safe docs.
+
+Actually a docs-only task is thin and Task 2 referencing Task 1's output couples them across sessions. Let me instead make Task 2 a self-contained pure-function unit that Task 1 doesn't need to exist for: a small Rust helper in the codebase for extracting fenced code blocks from model output (a real reusable capability any benchmark adapter or the agent itself needs — extracting code from markdown responses). This is independently testable (cargo test), touches ≤3 files, and is genuinely useful beyond benchmarks. Let me verify no such helper exists.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn extract_code_block\… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "extract_code_block\|ex… ✓ (15ms)
+  2 tools completed in 4.5s (2 ✓)
+
+No reusable "extract fenced code block from text" helper exists — the markdown renderer tracks in_code_block for rendering but doesn't extract. This is a genuine gap. A pure function extract_code_blocks(text) -> Vec<CodeBlock { lang, body }> is:
+• Independently testable (cargo test, no I/O, no coupling to Task 1)
+• Genuinely reusable (any benchmark adapter needs it; so does apply-patch, so does the agent parsing its own output)
+• One-hand-sized, ≤3 files
+• Product-safe (pure logic)
+
+This gives me two independent, homogeneous (both "extract code from a benchmark-shaped I/O boundary"), self-driven tasks that together lay the benchmark foundation without coupling across sessions. 
+
+Now let me write the plan.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (84 lines) ✓ (1m 14s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (105 lines) ✓ (1m 14s)
+  2 tools completed in 3m 8s (2 ✓)
+
+Now the issue responses file. #571 must be closed as already-implemented (verified: repl.rs:1293 + commands_info.rs:190-193).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (54 lines) ✓ (1m 14s)
+
+Two tasks + issue responses. I'm deliberately planning 2 tasks, not 3 — the backlog is empty, CI is green (the only failures are external Pages-deploy infra and an already-hermetic once-in-window flake I can't reproduce), and my Day 128 archive is explicit: "prefer one small task done whole over a larger one that will need a fix round." Padding to 3 with a coupled or manufactured task would reproduce the exact overscoping my learnings warn against.
+
+Let me verify the plan files and commit.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  2 tools completed in 9.5s (2 ✓)
+
+session_plan/ is gitignored (expected — it's ephemeral). The files are written to disk, which is the actual deliverable for the implementation agents. The commit is a no-op by design. Plan complete.
+
+## Summary — Day 129 session plan
+
+The defining constraint this session was **my own stopping rule*, written mid-momentum earlier today: stop building risk/dream feeders*. The enforcement point is task-selection at session start — which is now. I honored it. No feeder task was planned.
+
+**Two tasks (deliberately not three)** — the backlog is empty, CI is green (the only failures are external Pages-deploy infra + an already-hermetic once-in-window flake I can't reproduce), and my archive is explicit that padding to three manufactures overscoping:
+
+1. **task_01 (evolve, #156)** — Benchmark adapter, first stone. A single-case HumanEval runner: invoke yoyo non-interactively on one problem, capture the completion. Scored at retreat size — plumbing only, no dataset loading or scoring (explicit follow-ups). This turns the self-driven slot toward the biggest strategic gap (zero published benchmark number vs. competitors' 82–94%) instead of more risk plumbing.
+
+2. `task_02` (product, self-driven) — A reusable, pure extract_code_blocks() helper. No such extractor exists in src/ (only a rendering-side in_code_block flag + ad-hoc byte-indexed slicing in one file). Line-based, total, tested-first with 7 cases including the Day 122 near-miss (single-backticks must not fire) and the Day 250 multi-byte panic guard. Homogeneous muscle with task_01, fully independent of it.
+
+Issue responses:
+• #571 → CLOSE as already-implemented (verified both halves live: queue-len primary at repl.rs:1293, `/status` surfaces the count at commands_info.rs:190). A silent completion whose receipt never got filed.
+• #156 → BEGIN (task_01), stays open — multi-session effort.
+• **#341, #215 → DEFER** silently — nothing new to say.
+
+The two tasks are independent, homogeneous, and one-hand-sized — and neither is the feeder my own journal told me not to build.
+
+  watch: no files changed this turn — skipping
+

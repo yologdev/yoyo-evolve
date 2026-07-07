@@ -1,0 +1,93 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll implement this benchmark adapter task. Let me start by understanding the current CLI invocation patterns to make sure the script invokes yoyo correctly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output-format\|--prompt…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat docs/src/SUMMARY.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls scripts/bench/ 2>/dev/null; e… ✓ (3ms)
+ ✓ (7ms)
+ ✓ (6ms)
+  3 tools completed in 1.1s (3 ✓)
+
+Let me check how the piped/prompt mode works to invoke correctly, and look at an existing script for style.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output-format\|output_f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -40 scripts/evolve-local.sh ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Good. Now I understand the invocation. Let me create the benchmark script.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (104 lines) ✓ (1m 12s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && chmod +x scripts/bench/humaneval… ✓ (4ms)
+  2 tools completed in 1m 16s (2 ✓)
+
+Now the docs page:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (56 lines) ✓ (1m 15s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/SUMMARY.md (3 → 4 lines)
+    # Contributing
+    
+    - [Mutation Testing](./contributing/mutation-testing.md)
+  + - [Benchmarks](./contributing/benchmarks.md)
+ ✓ (1m 14s)
+    # Contributing
+    
+    - [Mutation Testing](./contributing/mutation-testing.md)
+  + - [Benchmarks](./contributing/benchmarks.md)
+  2 tools completed in 2m 34s (2 ✓)
+
+Now let me verify. Let me check if there's an API key available for a real run, and run the build/test checks.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/bench/humaneval_… ✓ (4ms)
+
+API key present. Let me verify the clean-exit path first (no API key), then run the build checks in parallel. I'll test the no-key path without burning tokens.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && env -u ANTHROPIC_API_KEY bash sc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (5ms)
+ ✓ (151ms)
+  2 tools completed in 6.2s (2 ✓)
+
+The no-key path exits cleanly with code 1 and a clear message. Now let me run tests and do a real single run since the API key is present.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (47.7s)
+
+Tests pass. Now a real single run to confirm the adapter works end to end. I'll reuse the debug binary via YOYO_BIN to avoid a long release build.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && YOYO_BIN=./target/debug/yoyo tim… ✓ (4.2s)
+  2 tools completed in 8.1s (2 ✓)
+
+The adapter works end to end — yoyo produced a correct completion for HumanEval/0, delimited cleanly. Now let me verify I didn't accidentally leave scratch files and run the finishing checklist.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "fm… ✓ (894ms)
+
+Clean — only the intended files. Let me run the finishing checklist verification:
+
+• ✅ script exists, executable, passes bash -n
+• ✅ docs page created and linked in SUMMARY.md
+• ✅ honest status (no benchmark number claimed)
+• ✅ closing comment names the scoring follow-up
+• ✅ cargo build && cargo test green
+
+Let me confirm executability and the closing follow-up comment are in place, then commit.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && test -x scripts/bench/humaneval_… ✓ (4ms)
+
+All checklist items pass. Committing.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Committed. Task done.
+
+## Summary
+
+Built the retreat-size benchmark adapter (issue #156) — yoyo's first step toward a published capability number.
+
+What shipped:
+• scripts/bench/humaneval_one.sh (new, executable, mode 100755) — feeds ONE hardcoded HumanEval/0 problem (has_close_elements) into yoyo non-interactively via the existing --prompt/--output-format text path, prints the raw completion between === yoyo completion === / `=== end === delimiters. Reads ANTHROPIC_API_KEY` from env (exits code 1 with a clear message if unset — no hang), supports optional YOYO_BIN to reuse a prebuilt binary, set -euo pipefail, quoted expansions, mktemp scratch dir with cleanup trap, resolves repo root from script location.
+• docs/src/contributing/benchmarks.md (new) — goal + ref to #156, what exists now, how to run, and an honest status checklist (✅ run+capture / ⬜ scoring / ⬜ dataset / ⬜ SWE-bench). No benchmark number claimed.
+• `docs/src/SUMMARY.md` — linked the page under Contributing (a page not in SUMMARY is invisible).
+
+**Verified end to end:** with the API key present I ran it against the debug binary — yoyo produced a correct has_close_elements implementation. Also confirmed the no-key path exits cleanly with code 1. `cargo build && cargo test (88 passed), cargo fmt --check, and bash -n` all green. No scratch files or captured output committed.
+
+Held the line on scope (per the Day 129 stopping rule and "the version that ships is the shrunk retry"): plumbing only — benchmark-shaped prompt IN, completion OUT. Scoring/dataset-loading/pass@1 is the explicit named follow-up in both the doc and a closing script comment, not smuggled in early. This deliberately turned the self-driven slot away from another risk feeder (forbidden by the fresh stopping rule) toward the actual biggest strategic gap: yoyo's missing benchmark number.
+
+  watch: no files changed this turn — skipping
+
