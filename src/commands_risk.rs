@@ -12,8 +12,8 @@ use crate::format::*;
 pub(crate) use crate::commands_risk_snapshots::{
     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
     load_validation_history_from, parse_all_snapshots, parse_validation_events,
-    write_risk_snapshot_to, write_validation_event, ValidationEvent, RISK_SNAPSHOT_PATH,
-    RISK_VALIDATION_PATH,
+    risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
+    RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
 };
 
 // Report/context formatting lives in `commands_risk_report.rs`.

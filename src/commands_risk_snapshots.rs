@@ -12,6 +12,19 @@ use crate::format::{DIM, RESET};
 /// Default path for risk snapshot JSONL file.
 pub(crate) const RISK_SNAPSHOT_PATH: &str = ".yoyo/risk_snapshots.jsonl";
 
+/// Pure predicate: is opt-in risk auto-snapshot enabled given this env value?
+/// Accepts "1"/"true"/"yes"; anything else (including None) is off.
+fn risk_autosnapshot_enabled_for(val: Option<&str>) -> bool {
+    matches!(val, Some("1") | Some("true") | Some("yes"))
+}
+
+/// Returns true if opt-in risk auto-snapshot on REPL exit is enabled.
+/// Off by default (product-safe). Enabled by `YOYO_RISK_AUTOSNAPSHOT=1`
+/// (also accepts "true"/"yes").
+pub(crate) fn risk_autosnapshot_enabled() -> bool {
+    risk_autosnapshot_enabled_for(std::env::var("YOYO_RISK_AUTOSNAPSHOT").ok().as_deref())
+}
+
 /// Build the JSON string for a risk snapshot entry.
 ///
 /// Takes already-sorted risk scores, day number, and git hash.
@@ -398,6 +411,25 @@ pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_risk_autosnapshot_enabled_for_truthy() {
+        assert!(risk_autosnapshot_enabled_for(Some("1")));
+        assert!(risk_autosnapshot_enabled_for(Some("true")));
+        assert!(risk_autosnapshot_enabled_for(Some("yes")));
+    }
+
+    #[test]
+    fn test_risk_autosnapshot_enabled_for_falsy() {
+        assert!(!risk_autosnapshot_enabled_for(None));
+        assert!(!risk_autosnapshot_enabled_for(Some("0")));
+        assert!(!risk_autosnapshot_enabled_for(Some("off")));
+        assert!(!risk_autosnapshot_enabled_for(Some("")));
+        assert!(!risk_autosnapshot_enabled_for(Some("junk")));
+        // case-sensitive: only exact lowercase tokens count
+        assert!(!risk_autosnapshot_enabled_for(Some("TRUE")));
+        assert!(!risk_autosnapshot_enabled_for(Some("Yes")));
+    }
 
     #[test]
     fn test_last_snapshot_git_hash_basic() {

@@ -1374,6 +1374,13 @@ pub async fn run_repl(
     // Auto-save session on exit (always — crash recovery for everyone)
     commands::auto_save_on_exit(agent);
 
+    // Opt-in: snapshot risk predictions on exit so the meter accumulates
+    // during any session where enabled (off by default — product-safe).
+    // Dedups by git hash → at most one snapshot per HEAD.
+    if crate::commands_risk::risk_autosnapshot_enabled() {
+        crate::commands_risk::auto_risk_snapshot();
+    }
+
     // Show session summary (files, tokens, cost, duration)
     if let Some(summary) = commands::format_exit_summary(
         &session_changes,
