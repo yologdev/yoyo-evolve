@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by understanding the current state of build_sub_agent_tool in src/tools.rs.
+  ▶ search 'build_sub_agent_tool' in src/tools.rs  ▶ search 'SubAgentTool|with_shared_state|with_description|SharedState' in src/tools.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ read src/tools.rs:1055..1205 ✓ (2ms)
+  3 tools completed in 8.8s (3 ✓)
+
+Now let me check the `SubAgentTool` API in yoagent to understand what methods are available (particularly whether I can read child tools or add tools).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ find ~/.cargo/registry/src/ -name "sub_agent.rs" -path "*yoagent*" 2>/dev/null |… ✓ (64ms)
+  ▶ $ cat ~/.cargo/registry/src/*/yoagent-0.9.0/src/sub_agent.rs | head -120 ✓ (4ms)
+  2 tools completed in 7.4s (2 ✓)
+
+`SubAgentTool implements AgentTool, so I can push Arc::new(nested_tool) into child_tools`. Now let me look at the existing tests for SharedState and the imports at the top of the file.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1..41 ✓ (0ms)
+
+Now I have enough understanding. Let me implement the change. I'll refactor build_sub_agent_tool to delegate to a depth-aware constructor, add a pure helper for testing tool names, and wire the nested tool sharing the same store.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (49 → 111 lines)
+  + /// Hard cap on sub-agent nesting depth. `depth 0` = the top-level parent's
+  + /// direct child; each nested `sub_agent` tool increments the depth by one.
+  + /// Matches the depth-3 cap documented in CLAUDE.md's RLM substrate section.
+  + /// The tool tree is finite by construction: the leaf level
+  + /// (`depth == MAX_SUB_AGENT_DEPTH - 1`) omits the nested `sub_agent` tool, so
+  + /// recursion cannot continue past the cap.
+  + const MAX_SUB_AGENT_DEPTH: usize = 3;
+  + 
+    pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, SharedState) {
+        let shared_state = SharedState::new();
+  +     let tool = build_sub_agent_tool_at_depth(config, 0, &shared_state);
+  +     (tool, shared_state)
+  + }
+    
+  + /// Build a `sub_agent` tool at a given nesting `depth`, all levels sharing the
+  + /// single `shared_state` store passed in (RLM substrate invariant: every
+  + /// sub-agent reads/writes the same key-value store). When
+  + /// `depth + 1 < MAX_SUB_AGENT_DEPTH`, the child gets its own `sub_agent` tool
+  + /// (built at `depth + 1`) so it can delegate further; at the leaf level the
+  + /// nested tool is omitted, guaranteeing termination.
+  ... (86 more lines)
+ ✓ (18.1s)
+  + /// Hard cap on sub-agent nesting depth. `depth 0` = the top-level parent's
+  + /// direct child; each nested `sub_agent` tool increments the depth by one.
+  + /// Matches the depth-3 cap documented in CLAUDE.md's RLM substrate section.
+  + /// The tool tree is finite by construction: the leaf level
+  + /// (`depth == MAX_SUB_AGENT_DEPTH - 1`) omits the nested `sub_agent` tool, so
+  + /// recursion cannot continue past the cap.
+  + const MAX_SUB_AGENT_DEPTH: usize = 3;
+  + 
+  ... (13 more lines)
+
+The helper is unused until I add tests. Let me add the tests now.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (6 → 2 lines)
+        #[test]
+        fn test_build_sub_agent_tool_returns_correct_name() {
+  -         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  -         let (tool, _state) = build_sub_agent_tool(&config);
+  -         assert_eq!(tool.name(), "sub_agent");
+  -     }
+ ✓ (797ms)
+        #[test]
+        fn test_build_sub_agent_tool_returns_correct_name() {
+  -         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  -         let (tool, _state) = build_sub_agent_tool(&config);
+  -         assert_eq!(tool.name(), "sub_agent");
+  -     }
+
+My edit accidentally left a dangling function body. Let me look at the area.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1213..1228 ✓ (0ms)
+
+I see — I removed the wrong thing. Let me restore that test and add the new tests.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (4 → 71 lines)
+        #[test]
+        fn test_build_sub_agent_tool_returns_correct_name() {
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         let (tool, _state) = build_sub_agent_tool(&config);
+  +         assert_eq!(tool.name(), "sub_agent");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_nested_sub_agent_present_below_cap() {
+  +         // At depth 0 (top-level parent's direct child), the child tool set must
+  +         // include a nested "sub_agent" so the sub-agent can delegate further.
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         let names = sub_agent_child_tool_names(&config, 0);
+  +         assert!(
+  +             names.iter().any(|n| n == "sub_agent"),
+  +             "below the cap the child must have a nested sub_agent tool; got {names:?}"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  ... (51 more lines)
+ ✓ (17.9s)
+        #[test]
+        fn test_build_sub_agent_tool_returns_correct_name() {
+  +         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+  +         let (tool, _state) = build_sub_agent_tool(&config);
+  +         assert_eq!(tool.name(), "sub_agent");
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+The next test lost its #[test] attribute (I consumed it in my replacement). Let me check.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/tools.rs:1283..1289 ✓ (1ms)
+  ▶ edit src/tools.rs (2 → 4 lines)
+        }
+  + 
+  +     #[test]
+        fn test_build_sub_agent_tool_has_task_parameter() {
+ ✓ (1m 37s)
+        }
+  + 
+  +     #[test]
+        fn test_build_sub_agent_tool_has_task_parameter() {
+  2 tools completed in 1m 41s (2 ✓)
+
+Now let me verify `description() exists on SubAgentTool and check the name()` method availability, then run the full checks.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn description\|fn name" ~/.cargo/registry/src/*/yoagent-0.9.0/src/sub_…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (16ms)
+
+Good. Now run the full checks.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -20 ✓ (17.6s)
+  ▶ $ cargo test sub_agent 2>&1 | tail -40 ✓ (19.7s)
+  2 tools completed in 41.0s (2 ✓)
+
+All sub_agent tests pass. Let me run the full test suite to confirm nothing else broke.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | tail -20 ✓ (58.9s)
+
+All green. Now update CLAUDE.md's RLM substrate section to reflect that recursion is now wired, not just convention.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "by convention\|Hard depth cap\|depth cap\|sub-agents automatically rece… ✓ (12ms)
+  ▶ read CLAUDE.md:199..205 ✓ (0ms)
+  2 tools completed in 2.2s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

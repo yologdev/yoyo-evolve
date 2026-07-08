@@ -1,0 +1,137 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll plan Day 130's session. Let me start by clearing the old plan and reviewing the key state.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+The assessment is thorough. Let me reason about task selection.
+
+Key facts from the assessment:
+• Build/test green, no bugs, no reverts, house tidy.
+• The dream milestone (measure whether the reflex works) is data-blocked, not code-blocked — #575 needs a human to touch the protected evolve.sh. I cannot close it myself. Every learning since Day 125 warns: building more meter plumbing is progress-shaped procrastination.
+• The **widest architectural gap** = nested/dynamic subagent orchestration (frontier: Claude Code subagents spawn subagents). RLM substrate (build_sub_agent_tool, SharedState) already exists → wire-up work, not greenfield. Tracked in #341.
+• Today already had TWO green evolve sessions (02:36, 10:17), both risk-meter feeder work.
+
+**My Day 129 lesson fires directly here:** "A stopping rule written mid-momentum... the enforcement point is task-selection at session start." Day 129 explicitly warned that after consecutive feeder-build sessions, STOP. Today's two prior sessions were both feeder work. **Task selection now must honor that: no more meter plumbing.**
+
+Day 120 + assessment agree: all-green internally → look outward → the gap that matters is architectural (subagent orchestration).
+
+So the self-driven slot should pursue the subagent orchestration gap (#341), decomposed into a task that fits in one hand (Day 128 lesson: small-enough-to-hold-whole ships clean). Let me size that carefully.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_parallelizable_t… ✓ (5ms)
+
+Let me look at the sub-agent depth/nesting situation to size the orchestration task correctly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1055,1155p' src/tools.rs ✓ (4ms)
+
+Key observation: sub-agents get child_tools that do NOT include `sub_agent` itself — so sub-agents currently cannot spawn sub-agents. That's the concrete nested-orchestration gap. But adding recursion needs a depth cap to avoid runaway (the RLM substrate docs already specify depth cap = 3). This is a real, well-scoped wire-up task. Let me check what yoagent exposes for depth so I don't reinvent.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "depth\|recurs\|nest\|wi… ✓ (6ms)
+  2 tools completed in 5.0s (2 ✓)
+
+yoagent 0.9 supports nesting — sub-agents can contain SubAgentTools. yoyo's `build_sub_agent_tool simply doesn't give the child a sub_agent` tool, so the substrate-documented depth-3 recursion is impossible in practice. The docs claim it works but it doesn't. This is a real gap (and a "surface lies while substance is missing" flavor).
+
+But careful sizing: adding recursion needs a depth cap enforced so it terminates. This is the right self-driven task — closing the widest architectural gap (nested subagents, #341), it's wire-up not greenfield, and it's small enough to hold in one hand. I'll scope it tightly to one level of nesting with an explicit depth cap, retreat-sized per Day 126.
+
+Now let me settle the full plan. Three slots:
+
+1. **Self-driven (dream/architecture):** Enable one level of nested sub-agents with a depth cap — the widest gap, wire-up. This is the honest "look outward" move.
+2. Community/self issues — let me check ISSUES_TODAY for anything scoring high.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && test -f ISSUES_TODAY.md && wc -l… ✓ (4ms)
+
+No community issues. So the remaining slots are self-driven or should stay empty (silence over noise). Let me verify the current substrate more precisely to plan the nested-subagent task accurately, and check how depth could be tracked.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '20,140p' ~/.cargo/regist… ✓ (4ms)
+
+I have enough. The cleanest, self-contained approach: give build_sub_agent_tool an optional depth parameter; when depth < cap, add a nested sub_agent tool to child_tools (built at depth+1); when depth == cap, don't. This is a bounded recursion wire-up in one file (tools.rs), with tests. Genuinely small.
+
+Let me write the tasks. Given today already had 2 sessions and the honest read is "look outward, don't build more meter," I'll plan 2 tasks — the nested-subagent gap (self-driven, high-impact) and a small companion that makes it visible/documented. Actually, per Day 128 (one genuinely-small task done whole beats a larger one needing a fix round) and the fact that nested recursion is subtle, I'll make the nested-subagent task the centerpiece and add one small, safe documentation/visibility task. I'll leave the third slot empty rather than manufacture feeder work.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (126 lines) ✓ (1m 16s)
+
+Now the second task. Since the nesting is the centerpiece, a good small companion is making the depth cap observable/enforced honestly — but that risks being coupled to task 1. Better: an independent, genuinely-small task that closes a real "surface lies" item from the assessment. The assessment noted #571 core is done via `follow_up_queue_len()` but "only marginal richer-inspection remains." That's marginal noise — skip.
+
+Let me pick something that stands alone and is truly small: update the sub_agent tool **description** to tell the model recursion is now available and bounded (a product/discoverability improvement) — but that's coupled to task 1 landing first. Risky sequencing.
+
+The honest read: I have ONE strong architectural task. Per Day 128 (one small task done whole beats a larger one needing a fix round) and my repeated wisdom that manufacturing filler is avoidance, I'll add just one more truly independent, small, safe task and leave the third slot empty. Let me find one real independent improvement.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_parallelizable_t… ✓ (4ms)
+
+I'll make task 2 the sub-agent description update — but decouple it from task 1's landing by scoping it to describe the substrate generally, testable on its own via a description-content assertion. Actually the cleanest independent second task: since task 1 wires nesting, the description telling the model "you may recurse up to N levels" belongs WITH task 1. Bundling would make task 1 touch its own file only (tools.rs) — no new file. Let me fold the description into task 1 and instead make task 2 a genuinely separate, standalone item.
+
+Let me reconsider — the description edit is in the same file (tools.rs) and directly serves nesting. I'll fold it into task 1 (still ≤3 files, still one file). That leaves me needing a truly independent second task or just one task.
+
+Given the strong self-wisdom against filler and today's two prior sessions, **one well-scoped architectural task done whole is the honest plan.** I'll fold the description into task 1 and stop at one task. Let me update task 1.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (1 → 11 lines)
+  + ### Also update the sub_agent tool description (same file, tells the model it can recurse)
+  + 
+  + In the `.with_description(...)` string on `SubAgentTool` (currently starts
+  + "Delegate a subtask to a fresh sub-agent..."), add ONE sentence noting the
+  + sub-agent itself has a `sub_agent` tool and may delegate further, bounded to a
+  + hard nesting cap (so the model knows recursion is available and finite). Keep it
+  + terse. This is the discoverability half — the capability is useless if the model
+  + doesn't know it exists. (Optional light test: assert the description string
+  + mentions nesting/recursion, so the doc-code link has a receipt.)
+  + 
+    ### Docs to update
+ ✓ (1m 14s)
+  + ### Also update the sub_agent tool description (same file, tells the model it can recurse)
+  + 
+  + In the `.with_description(...)` string on `SubAgentTool` (currently starts
+  + "Delegate a subtask to a fresh sub-agent..."), add ONE sentence noting the
+  + sub-agent itself has a `sub_agent` tool and may delegate further, bounded to a
+  + hard nesting cap (so the model knows recursion is available and finite). Keep it
+  + terse. This is the discoverability half — the capability is useless if the model
+  + doesn't know it exists. (Optional light test: assert the description string
+  ... (3 more lines)
+
+Now, should I add a second task? Let me honestly weigh it. The assessment found no bugs, no community issues, dream is data-blocked. My wisdom repeatedly warns that manufacturing a second/third task when the house is tidy is avoidance-shaped. But one well-scoped architecture task alone is a legitimate single-focus session.
+
+However — a single-task plan wastes 2 available slots when there IS a real, independent, safe improvement available. Let me find ONE that's genuinely independent and small: the #571 marginal work (richer follow-up inspection) is noise. Better candidate — the assessment mentions the risk-validation half has never recorded a point and #575 is human-blocked. I've already filed it. Nothing new to add there.
+
+Let me check if there's a real standalone improvement in the fan-out area that complements nesting without coupling.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1600,1660p' src/commands… ✓ (4ms)
+
+The parallel_suggestion output tells the user to run /spawn --parallel {joined} — let me verify that flag actually exists, since suggesting a non-existent flag would be a "command that silently never works" bug (Days 65-67 wisdom).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"--parallel"\|--paralle… ✓ (6ms)
+
+`--parallel` exists and works — the suggestion is honest, no bug. The fan-out area is already coherent (yesterday's work). No standalone bug to fix there.
+
+I've done due diligence. There is exactly one high-value, well-scoped task (nested subagents — the widest architectural gap), no community issues, no bugs, and the dream is human-blocked (#575 already filed). Manufacturing tasks 2 and 3 would be the exact avoidance my own wisdom warns against (Day 128: one small task done whole > larger with fix rounds; Day 129: stop the feeder momentum). 
+
+One focused task is the honest plan. Let me write the issue responses file and commit.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (43 lines) ✓ (1m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ && echo "---" &… ✓ (5ms)
+  2 tools completed in 1m 22s (2 ✓)
+
+`session_plan/` is gitignored (ephemeral by design). The files exist on disk for the implementation agents, which is what matters. Let me confirm with the || true intent from the instructions.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (11ms)
+
+Committed. Plan complete.
+
+## Day 130 plan — summary
+
+One focused task (deliberately not three).
+
+**Task 01 — Enable one level of nested sub-agents with a hard depth cap** (Kind: evolve, src/tools.rs, #341)
+
+This closes the widest architectural gap the assessment found. yoyo's docs (CLAUDE.md, analyze-trajectory skill) claim sub-agents can recurse to a depth-3 cap — but build_sub_agent_tool never gives the child a sub_agent tool, so the documented recursion is a surface lie: physically impossible. yoagent 0.9 already supports nesting, so this is wire-up, not greenfield. Scoped tightly (one file, retreat-sized): a depth-aware constructor, `MAX_SUB_AGENT_DEPTH = 3`, paired cap tests (present below cap / absent exactly at cap — Day 122 discriminator discipline), an explicit overscope retreat if shared-state reuse fights the borrow checker, plus the tool-description update so the model knows recursion exists.
+
+Why only one task: No community issues today, no bugs found, house tidy, and the dream milestone is data-blocked on a human (#575 — the risk-meter feed lives in the do-not-modify evolve.sh; paste-diff + contract test already provided, nothing more I can do). My own wisdom fired at task-selection time — the exact enforcement point Day 129 said a stopping rule needs:
+• Day 129: stop the risk-meter feeder momentum at session start (today already had two feeder sessions).
+• Day 128: one small task done whole beats a larger one needing a fix round.
+• **Day 120 / assessment:* all-green internally → look outward*; the gap that matters is architectural (nested subagent orchestration).
+
+Manufacturing tasks 2 and 3 to fill slots would be the progress-shaped procrastination my archive warns about. Silence > noise.
+
+Issue responses drafted: #575 (defer to human), #571 (core done), #156 (defer), #341 (acting on it, note after work lands), #215 (defer).
+
+  watch: no files changed this turn — skipping
+
