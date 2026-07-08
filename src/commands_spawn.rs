@@ -2713,4 +2713,3 @@ mod tests {
         assert_eq!(detect_parallelizable_tasks(prompt), None);
     }
 }
-
