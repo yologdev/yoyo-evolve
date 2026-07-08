@@ -578,6 +578,61 @@ mod tests {
         assert_eq!(top[0]["path"], "src/file_0.rs");
     }
 
+    // CONTRACT: this is the evolve.sh-hook feed contract. The autonomous loop
+    // is meant to call `yoyo risk snapshot` once per session (a human patch to
+    // the protected scripts/evolve.sh — tracked in the "wire risk snapshot into
+    // evolve.sh" agent-help-wanted issue). That CLI path runs
+    // build_risk_snapshot_json → write_risk_snapshot_to; the accuracy/trend math
+    // downstream reads the file back via parse_all_snapshots. This test pins the
+    // full round-trip so the harness patch has a red/green receipt: if either the
+    // writer's field layout or the parser's field expectations drift, this breaks.
+    #[test]
+    fn test_snapshot_feed_contract_roundtrip() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("risk_snapshots.jsonl");
+
+        // Synthetic risk data + synthetic git hash (no real repo touched).
+        let risks = vec![
+            FileRisk {
+                path: "src/commands_risk.rs".to_string(),
+                score: 0.91,
+                signals: vec!["▲churn", "▲size"],
+                test_density: 0.3,
+            },
+            FileRisk {
+                path: "src/prompt.rs".to_string(),
+                score: 0.64,
+                signals: vec!["▲churn"],
+                test_density: 1.2,
+            },
+        ];
+
+        // The exact two-step the non-interactive CLI feed performs.
+        let json_line = build_risk_snapshot_json(&risks, 130, "feed123");
+        write_risk_snapshot_to(&path, &json_line).expect("feed write must succeed");
+
+        // Read back exactly as the downstream accuracy math does.
+        let content = std::fs::read_to_string(&path).expect("feed read");
+        let parsed = parse_all_snapshots(&content);
+
+        // The invariant the harness feed depends on: one snapshot, with the
+        // day, git hash, and per-file predicted paths all surviving the round-trip.
+        assert_eq!(parsed.len(), 1, "one snapshot line written → one parsed");
+        assert_eq!(parsed[0].day, 130, "day must survive round-trip");
+        assert_eq!(
+            parsed[0].git_hash, "feed123",
+            "git_hash must survive round-trip"
+        );
+        assert_eq!(
+            parsed[0].predicted,
+            vec![
+                "src/commands_risk.rs".to_string(),
+                "src/prompt.rs".to_string()
+            ],
+            "per-file predicted paths (in rank order) must survive round-trip"
+        );
+    }
+
     #[test]
     fn test_parse_all_snapshots_empty() {
         let snapshots = parse_all_snapshots("");
