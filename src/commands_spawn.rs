@@ -695,6 +695,13 @@ pub async fn handle_spawn(
     }
 
     // Synchronous spawn (existing behavior)
+    // Non-intrusive fan-out hint: if the single task actually decomposes into
+    // ≥2 independent tasks, point the user at --parallel. Hint only — the single
+    // task still launches exactly as before.
+    if let Some(hint) = parallel_suggestion(&args.task) {
+        println!("{DIM}  {hint}{RESET}");
+    }
+
     // Register task in tracker
     let spawn_id = tracker.register(&args.task, args.output_path.clone());
 
@@ -1626,11 +1633,66 @@ pub fn detect_parallelizable_tasks(prompt: &str) -> Option<Vec<String>> {
     Some(items.into_iter().map(String::from).collect())
 }
 
+/// Pure decision helper: when a single-task `/spawn` prompt actually decomposes
+/// into ≥2 independent tasks, return a copy-pasteable `--parallel` suggestion hint.
+/// Returns `None` when the prompt is a single task, has sequential markers, or a
+/// path conflict — i.e. whenever fan-out would be unsafe or unhelpful. Hint only:
+/// this never changes what `/spawn` does, it just points at a faster path.
+pub fn parallel_suggestion(prompt: &str) -> Option<String> {
+    let tasks = detect_parallelizable_tasks(prompt)?;
+    if tasks.len() < 2 {
+        return None;
+    }
+    let joined = tasks.join(" --- ");
+    Some(format!(
+        "💡 this looks decomposable into {} independent tasks. Run them in parallel with:\n   /spawn --parallel {}",
+        tasks.len(),
+        joined
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
     use yoagent::types::{Content, Message, Usage};
+
+    #[test]
+    fn test_parallel_suggestion_fires_on_independent_tasks() {
+        // 3 genuinely independent tasks, no sequential markers, no path conflict.
+        let prompt = "- add tests for the parser\n- write docs for the api\n- refactor the logger";
+        let hint = parallel_suggestion(prompt).expect("should suggest fan-out");
+        // Copy-pasteable command must be present.
+        assert!(hint.contains("--parallel"), "hint: {hint}");
+        assert!(hint.contains("3 independent tasks"), "hint: {hint}");
+    }
+
+    #[test]
+    fn test_parallel_suggestion_silent_on_single_line() {
+        // A single-line prompt is one task — no fan-out.
+        assert!(parallel_suggestion("read src/main.rs and summarize").is_none());
+    }
+
+    #[test]
+    fn test_parallel_suggestion_silent_on_sequential_marker() {
+        // Sequential dependency ("first ... then ...") must NOT fan out even if it
+        // looks list-shaped — the tasks depend on ordering.
+        let prompt = "- first build the index\n- then query it\n- finally print results";
+        assert!(parallel_suggestion(prompt).is_none());
+    }
+
+    #[test]
+    fn test_parallel_suggestion_silent_on_path_conflict() {
+        // Paired negative (Day 122): decomposes structurally but two items touch the
+        // SAME file — parallel worktrees would collide. The hint must stay SILENT on
+        // this innocent-looking-but-unsafe neighbor.
+        let prompt =
+            "- add a field to src/config.rs\n- rename a fn in src/config.rs\n- update the readme";
+        assert!(
+            parallel_suggestion(prompt).is_none(),
+            "path conflict must suppress the fan-out hint"
+        );
+    }
 
     #[test]
     fn test_newly_finished_background_reports_completed_once() {
@@ -2651,3 +2713,4 @@ mod tests {
         assert_eq!(detect_parallelizable_tasks(prompt), None);
     }
 }
+
