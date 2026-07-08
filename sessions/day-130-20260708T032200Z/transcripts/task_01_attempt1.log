@@ -1,0 +1,156 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing test structure and the CLI dispatch path for `yoyo risk snapshot`.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:940..1020 ✓ (1ms)
+
+Now let me check how the risk subcommand is routed in try_dispatch_subcommand to understand whether yoyo risk snapshot would write to the real path.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search '"risk"' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:185..215 ✓ (1ms)
+  2 tools completed in 8.5s (2 ✓)
+
+Now I understand the routing. Calling try_dispatch_subcommand with yoyo risk snapshot would actually invoke `handle_risk("/risk snapshot"), which writes to the real .yoyo/risk_snapshots.jsonl`. I must NOT do that in a test.
+
+Let me look at how handle_risk dispatches snapshot to see if there's a routing-only way to test, and check the auto_risk_snapshot_to helper pattern.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:630..690 ✓ (1ms)
+
+Now I understand both patterns. For Part A, I'll add a routing-level test. But the issue is that `yoyo risk snapshot` at the dispatch level actually writes. So a routing test would touch the real path — I must not do that.
+
+The safe approach: test the routing decision for a read-only risk subcommand that goes through the same arm, OR add a test that verifies `write_risk_snapshot_to against a temp dir (the CLI-facing helper). Let me check what handle_risk`'s snapshot path calls, and whether there's a non-writing way to verify routing.
+
+Let me look at handle_risk to see what snapshot does.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search '"snapshot"' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:940..980 ✓ (1ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Now let me see handle_risk_snapshot to confirm it writes to the real path.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_risk_snapshot|RISK_SNAPSHOT_PATH|fn auto_risk_snap…' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs ✓ (2ms)
+  ▶ search 'fn handle_risk_snapshot' ✓ (8.2s)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1255..1295 ✓ (1ms)
+  3 tools completed in 14.6s (3 ✓)
+
+Confirmed: yoyo risk snapshot at dispatch level writes to the real `RISK_SNAPSHOT_PATH (.yoyo/risk_snapshots.jsonl). So I must NOT call the full dispatch with snapshot` in a test.
+
+The safe contract test: verify the routing string reconstruction — that `yoyo risk snapshot builds the correct /risk snapshot` input string. Let me look for the pure helper. The arm inlines the reconstruction; there's no separate pure function. 
+
+The cleanest, safe approach following the task's guidance: add a write-assertion test using write_risk_snapshot_to against a temp dir (the exact JSONL-append path the paste-diff depends on), plus verify the string reconstruction logic. Let me check what's already tested for `write_risk_snapshot_to and build_risk_snapshot_json`.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'fn write_risk_snapshot_to|fn test_' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs ✓ (2ms)
+  ▶ search 'write_risk_snapshot_to|#\[test\]' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_risk_snapshot_to\… ✓ (6ms)
+  3 tools completed in 9.1s (3 ✓)
+
+So write_risk_snapshot_to is already well-covered. The gap the task names is the **CLI dispatch → append** path in dispatch_sub.rs. Since the full dispatch writes to the real path, I'll add a routing-level test that verifies the input-string reconstruction which is the part unique to the dispatch layer.
+
+The cleanest way without touching the real path: extract the reconstruction logic isn't necessary — I can test that the risk arm properly forwards. But calling it writes. 
+
+Let me reconsider. The task explicitly says: "Assert routing only, or use the existing *_to(path) helper against a temp dir if you want a write assertion." A pure routing assertion for snapshot isn't possible without writing. So the best contract test that locks the CLI path *without side effects* is to assert the string reconstruction — but that logic is inlined.
+
+I'll extract the tiny reconstruction into a pure testable helper and test it. This locks the `yoyo risk <sub> → /risk <sub> mapping (the exact contract the paste-diff yoyo risk snapshot` depends on) without any write. Let me refactor minimally.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (8 → 3 lines)
+  -                 let rest = args[2..].join(" ");
+  -                 let input = if rest.is_empty() {
+  -                     "/risk".to_string()
+  -                 } else {
+  -                     format!("/risk {rest}")
+  -                 };
+  +                 let input = build_risk_input(&args[2..]);
+                    crate::commands_risk::handle_risk(&input);
+                    return Some(None);
+ ✓ (10.4s)
+  -                 let rest = args[2..].join(" ");
+  -                 let input = if rest.is_empty() {
+  -                     "/risk".to_string()
+  -                 } else {
+  -                     format!("/risk {rest}")
+  -                 };
+  +                 let input = build_risk_input(&args[2..]);
+                    crate::commands_risk::handle_risk(&input);
+                    return Some(None);
+
+Now let me add the pure helper function. Let me find a good spot near the top of the file.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:1..31 ✓ (0ms)
+
+I'll add the build_risk_input helper right after the module doc / imports, near strip_flag_with_value.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (1 → 20 lines)
+  + /// Reconstruct the `/risk <args>` input string that `handle_risk` expects
+  + /// from a CLI subcommand tail.
+  + ///
+  + /// `yoyo risk snapshot` arrives as the tail `["snapshot"]` and must map to
+  + /// the exact string `"/risk snapshot"` — the contract the evolve harness's
+  + /// paste-diff (`yoyo risk snapshot`) depends on to reach the snapshot-writing
+  + /// path in `commands_risk`. A bare `yoyo risk` (empty tail) maps to `"/risk"`.
+  + ///
+  + /// This is a pure function so the CLI→handler contract can be locked by a test
+  + /// without invoking the real, `.yoyo/`-writing snapshot dispatch.
+  + fn build_risk_input(tail: &[String]) -> String {
+  +     let rest = tail.join(" ");
+  +     if rest.is_empty() {
+  +         "/risk".to_string()
+  +     } else {
+  +         format!("/risk {rest}")
+  +     }
+  + }
+  + 
+    /// Remove a flag and its value from an args slice.
+ ✓ (1m 35s)
+  + /// Reconstruct the `/risk <args>` input string that `handle_risk` expects
+  + /// from a CLI subcommand tail.
+  + ///
+  + /// `yoyo risk snapshot` arrives as the tail `["snapshot"]` and must map to
+  + /// the exact string `"/risk snapshot"` — the contract the evolve harness's
+  + /// paste-diff (`yoyo risk snapshot`) depends on to reach the snapshot-writing
+  + /// path in `commands_risk`. A bare `yoyo risk` (empty tail) maps to `"/risk"`.
+  + ///
+  ... (12 more lines)
+
+Now update the comment in the arm to reflect the refactor, then add the contract test.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:205..230 ✓ (1ms)
+
+The comment still reads well. Now add the contract test after `test_try_dispatch_subcommand_risk_near_miss_falls_through`.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (13 → 44 lines)
+            assert!(
+                result.is_none(),
+                "expected None for near-miss `risky` (must not be swallowed by the risk arm)"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_risk_input_snapshot_contract() {
+  +         // Contract test for the `yoyo risk snapshot` CLI path the evolve
+  +         // harness's paste-diff depends on. The dispatch arm reconstructs the
+  +         // `/risk <sub>` string that `handle_risk` routes on; a wrong mapping
+  +         // here silently sends the snapshot to nowhere. We assert the pure
+  +         // reconstruction (no `.yoyo/` write) so the contract is locked without
+  +         // triggering the real snapshot-append side effect.
+  +         let snapshot_tail = vec!["snapshot".to_string()];
+  +         assert_eq!(
+  +             build_risk_input(&snapshot_tail),
+  +             "/risk snapshot",
+  +             "`yoyo risk snapshot` must reconstruct exactly `/risk snapshot`"
+  +         );
+  ... (16 more lines)
+ ✓ (1m 36s)
+            assert!(
+                result.is_none(),
+                "expected None for near-miss `risky` (must not be swallowed by the risk arm)"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_build_risk_input_snapshot_contract() {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.2s)
+  2 tools completed in 1m 57s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

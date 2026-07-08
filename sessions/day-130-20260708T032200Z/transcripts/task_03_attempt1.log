@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by finding the exact wording in CLAUDE.md I need to correct.
+  ▶ search 'YOYO_RISK_AUTOSNAPSHOT' in CLAUDE.md  ▶ search 'commands_risk_snapshots.rs' in CLAUDE.md ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Let me verify the actual firing behavior in the code before editing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'auto_risk_snapshot' (*.rs) ✓ (24ms)
+
+Confirmed: auto_risk_snapshot() is called from commands_git.rs (the /commit handler) and repl.rs (REPL exit). The evolve harness uses raw git commit, so it never fires. Now let me make the surgical edit to CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - `YOYO_RISK_AUTOSNAPSHOT=1` (opt-in, off by default, product-safe — also accepts `true`/`yes`) captures a risk snapshot on REPL exit (dedup-guarded by git hash) so the prediction meter's snapshot half accumulates outside `/commit`. Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence.
+  + `auto_risk_snapshot` fires ONLY from yoyo's own `/commit` handler and (opt-in) on REPL exit under `YOYO_RISK_AUTOSNAPSHOT=1` — it does **NOT** fire in the evolve loop, which commits with raw `git commit`, so the snapshot half of the prediction meter accumulates only through a human/harness invocation of `yoyo risk snapshot`. `YOYO_RISK_AUTOSNAPSHOT=1` (opt-in, off by default, product-safe — also accepts `true`/`yes`) captures a risk snapshot on REPL exit (dedup-guarded by git hash) so the prediction meter's snapshot half accumulates outside `/commit`. Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence.
+ ✓ (1m 16s)
+  - `YOYO_RISK_AUTOSNAPSHOT=1` (opt-in, off by default, product-safe — also accepts `true`/`yes`) captures a risk snapshot on REPL exit (dedup-guarded by git hash) so the prediction meter's snapshot half accumulates outside `/commit`. Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence.
+  + `auto_risk_snapshot` fires ONLY from yoyo's own `/commit` handler and (opt-in) on REPL exit under `YOYO_RISK_AUTOSNAPSHOT=1` — it does **NOT** fire in the evolve loop, which commits with raw `git commit`, so the snapshot half of the prediction meter accumulates only through a human/harness invocation of `yoyo risk snapshot`. `YOYO_RISK_AUTOSNAPSHOT=1` (opt-in, off by default, product-safe — also accepts `true`/`yes`) captures a risk snapshot on REPL exit (dedup-guarded by git hash) so the prediction meter's snapshot half accumulates outside `/commit`. Both meter halves are now CLI-callable AND recording (`yoyo risk snapshot`; `yoyo risk validate`), enabling a human-approved automated cadence.
+
+Now let me confirm nothing else drifted by running the build/test checks.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (48.5s)
+
+Build and tests pass. Let me verify the edit reads correctly.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read CLAUDE.md:94..95 ✓ (0ms)
+
+The record now honestly states the meter does not fire in the evolve loop. Committing.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Done. One edit, whole in one hand.
+
+What I did: Corrected CLAUDE.md's commands_risk_snapshots.rs description to state honestly that auto_risk_snapshot fires only from yoyo's own /commit handler and (opt-in) on REPL exit — and does not fire in the evolve loop, which commits with raw git commit. So the snapshot half of the prediction meter only accumulates through a human/harness invocation of yoyo risk snapshot.
+
+Why it mattered: The old wording let a future planner assume the meter was quietly running during evolution when it wasn't (one line since Day 125). That's the Day 125 failure — a vacuous claim at the narrative layer, an unverified status assertion in my own docs. I verified the actual call sites in code (commands_git.rs /commit + repl.rs exit, nothing in the harness) before writing the claim, exactly as that lesson demands.
+
+Build and tests unaffected (88 passed). No code, no protected files, one surgical edit. Committed.
+
+  watch: no files changed this turn — skipping
+

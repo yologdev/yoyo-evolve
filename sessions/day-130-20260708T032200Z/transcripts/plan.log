@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The assessment is clear and the trajectory is unusually honest with itself. Let me plan from it.
+
+The core finding: the risk meter is data-blocked, not code-blocked. Three sessions built the conveyor belt; it was never switched on. Day 129's own lesson says the enforcement point must be in the harness, not prose. So the priority this session is: turn the meter on — but `evolve.sh` and workflows are protected files.
+
+Let me verify the current state before planning.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== risk_snapshots.jsonl =…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== dispatch_sub risk rout… ✓ (6ms)
+ ✓ (11ms)
+  2 tools completed in 1.6s (2 ✓)
+
+Confirmed. The meter has 1 line since Day 125. yoyo risk CLI routing exists (dispatch_sub.rs:189). Now let me check what `yoyo risk snapshot` actually does when called — does the CLI path actually write a snapshot, and is there a place I can wire it that isn't protected?
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== handle_risk subcommand…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== protected files check … ✓ (7ms)
+ ✓ (7ms)
+  2 tools completed in 1.4s (2 ✓)
+
+So yoyo risk snapshot and yoyo risk validate both work as CLI commands and actually write to JSONL. The command layer is complete. The only missing piece is the trigger: something must call yoyo risk snapshot unattended.
+
+evolve.sh and .github/workflows/ are protected. So the wiring must be either:
+1. A human-paste diff + test contract (Day 55 pattern), OR
+2. A non-protected trigger.
+
+Let me check if there's a non-protected script that runs per-session, and verify the exact snapshot write behavior.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== handle_risk_snapshot i…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== yoyo_context.sh (non-p… ✓ (5ms)
+ ✓ (6ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Now I have the full picture. yoyo_context.sh and common.sh are non-protected and sourced by evolve.sh every session. But wiring a snapshot call into yoyo_context.sh (identity building) would be architecturally wrong — it's not the right place, and it runs before the binary is built.
+
+The honest situation, per Day 129's own lesson: the enforcement point is task-selection at session start, and if I can't trust prose, it needs to live in the harness — but the harness (evolve.sh) is protected. So the correct move is the **Day 55 pattern: ship a human-paste diff + a test contract**, and file the help-wanted issue so my human can flip the switch. That's the ONE thing that unblocks the dream.
+
+But I should also check: is there a *product-safe* auto-trigger I could ship that fires on its own without touching protected files? Let me verify where auto_risk_snapshot is already called from.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== where is auto_risk_sna… ✓ (13ms)
+
+Key discovery: auto_risk_snapshot() is already called from `commands_git.rs:1394` and `:1707` — those are the /commit handler paths. So in the evolve loop, when the harness commits via git commit (not via yoyo's /commit), no snapshot fires. The snapshot only fires when a *human uses yoyo's /commit* or when YOYO_RISK_AUTOSNAPSHOT=1 on REPL exit.
+
+That's the exact gap. The evolve harness commits with raw git, so the meter never advances during evolution. Let me confirm this is the mechanism.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== context around command… ✓ (5ms)
+
+Confirmed. The evolve harness commits with raw git commit (evolve.sh:1044, etc.), which bypasses auto_risk_snapshot() entirely. The snapshot only fires through yoyo's own /commit handler — which the harness never uses.
+
+So there are two honest paths to "turn the meter on":
+
+1. **Product-safe, no protected files**: The YOYO_RISK_AUTOSNAPSHOT=1 REPL-exit path already exists. But the evolve loop is non-interactive (piped/--prompt), so REPL-exit never fires there either.
+
+2. **Human-paste diff + test contract (Day 55 pattern)**: Add a single yoyo risk snapshot invocation to evolve.sh — but that's protected, so it must be a paste-diff + help-wanted issue.
+
+The cleanest self-contained win I can ship without protected files: make the snapshot fire on the non-interactive commit path too. But the harness uses raw git, not yoyo. So the only place a yoyo binary invocation could hook is... a yoyo risk snapshot call the harness would make.
+
+The truth (per Day 129's lesson): **this is harness-gated and I cannot flip it myself.** The load-bearing action is the help-wanted issue with a ready-to-paste diff. Let me draft the exact diff and plan around it. Let me look at the exact evolve.sh commit spot to write a precise paste-diff.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1300,1360p' scripts/evol… ✓ (4ms)
+
+I have everything I need. Now let me think carefully about the strongest self-driven task.
+
+The honest analysis: **the meter is harness-gated and I can't flip it myself** without touching evolve.sh (protected). Day 129's lesson is explicit: "if I can't trust myself to check the rule, it needs to live in the harness — a gate — not prose." The load-bearing action is a help-wanted issue with a ready-to-paste one-line diff so my human can wire it. That's a planning/communication deliverable, not a code task.
+
+But I should NOT spend a whole session building yet another feeder — Day 129 explicitly forbade that ("after the second consecutive feeder-build session, stop"). The trajectory shows 3 feeder sessions already. **The stopping rule fires NOW, at task-selection.** This is exactly the enforcement point.
+
+So the self-driven slot should NOT build more risk plumbing. Instead:
+• Slot 1 (self-driven, dream): File the help-wanted issue to flip the switch (the actual unblock) — but that's not a code task with 3-file scope. Better: make it a product-safe task that ALSO advances something real. 
+
+Let me reconsider. The dream milestone says "Measure whether the reflex works... enough cycles to see whether prediction accuracy climbs." The meter can't run until the harness fires it. Since I can't touch the harness, the genuinely useful code work is: **make the snapshot fire on a path the non-interactive loop actually hits**, without protected files or being a new feeder.
+
+The non-interactive --prompt/piped path never calls REPL-exit and never calls /commit. But there's a product-safe hook: after a successful non-interactive prompt run that changed files. Let me check what runs at end of a --prompt invocation. Actually — the cleanest, smallest, honest task is simply to file the help-wanted issue and spend the other slots on genuine outward work (#156 benchmark scoring). Let me not overthink and plan tightly.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== humaneval_one.sh state… ✓ (5ms)
+
+Now I have the full picture. humaneval_one.sh runs the prompt and captures the completion but does NOT score (verify the completion actually passes the test). That's the "retreat-size → next step" from Day 129: extend run→score. This is genuinely outward-facing (#156), small, and product-safe.
+
+Let me now finalize my plan. Three slots:
+
+1. **Self-driven (the actual dream unblock)**: File the help-wanted issue + write the paste-diff + a test contract asserting yoyo risk snapshot writes correctly. This is the *load-bearing* action per Day 129. But it's mostly a communication task — I'll make it a small code task: a test that locks the CLI snapshot-write contract (so the human's paste-diff is verified on my side), plus the issue.
+
+2. Outward (#156): Extend humaneval_one.sh from run→score.
+
+3. Community issue if any warrant it — but assessment shows backlog is thin (#571 core done, #341 too big, #215 TUI too big, #156 covered).
+
+Let me check ISSUES_TODAY.md quickly then write the plan.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+
+No community issues today. So all three slots are self-driven. Let me be disciplined per Day 129's stopping rule: no new risk feeder. The slots:
+
+1. **Turn the meter on** — the load-bearing dream action: help-wanted issue + paste-diff + a test that locks the contract (so the human's one-line diff is verified). This is NOT a feeder; it's flipping the switch.
+2. #156 benchmark scoring — extend humaneval_one.sh run→score. Outward, small.
+3. A genuinely small, whole task — Day 128's lesson (prefer one tiny task done whole). Let me pick something real and small rather than manufacture work. I'll reserve slot 3 for a modest product-safe improvement OR leave it lighter. Let me check for a real small win.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== does 'yoyo risk snapsh… ✓ (5ms)
+
+Good — there's write-contract testing at the helper level, but nothing locks the **CLI yoyo risk snapshot → JSONL append** end-to-end path that the human's paste-diff will rely on. That's the test contract worth adding (Day 55 pattern: the test is the receipt for the human's diff).
+
+I now have a clean, disciplined 3-task plan. Let me write it.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (4ms)
+  ▶ write session_plan/task_01.md (104 lines)  ▶ write session_plan/task_02.md (70 lines)  ▶ write session_plan/task_03.md (41 lines) ✓ (1m 16s)
+ ✓ (2m 32s)
+ ✓ (3m 48s)
+  ▶ write session_plan/issue_responses.md (35 lines) ✓ (1m 17s)
+  5 tools completed in 6m 29s (5 ✓)
+
+Now let me verify the plan files and commit.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/task_*.md se… ✓ (5ms)
+
+`session_plan/` is gitignored (ephemeral by design — the assessment section confirms it). The files exist on disk for the implementation agents to read, which is what matters. The commit is a no-op here, which is expected. Let me confirm the files are all present and readable.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== plan files present ===… ✓ (4ms)
+
+Plan complete. All three task files and issue_responses.md are on disk (session_plan/ is gitignored by design, so no commit is needed — the impl agents read from disk).
+
+## Summary — Day 130 session plan
+
+The trajectory is all-green with zero community issues, so the honest signal is entirely internal. My assessment found the one thing that actually matters, and I verified it directly this session:
+
+**The risk meter is data-blocked, not code-blocked.* `.yoyo/risk_snapshots.jsonl` has one line since Day 125*, no validation file exists, and there's no trigger anywhere in scripts/ or .github/workflows/. Root cause confirmed: auto_risk_snapshot() only fires from yoyo's /commit handler and REPL-exit — but the evolve harness commits with raw `git commit`, bypassing both. Three sessions (127–129) built the conveyor belt and never switched it on.
+
+Day 129's own stopping rule fires now, at task-selection: "after the second consecutive feeder-build session, stop" — and "if I can't trust myself to check the rule, it needs to live in the harness, not prose." So I planned against building a fourth feeder:
+
+• **Task 1 (evolve, dream):** Flip the switch, not build another sensor. Lock the yoyo risk snapshot CLI path with a contract test, then file an agent-help-wanted issue with a ready-to-paste one-line fail-soft diff for evolve.sh (protected, so Day 55 pattern: the test is the receipt, the human applies the diff). Explicit hard constraint: zero new risk-scoring code.
+• Task 2 (product, #156): Extend `humaneval_one.sh` from run → score — the planned next increment after Day 129's retreat-size runner. Outward-facing, product-safe, python3-gated.
+• Task 3 (evolve): Tiny whole-in-one-hand task (Day 128) — correct CLAUDE.md's risk-snapshot claim so it stops implying the meter runs during evolution when it doesn't.
+
+The through-line: I'm not adding more instrumentation to a meter that can't run. I'm handing my human the one line that turns it on, and telling the truth in my docs about the fact it's off.
+
+  watch: no files changed this turn — skipping
+

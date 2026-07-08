@@ -1,0 +1,199 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the two files I need to modify.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md ✓ (1ms)
+ ✓ (1ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Now I understand the current state. Let me extend the script to capture the completion, strip fences, and score it against canonical tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (13 → 13 lines)
+  - # WHAT THIS IS (retreat size — issue #156):
+  - #   The smallest useful first step toward giving yoyo an external, comparable
+  - #   capability number. It feeds ONE hardcoded HumanEval-style Python problem
+  - #   (function signature + docstring) into yoyo non-interactively and prints the
+  - #   raw completion. That's the whole job: benchmark-shaped prompt IN, model
+  - #   completion OUT. It proves the yoyo→benchmark I/O boundary works end to end.
+  + # WHAT THIS IS (run → score — issue #156):
+  + #   The smallest useful benchmark artifact toward giving yoyo an external,
+  + #   comparable capability number. It feeds ONE hardcoded HumanEval-style Python
+  + #   problem (function signature + docstring) into yoyo non-interactively,
+  + #   captures the completion, and SCORES it against the canonical HumanEval/0
+  + #   unit tests — printing a clear PASS/FAIL verdict and setting the exit code
+  + #   (0 = pass, 1 = fail). benchmark-shaped prompt IN, scored verdict OUT.
+    #
+  - # WHAT THIS IS NOT (the explicit FOLLOW-UP — do not confuse this with a score):
+  - #   - No dataset loading (the full HumanEval jsonl).
+  - #   - No sandboxed test execution / pass@1 scoring.
+  - #   - No multi-problem batch running.
+  + # WHAT THIS IS NOT (the explicit FOLLOW-UP — one problem, not a full run):
+  + #   - No dataset loading (the full HumanEval jsonl, 164 problems).
+  ... (4 more lines)
+ ✓ (1m 16s)
+  - # WHAT THIS IS (retreat size — issue #156):
+  - #   The smallest useful first step toward giving yoyo an external, comparable
+  - #   capability number. It feeds ONE hardcoded HumanEval-style Python problem
+  - #   (function signature + docstring) into yoyo non-interactively and prints the
+  - #   raw completion. That's the whole job: benchmark-shaped prompt IN, model
+  - #   completion OUT. It proves the yoyo→benchmark I/O boundary works end to end.
+  + # WHAT THIS IS (run → score — issue #156):
+  + #   The smallest useful benchmark artifact toward giving yoyo an external,
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (4 → 6 lines)
+    # lives under scripts/bench/ purely for yoyo's own capability measurement. It is
+    # not shipped to product users. Kept POSIX-flavored bash + dependency-light (no
+    # python package installs) so a human can run it in CI or locally without setup.
+  + # The scoring step needs only python3 (stdlib); if python3 is absent it skips
+  + # scoring gracefully (exit 0) rather than hard-failing on a missing tool.
+ ✓ (1m 15s)
+    # lives under scripts/bench/ purely for yoyo's own capability measurement. It is
+    # not shipped to product users. Kept POSIX-flavored bash + dependency-light (no
+    # python package installs) so a human can run it in CI or locally without setup.
+  + # The scoring step needs only python3 (stdlib); if python3 is absent it skips
+  + # scoring gracefully (exit 0) rather than hard-failing on a missing tool.
+  2 tools completed in 2m 38s (2 ✓)
+
+Now the invocation + scoring section:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (16 → 101 lines)
+    # --- 3. invoke yoyo non-interactively on the problem ------------------------
+    #
+    # Uses the existing --prompt / --output-format text piped path. Completion may
+  - # be multi-line, so capture the whole thing (do not assume a single line).
+  + # be multi-line, so capture the whole thing (do not assume a single line). We
+  + # tee it into a file so we can both show it and score it.
+    
+  - echo "=== yoyo completion ===" 
+  - run_yoyo --prompt "$PROMPT" --output-format text
+  + RAW_COMPLETION="$WORK_DIR/completion_raw.py"
+  + COMPLETION="$WORK_DIR/completion.py"
+  + 
+  + echo "=== yoyo completion ==="
+  + run_yoyo --prompt "$PROMPT" --output-format text | tee "$RAW_COMPLETION"
+    echo ""
+    echo "=== end ==="
+  + 
+  + # --- 4. defensively strip markdown fences -----------------------------------
+  + #
+  + # The prompt asks for no fences, but models sometimes wrap code in
+  ... (88 more lines)
+ ✓ (1m 15s)
+    # --- 3. invoke yoyo non-interactively on the problem ------------------------
+    #
+    # Uses the existing --prompt / --output-format text piped path. Completion may
+  - # be multi-line, so capture the whole thing (do not assume a single line).
+  + # be multi-line, so capture the whole thing (do not assume a single line). We
+  + # tee it into a file so we can both show it and score it.
+    
+  - echo "=== yoyo completion ===" 
+  ... (13 more lines)
+
+Now let me syntax-check the bash script and dry-run the Python scorer against a known-good completion:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/bench/humaneval_… ✓ (6ms)
+
+Now let me test the Python scorer logic against a known-good completion and a known-bad one. I'll extract the heredoc scorer into a standalone test:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WORK_DIR="$(… (44 lines) ✓ (329ms)
+
+My awk extraction grabbed the wrong PY-adjacent lines because there's an earlier <<'PY' reference in a comment. Let me fix the extraction to be precise:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PY" scripts/bench/human… ✓ (3ms)
+
+The heredoc is lines 134–173. Let me extract precisely:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WORK_DIR="$(… (44 lines) ✓ (104ms)
+
+All four cases behave correctly:
+• good (with fences stripped) → PASS, exit 0
+• bad (always returns False) → FAIL with clear message, exit 1
+• syntax error → FAIL (not a crash), exit 1
+• missing function → FAIL, exit 1
+
+The fence-stripping works too. Now let me verify the full-script flow by mocking YOYO_BIN to emit a known-good completion (avoids an API call):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WORK_DIR="$(… (42 lines) ✓ (76ms)
+
+Full end-to-end works: PASS→exit 0, FAIL→exit 1, fences stripped. Let me also verify the python3-absent skip path by simulating a missing python3 via PATH manipulation:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WORK_DIR="$(… (19 lines) ✓ (33ms)
+
+The python3-absent skip path works — exits 0 gracefully. All three paths verified. Now update the docs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (45 → 59 lines)
+    ## What exists now
+    
+  - A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It is
+  - the smallest useful first step: it feeds **one** hardcoded HumanEval-style Python
+  - problem (a function signature + docstring) into yoyo non-interactively and prints
+  - the raw completion yoyo produced. That's the whole job right now:
+  - benchmark-shaped prompt IN, model completion OUT.
+  + A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It feeds
+  + **one** hardcoded HumanEval-style Python problem (a function signature +
+  + docstring) into yoyo non-interactively, captures the completion, and **scores it
+  + against the canonical HumanEval/0 unit tests** — printing a clear PASS/FAIL
+  + verdict. That's the whole job right now: benchmark-shaped prompt IN, completion
+  + OUT + PASS/FAIL scored against the canonical tests.
+    
+  - This proves the yoyo → benchmark I/O boundary works end to end. It is
+  - deliberately **run + capture only** — there is **no scoring** and **no published
+  - number**.
+  + This proves the yoyo → benchmark → score I/O boundary works end to end. It is
+  + deliberately **one problem, scored** — there is still **no full dataset** and
+  + **no published pass@1 number** over the 164-problem set.
+  ... (53 more lines)
+ ✓ (1m 15s)
+    ## What exists now
+    
+  - A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It is
+  - the smallest useful first step: it feeds **one** hardcoded HumanEval-style Python
+  - problem (a function signature + docstring) into yoyo non-interactively and prints
+  - the raw completion yoyo produced. That's the whole job right now:
+  - benchmark-shaped prompt IN, model completion OUT.
+  + A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It feeds
+  ... (13 more lines)
+
+Now run the full check suite. No Rust was touched, but confirming nothing regressed as the acceptance requires:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/bench/humaneval_… ✓ (893ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (59.5s)
+  3 tools completed in 1m 25s (3 ✓)
+
+All green. Let me review the final script once more to confirm the whole flow reads cleanly:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh:91..121 ✓ (0ms)
+
+There's a subtle issue: run_yoyo ... | tee — since set -o pipefail is active, if run_yoyo exits non-zero the whole pipeline fails and set -e aborts before scoring. But that's actually acceptable behavior (a broken yoyo run should fail). However, the more important concern: the tee pipeline masks run_yoyo's exit code from being an issue since tee succeeds. Actually with pipefail, a yoyo failure would abort — which is fine/desired. Everything is verified working. Let me commit.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Committed. Task complete.
+
+## Summary
+
+Extended `scripts/bench/humaneval_one.sh` from run → run + score, the honest next increment toward issue #156 (a published benchmark number).
+
+What changed:
+1. Capture — yoyo's completion is now teed into `$WORK_DIR/completion_raw.py` (still shown to the user) instead of only echoed.
+2. Defensive fence-stripping — a grep -v drops any bare   ` fence lines before scoring, in case a model wraps the code in markdown despite the prompt asking otherwise.
+3. Scoring — a quoted Python heredoc (<<'PY', so bash doesn't expand $) execs the completion and runs 6 canonical HumanEval/0 checks (the two docstring examples plus standard cases). It prints === RESULT: PASS === / === RESULT: FAIL === and sets the exit code (0=pass, 1=fail).
+4. **Robustness** — set +e/set -e around the scorer so a syntax-error / missing-function completion yields FAIL, never a crashed script.
+5. python3 gate — if python3 is absent, it prints `scoring skipped: python3 not found and exits 0 (product-safe: no hard-fail on a missing optional tool). The ANTHROPIC_API_KEY` precondition stays.
+
+Docs — benchmarks.md updated: "completion OUT + PASS/FAIL scored," the exit-code contract, the python3 requirement, and the honest "FOLLOW-UP" (multi-problem set + aggregate pass@1 still not done).
+
+Verified (without spending API tokens) via a fake `YOYO_BIN`:
+• correct completion (with fences) → PASS, exit 0
+• wrong completion → FAIL with a clear diff message, exit 1
+• syntax error → FAIL, not a crash, exit 1
+• missing function → FAIL, exit 1
+• python3 removed from PATH → graceful skip, exit 0
+
+bash -n, cargo fmt --check, cargo clippy -D warnings, cargo build, and cargo test (88 passed) all green.
+
+This stays true to Day 129's lesson — retreat size plus one increment (run → score), one problem only, no premature dataset wiring.
+
+  watch: no files changed this turn — skipping
+
