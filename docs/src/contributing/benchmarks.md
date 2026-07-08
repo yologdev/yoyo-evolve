@@ -11,20 +11,21 @@ yoyo into standard benchmark evaluation pipelines. See
 
 ## What exists now
 
-A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It is
-the smallest useful first step: it feeds **one** hardcoded HumanEval-style Python
-problem (a function signature + docstring) into yoyo non-interactively and prints
-the raw completion yoyo produced. That's the whole job right now:
-benchmark-shaped prompt IN, model completion OUT.
+A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It feeds
+**one** hardcoded HumanEval-style Python problem (a function signature +
+docstring) into yoyo non-interactively, captures the completion, and **scores it
+against the canonical HumanEval/0 unit tests** — printing a clear PASS/FAIL
+verdict. That's the whole job right now: benchmark-shaped prompt IN, completion
+OUT + PASS/FAIL scored against the canonical tests.
 
-This proves the yoyo → benchmark I/O boundary works end to end. It is
-deliberately **run + capture only** — there is **no scoring** and **no published
-number**.
+This proves the yoyo → benchmark → score I/O boundary works end to end. It is
+deliberately **one problem, scored** — there is still **no full dataset** and
+**no published pass@1 number** over the 164-problem set.
 
 ### How to run it
 
 ```bash
-# Build and run against the one hardcoded problem:
+# Build and run against the one hardcoded problem, then score it:
 ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_one.sh
 
 # Reuse a prebuilt binary instead of rebuilding:
@@ -33,7 +34,19 @@ YOYO_BIN=./target/release/yoyo ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneva
 
 The script reads `ANTHROPIC_API_KEY` from the environment (never hardcoded); if
 it is unset, the script prints a clear message and exits non-zero instead of
-hanging. Output is delimited between `=== yoyo completion ===` and `=== end ===`.
+hanging. The captured completion is delimited between `=== yoyo completion ===`
+and `=== end ===`, followed by a `=== RESULT: PASS ===` or
+`=== RESULT: FAIL ===` verdict.
+
+**Exit-code contract:** `0` = the completion passes all canonical HumanEval/0
+checks, `1` = it fails (wrong answer, missing function, or a syntax error in the
+completion — a broken completion yields FAIL, never a crashed script).
+
+**python3 requirement:** scoring needs `python3` (stdlib only, no package
+installs). If `python3` is absent the script skips scoring gracefully — it prints
+`=== scoring skipped: python3 not found ===` and exits `0` rather than
+hard-failing on a missing optional tool. Markdown code fences (```` ```python ````)
+are stripped defensively before scoring in case a model adds them.
 
 It is a `Kind: evolve` script: it assumes this repo's Rust build and lives under
 `scripts/bench/` purely for yoyo's own capability measurement. It is not shipped
@@ -43,14 +56,15 @@ human can run it in CI or locally without setup.
 ## Honest status
 
 - ✅ Single HumanEval-style problem: run + capture works end to end.
-- ⬜ **Scoring** — running each problem's provided unit tests against the
-  captured completion in a sandbox and computing pass@1. *This is the next
-  step.*
+- ✅ **Scoring** — the captured completion is run against the canonical
+  HumanEval/0 unit tests and a PASS/FAIL verdict + exit code is produced.
 - ⬜ **Dataset loading** — the full HumanEval `jsonl` (164 problems) instead of
   one inline problem.
-- ⬜ **Multi-problem batch running** and aggregate reporting.
+- ⬜ **Multi-problem batch running** and aggregate **pass@1** reporting. *This is
+  the next step.*
 - ⬜ **SWE-bench / terminal-bench** adapters — these need repository checkout and
-  come after HumanEval scoring lands.
+  come after multi-problem HumanEval scoring lands.
 
-No benchmark number is published or implied. When scoring exists and produces a
-real pass@1 over the full dataset, that number will be reported here.
+No aggregate benchmark number is published or implied. When multi-problem scoring
+exists and produces a real pass@1 over the full dataset, that number will be
+reported here.
