@@ -14,6 +14,25 @@ use crate::format::*;
 use crate::providers::default_model_for_provider;
 use yoagent::skills::SkillSet;
 
+/// Reconstruct the `/risk <args>` input string that `handle_risk` expects
+/// from a CLI subcommand tail.
+///
+/// `yoyo risk snapshot` arrives as the tail `["snapshot"]` and must map to
+/// the exact string `"/risk snapshot"` — the contract the evolve harness's
+/// paste-diff (`yoyo risk snapshot`) depends on to reach the snapshot-writing
+/// path in `commands_risk`. A bare `yoyo risk` (empty tail) maps to `"/risk"`.
+///
+/// This is a pure function so the CLI→handler contract can be locked by a test
+/// without invoking the real, `.yoyo/`-writing snapshot dispatch.
+fn build_risk_input(tail: &[String]) -> String {
+    let rest = tail.join(" ");
+    if rest.is_empty() {
+        "/risk".to_string()
+    } else {
+        format!("/risk {rest}")
+    }
+}
+
 /// Remove a flag and its value from an args slice.
 ///
 /// Scans `args` for occurrences of `flag` (e.g. `"--skills"`) and drops
@@ -194,12 +213,7 @@ pub(crate) fn try_dispatch_subcommand(args: &[String]) -> Option<Option<Config>>
                 // reachable from any non-interactive context — the prerequisite
                 // for the harness (or a human) to record daily risk snapshots
                 // where the DREAM measurement data actually accumulates.
-                let rest = args[2..].join(" ");
-                let input = if rest.is_empty() {
-                    "/risk".to_string()
-                } else {
-                    format!("/risk {rest}")
-                };
+                let input = build_risk_input(&args[2..]);
                 crate::commands_risk::handle_risk(&input);
                 return Some(None);
             }
@@ -990,6 +1004,37 @@ mod tests {
             result.is_none(),
             "expected None for near-miss `risky` (must not be swallowed by the risk arm)"
         );
+    }
+
+    #[test]
+    fn test_build_risk_input_snapshot_contract() {
+        // Contract test for the `yoyo risk snapshot` CLI path the evolve
+        // harness's paste-diff depends on. The dispatch arm reconstructs the
+        // `/risk <sub>` string that `handle_risk` routes on; a wrong mapping
+        // here silently sends the snapshot to nowhere. We assert the pure
+        // reconstruction (no `.yoyo/` write) so the contract is locked without
+        // triggering the real snapshot-append side effect.
+        let snapshot_tail = vec!["snapshot".to_string()];
+        assert_eq!(
+            build_risk_input(&snapshot_tail),
+            "/risk snapshot",
+            "`yoyo risk snapshot` must reconstruct exactly `/risk snapshot`"
+        );
+
+        // Bare `yoyo risk` (empty tail) → `/risk` (read-only score display).
+        assert_eq!(
+            build_risk_input(&[]),
+            "/risk",
+            "bare `yoyo risk` must reconstruct `/risk`"
+        );
+
+        // A sibling writing subcommand routes the same way.
+        let validate_tail = vec!["validate".to_string()];
+        assert_eq!(build_risk_input(&validate_tail), "/risk validate");
+
+        // Flags after the subcommand are preserved verbatim.
+        let flagged = vec!["--all".to_string()];
+        assert_eq!(build_risk_input(&flagged), "/risk --all");
     }
 
     #[test]
