@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by understanding the existing code structure around the risk snapshot functions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_risk_snapshot_jso… ✓ (6ms)
+
+There's existing test coverage. Let me examine these functions and existing tests in detail.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:32..152 ✓ (1ms)
+
+Now let me look at the existing tests and ParsedSnapshot/parse_all_snapshots to see the exact fields.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:372..502 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:496..626 ✓ (1ms)
+  2 tools completed in 3.7s (2 ✓)
+
+There's substantial existing coverage. test_risk_snapshot_writes_jsonl is the closest to the contract — it exercises build_risk_snapshot_json → write_risk_snapshot_to → read-back → parse. But it doesn't chain through parse_all_snapshots (the harness feed's actual consumer) nor assert the full set of required fields end-to-end.
+
+The task says: if a suitable test already covers this exact contract, don't duplicate — add a `// CONTRACT: annotation. But none of the existing tests cover the *full* contract: build → write → read → parse_all_snapshots` yields a ParsedSnapshot with day, git_hash, and per-file predicted paths. That's the invariant the harness feed depends on. I'll add ONE new test that pins that full round-trip, annotated as the contract.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 57 lines)
+  +     // CONTRACT: this is the evolve.sh-hook feed contract. The autonomous loop
+  +     // is meant to call `yoyo risk snapshot` once per session (a human patch to
+  +     // the protected scripts/evolve.sh — tracked in the "wire risk snapshot into
+  +     // evolve.sh" agent-help-wanted issue). That CLI path runs
+  +     // build_risk_snapshot_json → write_risk_snapshot_to; the accuracy/trend math
+  +     // downstream reads the file back via parse_all_snapshots. This test pins the
+  +     // full round-trip so the harness patch has a red/green receipt: if either the
+  +     // writer's field layout or the parser's field expectations drift, this breaks.
+  +     #[test]
+  +     fn test_snapshot_feed_contract_roundtrip() {
+  +         let dir = tempfile::tempdir().expect("temp dir");
+  +         let path = dir.path().join("risk_snapshots.jsonl");
+  + 
+  +         // Synthetic risk data + synthetic git hash (no real repo touched).
+  +         let risks = vec![
+  +             FileRisk {
+  +                 path: "src/commands_risk.rs".to_string(),
+  +                 score: 0.91,
+  +                 signals: vec!["▲churn", "▲size"],
+  +                 test_density: 0.3,
+  ... (35 more lines)
+ ✓ (1m 33s)
+  +     // CONTRACT: this is the evolve.sh-hook feed contract. The autonomous loop
+  +     // is meant to call `yoyo risk snapshot` once per session (a human patch to
+  +     // the protected scripts/evolve.sh — tracked in the "wire risk snapshot into
+  +     // evolve.sh" agent-help-wanted issue). That CLI path runs
+  +     // build_risk_snapshot_json → write_risk_snapshot_to; the accuracy/trend math
+  +     // downstream reads the file back via parse_all_snapshots. This test pins the
+  +     // full round-trip so the harness patch has a red/green receipt: if either the
+  +     // writer's field layout or the parser's field expectations drift, this breaks.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --lib te… ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_snapshot_feed_co… ✓ (19.9s)
+  3 tools completed in 2m 2s (3 ✓)
+
+Test passes. Now run the full check suite.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 19s)
+
+All green. Now Part B — file the help-wanted issue. Let me verify the actual commit line in evolve.sh first.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git commit" scripts/evo… ✓ (4ms)
+
+Confirmed: line 1044 is the per-task commit, and line 2016 is a session wrap-up commit (a good hook point too). Now file the issue.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (33 lines) ✓ (718ms)
+
+Issue #575 created. Now commit.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (13ms)
+
+Done. Both halves of the task shipped:
+
+Part A — the contract test. Added test_snapshot_feed_contract_roundtrip to src/commands_risk_snapshots.rs, annotated with a // CONTRACT: doc-comment naming it as the evolve.sh-hook feed contract. The existing tests each cover a slice (serialization alone, write alone, parse alone) but none pinned the full round-trip the harness feed actually depends on. This one does: synthetic risk data + synthetic git hash → build_risk_snapshot_json → write_risk_snapshot_to (tempdir, no real repo touched) → read back → parse_all_snapshots → assert day, git_hash, and per-file predicted paths (in rank order) all survive. If either the writer's field layout or the parser's expectations drift, this breaks red — a receipt for the human's evolve.sh patch.
+
+Part B — the unblock. Filed [#575](https://github.com/yologdev/yoyo-evolve/issues/575) (agent-help-wanted) with the ground truth (snapshots: 1 line since day 125; validations: file never created), the traced root cause (auto-snapshot only fires from /commit and opt-in REPL exit; the loop commits with raw git commit and is non-interactive), and the one-line patch for the protected file, verified against the real commit sites (line 1044 per-task, line 2016 wrap-up).
+
+All checks green: `cargo fmt, clippy -D warnings, build, test` (88 passed).
+
+The honest note for the record: this is the fuel-line, not another feeder. The instrument's been built and re-built for five sessions; what it lacks isn't more plumbing but a connection behind a boundary I can't cross myself. Per the do-not-modify wisdom, the deliverable there is the exact diff plus the contract test — which is what shipped. The meter stays empty until a human applies the patch, and that's the correct place for the dependency to live.
+
+  watch: no files changed this turn — skipping
+

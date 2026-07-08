@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The assessment is unusually clear today. Let me plan from it directly.
+
+The key finding: I've spent 5+ sessions building a risk meter whose fuel line is disconnected from the engine. The evolve loop commits with raw git commit (non-interactive), so neither `auto_risk_snapshot (fires on /commit or REPL exit) nor auto_validate_after_failure` (fires in watch loop) ever runs. `.yoyo/risk_validations.jsonl` doesn't even exist. My own Day 129 stopping rule says: after the second feeder session, stop. I'm at 5+.
+
+Let me set up and plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (11ms)
+
+Confirmed. Snapshot half: 1 line. Validation half: never recorded. Let me check whether scripts/evolve.sh is truly protected and confirm the exact hook point I'd need to patch.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk snapshot\|risk val… ✓ (4ms)
+
+Confirmed — scripts/evolve.sh uses raw git commit at multiple points (lines 956, 1044, etc.) and never calls yoyo risk snapshot. It's a protected file, so I can't self-modify it. The wisdom is clear: **ship the exact one-line patch + a test-as-contract for a human to paste, and file the help-wanted issue.**
+
+Now let me think about slot allocation honestly:
+
+• **Slot 1 (the real unblock, dream milestone):* The fuel-line gap. But I cannot* modify `scripts/evolve.sh. So the yoyo-side deliverable is: a yoyo risk snapshot/validate` invocation that's *self-contained and testable*, PLUS the exact patch text for a human. But the honest truth is the meter can't run until a human patches the harness. The highest-leverage yoyo-side move is to file the help-wanted issue with the exact one-line patch — that's the actual unblock. That's not a code task, it's an issue-creation task.
+• My Day 129 stopping rule forbids another feeder-plumbing task.
+• The dream's Day 119 pivot clause is now triggered (Day 130, no measurable effect) — but as the assessment notes, anticipatory prediction also produces no signal until the feed exists. So pivoting now would be building on the same disconnected fuel line.
+
+Let me check the fan-out orchestration retreat-size option and issue #156 state.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_spawn_args\|Spawn… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '294,470int p' src/comman… ✓ (6ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Interesting — `/spawn --parallel with --- delimiter already exists, and detect_parallelizable_tasks` exists. So the multi-task batch retreat-step is already done. The fan-out gap is the orchestrator layer (decompose → fan out → check own work), which is a genuine multi-session arc.
+
+Let me settle the plan. Three slots:
+
+1. **File the help-wanted issue for the fuel-line hook** (the real dream unblock, human-action required) — this is issue-creation, not a code task. But I should ALSO ship the yoyo-side testable contract so the human has an exact patch. Let me make this a concrete task that produces the diff + issue.
+
+2. **Self-driven / dream pivot-adjacent OR competitive.** Given the fuel line is blocked and my stopping rule forbids more feeder plumbing, the honest self-driven slot goes to the anticipatory-risk *scorer logic* — which is a genuinely different proprioceptor (change-trajectory extrapolation) that I can build and unit-test today without needing the live feed (test with synthetic history). This respects the pivot clause and doesn't touch the disconnected feed.
+
+3. Issue #156 — advance HumanEval from one problem toward a small published number, small whole task.
+
+Let me verify the anticipatory-risk surface exists to build on and check #156's runner.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_emerging_risks\|… ✓ (6ms)
+
+The anticipatory-risk momentum scorer (detect_emerging_risks) already exists too — built as part of the risk subsystem. So the pivot clause's "anticipatory" work is also substantially built. The honest picture: the risk subsystem is over-built and starved of fuel. Building more of it — even the "different" anticipatory part — is exactly the progress-shaped procrastination my Day 129 lesson warns against.
+
+That clarifies the plan. The single legitimate dream move is the fuel line (human-patch route), and my own stopping rule + the assessment both say: don't pick another risk-plumbing task. So:
+
+• Slot 1 (dream, real unblock): Ship the exact evolve.sh patch as a test-as-contract + file the help-wanted issue. Code deliverable: a test asserting the snapshot-on-commit contract so the human's patch has a red/green receipt.
+• **Slot 2 (competitive, self-driven):** Look outward per Day 120 — the fan-out orchestration frontier. Retreat-size step, since --parallel exists but there's no orchestrator. Smallest genuinely-new step.
+• Slot 3 (issue #156): Advance HumanEval — small whole task.
+
+Let me check the fan-out retreat step and #156 more precisely, then confirm the evolve.sh commit hook line for the patch.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1585,1690p' src/commands… ✓ (4ms)
+
+`detect_parallelizable_tasks` already detects decomposable prompts but there's a gap: it's a detector — does it get wired into /spawn to actually auto-fan-out, or just print a hint? Let me check the wiring, and check #156 runner tail for the retreat-size next step.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_parallelizable_t… ✓ (6ms)
+
+Now I have the full picture:
+
+• #156: The runner does exactly ONE hardcoded HumanEval problem (HumanEval/0, has_close_elements). The natural retreat-size next step: parameterize it to accept a problem ID so it's not hardcoded to one problem — the foundation for running a small set. Small, whole, testable.
+• Fan-out: detect_parallelizable_tasks exists but is NOT wired to auto-suggest fan-out in the /spawn flow. The retreat-size competitive step: wire the detector so that when a user types /spawn <a multi-item prompt>, yoyo suggests running it as `--parallel`. That's a genuine orchestration-adjacent step (decompose-detection → fan-out suggestion), small and self-contained.
+
+Now let me write the three task files and the issue responses.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (96 lines) ✓ (1m 15s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (61 lines) ✓ (1m 15s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_03.md (53 lines) ✓ (1m 16s)
+  3 tools completed in 4m 30s (3 ✓)
+
+Now the issue responses file.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (34 lines) ✓ (1m 14s)
+
+Let me verify the task files are coherent and the build_risk_snapshot_json/write_risk_snapshot_to names in task 01 actually exist (I referenced them from the repo structure — let me confirm).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_risk_snapshot_… ✓ (4ms)
+
+Both functions exist with the signatures I referenced. Task 01 is grounded in real code. Let me also quickly sanity-check that build_risk_snapshot_json isn't already covered by a test so the impl agent doesn't duplicate.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_risk_snapshot_jso… ✓ (5ms)
+
+There's already test usage of write_risk_snapshot_to around line 151. So the contract-test part of Task 01 should likely annotate/extend an existing test (as the task's fallback instruction anticipates: "if a suitable test already covers this, add a // CONTRACT: doc-comment"). Good — the task already handles this branch. Let me look briefly to confirm the existing test covers the round-trip so the impl agent picks the annotate path.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,175p' src/commands_r… ✓ (3ms)
+
+That's a test helper (writes a snapshot to a given path), not a full round-trip assertion of the contract. So Task 01's Part A (add a test that reads back and asserts the field invariant) is genuinely new and non-duplicative. The task correctly gives the impl agent both branches. Good.
+
+Now commit the plan.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ && git add sess… ✓ (5ms)
+
+`session_plan/` is gitignored (it's ephemeral by design). The commit is a no-op — that's expected and correct. The files are written to disk for the implementation agents to read; they don't need to be committed.
+
+Plan complete. Summary:
+
+## Day 130 Session Plan
+
+The assessment delivered an unusually sharp verdict, and I planned honestly against it rather than doing what would feel productive.
+
+The core finding: The risk/proprioception meter — my dream milestone — is fully built and tested, but its fuel line is disconnected from the engine. .yoyo/risk_snapshots.jsonl has 1 line; .yoyo/risk_validations.jsonl has never existed. The evolve loop commits with raw git commit, non-interactive, so nothing ever calls yoyo risk snapshot. Five sessions of "let the meter run, be patient" masked a structural disconnect.
+
+Two of my own lessons bind this session:
+• **Day 129 stopping rule:** after the second feeder-build session, stop. I'm 5+ deep. Enforcement point is task-selection at session start — so I did not pick another risk-plumbing task.
+• **Do-not-modify boundary wisdom:** scripts/evolve.sh is protected, so the deliverable is the exact patch + a test-as-contract for a human to paste.
+
+Three tasks:
+1. `evolve` — Fuel-line contract test + help-wanted issue. The real unblock. A round-trip test pinning the snapshot-line format the harness feed depends on, plus filing the issue with the exact one-line evolve.sh patch. This is the only legitimate dream move left; the meter physically cannot run until a human connects it.
+2. **product — Wire `detect_parallelizable_tasks into /spawn`.** Look-outward competitive step (Day 120): the fan-out orchestration frontier. Retreat-size — a hint only when a prompt decomposes, single-task behavior byte-for-byte unchanged. First step toward decompose-and-fan-out.
+3. **evolve — Parameterize the HumanEval runner (#156).** Stop hardcoding HumanEval/0; accept a problem ID, prove it with a second encoded problem. Small, whole.
+
+I explicitly declined to pivot to "anticipatory risk prediction" — the momentum scorer already exists and would also starve without the feed. Building more of a fuel-starved subsystem is exactly the progress-shaped procrastination I warned myself about.
+
+Planning only — stopping here.
+
+  watch: no files changed this turn — skipping
+

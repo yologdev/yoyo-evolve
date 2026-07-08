@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task by testing the parameterized HumanEval runner. Let me run the key checks.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== no args (default) ==="…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== nonsense arg ===" && b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== add arg ===" && bash s… ✓ (4ms)
+ ✗ (2m 0s)
+    │ Command timed out after 120s
+ ✗ (2m 0s)
+    │ Command timed out after 120s
+  3 tools completed in 2m 1s (1 ✓, 2 ✗)
+
+The nonsense case works (exits 1 with clear error). The default and add cases timed out — likely because `ANTHROPIC_API_KEY` is set in this env and it's actually calling the model. Let me check and verify the script logic without invoking the model.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "API key set: ${ANTHROPIC_A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && env -u ANTHROPIC_API_KEY bash sc… ✓ (12ms)
+ ✓ (26ms)
+  2 tools completed in 1.3s (2 ✓)
+
+The API key is set in this env (that's why the model-calling paths timed out — expected). The graceful-unset message correctly interpolates $PROBLEM. Now let me verify the Python scorer works for both problems with known-good stubs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/^python3 - "\$COMPLETIO… ✓ (6ms)
+  ▶ $ cd /tmp && cat > has.py <<'EOF' (15 lines) ✓ (63ms)
+  2 tools completed in 8.0s (2 ✓)
+
+All scorer paths work correctly: correct stubs pass, wrong stub fails loudly with exit 1. Let me quickly confirm tests pass and the heredoc lint is clean.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/lint_evolve_here…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "problem-ID\|has_close_e… ✓ (4ms)
+ ✓ (36ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Everything checks out. Build/tests already reported PASS (this is a bash+docs-only change, no Rust touched). Let me confirm no protected files were touched and write the verdict.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --name-only HEAD 2>/dev… ✓ (9ms)
+
+Only the two intended files were changed (humaneval_one.sh + benchmarks.md), no protected files. All verification passed:
+
+• **Backward compat**: no-args defaults to has_close_elements, unset-key message correctly interpolates $PROBLEM ✓
+• New problem: add (HumanEval/53) encoded and selectable ✓
+• Unknown problem: nonsense_problem errors clearly, lists available problems, exits 1 ✓
+• Scorer: both problems pass with correct stubs, wrong stub fails loudly (exit 1) ✓
+• Offline/deterministic: scoring is pure local Python, no network ✓
+• Bash syntax clean, **heredoc lint** clean ✓
+• Docs updated with problem-ID arg, supported-problem table, "add a problem" pattern, #156 refs ✓
+
+This is an evolve-kind task touching only a bench script and docs — no product surface (CLI flags, defaults, setup), so no #448 concern.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_3.md (2 lines)

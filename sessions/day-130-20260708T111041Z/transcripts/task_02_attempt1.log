@@ -1,0 +1,168 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by understanding the current state of the code I need to modify.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_parallelizable_t… ✓ (7ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:1593..1693  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:634..734 ✓ (1ms)
+ ✓ (3ms)
+  3 tools completed in 5.1s (3 ✓)
+
+Now I understand the structure. Let me look at the color imports and add a pure helper function + wire it into the single-task branch. Let me check the imports at the top.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -30 src/commands_spawn.rs |… ✓ (4ms)
+
+Now let me add the pure helper function right after detect_parallelizable_tasks, and wire it in.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (5 → 23 lines)
+        Some(items.into_iter().map(String::from).collect())
+  + }
+  + 
+  + /// Pure decision helper: when a single-task `/spawn` prompt actually decomposes
+  + /// into ≥2 independent tasks, return a copy-pasteable `--parallel` suggestion hint.
+  + /// Returns `None` when the prompt is a single task, has sequential markers, or a
+  + /// path conflict — i.e. whenever fan-out would be unsafe or unhelpful. Hint only:
+  + /// this never changes what `/spawn` does, it just points at a faster path.
+  + pub fn parallel_suggestion(prompt: &str) -> Option<String> {
+  +     let tasks = detect_parallelizable_tasks(prompt)?;
+  +     if tasks.len() < 2 {
+  +         return None;
+  +     }
+  +     let joined = tasks.join(" --- ");
+  +     Some(format!(
+  +         "💡 this looks decomposable into {} independent tasks. Run them in parallel with:\n   /spawn --parallel {}",
+  +         tasks.len(),
+  +         joined
+  +     ))
+    }
+  ... (2 more lines)
+ ✓ (17.0s)
+        Some(items.into_iter().map(String::from).collect())
+  + }
+  + 
+  + /// Pure decision helper: when a single-task `/spawn` prompt actually decomposes
+  + /// into ≥2 independent tasks, return a copy-pasteable `--parallel` suggestion hint.
+  + /// Returns `None` when the prompt is a single task, has sequential markers, or a
+  + /// path conflict — i.e. whenever fan-out would be unsafe or unhelpful. Hint only:
+  + /// this never changes what `/spawn` does, it just points at a faster path.
+  ... (13 more lines)
+
+Expected — now let me wire it into the single-task branch. It should fire after the parallel/bg/collect branches are handled (i.e. we're definitely in single-task mode), and only when --parallel wasn't used.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 10 lines)
+        // Synchronous spawn (existing behavior)
+  +     // Non-intrusive fan-out hint: if the single task actually decomposes into
+  +     // ≥2 independent tasks, point the user at --parallel. Hint only — the single
+  +     // task still launches exactly as before.
+  +     if let Some(hint) = parallel_suggestion(&args.task) {
+  +         println!("{DIM}  {hint}{RESET}");
+  +     }
+  + 
+        // Register task in tracker
+        let spawn_id = tracker.register(&args.task, args.output_path.clone());
+ ✓ (1m 35s)
+        // Synchronous spawn (existing behavior)
+  +     // Non-intrusive fan-out hint: if the single task actually decomposes into
+  +     // ≥2 independent tasks, point the user at --parallel. Hint only — the single
+  +     // task still launches exactly as before.
+  +     if let Some(hint) = parallel_suggestion(&args.task) {
+  +         println!("{DIM}  {hint}{RESET}");
+  +     }
+  + 
+        // Register task in tracker
+        let spawn_id = tracker.register(&args.task, args.output_path.clone());
+
+Note: the --bg branch also handles single tasks. But the task spec says wire into "the single-task branch" (synchronous). The --parallel branch returns early before this, so `--parallel` is correctly skipped. Now let me add the tests.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (2 → 2 lines) ✓ (1m 35s)
+
+Let me find a good place to add the tests within the tests module.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_detect_paralleliza… ✓ (4ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 2 lines)
+        #[test]
+        fn test_parse_spawn_args_basic_task() {
+  -         let args = parse_spawn_args("/spawn read src/main.rs and summarize");
+ ✓ (10.9s)
+        #[test]
+        fn test_parse_spawn_args_basic_task() {
+  -         let args = parse_spawn_args("/spawn read src/main.rs and summarize");
+  2 tools completed in 15.8s (2 ✓)
+
+I accidentally removed a line. Let me fix that.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 4 lines)
+        #[test]
+        fn test_parse_spawn_args_basic_task() {
+  +         let args = parse_spawn_args("/spawn read src/main.rs and summarize");
+            assert!(args.is_some());
+ ✓ (1m 34s)
+        #[test]
+        fn test_parse_spawn_args_basic_task() {
+  +         let args = parse_spawn_args("/spawn read src/main.rs and summarize");
+            assert!(args.is_some());
+
+Good, restored. Now let me add the new tests right after the tests module opening.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (6 → 43 lines)
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+        use yoagent::types::{Content, Message, Usage};
+  + 
+  +     #[test]
+  +     fn test_parallel_suggestion_fires_on_independent_tasks() {
+  +         // 3 genuinely independent tasks, no sequential markers, no path conflict.
+  +         let prompt = "- add tests for the parser\n- write docs for the api\n- refactor the logger";
+  +         let hint = parallel_suggestion(prompt).expect("should suggest fan-out");
+  +         // Copy-pasteable command must be present.
+  +         assert!(hint.contains("--parallel"), "hint: {hint}");
+  +         assert!(hint.contains("3 independent tasks"), "hint: {hint}");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parallel_suggestion_silent_on_single_line() {
+  +         // A single-line prompt is one task — no fan-out.
+  +         assert!(parallel_suggestion("read src/main.rs and summarize").is_none());
+  +     }
+  + 
+  ... (21 more lines)
+ ✓ (1m 35s)
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+        use yoagent::types::{Content, Message, Usage};
+  + 
+  +     #[test]
+  +     fn test_parallel_suggestion_fires_on_independent_tasks() {
+  +         // 3 genuinely independent tasks, no sequential markers, no path conflict.
+  +         let prompt = "- add tests for the parser\n- write docs for the api\n- refactor the logger";
+  ... (13 more lines)
+
+Let me verify the path-conflict test prompt actually triggers a conflict. Let me check `extract_path_tokens`.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn extract_path_tokens\… ✓ (4ms)
+
+MIN_ITEM_CHARS is 15, so each item must be >15 chars. Let me check my test prompts. "then query it" is only 13 chars — but that test expects None anyway due to sequential marker so it's fine. For the path-conflict test, "update the readme" = 17 chars, ok. Let me run the build and tests.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.3s)
+
+Let me specifically verify my 4 new tests pass and run clippy.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test parallel_suggestion 2… ✓ (17.1s)
+
+All 4 new tests pass and clippy is clean. Let me verify the path-conflict test is genuinely testing the conflict path (not passing for the wrong reason — Day 122 wisdom about verifying the discriminator boundary). Let me confirm that removing the conflict makes it fire.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/v… (18 lines) ✓ (20.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test tmp_no_conflict_fires… ✓ (148ms)
+  2 tools completed in 25.1s (2 ✓)
+
+Confirmed: the boundary is real — same shape, distinct files → fires; same file → silent. The discriminator works on both sides. Now let me remove the throwaway verification module.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (25ms)
+
+Now let me check the docs for a spawn section to update.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "parallel\|/spawn\|fan… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn\|parallel" docs/s… ✓ (4ms)
+  2 tools completed in 2.0s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

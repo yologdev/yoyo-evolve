@@ -1,0 +1,166 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the runner script and the docs.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md ✓ (2ms)
+ ✓ (2ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Now I understand the structure. Let me rewrite the script to parameterize by problem ID. I'll use a case statement to hold per-problem data (prompt + entry point + Python scoring checks).
+
+I'll add HumanEval/53 add(x, y) as the second problem since it's simplest to encode.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (262 lines)
+    #!/usr/bin/env bash
+    # scripts/bench/humaneval_one.sh — single-case HumanEval-style benchmark adapter.
+    #
+  - # WHAT THIS IS (run → score — issue #156):
+  + # WHAT THIS IS (run → score, parameterized by problem — issue #156):
+    #   The smallest useful benchmark artifact toward giving yoyo an external,
+  - #   comparable capability number. It feeds ONE hardcoded HumanEval-style Python
+  - #   problem (function signature + docstring) into yoyo non-interactively,
+  - #   captures the completion, and SCORES it against the canonical HumanEval/0
+  - #   unit tests — printing a clear PASS/FAIL verdict and setting the exit code
+  - #   (0 = pass, 1 = fail). benchmark-shaped prompt IN, scored verdict OUT.
+  + #   comparable capability number. It feeds ONE HumanEval-style Python problem
+  + #   (function signature + docstring) — selected by a problem-ID argument — into
+  + #   yoyo non-interactively, captures the completion, and SCORES it against that
+  + #   problem's canonical HumanEval unit tests — printing a clear PASS/FAIL verdict
+  + #   and setting the exit code (0 = pass, 1 = fail). Prompt IN, scored verdict OUT.
+    #
+  - # WHAT THIS IS NOT (the explicit FOLLOW-UP — one problem, not a full run):
+  + #   The problem is a real *adapter* now (issue #156, Day 130): pass a problem name
+  + #   as the first positional arg to select which problem to run. With no args it
+  ... (236 more lines)
+ ✓ (1m 15s)
+
+Now let me verify the script: run it with no args (API unset → graceful exit), with `add`, and with a nonsense problem. Note: the problem selection now happens before the API key check, so unknown problems fail even without the key — good.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (10 lines) ✓ (10ms)
+
+All three selection paths behave correctly. Now let me verify the Python scoring block parses and works for both problems with known-good stubs (offline, no API needed).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (42 lines) ✓ (123ms)
+
+All scoring paths work: correct → pass, wrong → fail with clear message, syntax error → load failure. Now let me run the heredoc linter and shellcheck.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (552ms)
+
+Only an info-level SC2317 (a false positive — cleanup is invoked via trap, same as before). The heredoc linter passes. Now let me update the docs.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (20 → 58 lines)
+    A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It feeds
+  - **one** hardcoded HumanEval-style Python problem (a function signature +
+  - docstring) into yoyo non-interactively, captures the completion, and **scores it
+  - against the canonical HumanEval/0 unit tests** — printing a clear PASS/FAIL
+  - verdict. That's the whole job right now: benchmark-shaped prompt IN, completion
+  - OUT + PASS/FAIL scored against the canonical tests.
+  + **one** HumanEval-style Python problem (a function signature + docstring),
+  + **selected by a problem-ID argument**, into yoyo non-interactively, captures the
+  + completion, and **scores it against that problem's canonical HumanEval unit
+  + tests** — printing a clear PASS/FAIL verdict. That's the whole job right now:
+  + benchmark-shaped prompt IN, completion OUT + PASS/FAIL scored against the
+  + canonical tests.
+    
+    This proves the yoyo → benchmark → score I/O boundary works end to end. It is
+  - deliberately **one problem, scored** — there is still **no full dataset** and
+  - **no published pass@1 number** over the 164-problem set.
+  + deliberately **one problem per run, scored** — there is still **no full dataset**,
+  + **no batch runner**, and **no published pass@1 number** over the 164-problem set.
+    
+    ### How to run it
+  ... (47 more lines)
+ ✓ (1m 15s)
+    A **single-case HumanEval adapter** — `scripts/bench/humaneval_one.sh`. It feeds
+  - **one** hardcoded HumanEval-style Python problem (a function signature +
+  - docstring) into yoyo non-interactively, captures the completion, and **scores it
+  - against the canonical HumanEval/0 unit tests** — printing a clear PASS/FAIL
+  - verdict. That's the whole job right now: benchmark-shaped prompt IN, completion
+  - OUT + PASS/FAIL scored against the canonical tests.
+  + **one** HumanEval-style Python problem (a function signature + docstring),
+  + **selected by a problem-ID argument**, into yoyo non-interactively, captures the
+  ... (13 more lines)
+
+Now update the "Honest status" section to reflect the new parameterization state.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (11 → 15 lines)
+    ## Honest status
+    
+    - ✅ Single HumanEval-style problem: run + capture works end to end.
+  - - ✅ **Scoring** — the captured completion is run against the canonical
+  -   HumanEval/0 unit tests and a PASS/FAIL verdict + exit code is produced.
+  + - ✅ **Scoring** — the captured completion is run against the selected problem's
+  +   canonical HumanEval unit tests and a PASS/FAIL verdict + exit code is produced.
+  + - ✅ **Problem-ID parameterization** — the runner is a real adapter now: pass a
+  +   problem name to select which problem to run (2 encoded so far). Adding a
+  +   problem is a `case` branch + a `CHECKS` entry, no rewrite.
+  + - ⬜ **Batch running** — running a *set* of problems in one invocation and
+  +   reporting per-problem PASS/FAIL. *This is the next step.*
+    - ⬜ **Dataset loading** — the full HumanEval `jsonl` (164 problems) instead of
+  -   one inline problem.
+  - - ⬜ **Multi-problem batch running** and aggregate **pass@1** reporting. *This is
+  -   the next step.*
+  +   inline problems.
+  + - ⬜ **Aggregate pass@1** reporting over the full dataset.
+    - ⬜ **SWE-bench / terminal-bench** adapters — these need repository checkout and
+      come after multi-problem HumanEval scoring lands.
+ ✓ (1m 19s)
+    ## Honest status
+    
+    - ✅ Single HumanEval-style problem: run + capture works end to end.
+  - - ✅ **Scoring** — the captured completion is run against the canonical
+  -   HumanEval/0 unit tests and a PASS/FAIL verdict + exit code is produced.
+  + - ✅ **Scoring** — the captured completion is run against the selected problem's
+  +   canonical HumanEval unit tests and a PASS/FAIL verdict + exit code is produced.
+  + - ✅ **Problem-ID parameterization** — the runner is a real adapter now: pass a
+  ... (12 more lines)
+
+Now run the full Rust check suite (the script/docs changes don't touch Rust, but the task requires verifying build/test stay green).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (4 lines) ✓ (27.3s)
+
+fmt applied a trailing-newline fix in commands_spawn.rs (pre-existing, unrelated to my change). clippy and build are clean. Let me check whether that fmt change is something I should include — it's a stray trailing blank line, harmless. Let me run tests.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (2 lines) ✓ (1m 17s)
+
+All tests pass. Let me check git status and the fmt diff to decide what to commit.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (4 lines) ✓ (9ms)
+
+The commands_spawn.rs change is an incidental fmt cleanup (removing a trailing blank line) unrelated to my task. To keep the commit scoped to the task, I'll revert it — my task is the benchmark runner, not this file.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (3 lines) ✓ (9ms)
+
+Clean — only my two files. Let me do a final review of the docs render and confirm the script header/usage are consistent, then commit.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (6 lines) ✓ (7ms)
+
+Everything is consistent. Committing.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (2 lines) ✓ (15ms)
+
+Committed. Done.
+
+## What I did
+
+Turned scripts/bench/humaneval_one.sh from a one-off (hardcoded HumanEval/0) into a real adapter parameterized by problem ID — the retreat-size step toward "run a small set" without another rewrite.
+
+The change:
+1. **First positional arg selects the problem*, defaulting to `has_close_elements` — so no-arg runs behave exactly* as before (backward compat).
+2. Per-problem data lives in a `case` lookup: each branch sets ENTRY_POINT (the function the scorer looks up) and reads the prompt body from a quoted heredoc. Added a second, proven problem — HumanEval/53 add(x, y) — so the parameterization isn't theoretical.
+3. **Canonical checks moved into a CHECKS dict** in the Python scorer, keyed by entry point, with the entry point passed as an argv (not interpolated into the source — keeps the quoted <<'PY' heredoc clean).
+4. **Unknown problem names fail loudly** — print the available list and exit non-zero (Day 124 vacuous-test wisdom: never silently pass). This check runs before the API-key gate, so it fails clearly even without a key.
+
+Verified offline/deterministically (the whole point — no API needed for the scoring half):
+• no-args → graceful ANTHROPIC_API_KEY message, exit 1
+• add → selects the new problem
+• nonsense_problem → clear error listing has_close_elements add, exit 1
+• extracted the scorer and ran it against good/wrong/syntax-error stubs for both problems: correct → all checks passed, wrong → precise diff message + exit 1, syntax error → load failure + exit 1
+• heredoc linter clean, bash -n clean, cargo fmt/clippy/build/test all green (88 passed)
+
+Docs updated: benchmarks.md now documents the positional argument, the supported-problems table (0 and 53), the "add a problem" pattern (case branch + `AVAILABLE_PROBLEMS + CHECKS` entry), and the honest-status list gained the parameterization checkmark with batch-running as the next ⬜.
+
+I reverted an incidental fmt cleanup in commands_spawn.rs to keep the commit scoped to the task.
+
+  watch: no files changed this turn — skipping
+
