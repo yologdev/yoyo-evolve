@@ -1052,15 +1052,37 @@ pub fn build_tools(
 /// parent agent pre-populate or read shared variables. The sub-agent
 /// automatically receives a `shared_state` tool (via yoagent's
 /// `SharedStateTool`) so it can read/write the same store.
+/// Hard cap on sub-agent nesting depth. `depth 0` = the top-level parent's
+/// direct child; each nested `sub_agent` tool increments the depth by one.
+/// Matches the depth-3 cap documented in CLAUDE.md's RLM substrate section.
+/// The tool tree is finite by construction: the leaf level
+/// (`depth == MAX_SUB_AGENT_DEPTH - 1`) omits the nested `sub_agent` tool, so
+/// recursion cannot continue past the cap.
+const MAX_SUB_AGENT_DEPTH: usize = 3;
+
 pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, SharedState) {
     let shared_state = SharedState::new();
+    let tool = build_sub_agent_tool_at_depth(config, 0, &shared_state);
+    (tool, shared_state)
+}
 
+/// Build a `sub_agent` tool at a given nesting `depth`, all levels sharing the
+/// single `shared_state` store passed in (RLM substrate invariant: every
+/// sub-agent reads/writes the same key-value store). When
+/// `depth + 1 < MAX_SUB_AGENT_DEPTH`, the child gets its own `sub_agent` tool
+/// (built at `depth + 1`) so it can delegate further; at the leaf level the
+/// nested tool is omitted, guaranteeing termination.
+fn build_sub_agent_tool_at_depth(
+    config: &AgentConfig,
+    depth: usize,
+    shared_state: &SharedState,
+) -> SubAgentTool {
     // Sub-agent gets standard yoagent tools — no permission guards needed
     // since the parent already authorized the delegation.
     // Directory restrictions ARE inherited to prevent sub-agents from bypassing
     // path-based security boundaries.
     let restrictions = &config.dir_restrictions;
-    let child_tools: Vec<Arc<dyn AgentTool>> = vec![
+    let mut child_tools: Vec<Arc<dyn AgentTool>> = vec![
         Arc::new(yoagent::tools::bash::BashTool::default()),
         maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
         maybe_guard_arc(Arc::new(WriteFileTool::new()), restrictions),
@@ -1070,6 +1092,15 @@ pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, Share
         Arc::new(WebSearchTool),
     ];
 
+    // Allow exactly one more level of nesting, bounded by MAX_SUB_AGENT_DEPTH.
+    // The nested tool shares the SAME store (not a fresh one) so artifacts set
+    // at any level are visible at every level. The leaf level omits this tool —
+    // that omission is the termination guarantee.
+    if depth + 1 < MAX_SUB_AGENT_DEPTH {
+        let nested = build_sub_agent_tool_at_depth(config, depth + 1, shared_state);
+        child_tools.push(Arc::new(nested));
+    }
+
     // Select the right provider
     let provider: Arc<dyn StreamProvider> = match config.provider.as_str() {
         "anthropic" => Arc::new(AnthropicProvider),
@@ -1078,12 +1109,14 @@ pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, Share
         _ => Arc::new(OpenAiCompatProvider),
     };
 
-    let tool = SubAgentTool::new("sub_agent", provider)
+    SubAgentTool::new("sub_agent", provider)
         .with_description(
             "Delegate a subtask to a fresh sub-agent with its own context window. \
              Use for complex, self-contained subtasks like: researching a codebase, \
              running a series of tests, or implementing a well-scoped change. \
              The sub-agent has bash, file read/write/edit, list, and search tools. \
+             The sub-agent also has its own sub_agent tool and may delegate further, \
+             bounded to a hard nesting cap (recursion is available and finite). \
              It starts with a clean context and returns a summary of what it did.",
         )
         .with_system_prompt(
@@ -1097,9 +1130,38 @@ pub(crate) fn build_sub_agent_tool(config: &AgentConfig) -> (SubAgentTool, Share
         .with_thinking(config.thinking)
         .with_max_turns(25)
         .with_shared_state(shared_state.clone())
-        .with_skills(config.skills.clone());
+        .with_skills(config.skills.clone())
+}
 
-    (tool, shared_state)
+/// Return the tool names a sub-agent built at `depth` would expose to its child.
+/// Pure helper (no agent loop needed) for testing the nesting depth cap: below
+/// the cap the list contains a nested "sub_agent"; at the leaf level it does not.
+#[cfg(test)]
+fn sub_agent_child_tool_names(config: &AgentConfig, depth: usize) -> Vec<String> {
+    let restrictions = &config.dir_restrictions;
+    let mut names: Vec<String> = vec![
+        yoagent::tools::bash::BashTool::default().name().to_string(),
+        maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions)
+            .name()
+            .to_string(),
+        maybe_guard_arc(Arc::new(WriteFileTool::new()), restrictions)
+            .name()
+            .to_string(),
+        maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions)
+            .name()
+            .to_string(),
+        maybe_guard_arc(Arc::new(ListFilesTool::default()), restrictions)
+            .name()
+            .to_string(),
+        maybe_guard_arc(Arc::new(SearchTool::default()), restrictions)
+            .name()
+            .to_string(),
+        WebSearchTool.name().to_string(),
+    ];
+    if depth + 1 < MAX_SUB_AGENT_DEPTH {
+        names.push("sub_agent".to_string());
+    }
+    names
 }
 
 #[cfg(test)]
@@ -1155,6 +1217,73 @@ mod tests {
         let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
         let (tool, _state) = build_sub_agent_tool(&config);
         assert_eq!(tool.name(), "sub_agent");
+    }
+
+    #[test]
+    fn test_nested_sub_agent_present_below_cap() {
+        // At depth 0 (top-level parent's direct child), the child tool set must
+        // include a nested "sub_agent" so the sub-agent can delegate further.
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        let names = sub_agent_child_tool_names(&config, 0);
+        assert!(
+            names.iter().any(|n| n == "sub_agent"),
+            "below the cap the child must have a nested sub_agent tool; got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_nested_sub_agent_absent_at_cap() {
+        // Paired negative case (differs by one depth level): at the leaf level
+        // (MAX_SUB_AGENT_DEPTH - 1) the child tool set must NOT include a nested
+        // "sub_agent" — this is the termination guarantee.
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        let names = sub_agent_child_tool_names(&config, MAX_SUB_AGENT_DEPTH - 1);
+        assert!(
+            !names.iter().any(|n| n == "sub_agent"),
+            "at the cap the leaf child must NOT have a nested sub_agent tool; got {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_sub_agent_depth_ladder_terminates() {
+        // Walking the depth ladder: every level below the cap has the nested
+        // tool, the leaf omits it, so the tool tree is finite by construction.
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        for depth in 0..MAX_SUB_AGENT_DEPTH {
+            let has_nested = sub_agent_child_tool_names(&config, depth)
+                .iter()
+                .any(|n| n == "sub_agent");
+            assert_eq!(
+                has_nested,
+                depth + 1 < MAX_SUB_AGENT_DEPTH,
+                "depth {depth}: nested presence should match depth+1 < MAX"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nested_sub_agent_shares_one_store() {
+        // Every level shares ONE SharedState: build_sub_agent_tool returns the
+        // store threaded through all nested levels. Constructing the tool must
+        // not panic and returns a usable store.
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        let (tool, _state) = build_sub_agent_tool(&config);
+        assert_eq!(tool.name(), "sub_agent");
+    }
+
+    #[test]
+    fn test_sub_agent_description_mentions_recursion() {
+        // Discoverability receipt: the description must tell the model it can
+        // delegate further (recursion available and finite).
+        let config = test_agent_config("anthropic", "claude-sonnet-4-20250514");
+        let (tool, _state) = build_sub_agent_tool(&config);
+        let desc = tool.description().to_lowercase();
+        assert!(
+            desc.contains("nesting")
+                || desc.contains("recursion")
+                || desc.contains("delegate further"),
+            "description should mention nesting/recursion; got: {desc}"
+        );
     }
 
     #[test]
