@@ -2743,4 +2743,45 @@ mod tests {
         config.insert("max_auto_continues".to_string(), "0".to_string());
         assert_eq!(get_max_auto_continues(&config, false), 0);
     }
+
+    #[test]
+    fn test_format_followup_hint_empty_is_none() {
+        // Zero pending → no output (silent, product-safe no-op).
+        assert_eq!(format_followup_hint(0, "anything"), None);
+        // Non-zero count but blank first item → still None.
+        assert_eq!(format_followup_hint(3, ""), None);
+        assert_eq!(format_followup_hint(2, "   "), None);
+    }
+
+    #[test]
+    fn test_format_followup_hint_basic() {
+        let hint = format_followup_hint(2, "run the tests").expect("should produce a hint");
+        assert!(hint.contains("2 pending"));
+        assert!(hint.contains("run the tests"));
+        assert!(hint.contains('↻'));
+    }
+
+    #[test]
+    fn test_format_followup_hint_multibyte_no_panic() {
+        // A multi-byte first character (✓ is 3 bytes, 🚀 is 4 bytes) must not
+        // panic during truncation.
+        let first = "✓ done — now 🚀 deploy the release to production servers";
+        let hint = format_followup_hint(1, first).expect("should produce a hint");
+        assert!(hint.contains("1 pending"));
+        assert!(hint.contains('✓'));
+        // Repeat with a very long multi-byte string to force truncation.
+        let long = "🚀".repeat(200);
+        let hint2 = format_followup_hint(5, &long).expect("should produce a hint");
+        assert!(hint2.contains("5 pending"));
+    }
+
+    #[test]
+    fn test_format_followup_hint_long_truncated() {
+        let long = "a".repeat(200);
+        let hint = format_followup_hint(1, &long).expect("should produce a hint");
+        // Long item is truncated with an ellipsis.
+        assert!(hint.contains('…'));
+        // The full 200-char item is not reproduced verbatim.
+        assert!(!hint.contains(&long));
+    }
 }
