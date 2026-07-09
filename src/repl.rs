@@ -1299,6 +1299,17 @@ pub async fn run_repl(
                      — more work pending)...{RESET}"
                 );
 
+                // Surface WHAT queued follow-up work is pending (yoagent 0.9
+                // follow_up_queue_snapshot). Silent no-op when the queue is
+                // empty or unpopulated (product-safe for providers that don't
+                // use the follow-up queue).
+                let fu_snapshot = agent.follow_up_queue_snapshot();
+                if let Some(hint) =
+                    format_followup_hint(fu_snapshot.len(), &first_followup_text(&fu_snapshot))
+                {
+                    eprintln!("{DIM}  {hint}{RESET}");
+                }
+
                 // Snapshot state for the continuation turn
                 let cont_changes_before: Vec<String> = session_changes
                     .snapshot()
@@ -1432,6 +1443,44 @@ pub(crate) fn get_max_auto_continues(
 /// `looks_incomplete` text heuristic — never treat empty-queue as "done".
 pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
     queue_pending > 0 || looks_incomplete(text)
+}
+
+/// Format a dim one-line hint naming the next queued follow-up item.
+///
+/// `count` is the number of items pending in the follow-up queue; `first` is
+/// the text of the next queued item. Returns `None` (print nothing) when the
+/// queue is empty (`count == 0`) or the first item is blank — this keeps the
+/// hint a product-safe no-op for providers that don't populate the queue.
+///
+/// The first item is truncated char-boundary-safely (via `truncate_with_ellipsis`)
+/// so a multi-byte first character never panics.
+pub(crate) fn format_followup_hint(count: usize, first: &str) -> Option<String> {
+    let first = first.trim();
+    if count == 0 || first.is_empty() {
+        return None;
+    }
+    let preview = truncate_with_ellipsis(first, 60);
+    Some(format!("↻ continuing — {count} pending: {preview}"))
+}
+
+/// Extract a short preview of the next queued follow-up item from a yoagent
+/// follow-up-queue snapshot. Returns the trimmed text of the first LLM message's
+/// first text content block, or an empty string if the snapshot has no usable
+/// text (e.g. providers that don't populate the queue).
+fn first_followup_text(snapshot: &[yoagent::AgentMessage]) -> String {
+    for msg in snapshot {
+        if let Some(yoagent::Message::User { content, .. }) = msg.as_llm() {
+            for block in content {
+                if let yoagent::Content::Text { text } = block {
+                    let t = text.trim();
+                    if !t.is_empty() {
+                        return t.to_string();
+                    }
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 /// Heuristic check: does the agent's response text suggest it stopped mid-work
