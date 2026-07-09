@@ -19,9 +19,11 @@ tests** — printing a clear PASS/FAIL verdict. That's the whole job right now:
 benchmark-shaped prompt IN, completion OUT + PASS/FAIL scored against the
 canonical tests.
 
-This proves the yoyo → benchmark → score I/O boundary works end to end. It is
-deliberately **one problem per run, scored** — there is still **no full dataset**,
-**no batch runner**, and **no published pass@1 number** over the 164-problem set.
+This proves the yoyo → benchmark → score I/O boundary works end to end. A thin
+**aggregate runner** — `scripts/bench/humaneval_run.sh` — now composes it over
+the small inline problem set (see below). There is still **no full dataset** (the
+164-problem HumanEval `jsonl`) and **no published pass@1 number** over it — the
+aggregate score is HumanEval-*lite* (the 5 inline problems), not the full set.
 
 ### How to run it
 
@@ -36,6 +38,42 @@ ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_one.sh add
 # Reuse a prebuilt binary instead of rebuilding:
 YOYO_BIN=./target/release/yoyo ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_one.sh add
 ```
+
+### How to run the aggregate runner
+
+`scripts/bench/humaneval_run.sh` composes the single-case harness above over the
+whole inline problem set and prints one greppable summary line:
+
+```bash
+# Run all inline problems, tally, print the aggregate score:
+ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh
+
+# Run a subset by naming problems (validated against the available set):
+ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh add below_zero
+
+# Reuse a prebuilt binary (passed through to humaneval_one.sh):
+YOYO_BIN=./target/release/yoyo ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh
+```
+
+The final line has an exact, greppable format:
+
+```
+HumanEval-lite: 5/5 passed (100.0%)
+```
+
+It **composes** `humaneval_one.sh` — the single source of truth for both the
+problem set and the scoring. The problem list is read straight from the
+`AVAILABLE_PROBLEMS=` line in `humaneval_one.sh` (no independent hardcoded copy),
+so the two scripts never drift. Each problem's PASS/FAIL is decided solely by
+`humaneval_one.sh`'s exit code — the aggregate runner does **not** re-implement
+scoring. A problem whose *harness* crashes (vs. a wrong-answer FAIL) is counted
+as not-passed but reported distinctly, so a harness bug is never silently scored
+as a wrong answer. Exit `0` iff every problem passed, non-zero otherwise.
+
+This is **HumanEval-*lite*** — the 5 inline problems, **not** the full
+164-problem HumanEval dataset. It does not imply a pass@1 over 164 problems. The
+runner produces the *number* when you run it with a real key; no number is
+published here from a claim alone.
 
 ### Problem-ID argument
 
@@ -102,14 +140,18 @@ human can run it in CI or locally without setup.
 - ✅ **Problem-ID parameterization** — the runner is a real adapter now: pass a
   problem name to select which problem to run (5 encoded so far). Adding a
   problem is a `case` branch + a `CHECKS` entry, no rewrite.
-- ⬜ **Batch running** — running a *set* of problems in one invocation and
-  reporting per-problem PASS/FAIL. *This is the next step.*
+- ✅ **Batch running (lite)** — `humaneval_run.sh` runs the *set* of inline
+  problems in one invocation, reports per-problem PASS/FAIL, and prints an
+  aggregate `HumanEval-lite: N/M passed (X%)` summary line. This is over the
+  small inline set, **not** the full 164-problem dataset.
 - ⬜ **Dataset loading** — the full HumanEval `jsonl` (164 problems) instead of
   inline problems.
 - ⬜ **Aggregate pass@1** reporting over the full dataset.
 - ⬜ **SWE-bench / terminal-bench** adapters — these need repository checkout and
-  come after multi-problem HumanEval scoring lands.
+  come after full-dataset HumanEval scoring lands.
 
-No aggregate benchmark number is published or implied. When multi-problem scoring
-exists and produces a real pass@1 over the full dataset, that number will be
-reported here.
+No aggregate benchmark number is published or implied here. The lite aggregate
+runner *can* produce a `HumanEval-lite: N/M passed (X%)` figure when run with a
+real key — but a figure is only trustworthy when actually run, not claimed. When
+full-dataset scoring exists and produces a real pass@1 over the 164 problems,
+that number will be reported here.
