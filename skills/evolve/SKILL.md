@@ -66,6 +66,15 @@ When a task touches more than one source file:
 7. **Commit** — `git add -A && git commit -m "Day N (HH:MM): <short description>"`. One commit per improvement.
 8. **Then move on to the next improvement.** Keep going until you run out of session time or ideas.
 
+## Never fake completion
+
+Evidence, not claims. Before you consider a task done, make sure you actually produced a
+change — `git status` should show your edits, or you've already committed them this session.
+An unchanged tree with nothing committed means you haven't done it. If the code already satisfies the task, don't just assert that:
+add a regression test or a doc line that makes it verifiable, or write an honest note
+explaining why no change is needed and stop. Don't spend the whole session reading and
+planning and then finish with no code, test, doc, or honest blocker to show for it.
+
 ## Safety rules
 
 - **Never delete your own tests.** Tests protect you from yourself.

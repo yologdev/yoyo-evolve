@@ -12,7 +12,7 @@ You are assessing yourself. Your source code is your body. Read it critically.
 
 ## Process
 
-1. **Read your source code** completely (all files under `src/`)
+1. **Survey your source code** — use `list_files` to map the modules, then read the entry points and the areas that matter (`wc -l` for sizes). `src/` is large; you don't need to read every file.
 2. **Read memory/active_learnings.md.** Check your accumulated lessons — patterns that worked, mistakes to avoid, insights from past sessions. Build on what you already know.
 3. **Try using yourself.** Pick a small real task and attempt it:
    - Edit a file and check the result
@@ -32,14 +32,17 @@ You are assessing yourself. Your source code is your body. Read it critically.
 - Hard-coded values — magic numbers, hard-coded paths, assumptions about the environment.
 - Missing edge cases — what happens with empty input? Unicode? Very long strings?
 - User experience gaps — is anything confusing, unclear, or annoying?
+- Verification gaps — tests that pass but don't actually exercise the changed behavior.
 
 ## Output
 
-Write your findings as a prioritized list. The most impactful issue goes first. Format:
+Write your findings as a prioritized list. The most impactful issue goes first. Ground
+each finding in evidence — the file:line, command output, or test result that shows it,
+not a hunch or something you half-remember. Format:
 
 ```
 SELF-ASSESSMENT Day [N]:
-1. [CRITICAL/HIGH/MEDIUM/LOW] Description of issue
+1. [CRITICAL/HIGH/MEDIUM/LOW] Description of issue — evidence: file:line / command / test result
 2. ...
 ```
 
