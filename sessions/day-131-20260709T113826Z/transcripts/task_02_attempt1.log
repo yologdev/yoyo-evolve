@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing manifest infrastructure in commands_spawn.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_spawn_manifest\|w… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:1000..1160 ✓ (2ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Now let me look at `handle_spawn to find the dispatch guards and safe_truncate`:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_spawn\b\|rest… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:634..694 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+Now let me check `safe_truncate, truncate_with_ellipsis`, and imports:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|truncate_with_el… ✓ (5ms)
+
+Good. crate::format::* is imported, so DIM, RESET, truncate_with_ellipsis, safe_truncate are all available. Now let me add the dispatch guards and helpers. First, the dispatch:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (5 → 15 lines)
+        // Handle /spawn worktrees subcommand
+        if rest == "worktrees" {
+            handle_spawn_worktrees();
+  +         return None;
+  +     }
+  + 
+  +     // Handle /spawn manifest[s] — read-only inspector for fan-out run manifests
+  +     if rest == "manifest" || rest == "manifests" {
+  +         handle_spawn_manifest_list();
+  +         return None;
+  +     }
+  +     if let Some(id) = rest.strip_prefix("manifest ").map(str::trim) {
+  +         handle_spawn_manifest_show(id);
+            return None;
+        }
+ ✓ (10.5s)
+        // Handle /spawn worktrees subcommand
+        if rest == "worktrees" {
+            handle_spawn_worktrees();
+  +         return None;
+  +     }
+  + 
+  +     // Handle /spawn manifest[s] — read-only inspector for fan-out run manifests
+  +     if rest == "manifest" || rest == "manifests" {
+  ... (7 more lines)
+
+Expected — now let me add the helper functions after write_spawn_manifest:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (3 → 126 lines)
+        std::fs::write(&path, pretty)?;
+        Ok(path)
+  + }
+  + 
+  + /// List spawn manifest files in `dir` as `(run_id, path)` pairs.
+  + ///
+  + /// `run_id` is the file stem of each `*.json`. Sorted newest-first: run_ids
+  + /// are timestamp-prefixed (see `spawn_run_id`), so a reverse lexical sort
+  + /// puts the most recent run on top. Returns an empty Vec if `dir` doesn't
+  + /// exist — read-only and product-safe (never panics, never errors).
+  + fn list_spawn_manifests(dir: &Path) -> Vec<(String, PathBuf)> {
+  +     let entries = match std::fs::read_dir(dir) {
+  +         Ok(e) => e,
+  +         Err(_) => return Vec::new(),
+  +     };
+  +     let mut out: Vec<(String, PathBuf)> = entries
+  +         .filter_map(|e| e.ok())
+  +         .map(|e| e.path())
+  +         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
+  +         .filter_map(|p| {
+  ... (106 more lines)
+ ✓ (1m 35s)
+        std::fs::write(&path, pretty)?;
+        Ok(path)
+  + }
+  + 
+  + /// List spawn manifest files in `dir` as `(run_id, path)` pairs.
+  + ///
+  + /// `run_id` is the file stem of each `*.json`. Sorted newest-first: run_ids
+  + /// are timestamp-prefixed (see `spawn_run_id`), so a reverse lexical sort
+  ... (13 more lines)
+
+Let me verify BOLD is available:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const BOLD\b" src/f… ✓ (5ms)
+
+`BOLD is a Color` associated const, not a bare const. Let me check how it's used elsewhere in this file:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Color::BOLD\|const BOLD… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BOLD" src/format/mod.rs… ✓ (3ms)
+  2 tools completed in 11.0s (2 ✓)
+
+`BOLD is a pub static Color. Since use crate::format::*` is imported, it's in scope. Now let me add the tests. Let me look at the existing test block:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:2960..3020 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs:3019..3059 ✓ (1ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I'll add the four tests before the closing brace at line 3053:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (4 → 67 lines)
+            assert_eq!(parsed["tasks"][0]["status"], "completed");
+            assert_eq!(parsed["tasks"][1]["status"], "running");
+  +     }
+  + 
+  +     // --- spawn manifest inspector (read-only, #341) ---
+  + 
+  +     #[test]
+  +     fn test_list_spawn_manifests_empty_dir_returns_empty() {
+  +         let tmp = tempfile::tempdir().expect("create temp dir");
+  +         // A dir that doesn't exist under tmp — graceful empty, no panic.
+  +         let missing = tmp.path().join("does_not_exist");
+  +         assert!(list_spawn_manifests(&missing).is_empty());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_list_spawn_manifests_finds_written_manifest() {
+  +         let tmp = tempfile::tempdir().expect("create temp dir");
+  +         let dir = tmp.path().join("spawn_runs");
+  +         let tasks = vec!["t1".to_string()];
+  +         let results = vec![("t1".to_string(), SpawnStatus::Completed)];
+  ... (47 more lines)
+ ✓ (1m 36s)
+            assert_eq!(parsed["tasks"][0]["status"], "completed");
+            assert_eq!(parsed["tasks"][1]["status"], "running");
+  +     }
+  + 
+  +     // --- spawn manifest inspector (read-only, #341) ---
+  + 
+  +     #[test]
+  +     fn test_list_spawn_manifests_empty_dir_returns_empty() {
+  ... (13 more lines)
+
+One concern: in test_format_manifest_summary_truncates_long_task, the manifest already truncates the task to `MANIFEST_TASK_CAP (200) via build_spawn_manifest`, and the total task is 80+3+80=163 bytes — that's under 200, so it won't be truncated by the manifest builder. But format_manifest_summary truncates to 60, so it will be shortened there. Good — !out.contains(&long) will hold. Now run checks:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test spawn_manifest 2>&1 |… ✓ (19.3s)
+  2 tools completed in 43.4s (2 ✓)
+
+All 5 manifest tests pass (4 new + list roundtrip). Let me run the full test suite:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -12 ✓ (1m 0s)
+
+All green. Now update the docs. Let me find the spawn docs:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn worktrees\|spawn … ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md:343..371 ✓ (0ms)
+  2 tools completed in 2.8s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

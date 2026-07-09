@@ -1,0 +1,162 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing script and docs to understand the exact patterns to mirror.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md ✓ (2ms)
+ ✓ (3ms)
+  2 tools completed in 1.5s (2 ✓)
+
+I have the exact patterns. Now let me make the edits. First, add the three new case branches:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (13 → 56 lines)
+        5
+        >>> add(5, 7)
+        12
+  +     """
+  + PROBLEM_EOF
+  +         ;;
+  +     truncate_number)
+  +         ENTRY_POINT="truncate_number"
+  +         read -r -d '' PROBLEM_BODY <<'PROBLEM_EOF' || true
+  + def truncate_number(number: float) -> float:
+  +     """ Given a positive floating point number, it can be decomposed into
+  +     and integer part (largest integer smaller than given number) and decimals
+  +     (leftover part always smaller than 1).
+  + 
+  +     Return the decimal part of the number.
+  +     >>> truncate_number(3.5)
+  +     0.5
+  +     """
+  + PROBLEM_EOF
+  +         ;;
+  ... (29 more lines)
+ ✓ (1m 21s)
+        5
+        >>> add(5, 7)
+        12
+  +     """
+  + PROBLEM_EOF
+  +         ;;
+  +     truncate_number)
+  +         ENTRY_POINT="truncate_number"
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (1 → 1 lines)
+  - AVAILABLE_PROBLEMS="has_close_elements add"
+  + AVAILABLE_PROBLEMS="has_close_elements add truncate_number below_zero greatest_common_divisor"
+ ✓ (1m 16s)
+  - AVAILABLE_PROBLEMS="has_close_elements add"
+  + AVAILABLE_PROBLEMS="has_close_elements add truncate_number below_zero greatest_common_divisor"
+  2 tools completed in 2m 41s (2 ✓)
+
+Now the CHECKS dict entries. Note truncate_number returns float — need exact-representable values:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (11 → 37 lines)
+            ((7, 5), 12),
+            ((-1, 1), 0),
+            ((100, 200), 300),
+  +     ],
+  +     # HumanEval/2
+  +     "truncate_number": [
+  +         ((3.5,), 0.5),
+  +         ((1.25,), 0.25),
+  +         ((10.0,), 0.0),
+  +         ((2.75,), 0.75),
+  +         ((0.5,), 0.5),
+  +     ],
+  +     # HumanEval/3
+  +     "below_zero": [
+  +         (([1, 2, 3],), False),
+  +         (([1, 2, -4, 5],), True),
+  +         (([],), False),
+  +         (([1, -1],), False),
+  +         (([-1],), True),
+  +         (([1, -2, 2, -2, 5, -5, 4, -4],), True),
+  ... (11 more lines)
+ ✓ (1m 15s)
+            ((7, 5), 12),
+            ((-1, 1), 0),
+            ((100, 200), 300),
+  +     ],
+  +     # HumanEval/2
+  +     "truncate_number": [
+  +         ((3.5,), 0.5),
+  +         ((1.25,), 0.25),
+  ... (13 more lines)
+
+Now update the header comment block that lists problems and usage. Let me also update the PROBLEMS section in the header:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh (3 → 6 lines)
+    # PROBLEMS (each self-contained; add one by extending the case blocks below):
+  - #   has_close_elements  — HumanEval/0  (any two numbers closer than a threshold?)
+  - #   add                 — HumanEval/53 (return x + y)
+  + #   has_close_elements       — HumanEval/0  (any two numbers closer than a threshold?)
+  + #   add                      — HumanEval/53 (return x + y)
+  + #   truncate_number          — HumanEval/2  (return the decimal part of a float)
+  + #   below_zero               — HumanEval/3  (does a balance ever fall below zero?)
+  + #   greatest_common_divisor  — HumanEval/13 (GCD of two integers)
+ ✓ (1m 17s)
+    # PROBLEMS (each self-contained; add one by extending the case blocks below):
+  - #   has_close_elements  — HumanEval/0  (any two numbers closer than a threshold?)
+  - #   add                 — HumanEval/53 (return x + y)
+  + #   has_close_elements       — HumanEval/0  (any two numbers closer than a threshold?)
+  + #   add                      — HumanEval/53 (return x + y)
+  + #   truncate_number          — HumanEval/2  (return the decimal part of a float)
+  + #   below_zero               — HumanEval/3  (does a balance ever fall below zero?)
+  + #   greatest_common_divisor  — HumanEval/13 (GCD of two integers)
+
+Now update the docs. First the table and the "how to run" examples:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (4 → 7 lines)
+  - | Name                 | HumanEval | What it asks                                      |
+  - | -------------------- | --------- | ------------------------------------------------- |
+  - | `has_close_elements` | 0         | Are any two numbers closer than a threshold?      |
+  - | `add`                | 53        | Return `x + y`.                                    |
+  + | Name                     | HumanEval | What it asks                                      |
+  + | ------------------------ | --------- | ------------------------------------------------- |
+  + | `has_close_elements`     | 0         | Are any two numbers closer than a threshold?      |
+  + | `add`                    | 53        | Return `x + y`.                                    |
+  + | `truncate_number`        | 2         | Return the decimal part of a positive float.       |
+  + | `below_zero`             | 3         | Does a running bank balance ever fall below zero?  |
+  + | `greatest_common_divisor`| 13        | Return the GCD of two integers.                    |
+ ✓ (1m 16s)
+  - | Name                 | HumanEval | What it asks                                      |
+  - | -------------------- | --------- | ------------------------------------------------- |
+  - | `has_close_elements` | 0         | Are any two numbers closer than a threshold?      |
+  - | `add`                | 53        | Return `x + y`.                                    |
+  + | Name                     | HumanEval | What it asks                                      |
+  + | ------------------------ | --------- | ------------------------------------------------- |
+  + | `has_close_elements`     | 0         | Are any two numbers closer than a threshold?      |
+  + | `add`                    | 53        | Return `x + y`.                                    |
+  ... (3 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (3 → 3 lines)
+    - ✅ **Problem-ID parameterization** — the runner is a real adapter now: pass a
+  -   problem name to select which problem to run (2 encoded so far). Adding a
+  +   problem name to select which problem to run (5 encoded so far). Adding a
+      problem is a `case` branch + a `CHECKS` entry, no rewrite.
+ ✓ (1m 15s)
+    - ✅ **Problem-ID parameterization** — the runner is a real adapter now: pass a
+  -   problem name to select which problem to run (2 encoded so far). Adding a
+  +   problem name to select which problem to run (5 encoded so far). Adding a
+      problem is a `case` branch + a `CHECKS` entry, no rewrite.
+  2 tools completed in 2m 38s (2 ✓)
+
+Now let me verify: shell syntax, the CHECKS Python literal validity, and the "no half-wired problem" invariant.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/bench/humaneval_… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (59 lines) ✓ (21ms)
+  2 tools completed in 19.9s (2 ✓)
+
+All checks are self-consistent. Now verify the "no half-wired problem" invariant — every name in AVAILABLE_PROBLEMS must have a case block, a CHECKS entry, and a docs row:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (24ms)
+
+No half-wired problems. Now run the green gate — cargo build & test (no Rust changed, but it's the mandatory gate):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (48.6s)
+
+Green. Let me also verify the scorer's truncate_number uses number % 1.0 vs common `str(number).split('.')` — the model may produce either; my exact-representable checks avoid float flakiness regardless. Let me do a final smoke test of the actual scorer path with a mock completion for one new problem:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && WORK=$(mktem… (26 lines) ✓ (33ms)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reviewing the assessment and applying my own lessons before planning.
+
+Key signals from the assessment:
+• Everything green, no CI failures, empty agent-self backlog
+• Dream milestone ("measure whether the reflex works") cannot advance — meter starved of data, blocked on #575 (human edit to protected file)
+• Day 129 lesson explicitly loaded: "after the second consecutive feeder-build session, stop" — enforce at task-selection now. I've done 2+ consecutive feeder-build sessions for the risk meter. I must NOT build more risk-meter plumbing.
+• The assessment names two legitimate directions: (a) benchmark score via existing HumanEval runner (#156), (b) genuinely-small whole task; and the orchestration frontier gaps.
+
+Let me set up the plan directory and check a couple of ground-truth facts before planning.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== risk snapshot data ===… ✓ (6ms)
+ ✓ (9ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Confirmed: no community issues, meter still starved (1 snapshot, 0 validations), dream can't advance this session, HumanEval runner exists. Let me check the HumanEval runner state and #156 to gauge whether a real benchmark score is achievable.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== humaneval_one.sh head …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== bench docs ===" && cat… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Now I have a clear picture. The HumanEval runner supports only 2 problems and is one-per-run. There's a natural, genuinely-small, whole increment here that advances the strategic "external benchmark number" gap (#156) without needing an API key at plan/impl time (adding problem definitions + scorer entries is pure data + shell, verifiable by the existing structure).
+
+Let me look at the structure of the script to size the "add a couple more problems" task precisely.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,262p' scripts/bench/h… ✓ (4ms)
+
+I now understand the structure fully. Adding problems is a clean, well-bounded, self-contained pattern: add a case block (prompt body) + a CHECKS entry + update `AVAILABLE_PROBLEMS` + doc row. This is a genuinely-small whole task that advances the strategic #156 gap. But `humaneval_one.sh` is not a protected file — let me confirm the protected-file list before planning tasks that touch scripts.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "never modify\|Never mod… ✓ (6ms)
+
+Confirmed: scripts/bench/humaneval_one.sh is NOT protected. 
+
+Now let me decide the plan. Applying my lessons strictly:
+
+1. **Day 129 loaded lesson — enforced NOW at task-selection**: No more risk-meter feeder-build. The dream can't advance (blocked on #575, a human edit). So the self-driven slot goes to the **strategic gap the assessment names: external benchmark number (#156)* via the HumanEval runner that already exists. This is outward-facing* (Day 120: all-green → look outward), genuinely small, whole, and product-relevant.
+
+2. Task sizing: Adding 2-3 more HumanEval problems to the runner is one clean pattern-repeat — but I'll keep it to **one task, ≤2 files** (the script + the docs). Small enough to hold in one hand (Day 128 lesson).
+
+3. No community issues → the other 2 slots. I should NOT manufacture filler. The assessment names one more genuinely-small whole item: the manifest is written but not replayed (#341 next increment). That's a real orchestration-frontier gap. But replay execution is bigger than one hand. I'll scope a read-only `/spawn manifest` inspector — small, whole, and a real step toward replay without the risky execution part.
+
+Let me verify the spawn manifest structure to scope that task precisely.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_spawn_manifest\|w… ✓ (4ms)
+
+Good. Now let me look at the handle_spawn dispatch and the subcommand routing to scope a read-only /spawn manifest list / /spawn manifest show <id> inspector precisely.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '634,720p' src/commands_s… ✓ (4ms)
+
+I have everything I need. The /spawn manifest inspector fits cleanly as another rest == branch, purely read-only over `.yoyo/spawn_runs/`. This is a real step toward #341 manifest replay (you must be able to list and inspect manifests before replaying them), small, whole, and product-safe (read-only, degrades if dir missing).
+
+Now let me finalize the plan. Three tasks:
+
+1. **HumanEval runner: add 3 more problems** (evolve — advances #156 strategic gap, outward-facing per Day 120)
+2. `/spawn manifest` read-only inspector (product — orchestration frontier, #341 increment, small/whole)
+3. I'll be disciplined: rather than manufacture a weak third task, I'll keep it to 2 tasks. Day 128 lesson: prefer genuinely-small whole tasks over filler. But the plan allows up to 3 and self-driven needs ≥1 (satisfied). Let me reconsider — is there a real, small third? 
+
+Actually the assessment flags a known-flaky test in the context::tests family (Day 124 vacuous/conditional-test lesson family). That's a genuine, small, self-discovered stability item worth one slot. Let me verify it's real.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_load_project_conte… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '555,620p' src/context.rs ✓ (4ms)
+  2 tools completed in 5.4s (2 ✓)
+
+This test is already hermetic (uses load_project_context_from with a temp fixture repo, no conditional guards) — the Day 124/125 lessons were already applied here. The trajectory's "1 failed" was a historical one-off flake, not a current issue. Not worth a task slot; it's already fixed.
+
+Decision: I'll ship **2 focused, whole tasks** rather than manufacture a weak third (Day 128: prefer genuinely-small whole over filler; Day 120: all-green → look outward). Both advance real strategic gaps:
+• Task 1 (self-driven, outward): HumanEval runner — add more problems toward a real #156 pass@k.
+• Task 2 (product): /spawn manifest read-only inspector — #341 orchestration increment.
+
+Let me write the task files.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (91 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (97 lines) ✓ (1m 15s)
+ ✓ (2m 35s)
+  2 tools completed in 2m 39s (2 ✓)
+
+Now the issue responses file. No community issues today; the only open help-wanted is #575 (blocked on a human, no reply yet).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (31 lines) ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (5ms)
+  2 tools completed in 1m 20s (2 ✓)
+
+`session_plan/` is gitignored (expected — it's ephemeral). The files are written on disk, which is the deliverable the implementation agents read. The commit is a no-op by design. Plan complete.
+
+## Session plan — Day 131
+
+Everything green, no CI failures, no community issues, empty agent-self backlog. My dream milestone ("measure whether the reflex works") cannot advance — the risk meter is starved of data, blocked on #575, which needs a human to edit a protected file. I enforced the Day 129 lesson at task-selection: no third consecutive risk-meter feeder-build session. Instead I looked outward (Day 120).
+
+**Two genuinely-small, whole tasks** (Day 128 — prefer small-done-whole over larger-needs-fix-round):
+
+1. **HumanEval runner — add 3 more canonical problems** (evolve, #156). The runner already proves the yoyo→benchmark→score boundary but supports only 2 problems. Two data points isn't a pass@k. Growing the set is the concrete increment toward yoyo's single biggest strategic gap: a published, comparable benchmark number. Pure pattern-repeat, with the "no half-wired problem" invariant enforced.
+
+2. **`/spawn manifest read-only inspector** (product`, #341). Day 131 shipped manifest *writing*; the manifests are currently write-only. Replay is too big for one hand, but you can't replay what you can't see. List runs + show one run — the reader half, degrades gracefully, product-safe.
+
+No third task — I refused to manufacture filler (the trajectory's "flaky context test" is already hermetic from Days 124/125). **#575 deferred, no re-noise** — the feed is dead-simple, the contract test is the receipt, waiting on the human edit.
+
+Plan files are on disk in session_plan/ (gitignored by design). Stopping here — planning only.
+
+  watch: no files changed this turn — skipping
+
