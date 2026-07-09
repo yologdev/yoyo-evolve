@@ -653,6 +653,16 @@ pub async fn handle_spawn(
         return None;
     }
 
+    // Handle /spawn manifest[s] — read-only inspector for fan-out run manifests
+    if rest == "manifest" || rest == "manifests" {
+        handle_spawn_manifest_list();
+        return None;
+    }
+    if let Some(id) = rest.strip_prefix("manifest ").map(str::trim) {
+        handle_spawn_manifest_show(id);
+        return None;
+    }
+
     // Clean up stale worktrees from crashed sessions (max age: 1 hour)
     let cwd = std::env::current_dir().unwrap_or_default();
     cleanup_stale_worktrees(&cwd, std::time::Duration::from_secs(3600));
@@ -1136,6 +1146,129 @@ pub fn write_spawn_manifest(dir: &Path, manifest: &serde_json::Value) -> std::io
     let pretty = serde_json::to_string_pretty(manifest).unwrap_or_else(|_| manifest.to_string());
     std::fs::write(&path, pretty)?;
     Ok(path)
+}
+
+/// List spawn manifest files in `dir` as `(run_id, path)` pairs.
+///
+/// `run_id` is the file stem of each `*.json`. Sorted newest-first: run_ids
+/// are timestamp-prefixed (see `spawn_run_id`), so a reverse lexical sort
+/// puts the most recent run on top. Returns an empty Vec if `dir` doesn't
+/// exist — read-only and product-safe (never panics, never errors).
+fn list_spawn_manifests(dir: &Path) -> Vec<(String, PathBuf)> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<(String, PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|stem| (stem.to_string(), p.clone()))
+        })
+        .collect();
+    // Newest-first: run_ids are timestamp-prefixed, so reverse lexical works.
+    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out
+}
+
+/// Pure formatter: render a parsed manifest JSON as a human line-per-task
+/// summary. Emits the run_id, task count, then one line per task with its
+/// status and a char-boundary-safe truncated task string.
+fn format_manifest_summary(manifest: &serde_json::Value) -> String {
+    let run_id = manifest
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown)");
+    let count = manifest
+        .get("task_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_else(|| {
+            manifest
+                .get("tasks")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len() as u64)
+                .unwrap_or(0)
+        });
+
+    let mut out = format!("{run_id} — {count} task(s)\n");
+    if let Some(tasks) = manifest.get("tasks").and_then(|v| v.as_array()) {
+        for entry in tasks {
+            let status = entry
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let task = entry.get("task").and_then(|v| v.as_str()).unwrap_or("");
+            let preview = truncate_with_ellipsis(task, 60);
+            out.push_str(&format!("  [{status}] {preview}\n"));
+        }
+    }
+    out
+}
+
+/// `/spawn manifest` — list all recorded fan-out run manifests.
+fn handle_spawn_manifest_list() {
+    let runs = list_spawn_manifests(Path::new(SPAWN_RUNS_DIR));
+    if runs.is_empty() {
+        println!(
+            "{DIM}  no spawn manifests yet (run `/spawn --parallel ...` to create one){RESET}"
+        );
+        return;
+    }
+    println!("{BOLD}Spawn run manifests{RESET} ({} total)\n", runs.len());
+    for (run_id, path) in &runs {
+        // Read + parse for a one-line tally; fall back to just the id on error.
+        match std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(manifest) => {
+                let count = manifest
+                    .get("task_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let mut completed = 0u64;
+                let mut failed = 0u64;
+                let mut running = 0u64;
+                if let Some(tasks) = manifest.get("tasks").and_then(|v| v.as_array()) {
+                    for t in tasks {
+                        match t.get("status").and_then(|v| v.as_str()) {
+                            Some("completed") => completed += 1,
+                            Some("failed") => failed += 1,
+                            Some("running") => running += 1,
+                            _ => {}
+                        }
+                    }
+                }
+                println!(
+                    "  {CYAN}{run_id}{RESET}  {count} task(s)  {DIM}({completed} completed, {failed} failed, {running} running){RESET}"
+                );
+            }
+            None => println!("  {CYAN}{run_id}{RESET}  {DIM}(unreadable manifest){RESET}"),
+        }
+    }
+    println!("\n{DIM}  Use /spawn manifest <run_id> to inspect one run.{RESET}");
+}
+
+/// `/spawn manifest <run_id>` — show one run's tasks and statuses.
+fn handle_spawn_manifest_show(id: &str) {
+    let path = Path::new(SPAWN_RUNS_DIR).join(format!("{id}.json"));
+    let manifest = match std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    {
+        Some(m) => m,
+        None => {
+            println!(
+                "{DIM}  no readable manifest for run '{id}' (looked in {}){RESET}",
+                path.display()
+            );
+            return;
+        }
+    };
+    print!("{}", format_manifest_summary(&manifest));
 }
 
 /// Collect a finished background spawn's result.
@@ -2915,5 +3048,68 @@ mod tests {
         assert_eq!(parsed["task_count"], 2);
         assert_eq!(parsed["tasks"][0]["status"], "completed");
         assert_eq!(parsed["tasks"][1]["status"], "running");
+    }
+
+    // --- spawn manifest inspector (read-only, #341) ---
+
+    #[test]
+    fn test_list_spawn_manifests_empty_dir_returns_empty() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        // A dir that doesn't exist under tmp — graceful empty, no panic.
+        let missing = tmp.path().join("does_not_exist");
+        assert!(list_spawn_manifests(&missing).is_empty());
+    }
+
+    #[test]
+    fn test_list_spawn_manifests_finds_written_manifest() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        let tasks = vec!["t1".to_string()];
+        let results = vec![("t1".to_string(), SpawnStatus::Completed)];
+        // Round-trip with the WRITER (fuel-line contract, Day 128).
+        let manifest = build_spawn_manifest("20260709T100000Z", &tasks, &results);
+        write_spawn_manifest(&dir, &manifest).expect("write manifest");
+
+        let listed = list_spawn_manifests(&dir);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "20260709T100000Z");
+        assert!(listed[0].1.ends_with("20260709T100000Z.json"));
+    }
+
+    #[test]
+    fn test_format_manifest_summary_contains_statuses() {
+        let tasks = vec!["add tests".to_string(), "break build".to_string()];
+        let results = vec![
+            ("add tests".to_string(), SpawnStatus::Completed),
+            (
+                "break build".to_string(),
+                SpawnStatus::Failed("boom".to_string()),
+            ),
+        ];
+        let m = build_spawn_manifest("run-mixed", &tasks, &results);
+        let out = format_manifest_summary(&m);
+
+        assert!(out.contains("run-mixed"), "run_id in summary: {out}");
+        assert!(out.contains("completed"), "completed status: {out}");
+        assert!(out.contains("failed"), "failed status: {out}");
+        assert!(out.contains("add tests"), "task 1 substring: {out}");
+        assert!(out.contains("break build"), "task 2 substring: {out}");
+    }
+
+    #[test]
+    fn test_format_manifest_summary_truncates_long_task() {
+        // Long task with a multi-byte char (✓, 3 bytes) — must not panic and
+        // must render a shortened form in the summary (char-boundary safe).
+        let long = format!("{}✓{}", "x".repeat(80), "y".repeat(80));
+        let tasks = vec![long.clone()];
+        let results = vec![(long.clone(), SpawnStatus::Running)];
+        let m = build_spawn_manifest("run-long", &tasks, &results);
+        let out = format_manifest_summary(&m);
+
+        // The full untruncated task must NOT appear (it was shortened).
+        assert!(!out.contains(&long), "long task should be truncated: {out}");
+        // Status still present.
+        assert!(out.contains("running"), "status present: {out}");
+        // No panic occurred (reaching here proves char-boundary safety).
     }
 }
