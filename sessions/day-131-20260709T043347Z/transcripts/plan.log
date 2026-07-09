@@ -1,0 +1,101 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reviewing the key state files to plan this session, then write the task files based on the assessment.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l .yoyo/risk_snapshots.jsonl…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Confirmed: the risk meter feed is still stuck (1 snapshot line, no validations), no yoyo risk snapshot in evolve.sh, and no community issues today. Let me check the current state of the risk snapshot recording path and the accuracy/validation half to plan the highest-leverage work.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_validate_after_fai…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_validate_after_fa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk snapshot\|risk val… ✓ (5ms)
+ ✓ (6ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '942,960p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "1/1000\|subagent\|orche… ✓ (6ms)
+ ✓ (7ms)
+  5 tools completed in 7.3s (5 ✓)
+
+I have a clear picture. The dream's #575 bottleneck is blocked on a protected file (evolve.sh) and already has a filed help-wanted issue with a ready patch + contract test. No human reply yet. Let me check whether there's a self-driven, unblocked way to advance the dream — the accuracy/validation half — and think about the orchestration-scale gap.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '166,230p' src/commands_r… ✓ (3ms)
+
+Now let me understand the key insight. The validation half (auto_validate_after_failure) records a validation event only when a build/watch failure occurs — which needs an existing snapshot to compare against. But there's also `yoyo risk validate as a CLI subcommand. Let me check what handle_risk does for validate` and whether the CLI path can record a validation.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_risk_validate\|f… ✓ (6ms)
+
+Now I fully understand. `yoyo risk validate` compares the last snapshot's predicted top-10 against files that actually changed since that snapshot's git hash — and records a validation event. Both snapshot and validate are CLI-callable but neither fires in the evolve loop (which uses raw git commit). Both are blocked by the same protected-file wall (#575).
+
+The dream's actual blocker is a human editing evolve.sh. That's already filed with a ready patch. My self-driven slot should advance the dream in a way that's not blocked — the accuracy/validation half has never recorded a point, and the reason is deeper than just missing snapshots: even if snapshots existed, validation needs subsequent commits. Let me look at whether there's an unblocked, meaningful step, plus check the orchestration gap.
+
+Let me now think about task selection and write the plan. The key constraints from my own wisdom:
+• Day 129/130: "let the meter run" — adding more sensors is procrastination. The feed is blocked on a protected file.
+• Day 120: when internal is all-green and the frontier moved, look outward (orchestration scale).
+• Day 128: prefer one-hand-sized tasks done whole.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn_pr\|--pr\|--paral… ✓ (609ms)
+
+I have enough context. Now let me decide the plan.
+
+Key strategic reasoning:
+1. **Self-driven / dream slot**: The dream's #575 bottleneck is genuinely blocked on a protected file. I already filed the issue with a ready patch + contract test. No human reply yet. Per my own wisdom (Days 76–79), I've done the right thing — I should NOT keep hammering it. But there IS an *unblocked* dream-advancing move: the validation half needs snapshots to exist to record accuracy. Even outside evolve.sh, I can make the meter *self-seed* — have yoyo risk validate automatically take a fresh snapshot if none exists or the latest is stale, so the accuracy path can begin recording. That's the "remove a human-in-the-loop dependency from the meter" class (Day 129's legitimate feeder work) — and it's unblocked.
+
+Actually — better and smaller: the real problem is the validation half has literally never recorded a point because it requires (a) a snapshot AND (b) commits after it. Let me make a genuinely unblocked, one-hand task.
+
+Let me reconsider — my Day 129 lesson explicitly warns against another feeder-build session, and Day 129's stopping rule said "after the second consecutive feeder-build session, stop." Days 128–130 were all feeder work. **This is exactly the moment to honor that stopping rule and look outward** (Day 120). The orchestration-scale gap is the real frontier.
+
+Let me write the plan: one self-driven task toward the orchestration gap (small, concrete), plus close/respond on the stuck issues honestly.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+Now let me look at how /spawn --parallel currently records/reports its run — to identify a small, concrete step toward the "codified/rerunnable orchestration script" gap that Claude Code's dynamic workflows have.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '560,634p' src/commands_s… ✓ (3ms)
+
+I now have a clear, concrete step toward the orchestration gap. Claude Code's dynamic workflows are rerunnable — a codified script you can replay. My `/spawn --parallel` runs fan-out but leaves no rerunnable record. A small, one-hand step: have /spawn --parallel write the fan-out plan to a JSON manifest (`.yoyo/spawn_runs/<id>.json`) capturing the tasks + results, so a run is inspectable and reproducible. That's the first primitive toward "codified/rerunnable orchestration."
+
+But let me size it properly — writing a manifest touches commands_spawn.rs only, is testable with a pure builder function. That's genuinely one-hand-sized.
+
+Let me now write the three task files and issue responses.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (92 lines) ✓ (1m 15s)
+
+Now the second task. Let me address #571 — a real, unblocked, small cleanup that reduces guessing (aligns with Day 128's lesson about demoting guesses to fallbacks when the framework knows the real answer). Let me verify its current state.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "looks_incomplete\|follo… ✓ (650ms)
+
+#571 is already partially done (Day 128 wired follow_up_queue_len). The remaining piece — surfacing queued follow-ups in /status — is small and unblocked. But looks_incomplete is intentionally kept as a fallback (product-safe), so the "replace" framing is mostly resolved. This is a good candidate for an honest response + small optional task. Let me check the /status handler and whether steering_queue_snapshot is available.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (7ms)
+
+The queue APIs exist. #571's remaining piece (surface queued follow-ups) is real but requires threading agent state into /status, which may be more than one hand. Given my Day 128/129 lessons and the goal of one dream-advancing task + honest issue handling, I'll make the second task a small, self-contained one: close out #571 properly by resolving the "replace" ambiguity — but that's really a decision, not code.
+
+Let me reconsider. I have 3 slots. Task 1 is the strong self-driven orchestration step. For the remaining slots, per priority: no community issues, backlog is thin. The highest-value remaining work:
+• #156 — actually run the HumanEval batch for a real external number (the runner is built). But that's a long-running batch that needs an API key and could be flaky/expensive — not one-hand, and risky in the loop. Better as a manual/human step.
+• A genuinely small polish.
+
+Let me keep the plan tight and honest: 1 strong task + optional 1 small task, rather than padding to 3. My wisdom (Day 128) says prefer fewer whole tasks. Let me make task 2 the /status queue-visibility piece for #571 (small, concrete, closes an ambiguous issue) and verify it's one-hand.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_status" src/c… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '149,175p' src/commands_i… ✓ (5ms)
+  2 tools completed in 3.5s (2 ✓)
+
+`handle_status **already receives follow_up_pending`*. Let me check whether it actually displays* it — that's the small #571 gap.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '175,230p' src/commands_i… ✓ (6ms)
+
+`/status` already surfaces queued follow-ups. So #571 is essentially fully resolved: auto-continue consults the authoritative queue (Day 128), `looks_incomplete is a deliberate product-safe fallback, and /status` shows the queue count. The only remaining item is the optional steering_queue_snapshot() — but the queue length already covers the decision. **#571 is closeable.**
+
+That changes my plan: #571 → close as resolved (no code task needed). This means I have slots but genuinely little unblocked, high-value code work. Per my own wisdom (Day 128: prefer one whole task over padding), I'll ship **one strong self-driven task** (the orchestration manifest) and use the remaining energy on honest issue triage, not manufactured tasks.
+
+Let me write task 2 as a small, genuinely-useful companion and the issue responses. Actually — let me reconsider whether a second task adds value or dilutes. My Day 130 corollary warns about self-flattery via small tasks; but padding with a weak task is worse. I'll write one substantive task plus the issue responses. Let me finalize.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (43 lines) ✓ (1m 19s)
+
+Now let me add a second task — closing #571 with the actual gh issue close action is an issue-response, not a code task. But there's genuine value in a small companion task that's unblocked and product-safe. Let me reconsider: is there a real second improvement worth a slot?
+
+The `steering_queue_snapshot() content-surfacing for /status` (showing what is queued, not just the count) is a small, concrete, product-safe improvement that closes the last sliver of #571 with actual code. That's one-hand-sized and genuinely useful. Let me verify it fits and write it as task 2.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '395,415p' ~/.cargo/regis… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+

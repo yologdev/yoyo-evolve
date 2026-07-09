@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing spawn code structure, particularly the parallel fan-out path and existing patterns.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_spawn_status\|pa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 src/commands_spawn.rs ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 1.3s (2 ✓)
+
+Let me look at the parallel handler and existing patterns for writing JSON, plus the risk snapshot write pattern.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '965,1120p' src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/commands_risk… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 2.8s (2 ✓)
+
+Now let me look at the write pattern and end of the risk snapshot file, and check char-boundary truncation helpers already in commands_spawn.rs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,110p' src/commands_ri…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_char_boundary\|trunc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat .gitignore | grep -n "yoyo" ✓ (4ms)
+ ✓ (4ms)
+ ✓ (4ms)
+  3 tools completed in 4.7s (3 ✓)
+
+`.yoyo/ is not broadly ignored — I'll need to add .yoyo/spawn_runs/. Let me check the safe_truncate` helper and where imports for serde_json/PathBuf are.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn safe_truncate\|use s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\.gitignore" .gitignore… ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '310,330p' src/format/mod… ✓ (5ms)
+  3 tools completed in 5.0s (3 ✓)
+
+Now I have all the patterns. Let me check the top of the tests module and where `handle_spawn_parallel ends, then implement. First, add the pure functions after handle_spawn_parallel`.
+
+Let me look at the exact end of `handle_spawn_parallel` and the imports at top:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,15p' src/commands_spaw… ✓ (4ms)
+
+Now let me check how the parallel tasks resolve their final status. The parallel path launches background tasks and returns immediately (None) — statuses are "running" at that point. The manifest is written at fan-out completion, so all are "running" initially. Let me look at how to build the results tuple. Since `handle_spawn_parallel` returns before tasks complete, the manifest records the launch state.
+
+Let me build a helper that reads current statuses from the tracker after launch. Now let me implement the pure functions and wire them in:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (6 → 133 lines)
+  +     // Record the fan-out as a rerunnable JSON manifest so the run is
+  +     // inspectable/reproducible after the session ends. Best-effort: a write
+  +     // failure is a dim note, never a blocker (#341, orchestration scale).
+  +     let results: Vec<(String, SpawnStatus)> = {
+  +         let tasks_vec = lock_or_recover(&tracker.inner);
+  +         ids.iter()
+  +             .zip(tasks.iter())
+  +             .map(|(id, task_text)| {
+  +                 let status = tasks_vec
+  +                     .iter()
+  +                     .find(|t| t.id == *id)
+  +                     .map(|t| t.status.clone())
+  +                     .unwrap_or(SpawnStatus::Running);
+  +                 (task_text.clone(), status)
+  +             })
+  +             .collect()
+  +     };
+  +     let run_id = spawn_run_id();
+  +     let manifest = build_spawn_manifest(&run_id, tasks, &results);
+  +     match write_spawn_manifest(Path::new(SPAWN_RUNS_DIR), &manifest) {
+  ... (113 more lines)
+ ✓ (1m 34s)
+  +     // Record the fan-out as a rerunnable JSON manifest so the run is
+  +     // inspectable/reproducible after the session ends. Best-effort: a write
+  +     // failure is a dim note, never a blocker (#341, orchestration scale).
+  +     let results: Vec<(String, SpawnStatus)> = {
+  +         let tasks_vec = lock_or_recover(&tracker.inner);
+  +         ids.iter()
+  +             .zip(tasks.iter())
+  +             .map(|(id, task_text)| {
+  ... (13 more lines)
+
+Now let me add the tests. Let me look at the existing test module header for imports:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1781,1810p' src/commands… ✓ (5ms)
+
+Good, tempfile is available. Let me add the tests near the end of the test module:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_spawn.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_spawn.rs (9 → 87 lines)
+                          2. Write integration tests for the config loader\n\
+                          3. Update the installation documentation pages";
+            assert_eq!(detect_parallelizable_tasks(prompt), None);
+  +     }
+  + 
+  +     // --- spawn manifest (#341: codified/replayable orchestration) ---
+  + 
+  +     #[test]
+  +     fn test_build_spawn_manifest_shape() {
+  +         let tasks = vec![
+  +             "add tests".to_string(),
+  +             "write docs".to_string(),
+  +             "refactor logger".to_string(),
+  +         ];
+  +         let results = vec![
+  +             ("add tests".to_string(), SpawnStatus::Completed),
+  +             ("write docs".to_string(), SpawnStatus::Completed),
+  +             (
+  +                 "refactor logger".to_string(),
+  +                 SpawnStatus::Failed("boom".to_string()),
+  ... (63 more lines)
+ ✓ (1m 33s)
+                          2. Write integration tests for the config loader\n\
+                          3. Update the installation documentation pages";
+            assert_eq!(detect_parallelizable_tasks(prompt), None);
+  +     }
+  + 
+  +     // --- spawn manifest (#341: codified/replayable orchestration) ---
+  + 
+  +     #[test]
+  ... (13 more lines)
+  2 tools completed in 1m 53s (2 ✓)
+
+Now add .yoyo/spawn_runs/ to .gitignore:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/.gitignore (1 → 2 lines)
+    .yoyo/last-session.json
+  + .yoyo/spawn_runs/
+ ✓ (1m 16s)
+    .yoyo/last-session.json
+  + .yoyo/spawn_runs/
+
+Now run the checks:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (8.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test spawn_manifest 2>&1 |… ✓ (17.5s)
+  2 tools completed in 31.1s (2 ✓)
+
+All three tests pass. Now clippy and fmt check, plus full test suite:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo "FM… ✓ (1m 1s)
+  2 tools completed in 1m 22s (2 ✓)
+
+All green: build, clippy, fmt, and full test suite pass. Now update the docs.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_spawn.rs" CLAU… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - degrades gracefully — `gh` missing / push failure / PR failure each get one honest note and the local branch remains the result
+  + degrades gracefully — `gh` missing / push failure / PR failure each get one honest note and the local branch remains the result. `--parallel` now writes a rerunnable JSON manifest of the fan-out to `.yoyo/spawn_runs/<run_id>.json` (pure `build_spawn_manifest` + `write_spawn_manifest`), the first step toward codified/replayable orchestration (#341).
+ ✓ (1m 16s)
+  - degrades gracefully — `gh` missing / push failure / PR failure each get one honest note and the local branch remains the result
+  + degrades gracefully — `gh` missing / push failure / PR failure each get one honest note and the local branch remains the result. `--parallel` now writes a rerunnable JSON manifest of the fan-out to `.yoyo/spawn_runs/<run_id>.json` (pure `build_spawn_manifest` + `write_spawn_manifest`), the first step toward codified/replayable orchestration (#341).
+  2 tools completed in 1m 22s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

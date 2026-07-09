@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me start by checking the key parts of the implementation and running tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SpawnStatus" src/comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safe_truncate\|use crat… ✓ (6ms)
+ ✓ (4ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Good. `safe_truncate and lock_or_recover are already imported. Let me verify Path/PathBuf` imports and the wiring context, then run tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use std::path\|PathBuf\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '965,1045p' src/commands_… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 1.3s (2 ✓)
+
+The wiring is clean and in the parallel-only path. Now let me run the tests and other checks.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib spawn_manifest …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn_runs\|records a r… ✓ (3ms)
+ ✓ (126ms)
+  2 tools completed in 1.4s (2 ✓)
+
+README doesn't have the update. Let me check the README /spawn bullet and run the actual tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn\|parallel\|fan-ou…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test spawn_manifest 2>&1 |… ✓ (4ms)
+ ✓ (135ms)
+  2 tools completed in 1.4s (2 ✓)
+
+All 3 tests pass. The README /spawn bullet was NOT updated per the task's Docs section (which asked to extend the parallel clause with "(records a run manifest under `.yoyo/spawn_runs/`)"). This is a minor doc omission — not load-bearing. Let me verify clippy and fmt pass since those are in the verify command.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.2s)
+
+Clippy clean, fmt clean. Let me do a final assessment.
+
+Summary of verification:
+• **Pure `build_spawn_manifest**: ✅ captures run_id, created_ts, task_count, per-task {index, task (truncated), status}`. Pure, no spawning.
+• **`write_spawn_manifest`**: ✅ follows risk-snapshot pattern (create_dir_all + to_string_pretty), returns PathBuf.
+• **Wiring**: ✅ in handle_spawn_parallel only, best-effort with dim note on failure, doesn't touch single/bg/pr paths.
+• Tests: ✅ all 3 pass (shape, char-boundary truncation with ✓, roundtrip).
+• `.gitignore`: ✅ added `.yoyo/spawn_runs/`.
+• CLAUDE.md: ✅ updated.
+• README.md: ❌ NOT updated (task asked to extend the /spawn parallel clause). Minor doc omission — the retreat clause explicitly permits shipping without the last-mile docs, and the load-bearing primitive + wiring + CLAUDE.md are all present.
+• Build/clippy/fmt all clean. Product-safe: only writes under `.yoyo/, fires only in explicit --parallel` action.
+
+The README miss is a minor doc gap, not grounds for failure per the eval rules (don't fail for minor imperfections).
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (59.3s)
+
+**Verdict: PASS**
+
+The implementation matches the task cleanly:
+• Pure build_spawn_manifest and write_spawn_manifest follow the described contract and the existing risk-snapshot pattern.
+• Wired only into `handle_spawn_parallel`, best-effort (dim note on failure, never panics/blocks), leaving single/bg/pr paths untouched.
+• All 3 tests pass; build, clippy (-D warnings), and fmt are all clean.
+• .gitignore and CLAUDE.md updated; product-safe (writes only under .yoyo/, fires only inside explicit --parallel).
+
+The only gap is the README `/spawn` bullet clause wasn't added — a minor doc omission the task's own retreat clause tolerates, so I flagged it as cleanup feedback rather than failing.
+
+  watch: no files changed this turn — skipping
+
