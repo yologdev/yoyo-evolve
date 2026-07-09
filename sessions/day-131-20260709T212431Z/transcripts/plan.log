@@ -1,0 +1,126 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll plan from the assessment. The key signals: everything green, no CI failures, dream is accumulation-blocked (don't build more meter), and the biggest outward gap is a **reportable benchmark number** (#156). Let me set up and plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (9ms)
+
+Let me look at the current state of the benchmark harness to plan the smallest real advance toward a reportable score.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' scripts/bench/hum… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '60,140p' scripts/bench/h… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,334p' scripts/bench/… ✓ (4ms)
+  3 tools completed in 8.6s (3 ✓)
+
+Now I understand the harness. It runs ONE problem at a time and reports PASS/FAIL. The missing piece for a **reportable score** is a runner that iterates all problems and emits an aggregate `N/M passed (X%)`. This is the smallest real advance toward #156 — a genuine number.
+
+The task is retreat-sized: a new script `scripts/bench/humaneval_run.sh` that loops the existing single-case harness over its 5 problems and prints a pass count / percentage. It touches no source, is bench-only (evolve kind), and doesn't reinvent — it composes the existing humaneval_one.sh.
+
+Let me verify the problem-list source of truth so the runner stays in sync.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AVAILABLE_PROBLEMS=" sc… ✓ (6ms)
+
+Confirmed: dream is accumulation-blocked on #575 (human wiring), 1 snapshot, no validations. Building more meter is procrastination per my own Day 125/129 lessons. The honest self-driven move is the outward benchmark work.
+
+Now let me plan. Three slots:
+1. Self-driven (benchmark #156) — an aggregate runner that emits a real score. This is retreat-sized, composes the existing harness, produces the credibility number I lack.
+2. **Close #577** — verify it's done, it's an issue response not a task.
+3. A second small product-safe polish OR expand the problem set slightly. I'll add a second bench task: emit machine-readable output (JSON summary) so the score can be reported — but that risks door/handle. Better: keep it to ONE bench task done whole, plus a genuinely-small product task.
+
+Let me reconsider — Day 128 lesson: prefer one genuinely-small task done whole. I'll make the runner task self-contained (loop + aggregate + summary line all in one file), and add one small product task from the assessment's default-ergonomics observation. Let me write the plan.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (63 lines) ✓ (1m 18s)
+
+For the second slot, a genuinely-small product task. From the assessment, `/spawn --pr` is opt-in but the discoverability is a gap. But that risks scope creep. Let me pick something truly hold-in-one-hand. 
+
+Let me check what small product friction exists — the assessment noted no functional bugs. A safe small task: the benchmark runner produces a score, and #156 also asks about submitting to official benchmarks. But that needs the runner first. 
+
+I'll make task 2 a small, self-contained product-safe improvement I can verify without a key: a machine-readable summary flag for the runner would be door/handle-coupled to task 1 — skip. Instead, let me keep the session lean: **one bench task done whole + close #577 + one tiny product polish**. Let me pick the tiny polish carefully.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "HumanEval\|humaneval\|b… ✓ (5ms)
+
+The docs explicitly call out "no batch runner, no published pass@1 number" — task 1 directly closes the "no batch runner" gap. Good, that's the right task. The docs update in task 1 will need to revise this "What exists now" section too — let me note that.
+
+For slot 2, I'll keep it minimal and avoid door/handle coupling. The most honest second self-driven task is a very small, independently-verifiable one. Given everything's green and I shouldn't build more risk meter, I'll do a single small product task and leave slot 3 empty rather than pad. Per Day 128: prefer fewer tasks done whole.
+
+Let me pick a tiny product polish that's real. Let me check benchmarks.md docs staleness that task 1's runner will make — actually I'll fold that into task 1. For task 2, a genuinely small standalone: none of the community issues need code (#577 done, #575 human-blocked, #341/#215/#156 tracked). So the honest plan is **1 bench task + issue responses**, maybe a 2nd tiny task only if it's clearly worth it.
+
+Let me add task 2 only if it's a real, hold-in-one-hand improvement. I'll add a small, self-contained runner companion is coupling — skip. Instead: a tiny product-safe polish to benchmarks.md accuracy is inside task 1. I'll write just ONE task and the issue responses. That respects Day 128 (one whole task > padded).
+
+Let me update task 1 to explicitly revise the stale docs section, then write issue responses.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (6 → 12 lines)
+    ## Docs
+  - - Update `docs/src/contributing/benchmarks.md`: add a short section showing
+  -   `ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh` and the summary-line format, and
+  -   that it composes `humaneval_one.sh` (single source of truth for problems + scoring).
+  - - If CLAUDE.md has a benchmarks note, add one sentence pointing at the aggregate runner. If it
+  -   doesn't, skip CLAUDE.md — don't invent a new section.
+  + - Update `docs/src/contributing/benchmarks.md`:
+  +   - The "What exists now" section currently says "**no batch runner**". That becomes stale the
+  +     moment this task lands — REVISE it to say a batch runner now exists (over the current small
+  +     problem set, NOT yet the full 164-problem dataset — stay honest about scope).
+  +   - Add a short "How to run the aggregate runner" subsection showing
+  +     `ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh` and the exact summary-line format,
+  +     noting it composes `humaneval_one.sh` (single source of truth for problems + scoring).
+  +   - Keep the honest caveat: this is HumanEval-*lite* (5 problems), not the full set — do not
+  +     imply a pass@1 over 164 problems.
+  + - grep CLAUDE.md for a benchmarks note; if one exists, add one sentence pointing at the aggregate
+  +   runner. If none exists, skip CLAUDE.md — don't invent a new section.
+ ✓ (1m 18s)
+    ## Docs
+  - - Update `docs/src/contributing/benchmarks.md`: add a short section showing
+  -   `ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh` and the summary-line format, and
+  -   that it composes `humaneval_one.sh` (single source of truth for problems + scoring).
+  - - If CLAUDE.md has a benchmarks note, add one sentence pointing at the aggregate runner. If it
+  -   doesn't, skip CLAUDE.md — don't invent a new section.
+  + - Update `docs/src/contributing/benchmarks.md`:
+  +   - The "What exists now" section currently says "**no batch runner**". That becomes stale the
+  ... (9 more lines)
+
+Now issue responses. Let me verify #577 is actually done before claiming it (Day 130 lesson: don't claim without checking the code).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "role\|honesty\|search c… ✓ (4ms)
+
+Confirmed: SYSTEM_PROMPT is restructured into named sections with tests pinning the headers. #577 is genuinely done (Day 131 17:55). Safe to close.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (31 lines) ✓ (1m 19s)
+
+Now let me reconsider whether to fill a second task slot. The mandate: ≥1 self-driven (satisfied by task 1, which is dream-adjacent-outward per my Day 121/125 lessons — the honest move at all-green is looking outward). Community issues either done, human-blocked, or too large. 
+
+Per Day 128 ("prefer one genuinely-small task done whole over a larger one that will need a fix round") and Day 126 ("start at retreat size"), I'll keep this a single-task session. Padding with a marginal second task risks a fix-round and door/handle coupling. One whole task is the right call.
+
+Let me verify the plan files and commit.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+  2 tools completed in 6.0s (2 ✓)
+
+`session_plan/` is gitignored (expected — it's ephemeral per CLAUDE.md). The files are written to disk where the implementation agents will read them; no commit needed. That matches the documented design.
+
+Plan complete. Summary:
+
+## Session Plan — Day 131
+
+**One task, done whole** (following Day 128: prefer one genuinely-small task finished over a padded larger one; Day 126: start at retreat size).
+
+### task_01 — HumanEval aggregate runner (`Kind: evolve`, #156)
+Close my single most visible credibility gap: no reportable benchmark number. The existing humaneval_one.sh already runs one problem and scores PASS/FAIL. The missing layer is aggregation — a new `scripts/bench/humaneval_run.sh` that:
+• Reads the problem list from the single source of truth (grep `AVAILABLE_PROBLEMS= out of humaneval_one.sh` — no hardcoded subset, per Day 111).
+• Composes the single-case harness as a black box (no reinvented scoring — the "don't reinvent the wheel" rule).
+• Tallies pass/fail and prints one greppable line: HumanEval-lite: N/M passed (X%).
+• Distinguishes harness crashes from wrong-answer FAILs.
+• Product-safe: bench-only, not wired into any default/CI/startup path.
+• Updates the stale benchmarks.md "no batch runner" claim honestly (HumanEval-lite, 5 problems, not a full-164 pass@1).
+• **Anti-fabrication guard baked in*: deliver the runner that can* produce a number, don't claim a number without running it with a real key.
+
+### Why not more tasks
+• #577 (SYSTEM_PROMPT restructure) — verified done in code this session; close, don't re-implement.
+• #575 (risk-snapshot feed) — human-blocked (protected file); per my own Day 125/129 lessons, building more meter while waiting is procrastination. Look outward instead. Defer, no re-ping.
+• #341 / #215 — tracking / too-large; silence over noise.
+
+The self-driven slot points outward (benchmark credibility) because the dream milestone is genuinely accumulation-blocked on a human, and everything else is green — exactly the Day 120/121 "at all-green, look outward" call.
+
+Plan written to session_plan/ (gitignored by design). Stopping here — implementation is the next phase.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,172 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the existing single-case harness to understand its structure, then build the aggregate runner that composes it.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_one.sh  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.2s (2 ✓)
+
+I have a clear picture. Now let me check for a benchmarks note in CLAUDE.md and then create the aggregate runner.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -ni 'humaneval\|benchmark\|… ✓ (6ms)
+
+No benchmarks note in CLAUDE.md, so I'll skip CLAUDE.md per the task instructions. Now let me create the aggregate runner, composing humaneval_one.sh as a black box.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_run.sh (161 lines) ✓ (1m 18s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && chmod +x scripts/bench/humaneval… ✓ (5ms)
+  2 tools completed in 1m 24s (2 ✓)
+
+Syntax is clean. Now let me verify the problem-parsing logic works correctly by testing the parsing and subset validation without making model calls.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && command -v shellcheck >/dev/null… ✓ (691ms)
+
+Good catch from shellcheck. REPO_ROOT is unused — the task mentions resolving it "the same way humaneval_one.sh does" but the single-case harness handles its own cwd. Let me remove it to keep clean, but I'll keep it as a documented resolution since it's harmless — actually, cleaner to drop the unused variable.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/bench/humaneval_run.sh (5 → 6 lines)
+  - # Resolve dirs the same way humaneval_one.sh does (from $0), so it runs anywhere.
+  + # Resolve SCRIPT_DIR the same way humaneval_one.sh does (from $0), so it runs
+  + # anywhere. The single-case harness resolves its own REPO_ROOT/cwd, so we only
+  + # need SCRIPT_DIR to locate it.
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  - REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    
+    ONE="$SCRIPT_DIR/humaneval_one.sh"
+ ✓ (1m 17s)
+  - # Resolve dirs the same way humaneval_one.sh does (from $0), so it runs anywhere.
+  + # Resolve SCRIPT_DIR the same way humaneval_one.sh does (from $0), so it runs
+  + # anywhere. The single-case harness resolves its own REPO_ROOT/cwd, so we only
+  + # need SCRIPT_DIR to locate it.
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  - REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    
+    ONE="$SCRIPT_DIR/humaneval_one.sh"
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/bench/humaneval_… ✓ (60ms)
+  2 tools completed in 1m 25s (2 ✓)
+
+Now let me verify the parsing logic and tally behavior by exercising the runner with a stubbed `humaneval_one.sh` (no API key, no model calls) — this validates AVAILABLE_PROBLEMS parsing, subset validation, tally, and summary format.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && TMP="$(mktem… (33 lines) ✓ (71ms)
+
+All aggregation logic works exactly as intended:
+• Full run tallies 3/5 (60.0%), distinguishing the wrong-answer FAIL from the harness ERROR
+• Subset run reports 2/2 (100.0%) and exits 0
+• Unknown problem fails loudly (exit 1)
+• Summary line is greppable and on stdout even on partial failure
+
+Let me also confirm the python3-absent integer fallback path and verify stdout/stderr separation:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && TMP="$(mktem… (23 lines) ✓ (70ms)
+
+Both paths work: float percentage (80.0%) with python3, integer fallback (80%) without. The summary line stays greppable on stdout in both cases and on partial failure.
+
+Now let me update the docs to reflect the new batch runner. I'll revise the stale "no batch runner" claim and the "Batch running" checkbox, and add a "How to run the aggregate runner" subsection.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (3 → 5 lines)
+  - This proves the yoyo → benchmark → score I/O boundary works end to end. It is
+  - deliberately **one problem per run, scored** — there is still **no full dataset**,
+  - **no batch runner**, and **no published pass@1 number** over the 164-problem set.
+  + This proves the yoyo → benchmark → score I/O boundary works end to end. A thin
+  + **aggregate runner** — `scripts/bench/humaneval_run.sh` — now composes it over
+  + the small inline problem set (see below). There is still **no full dataset** (the
+  + 164-problem HumanEval `jsonl`) and **no published pass@1 number** over it — the
+  + aggregate score is HumanEval-*lite* (the 5 inline problems), not the full set.
+ ✓ (1m 18s)
+  - This proves the yoyo → benchmark → score I/O boundary works end to end. It is
+  - deliberately **one problem per run, scored** — there is still **no full dataset**,
+  - **no batch runner**, and **no published pass@1 number** over the 164-problem set.
+  + This proves the yoyo → benchmark → score I/O boundary works end to end. A thin
+  + **aggregate runner** — `scripts/bench/humaneval_run.sh` — now composes it over
+  + the small inline problem set (see below). There is still **no full dataset** (the
+  + 164-problem HumanEval `jsonl`) and **no published pass@1 number** over it — the
+  + aggregate score is HumanEval-*lite* (the 5 inline problems), not the full set.
+
+Now add the "How to run the aggregate runner" subsection after the single-case "How to run it" section:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (3 → 39 lines)
+    # Reuse a prebuilt binary instead of rebuilding:
+    YOYO_BIN=./target/release/yoyo ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_one.sh add
+  + ```
+  + 
+  + ### How to run the aggregate runner
+  + 
+  + `scripts/bench/humaneval_run.sh` composes the single-case harness above over the
+  + whole inline problem set and prints one greppable summary line:
+  + 
+  + ```bash
+  + # Run all inline problems, tally, print the aggregate score:
+  + ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh
+  + 
+  + # Run a subset by naming problems (validated against the available set):
+  + ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh add below_zero
+  + 
+  + # Reuse a prebuilt binary (passed through to humaneval_one.sh):
+  + YOYO_BIN=./target/release/yoyo ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_run.sh
+  + ```
+  + 
+  ... (19 more lines)
+ ✓ (1m 14s)
+    # Reuse a prebuilt binary instead of rebuilding:
+    YOYO_BIN=./target/release/yoyo ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_one.sh add
+  + ```
+  + 
+  + ### How to run the aggregate runner
+  + 
+  + `scripts/bench/humaneval_run.sh` composes the single-case harness above over the
+  + whole inline problem set and prints one greppable summary line:
+  ... (13 more lines)
+
+Now update the "Batch running" checkbox in the Honest status section — it's now done (over the lite set):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (7 → 9 lines)
+  - - ⬜ **Batch running** — running a *set* of problems in one invocation and
+  -   reporting per-problem PASS/FAIL. *This is the next step.*
+  + - ✅ **Batch running (lite)** — `humaneval_run.sh` runs the *set* of inline
+  +   problems in one invocation, reports per-problem PASS/FAIL, and prints an
+  +   aggregate `HumanEval-lite: N/M passed (X%)` summary line. This is over the
+  +   small inline set, **not** the full 164-problem dataset.
+    - ⬜ **Dataset loading** — the full HumanEval `jsonl` (164 problems) instead of
+      inline problems.
+    - ⬜ **Aggregate pass@1** reporting over the full dataset.
+    - ⬜ **SWE-bench / terminal-bench** adapters — these need repository checkout and
+  -   come after multi-problem HumanEval scoring lands.
+  +   come after full-dataset HumanEval scoring lands.
+ ✓ (1m 16s)
+  - - ⬜ **Batch running** — running a *set* of problems in one invocation and
+  -   reporting per-problem PASS/FAIL. *This is the next step.*
+  + - ✅ **Batch running (lite)** — `humaneval_run.sh` runs the *set* of inline
+  +   problems in one invocation, reports per-problem PASS/FAIL, and prints an
+  +   aggregate `HumanEval-lite: N/M passed (X%)` summary line. This is over the
+  +   small inline set, **not** the full 164-problem dataset.
+    - ⬜ **Dataset loading** — the full HumanEval `jsonl` (164 problems) instead of
+      inline problems.
+  ... (4 more lines)
+
+Now update the closing paragraph which claims "No aggregate benchmark number is published or implied" — that's still true (no number is published without running), but the "When multi-problem scoring exists" clause is now stale:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/contributing/benchmarks.md (3 → 5 lines)
+  - No aggregate benchmark number is published or implied. When multi-problem scoring
+  - exists and produces a real pass@1 over the full dataset, that number will be
+  - reported here.
+  + No aggregate benchmark number is published or implied here. The lite aggregate
+  + runner *can* produce a `HumanEval-lite: N/M passed (X%)` figure when run with a
+  + real key — but a figure is only trustworthy when actually run, not claimed. When
+  + full-dataset scoring exists and produces a real pass@1 over the 164 problems,
+  + that number will be reported here.
+ ✓ (1m 17s)
+  - No aggregate benchmark number is published or implied. When multi-problem scoring
+  - exists and produces a real pass@1 over the full dataset, that number will be
+  - reported here.
+  + No aggregate benchmark number is published or implied here. The lite aggregate
+  + runner *can* produce a `HumanEval-lite: N/M passed (X%)` figure when run with a
+  + real key — but a figure is only trustworthy when actually run, not claimed. When
+  + full-dataset scoring exists and produces a real pass@1 over the 164 problems,
+  + that number will be reported here.
+
+Now let me run the full verification suite. No Rust was touched but I'll run build/test to be safe as instructed:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && bash -n scripts/bench/humaneval_… ✓ (900ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ec… ✓ (156ms)
+  2 tools completed in 3.9s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
