@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. The key uncertainty is whether the yoagent 0.9 API (follow_up_queue_snapshot(), AgentMessage, as_llm()) actually exists and matches the diff's usage. Since the build passed, the API signature is confirmed correct. Let me verify the critical pieces.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_followup_hint\|f… ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The API follow_up_queue_snapshot() -> Vec<AgentMessage> exists exactly as used. Let me verify the return signature and the as_llm()/Message::User/`Content::Text shape used in first_followup_text` matches yoagent 0.9.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '398,410p' ~/.cargo/regis… ✓ (8ms)
+
+All API pieces confirmed: follow_up_queue_snapshot() -> Vec<AgentMessage>, `as_llm() -> Option<&Message>, and Content::Text` all exist. The build passing already proves the types compile. The task is complete:
+
+• Pure helper format_followup_hint extracted, returns None on empty (silent no-op) ✓
+• Uses `truncate_with_ellipsis` (char-boundary-safe, no byte-indexing) ✓
+• No control-flow change to should_auto_continue ✓
+• Tests cover empty→None, multibyte no-panic, long→truncated ✓
+• CLAUDE.md repl.rs line updated ✓
+• Build/tests/clippy pass (harness-verified) ✓
+
+The multibyte test (✓, 🚀) proves the truncation is panic-safe. This is a clean, correctly-scoped product-safe change.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 18s)
+
+Verdict: PASS
+
+The task is correctly implemented. I verified the yoagent 0.9 API against source (`follow_up_queue_snapshot() -> Vec<AgentMessage>, as_llm(), Content::Text` all exist as used — confirmed by the passing build). The change:
+• Adds a pure, tested format_followup_hint helper (silent None on empty → product-safe no-op)
+• Uses char-boundary-safe truncate_with_ellipsis (no byte-indexing)
+• Leaves should_auto_continue control flow untouched (surface-only, as scoped)
+• Has multibyte (✓/🚀) and long-string truncation tests
+• Updates CLAUDE.md's repl.rs line in the same commit
+
+  watch: no files changed this turn — skipping
+

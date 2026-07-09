@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll examine the current state of the implementation to understand what exists and what's missing.
+  ▶ search 'format_followup_hint' in src/repl.rs  ▶ search 'follow_up_queue_snapshot' in src/repl.rs ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 2.1s (2 ✓)
+
+The implementation exists. Let me look at the helper function and its call site.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1290..1330  ▶ read src/repl.rs:1450..1500 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.8s (2 ✓)
+
+The implementation is complete and correct. The two missing deliverables are: (1) the unit test for format_followup_hint, and (2) the CLAUDE.md update. Let me check the existing tests section and CLAUDE.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests|#\[test\]' in src/repl.rs  ▶ search 'should_auto_continue' in CLAUDE.md ✓ (3ms)
+ ✓ (2ms)
+  2 tools completed in 1.3s (2 ✓)
+
+No tests module exists in repl.rs. Let me check the end of the file to find where to add tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:2720..2750 ✓ (1ms)
+
+There is a tests module. Let me find its start and add tests for format_followup_hint.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'mod tests' in src/repl.rs ✓ (3ms)
+  ▶ edit src/repl.rs (7 → 48 lines)
+            let mut config = std::collections::HashMap::new();
+            config.insert("max_auto_continues".to_string(), "0".to_string());
+            assert_eq!(get_max_auto_continues(&config, false), 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_followup_hint_empty_is_none() {
+  +         // Zero pending → no output (silent, product-safe no-op).
+  +         assert_eq!(format_followup_hint(0, "anything"), None);
+  +         // Non-zero count but blank first item → still None.
+  +         assert_eq!(format_followup_hint(3, ""), None);
+  +         assert_eq!(format_followup_hint(2, "   "), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_followup_hint_basic() {
+  +         let hint = format_followup_hint(2, "run the tests").expect("should produce a hint");
+  +         assert!(hint.contains("2 pending"));
+  +         assert!(hint.contains("run the tests"));
+  +         assert!(hint.contains('↻'));
+  ... (26 more lines)
+ ✓ (1m 38s)
+            let mut config = std::collections::HashMap::new();
+            config.insert("max_auto_continues".to_string(), "0".to_string());
+            assert_eq!(get_max_auto_continues(&config, false), 0);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_format_followup_hint_empty_is_none() {
+  +         // Zero pending → no output (silent, product-safe no-op).
+  ... (13 more lines)
+  2 tools completed in 1m 53s (2 ✓)
+
+Now let me verify truncate_with_ellipsis uses … as the ellipsis char.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn truncate_with_ellipsis' in src/format/mod.rs ✓ (2ms)
+  ▶ read src/format/mod.rs:333..353 ✓ (1ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Good — it uses … and is char-boundary safe. Now update CLAUDE.md.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - falling back to the `looks_incomplete` text heuristic when the queue is empty; product-safe — no-op for providers that don't populate the queue, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  + falling back to the `looks_incomplete` text heuristic when the queue is empty; product-safe — no-op for providers that don't populate the queue, up to 5 follow-ups per user turn; when auto-continue is about to fire it also surfaces a dim one-line hint of the next queued follow-up via `follow_up_queue_snapshot()` (`format_followup_hint` — char-boundary-safe truncation, silent when the queue is empty/unsupported)), contextual command hints after prompt turns
+ ✓ (1m 16s)
+  - falling back to the `looks_incomplete` text heuristic when the queue is empty; product-safe — no-op for providers that don't populate the queue, up to 5 follow-ups per user turn), contextual command hints after prompt turns
+  + falling back to the `looks_incomplete` text heuristic when the queue is empty; product-safe — no-op for providers that don't populate the queue, up to 5 follow-ups per user turn; when auto-continue is about to fire it also surfaces a dim one-line hint of the next queued follow-up via `follow_up_queue_snapshot()` (`format_followup_hint` — char-boundary-safe truncation, silent when the queue is empty/unsupported)), contextual command hints after prompt turns
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.8s)
+  2 tools completed in 1m 38s (2 ✓)
+
+All 4 new tests pass, clippy is clean. Let me run the full test suite to confirm nothing broke.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (1m 0s)
+
+All green. Both missing deliverables are now complete:
+
+## Summary
+
+The implementation logic (`format_followup_hint, first_followup_text`, call site) was already correct and verified against yoagent 0.9's API. I completed the two mandatory deliverables the evaluator flagged as missing:
+
+1. Unit tests for `format_followup_hint` (added to the existing tests module in src/repl.rs):
+   • test_format_followup_hint_empty_is_none — zero count → None, blank/whitespace first item → None (silent no-op).
+   • `test_format_followup_hint_basic — sanity: contains count, item text, and ↻`.
+   • `test_format_followup_hint_multibyte_no_panic — multi-byte first char (✓, 🚀`) and a 200-char emoji string, no panic.
+   • test_format_followup_hint_long_truncated — long item truncated with …, full item not reproduced verbatim.
+
+2. CLAUDE.md update — the repl.rs line now documents that auto-continue surfaces a dim one-line hint of the next queued follow-up via follow_up_queue_snapshot() (format_followup_hint, char-boundary-safe, silent when the queue is empty/unsupported).
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (88 passed, 0 failed) all green.
+
+  watch: no files changed this turn — skipping
+

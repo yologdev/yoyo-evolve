@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task. Let me check the key claims: the API existence, the test, and docs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_followup_hint\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu… ✓ (4ms)
+ ✓ (12ms)
+ ✓ (9ms)
+  3 tools completed in 4.1s (3 ✓)
+
+The API exists and returns Vec<AgentMessage>, matching the implementation. But the diff only touches src/repl.rs — CLAUDE.md was NOT updated (task required it). Let me verify the API signature details and check for the test and docs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '395,415p' ~/.cargo/regis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_format_followup_hi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "follow_up_queue_snapsho… ✓ (4ms)
+ ✓ (4ms)
+ ✓ (6ms)
+  3 tools completed in 3.2s (3 ✓)
+
+Two problems: (1) no unit test was added for format_followup_hint (task required tests written BEFORE), and (2) CLAUDE.md was NOT updated. Let me confirm there's truly no test.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "format_followup_hint\|… ✓ (12ms)
+
+Confirmed. The task explicitly required unit tests written BEFORE (empty→None, multi-byte first item, long-item truncation), and required updating CLAUDE.md. Neither was done. The diff adds #[allow]-free functions with zero test coverage despite the task making tests a hard requirement, and skips the docs update.
+
+Let me do one quick check that truncate_with_ellipsis is actually imported/in scope (no clippy failure means it compiles, but confirming the API shape is correct).
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "truncate_with_ellipsis\… ✓ (5ms)
+
+The core implementation is correct and compiles: the API exists with the right signature (`Vec<AgentMessage>), truncation is char-boundary-safe via truncate_with_ellipsis`, and it degrades to silent no-op. However, two explicit hard requirements were skipped:
+
+1. No unit test — the task made tests a "write BEFORE" requirement with three specific cases (empty→None, multi-byte, long-item truncation). The diff adds zero tests for format_followup_hint.
+2. CLAUDE.md not updated — the task required a docs update in the same commit; the diff only touches src/repl.rs.
+
+The implementation logic itself is sound, but the task defined tests and docs as mandatory deliverables, and both are absent.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 16s)
+
+Verdict written.
+
+Verdict: FAIL
+
+The core code is correct — the API was verified against yoagent 0.9 source (follow_up_queue_snapshot() → Vec<AgentMessage>), truncation is char-boundary-safe via truncate_with_ellipsis, and it degrades to a silent no-op. But the task specified two mandatory deliverables that are both absent from the commit:
+
+1. **No unit test** for format_followup_hint — the task explicitly required tests written BEFORE, covering empty→None, a multi-byte first item, and long-item truncation. The diff adds zero tests.
+2. **CLAUDE.md not updated** — the task required documenting the new hint in the repl.rs line; the diff only touches src/repl.rs.
+
+Since tests and docs were explicit hard requirements (not optional polish), this fails despite the working implementation.
+
+  watch: no files changed this turn — skipping
+

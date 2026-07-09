@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by verifying the yoagent 0.9 API to know exactly what's available before writing any display code.
+  ▶ $ ls ~/.cargo/registry/src/*/yoagent-*/src/ 2>/dev/null | head; echo "---"; grep -… ✓ (9ms)
+
+The API exists. Let me check the exact signature and AgentMessage shape.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '385,420p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5…📦 RTK detected — using compressed output (disable with --no-rtk)
+  ▶ $ grep -rn "pub struct AgentMessage\|pub enum AgentMessage" /home/runner/.cargo/re… ✓ (4ms)
+ ✓ (14ms)
+  ▶ $ sed -n '230,320p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (4ms)
+  3 tools completed in 10.1s (3 ✓)
+
+Now I need to understand Message to extract text content. Let me check the Message type and how to get text from it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub struct Message\b\|pub fn text\|pub fn role\|pub enum ContentBlock\|… ✓ (4ms)
+  ▶ $ sed -n '100,230p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b5… ✓ (4ms)
+  2 tools completed in 8.5s (2 ✓)
+
+Let me find the Content enum and a helper to extract text from a message.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub enum Content\|Text {\|pub fn text_content\|fn text\b" /home/runner/… ✓ (3ms)
+  ▶ $ sed -n '20,60p' /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557… ✓ (3ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now I understand the shape. follow_up_queue_snapshot() returns `Vec<AgentMessage>. To get text: match on AgentMessage::Llm(Message::User { content, .. }) and pull Content::Text`. Now let me look at the repl.rs auto-continue firing site.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "should_auto_continue\|follow_up_queue_len\|follow_up_queue_snapshot\|au… ✓ (5ms)
+  ▶ read src/repl.rs:1285..1360 ✓ (1ms)
+  2 tools completed in 9.5s (2 ✓)
+
+Now I understand the firing site. The ⚡ auto-continuing line prints at line 1297-1300. I'll add my snapshot hint right after that. Let me first check what's imported at the top and where helpers live.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "truncate_with_ellipsis\|safe_truncate" src/format/mod.rs | head; echo "… ✓ (5ms)
+
+`truncate_with_ellipsis is available via crate::format::*. Now let me look at truncate_with_ellipsis` to confirm its behavior, then write the test-first pure helper.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read src/format/mod.rs:333..351 ✓ (1ms)
+
+`truncate_with_ellipsis is char-boundary safe (uses char_indices().nth()`). Now let me write the test first. I'll add the pure helper format_followup_hint and its tests. Let me find a good insertion spot near the other helpers.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:1427..1457 ✓ (1ms)
+
+I'll add the pure helper right after should_auto_continue. Let me write it:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (3 → 41 lines)
+    pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
+        queue_pending > 0 || looks_incomplete(text)
+  + }
+  + 
+  + /// Format a dim one-line hint naming the next queued follow-up item.
+  + ///
+  + /// `count` is the number of items pending in the follow-up queue; `first` is
+  + /// the text of the next queued item. Returns `None` (print nothing) when the
+  + /// queue is empty (`count == 0`) or the first item is blank — this keeps the
+  + /// hint a product-safe no-op for providers that don't populate the queue.
+  + ///
+  + /// The first item is truncated char-boundary-safely (via `truncate_with_ellipsis`)
+  + /// so a multi-byte first character never panics.
+  + pub(crate) fn format_followup_hint(count: usize, first: &str) -> Option<String> {
+  +     let first = first.trim();
+  +     if count == 0 || first.is_empty() {
+  +         return None;
+  +     }
+  +     let preview = truncate_with_ellipsis(first, 60);
+  +     Some(format!("↻ continuing — {count} pending: {preview}"))
+  ... (21 more lines)
+ ✓ (17.2s)
+    pub(crate) fn should_auto_continue(text: &str, queue_pending: usize) -> bool {
+        queue_pending > 0 || looks_incomplete(text)
+  + }
+  + 
+  + /// Format a dim one-line hint naming the next queued follow-up item.
+  + ///
+  + /// `count` is the number of items pending in the follow-up queue; `first` is
+  + /// the text of the next queued item. Returns `None` (print nothing) when the
+  ... (13 more lines)
+
+Expected — I need to verify the yoagent re-exports (AgentMessage, Message, Content) and then wire the call site. Let me check the exports.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "pub use\|AgentMessage\|pub use.*Message\|pub use.*Content" /home/runner… ✓ (4ms)
+  ▶ $ grep -n "pub use\|pub mod" /home/runner/.cargo/registry/src/index.crates.io-1949… ✓ (3ms)
+  2 tools completed in 7.9s (2 ✓)
+
+`types::* is re-exported, so yoagent::AgentMessage, yoagent::Message, yoagent::Content` are all valid. Now wire the call site to print the hint. I'll add it right after the `⚡ auto-continuing` eprintln.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (5 → 16 lines)
+                        "\n{DIM}  ⚡ auto-continuing ({auto_continue_count}/{max_continues} \
+                         — more work pending)...{RESET}"
+                    );
+  + 
+  +                 // Surface WHAT queued follow-up work is pending (yoagent 0.9
+  +                 // follow_up_queue_snapshot). Silent no-op when the queue is
+  +                 // empty or unpopulated (product-safe for providers that don't
+  +                 // use the follow-up queue).
+  +                 let fu_snapshot = agent.follow_up_queue_snapshot();
+  +                 if let Some(hint) =
+  +                     format_followup_hint(fu_snapshot.len(), &first_followup_text(&fu_snapshot))
+  +                 {
+  +                     eprintln!("{DIM}  {hint}{RESET}");
+  +                 }
+ ✓ (1m 37s)
+                        "\n{DIM}  ⚡ auto-continuing ({auto_continue_count}/{max_continues} \
+                         — more work pending)...{RESET}"
+                    );
+  + 
+  +                 // Surface WHAT queued follow-up work is pending (yoagent 0.9
+  +                 // follow_up_queue_snapshot). Silent no-op when the queue is
+  +                 // empty or unpopulated (product-safe for providers that don't
+  +                 // use the follow-up queue).
+  ... (6 more lines)
+
+Now add the tests. Let me find the test module and place them near the existing should_auto_continue tests.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/repl.rs:2360..2390 ✓ (1ms)
+  ▶ read src/repl.rs:2389..2414 ✓ (1ms)
+  2 tools completed in 6.1s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

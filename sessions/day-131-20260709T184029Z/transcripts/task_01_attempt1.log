@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current SYSTEM_PROMPT to understand what I'm working with.
+  ▶ search 'SYSTEM_PROMPT' in src/cli_config.rs ✓ (2ms)
+  ▶ read src/cli_config.rs:115..155 ✓ (0ms)
+  2 tools completed in 6.2s (2 ✓)
+
+Now let me look at the existing test around line 219:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:210..250 ✓ (1ms)
+
+Now I understand the structure. Let me write the test first (before editing the prompt). I'll add a test that asserts each of the five section markers.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (5 → 28 lines)
+            assert!(SYSTEM_PROMPT.contains("coding assistant"));
+  +     }
+  + 
+  +     #[test]
+  +     fn system_prompt_has_behavioral_sections() {
+  +         // The default system prompt is structured as named, sectioned behavioral
+  +         // defaults. Each section header must be present; one assertion per section
+  +         // so a dropped section fails loudly. These substrings are the actual
+  +         // human-readable headers in SYSTEM_PROMPT — keep them in sync if reworded.
+  +         let p = SYSTEM_PROMPT;
+  +         assert!(p.contains("# Role"), "missing Role section");
+  +         assert!(
+  +             p.contains("# Evidence and honesty"),
+  +             "missing anti-fabrication / evidence-grounding section"
+  +         );
+  +         assert!(p.contains("# Search craft"), "missing Search craft section");
+  +         assert!(
+  +             p.contains("# Change discipline"),
+  +             "missing Change discipline section"
+  +         );
+  ... (7 more lines)
+ ✓ (1m 33s)
+            assert!(SYSTEM_PROMPT.contains("coding assistant"));
+  +     }
+  + 
+  +     #[test]
+  +     fn system_prompt_has_behavioral_sections() {
+  +         // The default system prompt is structured as named, sectioned behavioral
+  +         // defaults. Each section header must be present; one assertion per section
+  +         // so a dropped section fails loudly. These substrings are the actual
+  ... (13 more lines)
+
+The test fails as expected (sections don't exist yet). Now let me restructure the SYSTEM_PROMPT:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (14 → 36 lines)
+    pub const SYSTEM_PROMPT: &str = r#"You are a coding assistant working in the user's terminal.
+    You have access to the filesystem and shell. Be direct and concise.
+  + 
+  + # Role
+    When the user asks you to do something, do it — don't just explain how.
+    Use tools proactively: read files to understand context, run commands to verify your work.
+    After making changes, run tests or verify the result when appropriate.
+    
+  - How to work effectively:
+  - - Search before reading: use search and list_files to locate relevant code before reading whole files. Don't guess at file paths.
+  - - Be efficient with context: don't read entire large files when you only need a specific function. Use search or read with offset/limit to find the right section.
+  - - Verify changes: after edits, run the project's build/test/lint commands. Check that your changes compile and tests pass before moving on.
+  - - Plan multi-file edits: when a change spans multiple files, think through the approach first. Make changes incrementally and verify between steps.
+  - - Handle errors carefully: if a command fails or an edit doesn't match, read the error output. Check actual file content before retrying with a corrected edit.
+  - - Use git awareness: check git status/diff to understand the current state. Don't make changes that conflict with uncommitted work without asking.
+  - - Confirm destructive operations: before deleting files, resetting git state, or running other irreversible commands, confirm with the user."#;
+  + # Evidence and honesty
+  + Ground every claim in what you actually observed. Don't invent file paths, function
+  + names, APIs, command output, or test results — read or run to confirm before stating
+  + something as fact. If you haven't verified a claim, say so rather than guess. When you
+  ... (24 more lines)
+ ✓ (1m 37s)
+    pub const SYSTEM_PROMPT: &str = r#"You are a coding assistant working in the user's terminal.
+    You have access to the filesystem and shell. Be direct and concise.
+  + 
+  + # Role
+    When the user asks you to do something, do it — don't just explain how.
+    Use tools proactively: read files to understand context, run commands to verify your work.
+    After making changes, run tests or verify the result when appropriate.
+    
+  ... (13 more lines)
+
+Now let me run the checks:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.0s)
+
+Clippy passed. It's a binary crate, not lib. Let me run tests correctly:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test cli_config 2>&1 | tai… ✓ (142ms)
+
+Tests pass including the new system_prompt_has_behavioral_sections. Let me run full build+test and the help sanity check:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (1m 0s)
+
+All green. Now let me update the docs. First CLAUDE.md's cli_config.rs line:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'cli_config.rs' in CLAUDE.md ✓ (2ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `cli_config.rs` — CLI constants (VERSION, thresholds, SYSTEM_PROMPT), Config struct, ContextStrategy/OutputFormat enums, effective context token state (extracted from `cli.rs`, re-exported by it)
+  + - `cli_config.rs` — CLI constants (VERSION, thresholds, SYSTEM_PROMPT — now structured as named sectioned behavioral defaults: role, evidence/anti-fabrication, search craft, change discipline, bounded verification), Config struct, ContextStrategy/OutputFormat enums, effective context token state (extracted from `cli.rs`, re-exported by it)
+ ✓ (1m 17s)
+  - - `cli_config.rs` — CLI constants (VERSION, thresholds, SYSTEM_PROMPT), Config struct, ContextStrategy/OutputFormat enums, effective context token state (extracted from `cli.rs`, re-exported by it)
+  + - `cli_config.rs` — CLI constants (VERSION, thresholds, SYSTEM_PROMPT — now structured as named sectioned behavioral defaults: role, evidence/anti-fabrication, search craft, change discipline, bounded verification), Config struct, ContextStrategy/OutputFormat enums, effective context token state (extracted from `cli.rs`, re-exported by it)
+  2 tools completed in 1m 30s (2 ✓)
+
+Now check if the system-prompts doc describes the default prompt's shape:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "default\|search befo… ✓ (4ms)
+  ▶ read docs/src/configuration/system-prompts.md:5..25 ✓ (0ms)
+  2 tools completed in 5.3s (2 ✓)
+
+The doc describes it as a general list. Let me update it to reflect the new sectioned structure, which is accurate and helpful (the /context system reference at line 77 already mentions sections):
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/system-prompts.md (5 → 10 lines)
+  - The default system prompt tells the model to:
+  - - Work as a coding assistant in the user's terminal
+  - - Be direct and concise
+  - - Use tools proactively (read files, run commands, verify work)
+  - - Do things rather than just explain how
+  + The default system prompt is structured as named, sectioned behavioral defaults:
+  + - **Role** — work as a coding assistant in the user's terminal; do things rather than
+  +   just explain how; use tools proactively (read files, run commands, verify work).
+  + - **Evidence and honesty** — ground claims in what was actually observed; don't invent
+  +   file paths, APIs, or command output; say so when unsure rather than guess.
+  + - **Search craft** — locate before reading; prefer targeted search over reading whole files.
+  + - **Change discipline** — narrow edits, clarify on ambiguity, verify between steps, confirm
+  +   before destructive operations.
+  + - **Bounded verification** — verify enough to be confident, give a verdict, and stop
+  +   re-checking work that's already green.
+ ✓ (1m 16s)
+  - The default system prompt tells the model to:
+  - - Work as a coding assistant in the user's terminal
+  - - Be direct and concise
+  - - Use tools proactively (read files, run commands, verify work)
+  - - Do things rather than just explain how
+  + The default system prompt is structured as named, sectioned behavioral defaults:
+  + - **Role** — work as a coding assistant in the user's terminal; do things rather than
+  +   just explain how; use tools proactively (read files, run commands, verify work).
+  ... (7 more lines)
+
+Let me verify the final prompt reads well and confirm there are zero language/tool/CI-specific assumptions:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli_config.rs:117..157 ✓ (0ms)
+
+The prompt is clean: no Rust/CI/repo-specific assumptions. All five sections present, the two NEW sections (Evidence and honesty, Bounded verification) contain real guidance. Existing intent preserved (search/edit/verify/git content is all consolidated under headers). LITE_SYSTEM_PROMPT untouched.
+
+Let me run the completeness checklist mentally against the checks one more time — everything green. Now commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check 2>&1 | tail… ✓ (911ms)
+
+Committed. Here's what I did for #577:
+
+## Summary
+
+Restructured the product SYSTEM_PROMPT in src/cli_config.rs from a flat intro + bullet list into named sectioned behavioral defaults, matching the 2026 coding-agent prompt consensus.
+
+Five sections:
+1. # Role — kept existing intro/role content (do things, use tools proactively, verify).
+2. # Evidence and honesty — NEW: don't invent file paths/APIs/output, read or run to confirm before claiming, say so when unsure rather than guess. (The biggest gap called out in the issue.)
+3. # Search craft — consolidated the "locate before reading / targeted search" guidance under one header.
+4. # Change discipline — consolidated narrow-edits / clarify-on-ambiguity / verify-between-steps / git-awareness / confirm-destructive guidance.
+5. **# Bounded verification* — NEW*: verify enough to be confident, give a verdict, then stop; don't loop re-checking green work.
+
+**Process (test-first):**
+• Wrote system_prompt_has_behavioral_sections before editing — one assertion per section header (asserts on real human-readable headers, no fake marker tokens), so a dropped section fails loudly. Watched it fail, then made it pass.
+• cargo fmt, cargo clippy --all-targets -- -D warnings clean, cargo build && cargo test green (88 integration + all lib tests pass), cargo run -- --help runs.
+
+Product-safety: re-read the final text — zero language/tool/CI/repo-specific assumptions. The two new sections are universally-safe behavioral defaults. LITE_SYSTEM_PROMPT left untouched (intentionally minimal).
+
+Docs (same commit): updated CLAUDE.md's `cli_config.rs line and docs/src/configuration/system-prompts.md`'s "Default behavior" section to describe the new sectioned structure.
+
+One note on my own recent lesson (Day 131): this task discards nothing and fans out nothing — it's a pure restructure — so there's no inverse "gather-half" to ship. Clean scope, held in one hand, done whole first try.
+
+  watch: no files changed this turn — skipping
+
