@@ -131,15 +131,14 @@ fn try_parse_numbered(line: &str) -> Option<PlanStep> {
         } else {
             return None;
         }
-    } else if let Some(pos) = line.find(") ") {
+    } else {
+        let pos = line.find(") ")?;
         let num_part = &line[..pos];
         if num_part.chars().all(|c| c.is_ascii_digit()) && !num_part.is_empty() {
             (num_part, &line[pos + 2..])
         } else {
             return None;
         }
-    } else {
-        return None;
     };
 
     let number: usize = num_str.parse().ok()?;
@@ -167,15 +166,14 @@ fn try_parse_checklist(line: &str, default_number: usize) -> Option<PlanStep> {
             description: String::new(),
             completed: true,
         });
-    } else if let Some(r) = line.strip_prefix("- [X] ") {
+    } else {
+        let r = line.strip_prefix("- [X] ")?;
         return Some(PlanStep {
             number: default_number,
             title: r.trim().to_string(),
             description: String::new(),
             completed: true,
         });
-    } else {
-        return None;
     };
 
     Some(PlanStep {
