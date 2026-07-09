@@ -61,7 +61,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `update.rs` — version comparison (`version_is_newer`) and update checking (`check_for_update`) against GitHub releases
 - `safety.rs` — bash command safety analysis, destructive pattern detection
 - `cli.rs` — CLI argument parsing, subcommands, configuration (delegates `--help` text to `help.rs`)
-- `cli_config.rs` — CLI constants (VERSION, thresholds, SYSTEM_PROMPT), Config struct, ContextStrategy/OutputFormat enums, effective context token state (extracted from `cli.rs`, re-exported by it)
+- `cli_config.rs` — CLI constants (VERSION, thresholds, SYSTEM_PROMPT — now structured as named sectioned behavioral defaults: role, evidence/anti-fabrication, search craft, change discipline, bounded verification), Config struct, ContextStrategy/OutputFormat enums, effective context token state (extracted from `cli.rs`, re-exported by it)
 - `commands.rs` — slash command dispatch, grouped /help, custom command discovery (loads user-defined `.md` files from `.yoyo/commands/` and `~/.yoyo/commands/`)
 - `dispatch.rs` — REPL `/command` routing (`dispatch_command`), `CommandResult`, `DispatchContext`
 - `dispatch_sub.rs` — CLI subcommand routing (`try_dispatch_subcommand` for `yoyo <subcmd>`), `flag_value`, `FlagValueCheck`, `require_flag_value`. Routes `yoyo risk [snapshot|validate|history|predict|accuracy|effectiveness|--all]` to `commands_risk::handle_risk`, making the risk subsystem callable from any non-interactive context (the prerequisite for the harness or a human to record daily risk snapshots where the DREAM.md measurement data actually accumulates).

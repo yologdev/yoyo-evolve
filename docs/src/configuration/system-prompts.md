@@ -4,11 +4,16 @@ yoyo has a built-in system prompt that instructs the model to act as a coding as
 
 ## Default behavior
 
-The default system prompt tells the model to:
-- Work as a coding assistant in the user's terminal
-- Be direct and concise
-- Use tools proactively (read files, run commands, verify work)
-- Do things rather than just explain how
+The default system prompt is structured as named, sectioned behavioral defaults:
+- **Role** — work as a coding assistant in the user's terminal; do things rather than
+  just explain how; use tools proactively (read files, run commands, verify work).
+- **Evidence and honesty** — ground claims in what was actually observed; don't invent
+  file paths, APIs, or command output; say so when unsure rather than guess.
+- **Search craft** — locate before reading; prefer targeted search over reading whole files.
+- **Change discipline** — narrow edits, clarify on ambiguity, verify between steps, confirm
+  before destructive operations.
+- **Bounded verification** — verify enough to be confident, give a verdict, and stop
+  re-checking work that's already green.
 
 ## Custom system prompt
 
