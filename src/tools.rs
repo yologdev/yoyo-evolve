@@ -125,6 +125,22 @@ fn emit_update(ctx: &yoagent::types::ToolContext, output: &str) {
     }
 }
 
+/// Decide whether a bash exit code represents success, accounting for the
+/// `pipefail` shell option we run with.
+///
+/// With `set -o pipefail`, a pipeline reports the exit status of the *last*
+/// stage that failed. This surfaces real mid-pipeline failures (e.g.
+/// `sh -c 'exit 3' | cat` now exits 3 instead of silently succeeding). But it
+/// also breaks the extremely common `yes | head` idiom: `yes` receives SIGPIPE
+/// when `head` closes the pipe and exits 141 (128 + SIGPIPE 13), which pipefail
+/// would otherwise propagate as a "failure" even though the pipeline did exactly
+/// what was asked. So exit code 141 is treated as NOT-a-failure here — the
+/// numeric code is still reported to the caller, we just don't flip `success`
+/// to false for it.
+fn pipeline_success(exit_code: i64) -> bool {
+    exit_code == 0 || exit_code == 141
+}
+
 #[async_trait::async_trait]
 impl AgentTool for StreamingBashTool {
     fn name(&self) -> &str {
@@ -206,8 +222,18 @@ impl AgentTool for StreamingBashTool {
         // Apply RTK prefix for supported commands
         let effective_command = maybe_prefix_rtk(command);
 
+        // Enable `pipefail` so a mid-pipeline failure is surfaced instead of
+        // being masked by the exit status of the last stage. Without this,
+        // `sh -c 'exit 3' | cat` reports success even though the pipe failed,
+        // and the agent silently believes a broken build/test pipe succeeded.
+        // The `yes | head` idiom (SIGPIPE → exit 141) is handled below by the
+        // SIGPIPE-141 guard so pipefail doesn't turn a normal pipeline into a
+        // reported failure.
         let mut cmd = tokio::process::Command::new("bash");
-        cmd.arg("-c").arg(&effective_command);
+        cmd.arg("-o")
+            .arg("pipefail")
+            .arg("-c")
+            .arg(&effective_command);
 
         if let Some(ref cwd) = self.cwd {
             cmd.current_dir(cwd);
@@ -398,7 +424,7 @@ impl AgentTool for StreamingBashTool {
 
         Ok(TR {
             content: vec![Content::Text { text: formatted }],
-            details: serde_json::json!({ "exit_code": exit_code, "success": exit_code == 0 }),
+            details: serde_json::json!({ "exit_code": exit_code, "success": pipeline_success(exit_code as i64) }),
         })
     }
 }
@@ -1566,6 +1592,74 @@ mod tests {
         let params = serde_json::json!({"command": "exit 42"});
         let result = tool.execute(params, ctx).await.unwrap();
         assert_eq!(result.details["exit_code"], 42);
+        assert_eq!(result.details["success"], false);
+    }
+
+    // --- pipefail + SIGPIPE-141 guard (#579) ---
+
+    #[test]
+    fn test_pipeline_success_helper() {
+        // Clean success and the SIGPIPE-141 case are both "not a failure".
+        assert!(pipeline_success(0));
+        assert!(
+            pipeline_success(141),
+            "yes | head (SIGPIPE 141) must not fail"
+        );
+        // Everything else is a failure, including near-misses.
+        assert!(!pipeline_success(1));
+        assert!(!pipeline_success(3));
+        assert!(!pipeline_success(140));
+        assert!(!pipeline_success(142));
+        assert!(!pipeline_success(-1));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_pipefail_surfaces_midpipe_failure() {
+        // Without pipefail, `exit 3 | cat` reports success (exit 0) because the
+        // last stage (cat) succeeds. With pipefail it must surface the failure.
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "sh -c 'exit 3' | cat"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        assert_eq!(
+            result.details["exit_code"], 3,
+            "mid-pipeline exit 3 must propagate under pipefail"
+        );
+        assert_eq!(result.details["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_sigpipe_141_not_a_failure() {
+        // `yes | head` is the canonical SIGPIPE idiom: `yes` dies with SIGPIPE
+        // (exit 141) when `head` closes the pipe. pipefail would report this as
+        // a failure; the SIGPIPE-141 guard must keep it a success.
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "yes | head -n1"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        assert_eq!(
+            result.details["success"], true,
+            "yes | head must not be reported as a failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_plain_success_still_success() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "echo hi"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        assert_eq!(result.details["exit_code"], 0);
+        assert_eq!(result.details["success"], true);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_bash_plain_failure_still_failure() {
+        let tool = StreamingBashTool::default();
+        let ctx = test_tool_context(None);
+        let params = serde_json::json!({"command": "false"});
+        let result = tool.execute(params, ctx).await.unwrap();
+        assert_eq!(result.details["exit_code"], 1);
         assert_eq!(result.details["success"], false);
     }
 
