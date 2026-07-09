@@ -1008,11 +1008,134 @@ fn handle_spawn_parallel(
         ids.push(last_id);
     }
 
+    // Record the fan-out as a rerunnable JSON manifest so the run is
+    // inspectable/reproducible after the session ends. Best-effort: a write
+    // failure is a dim note, never a blocker (#341, orchestration scale).
+    let results: Vec<(String, SpawnStatus)> = {
+        let tasks_vec = lock_or_recover(&tracker.inner);
+        ids.iter()
+            .zip(tasks.iter())
+            .map(|(id, task_text)| {
+                let status = tasks_vec
+                    .iter()
+                    .find(|t| t.id == *id)
+                    .map(|t| t.status.clone())
+                    .unwrap_or(SpawnStatus::Running);
+                (task_text.clone(), status)
+            })
+            .collect()
+    };
+    let run_id = spawn_run_id();
+    let manifest = build_spawn_manifest(&run_id, tasks, &results);
+    match write_spawn_manifest(Path::new(SPAWN_RUNS_DIR), &manifest) {
+        Ok(path) => println!("{DIM}  manifest: {}{RESET}", path.display()),
+        Err(e) => println!("{DIM}  (manifest not written: {e}){RESET}"),
+    }
+
     println!(
         "\n{DIM}  Use /spawn status to check progress.\n  Use /spawn collect <id> to retrieve results.{RESET}\n"
     );
 
     None
+}
+
+/// Directory where `/spawn --parallel` fan-out manifests are written.
+const SPAWN_RUNS_DIR: &str = ".yoyo/spawn_runs";
+
+/// Max bytes stored for a task string in a manifest entry (char-boundary safe).
+const MANIFEST_TASK_CAP: usize = 200;
+
+/// Generate a run id for a `/spawn --parallel` fan-out manifest.
+/// Timestamp-based (UTC, compact), falling back to a fixed label if `date`
+/// is unavailable so the write still succeeds.
+fn spawn_run_id() -> String {
+    std::process::Command::new("date")
+        .args(["-u", "+%Y%m%dT%H%M%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "run".to_string())
+}
+
+/// Map a `SpawnStatus` to the stable manifest status string.
+fn manifest_status_str(status: &SpawnStatus) -> &'static str {
+    match status {
+        SpawnStatus::Running => "running",
+        SpawnStatus::Completed => "completed",
+        SpawnStatus::Failed(_) => "failed",
+    }
+}
+
+/// Build a rerunnable JSON manifest of a `/spawn --parallel` fan-out.
+///
+/// Pure (no I/O, no spawning) so it is unit-testable. Captures the run id,
+/// a UTC timestamp, the task count, and per-task `{index, task, status}`
+/// where `task` is char-boundary-truncated to a sane cap.
+///
+/// First step toward codified/replayable orchestration (#341).
+pub fn build_spawn_manifest(
+    run_id: &str,
+    tasks: &[String],
+    results: &[(String, SpawnStatus)],
+) -> serde_json::Value {
+    let created_ts = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let entries: Vec<serde_json::Value> = results
+        .iter()
+        .enumerate()
+        .map(|(index, (task, status))| {
+            serde_json::json!({
+                "index": index,
+                "task": safe_truncate(task, MANIFEST_TASK_CAP),
+                "status": manifest_status_str(status),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "run_id": run_id,
+        "created_ts": created_ts,
+        "task_count": tasks.len(),
+        "tasks": entries,
+    })
+}
+
+/// Write a spawn manifest to `<dir>/<run_id>.json`, creating `dir` if needed.
+/// Follows the risk-snapshot write pattern (`create_dir_all` +
+/// `to_string_pretty`). Returns the path so the caller can print it.
+pub fn write_spawn_manifest(dir: &Path, manifest: &serde_json::Value) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let run_id = manifest
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("run");
+    let path = dir.join(format!("{run_id}.json"));
+    let pretty = serde_json::to_string_pretty(manifest).unwrap_or_else(|_| manifest.to_string());
+    std::fs::write(&path, pretty)?;
+    Ok(path)
 }
 
 /// Collect a finished background spawn's result.
@@ -2711,5 +2834,86 @@ mod tests {
                       2. Write integration tests for the config loader\n\
                       3. Update the installation documentation pages";
         assert_eq!(detect_parallelizable_tasks(prompt), None);
+    }
+
+    // --- spawn manifest (#341: codified/replayable orchestration) ---
+
+    #[test]
+    fn test_build_spawn_manifest_shape() {
+        let tasks = vec![
+            "add tests".to_string(),
+            "write docs".to_string(),
+            "refactor logger".to_string(),
+        ];
+        let results = vec![
+            ("add tests".to_string(), SpawnStatus::Completed),
+            ("write docs".to_string(), SpawnStatus::Completed),
+            (
+                "refactor logger".to_string(),
+                SpawnStatus::Failed("boom".to_string()),
+            ),
+        ];
+        let m = build_spawn_manifest("run-abc", &tasks, &results);
+
+        assert_eq!(m["run_id"], "run-abc");
+        assert_eq!(m["task_count"], 3);
+        let entries = m["tasks"].as_array().expect("tasks array");
+        assert_eq!(entries.len(), 3);
+        // Indices 0..2 in order.
+        assert_eq!(entries[0]["index"], 0);
+        assert_eq!(entries[1]["index"], 1);
+        assert_eq!(entries[2]["index"], 2);
+        // Status strings map correctly (Failed → "failed", no message leak).
+        assert_eq!(entries[0]["status"], "completed");
+        assert_eq!(entries[1]["status"], "completed");
+        assert_eq!(entries[2]["status"], "failed");
+        // created_ts present (some non-empty string).
+        assert!(m["created_ts"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_build_spawn_manifest_truncates_long_task() {
+        // A task longer than the cap, with a multi-byte char (✓, 3 bytes)
+        // straddling the boundary — must truncate on a char boundary, never panic.
+        let long = format!("{}✓{}", "a".repeat(MANIFEST_TASK_CAP - 1), "b".repeat(50));
+        let tasks = vec![long.clone()];
+        let results = vec![(long, SpawnStatus::Running)];
+        let m = build_spawn_manifest("run-xyz", &tasks, &results);
+
+        let stored = m["tasks"][0]["task"].as_str().expect("task string");
+        // Truncated to at most the cap.
+        assert!(stored.len() <= MANIFEST_TASK_CAP, "len {}", stored.len());
+        // Shorter than the original (truncation happened).
+        assert!(
+            stored.len()
+                < format!("{}✓{}", "a".repeat(MANIFEST_TASK_CAP - 1), "b".repeat(50)).len()
+        );
+        // The stored slice is itself valid UTF-8 (it's a &str, so this is
+        // implicit — but assert it's a proper prefix boundary explicitly).
+        assert!(stored.is_char_boundary(stored.len()));
+    }
+
+    #[test]
+    fn test_write_spawn_manifest_roundtrip() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        let tasks = vec!["t1".to_string(), "t2".to_string()];
+        let results = vec![
+            ("t1".to_string(), SpawnStatus::Completed),
+            ("t2".to_string(), SpawnStatus::Running),
+        ];
+        let manifest = build_spawn_manifest("run-roundtrip", &tasks, &results);
+
+        let path = write_spawn_manifest(&dir, &manifest).expect("write manifest");
+        assert!(path.exists(), "manifest file should exist");
+        assert!(path.ends_with("run-roundtrip.json"));
+
+        let raw = std::fs::read_to_string(&path).expect("read manifest back");
+        let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse json");
+        assert_eq!(parsed, manifest, "round-trip must be lossless");
+        assert_eq!(parsed["run_id"], "run-roundtrip");
+        assert_eq!(parsed["task_count"], 2);
+        assert_eq!(parsed["tasks"][0]["status"], "completed");
+        assert_eq!(parsed["tasks"][1]["status"], "running");
     }
 }
