@@ -1,0 +1,27 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me verify the key concern: does is_at_word_boundary exist and does the logic correctly handle the false-positive case?
+  ▶ search 'fn is_at_word_boundary' in src/safety.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '935,965p' src/safety.rs ✓ (4ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '81,110p' src/safety.rs ✓ (4ms)
+  3 tools completed in 3.3s (3 ✓)
+
+The implementation is correct. is_at_word_boundary checks the char before the match position is a separator (space, ;, |, &, /, (, tab, newline) or start-of-string. For `rsync -c foo bar`, "nc " is preceded by 'y' → not a boundary → not flagged. The .find() + abs_pos indexing is UTF-8 safe (find returns valid boundaries). Tests cover positive (`nc -e, ncat -c, prefixed-by-;/|) and negative (rsync -c, franchise -e`) cases as required.
+
+Let me quickly confirm the note that is_at_word_boundary treats / as a boundary — the task mentioned func/ncdu. The command's exec-flag requirement ( -c  /  -e ) already gates most, but / being a boundary means func/ncat -c would flag; that's acceptable (a path-invoked ncat). The core reported bug is correctly fixed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines) ✓ (1m 15s)
+
+Verdict: PASS
+
+The implementation correctly fixes the reported false positive:
+• Uses the existing `is_at_word_boundary helper to ensure nc/ncat/netcat` only match as standalone command tokens.
+• `rsync -c foo bar no longer matches (the nc inside rsync ` fails the boundary check since preceded by y), while genuine reverse shells (`nc -e /bin/sh ..., ; nc ..., | netcat ...`) still flag.
+• UTF-8 safe: .find() returns valid char boundaries and indexing uses those offsets.
+• Paired positive/negative tests added per the Day 122 lesson.
+
+Verdict written to session_plan/eval_task_2.md.
+
+  watch: no files changed this turn — skipping
+

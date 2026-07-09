@@ -1,0 +1,89 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the exact code structure in the task-scope file.
+  ▶ read src/commands_plan.rs:115..190 ✓ (1ms)
+
+Now I understand the structure. Let me apply the ? rewrites clippy suggests.
+
+For `:134 — the final else if let Some(pos) = line.find(") ") block collapses to ? since the fall-through is return None. The ? on line.find(") ") returns None` from the function if no match, which is identical.
+
+For :170 — the final else if let Some(r) = line.strip_prefix("- [X] ") block collapses to `? since fall-through is return None`.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (10 → 9 lines)
+  -     } else if let Some(pos) = line.find(") ") {
+  +     } else {
+  +         let pos = line.find(") ")?;
+            let num_part = &line[..pos];
+            if num_part.chars().all(|c| c.is_ascii_digit()) && !num_part.is_empty() {
+                (num_part, &line[pos + 2..])
+            } else {
+                return None;
+            }
+  -     } else {
+  -         return None;
+        };
+ ✓ (18.0s)
+  -     } else if let Some(pos) = line.find(") ") {
+  +     } else {
+  +         let pos = line.find(") ")?;
+            let num_part = &line[..pos];
+            if num_part.chars().all(|c| c.is_ascii_digit()) && !num_part.is_empty() {
+                (num_part, &line[pos + 2..])
+            } else {
+                return None;
+  ... (4 more lines)
+
+First fix applied. Now the second one at :170.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (10 → 9 lines)
+  -     } else if let Some(r) = line.strip_prefix("- [X] ") {
+  +     } else {
+  +         let r = line.strip_prefix("- [X] ")?;
+            return Some(PlanStep {
+                number: default_number,
+                title: r.trim().to_string(),
+                description: String::new(),
+                completed: true,
+            });
+  -     } else {
+  -         return None;
+        };
+ ✓ (1m 37s)
+  -     } else if let Some(r) = line.strip_prefix("- [X] ") {
+  +     } else {
+  +         let r = line.strip_prefix("- [X] ")?;
+            return Some(PlanStep {
+                number: default_number,
+                title: r.trim().to_string(),
+                description: String::new(),
+                completed: true,
+  ... (4 more lines)
+
+Both fixes applied. Now run the full CI gate to confirm green.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 ✓ (18.1s)
+
+Clippy is green. Now build and test.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -3 && cargo test 2>&1 | tail -15 ✓ (59.1s)
+
+All green: clippy exits 0, build clean, all tests pass. The behavior is unchanged — both ? rewrites are semantically identical (the fall-through was return None, and the function returns Option). Let me commit.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 131 (14:40): Fix clippy red on main — question_… ✓ (13ms)
+
+Done. CI red is fixed.
+
+What happened: The tip of main had two clippy::question_mark errors from a human fork-review commit. Both were mechanical `else if let Some(x) = ... { ... } else { return None } blocks where the final arm falls through to return None — exactly what ? does on an Option`-returning function.
+
+• `try_parse_numbered:134 — line.find(") ")?` replaces the redundant match-and-return-None.
+• `try_parse_checklist:170 — line.strip_prefix("- [X] ")?` same pattern.
+
+I verified both rewrites are semantically identical (I read the surrounding code first — both functions return Option<PlanStep>, and the fall-through was `None, so no behavior change). The &line[..pos]` byte-slice stayed untouched — pos is the byte index of an ASCII ), always a char boundary.
+
+Verification: cargo clippy --all-targets -- -D warnings exits 0, cargo build clean, cargo test 88 passed / 0 failed. Parsing behavior unchanged — no existing tests broke. Committed as 50a18e66.
+
+A one-liner from a human that happened to be lint-clean under their toolchain but not under -D warnings — the kind of thing that quietly turns every future push red until someone notices. Good to clear it first.
+
+  watch: no files changed this turn — skipping
+

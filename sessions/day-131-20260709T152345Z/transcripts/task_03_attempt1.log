@@ -1,0 +1,172 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant section of src/tools.rs to understand how the bash command is assembled and executed.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:150..290 ✓ (2ms)
+
+Let me see how the exit status is inspected after the command runs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:289..469 ✓ (1ms)
+
+Now I understand the structure. Key points:
+• Line 209-210: bash -c <effective_command> is spawned.
+• Line 361-371: exit_code computed; success is exit_code == 0 (line 401).
+
+Currently there's no set -o pipefail, so sh -c 'exit 3' | cat reports success. I need to:
+1. Enable pipefail (prefix the script).
+2. Guard against SIGPIPE 141 so yes | head isn't reported as a failure.
+
+Let me look at the existing tests to see where bash-tool tests live and find a good pure-function seam to test.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|StreamingBas… ✓ (7ms)
+
+There are existing async integration-style tests for StreamingBashTool. Let me look at a couple to match the pattern, particularly test_streaming_bash_captures_exit_code.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1546..1616 ✓ (1ms)
+
+Now I have the full picture. Let me make the changes.
+
+Change 1: Enable pipefail by prefixing the command. I'll modify the command assembly around line 209-210.
+
+Change 2: Add a SIGPIPE-141 guard. The subtle bit: with pipefail, yes | head will exit 141. The task says "an exit code of 141 (128 + SIGPIPE 13) from an otherwise-normal pipeline should NOT be surfaced as an error." So I need to treat exit code 141 as success (exit_code == 0-equivalent for the success flag), while keeping the numeric code visible if it was before. Currently 141 would previously just have been a real exit code from bash (e.g. if the last command exited 141) — but without pipefail, yes|head reported success=true already. So my guard restores that: 141 → success.
+
+Let me make the edits.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (5 → 12 lines)
+            // Apply RTK prefix for supported commands
+            let effective_command = maybe_prefix_rtk(command);
+    
+  +         // Enable `pipefail` so a mid-pipeline failure is surfaced instead of
+  +         // being masked by the exit status of the last stage. Without this,
+  +         // `sh -c 'exit 3' | cat` reports success even though the pipe failed,
+  +         // and the agent silently believes a broken build/test pipe succeeded.
+  +         // The `yes | head` idiom (SIGPIPE → exit 141) is handled below by the
+  +         // SIGPIPE-141 guard so pipefail doesn't turn a normal pipeline into a
+  +         // reported failure.
+            let mut cmd = tokio::process::Command::new("bash");
+  -         cmd.arg("-c").arg(&effective_command);
+  +         cmd.arg("-o").arg("pipefail").arg("-c").arg(&effective_command);
+ ✓ (1m 35s)
+            // Apply RTK prefix for supported commands
+            let effective_command = maybe_prefix_rtk(command);
+    
+  +         // Enable `pipefail` so a mid-pipeline failure is surfaced instead of
+  +         // being masked by the exit status of the last stage. Without this,
+  +         // `sh -c 'exit 3' | cat` reports success even though the pipe failed,
+  +         // and the agent silently believes a broken build/test pipe succeeded.
+  +         // The `yes | head` idiom (SIGPIPE → exit 141) is handled below by the
+  ... (5 more lines)
+
+Now the SIGPIPE-141 guard. Let me extract the success/exit-code logic into a testable pure helper and apply it. First let me look at the exact current block after my edit (the exit_code and success computation).
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:368..413 ✓ (1ms)
+
+Now I'll add a pure helper function pipeline_success(exit_code) and use it for the success flag. I'll place the helper near the top-level of the module (before the tests). Let me add it right before the mod tests or near the simplify_command_pattern free function. Let me find a good spot.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn \|^pub fn \|^pub(cr… ✓ (4ms)
+
+I'll add the helper right after emit_update (around line 117). Let me read that region.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:117..131 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (11 → 27 lines)
+                details: serde_json::json!({"streaming": true}),
+            });
+        }
+  + }
+  + 
+  + /// Decide whether a bash exit code represents success, accounting for the
+  + /// `pipefail` shell option we run with.
+  + ///
+  + /// With `set -o pipefail`, a pipeline reports the exit status of the *last*
+  + /// stage that failed. This surfaces real mid-pipeline failures (e.g.
+  + /// `sh -c 'exit 3' | cat` now exits 3 instead of silently succeeding). But it
+  + /// also breaks the extremely common `yes | head` idiom: `yes` receives SIGPIPE
+  + /// when `head` closes the pipe and exits 141 (128 + SIGPIPE 13), which pipefail
+  + /// would otherwise propagate as a "failure" even though the pipeline did exactly
+  + /// what was asked. So exit code 141 is treated as NOT-a-failure here — the
+  + /// numeric code is still reported to the caller, we just don't flip `success`
+  + /// to false for it.
+  + fn pipeline_success(exit_code: i64) -> bool {
+  +     exit_code == 0 || exit_code == 141
+    }
+  ... (1 more lines)
+ ✓ (17.2s)
+                details: serde_json::json!({"streaming": true}),
+            });
+        }
+  + }
+  + 
+  + /// Decide whether a bash exit code represents success, accounting for the
+  + /// `pipefail` shell option we run with.
+  + ///
+  ... (13 more lines)
+  2 tools completed in 30.6s (2 ✓)
+
+Now I need to wire it into the success computation. Let me update the details line.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 1 lines)
+  -             details: serde_json::json!({ "exit_code": exit_code, "success": exit_code == 0 }),
+  +             details: serde_json::json!({ "exit_code": exit_code, "success": pipeline_success(exit_code as i64) }),
+ ✓ (1m 33s)
+  -             details: serde_json::json!({ "exit_code": exit_code, "success": exit_code == 0 }),
+  +             details: serde_json::json!({ "exit_code": exit_code, "success": pipeline_success(exit_code as i64) }),
+
+Let me confirm the type of exit_code — it's i32 from exit_status.code(). The as i64 cast is fine. Now let me add tests. Let me find the end of the streaming bash tests to insert alongside them.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "test_streaming_bash_out… ✓ (4ms)
+
+I'll insert the new tests right after test_streaming_bash_captures_exit_code (ends around line 1593). Let me read the exact boundary.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1585..1597 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (4 → 69 lines)
+            assert_eq!(result.details["exit_code"], 42);
+  +         assert_eq!(result.details["success"], false);
+  +     }
+  + 
+  +     // --- pipefail + SIGPIPE-141 guard (#579) ---
+  + 
+  +     #[test]
+  +     fn test_pipeline_success_helper() {
+  +         // Clean success and the SIGPIPE-141 case are both "not a failure".
+  +         assert!(pipeline_success(0));
+  +         assert!(pipeline_success(141), "yes | head (SIGPIPE 141) must not fail");
+  +         // Everything else is a failure, including near-misses.
+  +         assert!(!pipeline_success(1));
+  +         assert!(!pipeline_success(3));
+  +         assert!(!pipeline_success(140));
+  +         assert!(!pipeline_success(142));
+  +         assert!(!pipeline_success(-1));
+  +     }
+  + 
+  +     #[tokio::test]
+  ... (49 more lines)
+ ✓ (1m 39s)
+            assert_eq!(result.details["exit_code"], 42);
+  +         assert_eq!(result.details["success"], false);
+  +     }
+  + 
+  +     // --- pipefail + SIGPIPE-141 guard (#579) ---
+  + 
+  +     #[test]
+  +     fn test_pipeline_success_helper() {
+  ... (13 more lines)
+  2 tools completed in 1m 57s (2 ✓)
+
+Now let me run all the checks.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.7s)
+
+Clippy clean. Now let me run the specific tests plus the full build/test.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib pipefail 2>&1 |… ✓ (245ms)
+
+It's a binary crate. Let me use the bin target.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo streaming_… ✓ (19.5s)
+
+All streaming_bash tests pass including the new ones. Let me run the pipefail-specific tests explicitly to confirm they ran, then the full suite.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo pipefail 2… ✓ (1m 6s)
+
+  watch: no files changed this turn — skipping
+

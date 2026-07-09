@@ -1,0 +1,72 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by clearing the session plan directory, then plan from the assessment evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (7ms)
+
+The evidence is clear. Priority 0 is fixing the red CI (clippy question_mark in commands_plan.rs). Then the smallest confirmed bug (#578 reverse-shell false positive), and #579 pipefail as a stretch. All product-safe mechanical fixes — one cognitive mode per session (my Day-throughput lesson).
+
+Let me write the task files.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (59 lines)  ▶ write session_plan/task_02.md (54 lines)  ▶ write session_plan/task_03.md (58 lines) ✓ (17.5s)
+ ✓ (34.5s)
+ ✓ (51.9s)
+  3 tools completed in 55.4s (3 ✓)
+
+The auto-check confirms exactly the two clippy errors task_01 targets (writing plan files doesn't fix code — that's expected; these are the pre-existing red-CI errors). The full clippy output even shows the exact :134 fix for try_parse_numbered, which I can now include precisely in task_01.
+
+Let me refine task_01 with the confirmed `:134` fix, then write issue_responses.md.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/task_01.md (1 → 14 lines)
+  -    Apply the analogous transform to the `:134` `try_parse_numbered` case using `line.find(") ")?`.
+  +    For the `:134` `try_parse_numbered` case, clippy's exact suggested fix is:
+  +    ```rust
+  +    } else {
+  +        let pos = line.find(") ")?;
+  +        let num_part = &line[..pos];
+  +        if num_part.chars().all(|c| c.is_ascii_digit()) && !num_part.is_empty() {
+  +            (num_part, &line[pos + 2..])
+  +        } else {
+  +            return None;
+  +        }
+  +    };
+  +    ```
+  +    Note the byte-slice `&line[..pos]` here is safe because `pos` is the byte index of a `)`
+  +    (ASCII, always a char boundary) — do not "fix" it. Apply the analogous `?` transform.
+ ✓ (17.0s)
+  -    Apply the analogous transform to the `:134` `try_parse_numbered` case using `line.find(") ")?`.
+  +    For the `:134` `try_parse_numbered` case, clippy's exact suggested fix is:
+  +    ```rust
+  +    } else {
+  +        let pos = line.find(") ")?;
+  +        let num_part = &line[..pos];
+  +        if num_part.chars().all(|c| c.is_ascii_digit()) && !num_part.is_empty() {
+  +            (num_part, &line[pos + 2..])
+  ... (7 more lines)
+
+Now the issue responses file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (52 lines) ✓ (17.1s)
+
+All plan files written. The auto-check errors are the pre-existing red-CI clippy errors that task_01 exists to fix (writing markdown doesn't touch the source — expected). Let me verify the plan files and commit.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -1 session_plan/ && echo "---… ✓ (6ms)
+
+`session_plan/` is gitignored (ephemeral, per CLAUDE.md). The commit step is a no-op by design — the files exist on disk for the implementation agents, which is what matters. Plan complete.
+
+## Session plan — Day 131
+
+CI is red on main (clippy question_mark from the human fork-review commit `05b58c52`), so priority 0 dictates the session. I planned a homogeneous "mechanical fix" muscle session — one cognitive mode, retreat-size tasks, all pre-cut from the assessment's confirmed findings:
+
+• **task_01 (evolve) — Fix clippy red** in commands_plan.rs:134 & :170. Non-negotiable first; every future push shows red CI until this lands. I embedded clippy's exact ?-rewrite for both sites and a note not to "fix" the safe ASCII byte-slice.
+• **task_02 (product) — #578 reverse-shell false positive**: rsync -c blocked because `nc  matches inside rsy​nc. Apply the existing is_at_word_boundary` helper, with **paired near-miss tests** (Day 122: test the silent side).
+• **task_03 (product, stretch) — #579 pipefail**: mid-pipeline failures are invisible. Fix with set -o pipefail + a SIGPIPE-141 guard so yes | head doesn't regress. Largest, so it's last.
+
+Deferred: #577 (prompt restructure — wrong muscle, product-surface), #571 (refinement not fix), #341/#215/#156 (tracking).
+
+Dream note: the milestone (let the risk meter run and measure the reflex) is structurally blocked on #575 — the feed patch touches protected `scripts/evolve.sh` and needs a human. Per Days 125/129, building more meter plumbing now would be progress-shaped procrastination, so the self-driven slot correctly goes to CI hygiene + confirmed bugs (keep myself stable). The dream advances when a human applies the #575 one-line patch, not when I add more sensors.
+
+Stopping here — planning only.
+
+  watch: no files changed this turn — skipping
+
