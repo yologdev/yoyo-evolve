@@ -44,10 +44,13 @@ it defaults to `has_close_elements`, so existing invocations are unchanged.
 Passing an unknown problem name prints the list of available problems and exits
 non-zero (it never silently passes). Currently supported problems:
 
-| Name                 | HumanEval | What it asks                                      |
-| -------------------- | --------- | ------------------------------------------------- |
-| `has_close_elements` | 0         | Are any two numbers closer than a threshold?      |
-| `add`                | 53        | Return `x + y`.                                    |
+| Name                     | HumanEval | What it asks                                      |
+| ------------------------ | --------- | ------------------------------------------------- |
+| `has_close_elements`     | 0         | Are any two numbers closer than a threshold?      |
+| `add`                    | 53        | Return `x + y`.                                    |
+| `truncate_number`        | 2         | Return the decimal part of a positive float.       |
+| `below_zero`             | 3         | Does a running bank balance ever fall below zero?  |
+| `greatest_common_divisor`| 13        | Return the GCD of two integers.                    |
 
 Each problem is **self-contained in the script** — no network fetch — so the
 scoring half stays fully offline and deterministic.
@@ -97,7 +100,7 @@ human can run it in CI or locally without setup.
 - ✅ **Scoring** — the captured completion is run against the selected problem's
   canonical HumanEval unit tests and a PASS/FAIL verdict + exit code is produced.
 - ✅ **Problem-ID parameterization** — the runner is a real adapter now: pass a
-  problem name to select which problem to run (2 encoded so far). Adding a
+  problem name to select which problem to run (5 encoded so far). Adding a
   problem is a `case` branch + a `CHECKS` entry, no rewrite.
 - ⬜ **Batch running** — running a *set* of problems in one invocation and
   reporting per-problem PASS/FAIL. *This is the next step.*

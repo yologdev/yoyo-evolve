@@ -29,8 +29,11 @@
 #   YOYO_BIN=./target/release/yoyo ANTHROPIC_API_KEY=sk-... ./scripts/bench/humaneval_one.sh add
 #
 # PROBLEMS (each self-contained; add one by extending the case blocks below):
-#   has_close_elements  — HumanEval/0  (any two numbers closer than a threshold?)
-#   add                 — HumanEval/53 (return x + y)
+#   has_close_elements       — HumanEval/0  (any two numbers closer than a threshold?)
+#   add                      — HumanEval/53 (return x + y)
+#   truncate_number          — HumanEval/2  (return the decimal part of a float)
+#   below_zero               — HumanEval/3  (does a balance ever fall below zero?)
+#   greatest_common_divisor  — HumanEval/13 (GCD of two integers)
 #
 # ENV:
 #   ANTHROPIC_API_KEY  — required (read from env, never hardcoded).
@@ -53,7 +56,7 @@ PROBLEM="${1:-has_close_elements}"
 
 # Available problem names (kept in sync with the case blocks below). Used for the
 # error message when an unknown name is passed — fail loudly, never silently pass.
-AVAILABLE_PROBLEMS="has_close_elements add"
+AVAILABLE_PROBLEMS="has_close_elements add truncate_number below_zero greatest_common_divisor"
 
 # The per-problem PROMPT_BODY (function signature + docstring) and ENTRY_POINT
 # (the function name the scorer looks up) are set here. The canonical checks live
@@ -84,6 +87,49 @@ def add(x: int, y: int) -> int:
     5
     >>> add(5, 7)
     12
+    """
+PROBLEM_EOF
+        ;;
+    truncate_number)
+        ENTRY_POINT="truncate_number"
+        read -r -d '' PROBLEM_BODY <<'PROBLEM_EOF' || true
+def truncate_number(number: float) -> float:
+    """ Given a positive floating point number, it can be decomposed into
+    and integer part (largest integer smaller than given number) and decimals
+    (leftover part always smaller than 1).
+
+    Return the decimal part of the number.
+    >>> truncate_number(3.5)
+    0.5
+    """
+PROBLEM_EOF
+        ;;
+    below_zero)
+        ENTRY_POINT="below_zero"
+        read -r -d '' PROBLEM_BODY <<'PROBLEM_EOF' || true
+from typing import List
+
+
+def below_zero(operations: List[int]) -> bool:
+    """ You're given a list of deposit and withdrawal operations on a bank account that starts with
+    zero balance. Your task is to detect if at any point the balance of account fallls below zero, and
+    at that point function should return True. Otherwise it should return False.
+    >>> below_zero([1, 2, 3])
+    False
+    >>> below_zero([1, 2, -4, 5])
+    True
+    """
+PROBLEM_EOF
+        ;;
+    greatest_common_divisor)
+        ENTRY_POINT="greatest_common_divisor"
+        read -r -d '' PROBLEM_BODY <<'PROBLEM_EOF' || true
+def greatest_common_divisor(a: int, b: int) -> int:
+    """ Return a greatest common divisor of two integers a and b
+    >>> greatest_common_divisor(3, 5)
+    1
+    >>> greatest_common_divisor(25, 15)
+    5
     """
 PROBLEM_EOF
         ;;
@@ -222,6 +268,32 @@ CHECKS = {
         ((7, 5), 12),
         ((-1, 1), 0),
         ((100, 200), 300),
+    ],
+    # HumanEval/2
+    "truncate_number": [
+        ((3.5,), 0.5),
+        ((1.25,), 0.25),
+        ((10.0,), 0.0),
+        ((2.75,), 0.75),
+        ((0.5,), 0.5),
+    ],
+    # HumanEval/3
+    "below_zero": [
+        (([1, 2, 3],), False),
+        (([1, 2, -4, 5],), True),
+        (([],), False),
+        (([1, -1],), False),
+        (([-1],), True),
+        (([1, -2, 2, -2, 5, -5, 4, -4],), True),
+    ],
+    # HumanEval/13
+    "greatest_common_divisor": [
+        ((3, 5), 1),
+        ((25, 15), 5),
+        ((12, 8), 4),
+        ((100, 10), 10),
+        ((17, 5), 1),
+        ((49, 14), 7),
     ],
 }
 
