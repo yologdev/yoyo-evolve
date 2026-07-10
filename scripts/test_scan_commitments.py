@@ -32,8 +32,11 @@ def _comment(author, body, ts="2026-06-01T00:00:00Z"):
     return {"author": {"login": author}, "body": body, "createdAt": ts}
 
 
-def _issue(num, title, comments):
-    return {"number": num, "title": title, "comments": comments}
+def _issue(num, title, comments, source=None):
+    item = {"number": num, "title": title, "comments": comments}
+    if source is not None:
+        item["source"] = source
+    return item
 
 
 class BuildPayload(unittest.TestCase):
@@ -202,6 +205,105 @@ class ScanIntegration(unittest.TestCase):
         inner = json.loads(body["messages"][0]["content"])
         self.assertIn("issues", inner)
         self.assertIn("recent_commits", inner)
+
+
+class SourceAwareness(unittest.TestCase):
+    """Discussions and issues share the stdin shape; only the header noun
+    differs. A `source` field ("issue" | "discussion") selects it, defaulting
+    to "issue" for backward-compat callers that pass no source.
+    """
+
+    def _mock_response(self, outstanding):
+        text = json.dumps({"outstanding_commitments": outstanding})
+        return {"content": [{"type": "text", "text": text}]}
+
+    def test_discussion_source_renders_discussion_header(self):
+        issue = _issue(
+            37,
+            "Tag a release every 10-15 days",
+            [_comment(BOT, "I'll tag @danstis on the next release.")],
+            source="discussion",
+        )
+        resp = self._mock_response([{
+            "issue_number": 37,
+            "promise_quote": "I'll tag @danstis on the next release.",
+            "rationale": "No release tagged since.",
+        }])
+        with patch("scan_commitments._call_api_with_retries", return_value=resp):
+            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("### Discussion #37 —", blocks[0])
+        self.assertNotIn("### Issue #37", blocks[0])
+
+    def test_missing_source_defaults_to_issue(self):
+        issue = _issue(
+            418,
+            "Use ollama preset",
+            [_comment(BOT, "Picking this up next session.")],
+        )
+        resp = self._mock_response([{
+            "issue_number": 418,
+            "promise_quote": "Picking this up next session.",
+            "rationale": "No commit references #418.",
+        }])
+        with patch("scan_commitments._call_api_with_retries", return_value=resp):
+            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("### Issue #418 —", blocks[0])
+        self.assertNotIn("### Discussion #418", blocks[0])
+
+    def test_issue_and_discussion_same_number_dont_collide(self):
+        # Issue #5 and Discussion #5 can coexist; both have outstanding
+        # promises and must surface with distinct, correct headers.
+        the_issue = _issue(
+            5,
+            "Issue five title",
+            [_comment(BOT, "Will fix the issue next cycle.")],
+            source="issue",
+        )
+        the_discussion = _issue(
+            5,
+            "Discussion five title",
+            [_comment(BOT, "Will ship the discussed feature next cycle.")],
+            source="discussion",
+        )
+        resp = self._mock_response([
+            {
+                "issue_number": 5,
+                "promise_quote": "Will fix the issue next cycle.",
+                "rationale": "issue outstanding",
+            },
+            {
+                "issue_number": 5,
+                "promise_quote": "Will ship the discussed feature next cycle.",
+                "rationale": "discussion outstanding",
+            },
+        ])
+        with patch("scan_commitments._call_api_with_retries", return_value=resp):
+            blocks = scan([the_issue, the_discussion], BOT, "", api_key="sk-fake")
+        joined = "\n".join(blocks)
+        self.assertIn("### Issue #5 — Issue five title", joined)
+        self.assertIn("### Discussion #5 — Discussion five title", joined)
+        # Neither block should carry the other source's title.
+        self.assertNotIn("### Issue #5 — Discussion five title", joined)
+        self.assertNotIn("### Discussion #5 — Issue five title", joined)
+
+    def test_unknown_source_treated_as_issue(self):
+        issue = _issue(
+            9,
+            "Weird source",
+            [_comment(BOT, "Picking this up next session.")],
+            source="banana",
+        )
+        resp = self._mock_response([{
+            "issue_number": 9,
+            "promise_quote": "Picking this up next session.",
+            "rationale": "outstanding",
+        }])
+        with patch("scan_commitments._call_api_with_retries", return_value=resp):
+            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("### Issue #9 —", blocks[0])
 
 
 class RetryPolicy(unittest.TestCase):

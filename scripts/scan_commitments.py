@@ -157,9 +157,17 @@ def _build_payload(issues, bot_login, git_log_recent):
                 "body": body,
             }
 
+        # Source distinguishes issues from discussions (same stdin shape;
+        # only the rendered header noun differs). Default/unknown → "issue"
+        # so existing callers that pass no `source` are unchanged.
+        source = issue.get("source", "issue")
+        if source != "discussion":
+            source = "issue"
+
         trimmed_issues.append({
             "number": issue.get("number"),
             "title": issue.get("title", ""),
+            "source": source,
             "prior_comments": [trim(c) for c in prior],
             "last_bot_comment": trim(last_bot),
         })
@@ -296,7 +304,15 @@ def scan(issues, bot_login, git_log_recent, api_key):
         return []
 
     # Build a lookup so we can render title alongside the LLM's verdict.
-    by_number = {i.get("number"): i for i in trimmed_issues}
+    # Issues and discussions can share a number (issue #5 vs discussion #5),
+    # so the value is a LIST of items keyed on number. The LLM verdict only
+    # carries `issue_number` (we don't churn the prompt schema), so we match
+    # each verdict back to the next unconsumed item with that number, in
+    # input order — this keeps distinct-source same-number items from
+    # overwriting each other.
+    by_number = {}
+    for i in trimmed_issues:
+        by_number.setdefault(i.get("number"), []).append(i)
 
     blocks = []
     for item in items:
@@ -304,19 +320,35 @@ def scan(issues, bot_login, git_log_recent, api_key):
         if num is None:
             _warn(f"item missing issue_number: {item!r}")
             continue
-        if num not in by_number:
-            # LLM hallucinated an issue number not in our input. Drop it (we
-            # can't render it) but warn — repeated hallucinations are a signal
-            # the prompt or model is misbehaving.
+        candidates = by_number.get(num)
+        if not candidates:
+            # LLM hallucinated an issue number not in our input, or every
+            # item with this number was already consumed by an earlier
+            # verdict. Drop it (we can't render it) but warn — repeated
+            # hallucinations are a signal the prompt or model is misbehaving.
             _warn(f"LLM returned unknown issue #{num} (not in input); dropping")
             continue
-        title = by_number[num].get("title", "(no title)")
         promise = (item.get("promise_quote") or "").strip()
+        # When multiple items share a number (issue #5 + discussion #5), the
+        # verdict's `issue_number` alone is ambiguous. Disambiguate on the
+        # promise_quote — it's lifted verbatim from one specific item's
+        # comment — and fall back to input order if no text match is found.
+        matched = None
+        if len(candidates) > 1 and promise:
+            for idx, cand in enumerate(candidates):
+                if promise in (cand.get("last_bot_comment") or {}).get("body", ""):
+                    matched = candidates.pop(idx)
+                    break
+        if matched is None:
+            matched = candidates.pop(0)
+        source = matched.get("source", "issue")
+        noun = "Discussion" if source == "discussion" else "Issue"
+        title = matched.get("title", "(no title)")
         rationale = (item.get("rationale") or "").strip()
         if len(promise) > 200:
             promise = promise[:200] + "…"
         blocks.append(
-            f"### Issue #{num} — {title}\n"
+            f"### {noun} #{num} — {title}\n"
             f'You said: "{promise}"\n'
             f"Why outstanding: {rationale}\n"
             f"**Status: UNFULFILLED.**\n"
