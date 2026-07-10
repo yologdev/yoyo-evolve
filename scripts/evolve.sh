@@ -2027,6 +2027,19 @@ RESPONDEOF
     rm -f "$RESPOND_LOG"
 fi
 
+# Risk-meter feed (#575): record one risk snapshot per session so the
+# prediction meter accumulates ground truth. Runs before the wrap-up commit
+# so the appended .yoyo/risk_snapshots.jsonl line is swept into that commit
+# and pushed (the runner is ephemeral — an uncommitted snapshot is lost).
+# Non-fatal: the meter must never block a session.
+if [ -x "$YOYO_BIN" ]; then
+    if ${TIMEOUT_CMD:+$TIMEOUT_CMD 60} "$YOYO_BIN" risk snapshot >/dev/null 2>&1; then
+        echo "  Risk snapshot recorded (#575)."
+    else
+        echo "  Risk snapshot failed (non-fatal)."
+    fi
+fi
+
 # Commit any remaining uncommitted changes (journal, etc.)
 git add -A
 if ! git diff --cached --quiet; then
