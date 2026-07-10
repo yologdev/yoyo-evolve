@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the session plan directory and reviewing the key evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (5ms)
+
+Let me review the key facts from the assessment before planning.
+
+The assessment is thorough. Key findings:
+• Everything green (build, test, clippy)
+• agent-self backlog: EMPTY
+• **#575** (dream's critical blocker) — needs a human hand (protected file `evolve.sh`), already filed, no replies yet
+• #577 — already implemented Day 131, needs closing
+• #156 — HumanEval-lite harness advanced, full leaderboard is large
+• Dream milestone is accumulation-blocked, not implementation-blocked — meter needs fuel (#575), out of my hands
+• Recurring theme: scatter/gather split → planner trigger fix
+
+Let me check the current state of a couple of ground-truth facts before planning, since these directly affect my task choices.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l .yoyo/risk_snapshots.jsonl… ✓ (552ms)
+
+Confirmed: agent-self backlog empty, risk meter still at 1 line, validations file doesn't exist. The dream milestone is accumulation-blocked — I can't feed the meter myself (#575 is a protected file needing a human).
+
+Let me check #575 replies and the TODO dedup opportunity noted in the assessment.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,450p' src/prompt_uti… ✓ (4ms)
+
+The line 2169 reference is a test, not production code. Let me find the actual production caller doing ad-hoc fence slicing.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '```' src/commands_file.… ✓ (4ms)
+
+Line 1244 is the actual production fence-parsing site (apply_patch). The TODO's dedup opportunity is real but minor. This is a candidate for a small self-driven task.
+
+Now let me think about the strategic situation. This is a classic "all-green, backlog-empty, dream accumulation-blocked" session. My own wisdom (Day 120, Day 128) says: when the house is tidy and the dream is accumulation-blocked, look outward and prefer one genuinely-small task done whole. Let me check the competitive frontier — the under-exercised sub-agent parallelism substrate — and community issues.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+
+Only one community issue: #577, which the assessment confirms was already implemented on Day 131. Let me verify that's true before deciding it's a close-not-implement.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '# Role\|# Evidence\|# S… ✓ (3ms)
+
+Confirmed: #577 is fully implemented with all the requested sections (Role, Evidence and honesty, Search craft, Change discipline, Bounded verification) and tests. It should be closed in the issue-response phase, not re-implemented.
+
+Now my planning situation is clear:
+• No CI failures (priority 0 — none)
+• **agent-self backlog empty**
+• #575 (dream blocker) — filed, protected file, needs human, no reply → nothing I can do
+• #577 — already done → close in response phase
+• Dream milestone — accumulation-blocked, can't self-advance
+• Only real self-driven opportunities: the sub-agent parallelism polish (competitive frontier), the TODO dedup, or another small self-discovered improvement
+
+My wisdom is loud here (Days 128, 129, 131): all-green + tidy → prefer one genuinely-small task done whole, look outward, and honor the scatter/gather planner trigger. Let me not over-plan. I'll pick a small number of well-scoped tasks.
+
+Let me examine the competitive frontier gap — the under-exercised /spawn parallelism — to see if there's a small, whole slice worth doing.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn build_spawn_manifest… ✓ (4ms)
+
+Interesting — the manifest is written and there's a read-only inspector (manifest/`manifest show`), but the assessment/CLAUDE.md called the manifest "the first step toward codified/replayable orchestration (#341)." The manifest is currently write + inspect. The natural next slice — the scatter/gather "handle" — is **replay**: /spawn replay <run_id> re-runs the tasks from a saved manifest. That's exactly the kind of gather-half that my Day-131 lesson says I keep shipping a session late. But let me check if replay already exists and whether it's realistically a 20-min task.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'replay\|rerun\|re-run' … ✓ (5ms)
+
+So the state is: manifest is written and can be listed/shown, but there's no way to read the tasks back out of a manifest programmatically (no parse function) and no replay. The manifest inspector reads raw JSON text for display.
+
+The scatter/gather completion here would be a parse function + a replay path. But full replay (re-dispatching sub-agents) is more than 20 minutes and touches the fan-out execution path. Per my Day-126/128 wisdom (start at retreat size, prefer tiny-done-whole), I should scope this **down: the smallest whole slice is a pure parse_spawn_manifest function** that reads a manifest file back into its task list — the missing "read" primitive that any replay must be built on — with a round-trip test against build_spawn_manifest. That's genuinely small, whole, and it's the gather-primitive.
+
+Let me confirm the manifest JSON shape so the task is precise.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1088,1160p' src/commands… ✓ (3ms)
+
+I have everything I need. The manifest JSON shape is clear: {run_id, created_ts, task_count, tasks: [{index, task, status}]}. A parse_spawn_manifest that reads a manifest file back into `(run_id, Vec<(index, task, status)>)` with a round-trip test is a clean, small, whole gather-primitive.
+
+Now let me settle the plan. My wisdom is unambiguous here:
+• Self-driven slot (dream): dream is accumulation-blocked, can't self-advance (#575 needs a human). So the self-driven slot goes to a competitive/capability improvement.
+• **Prefer one small task done whole** (Day 128) over padding to 3 slots.
+• **Honor the scatter/gather planner trigger** (Day 131): the spawn manifest is a scatter artifact whose gather-half (read-back/replay) is missing — build the read primitive.
+
+I'll plan two tasks (not three — no need to manufacture work):
+1. **Self-driven (competitive/scatter-gather)**: parse_spawn_manifest — the missing read primitive for the manifest, the gather-half of the fan-out.
+2. Self-driven (dedup, small-done-whole): resolve the `extract_code_blocks TODO by pointing the production apply_patch` fence parser at the shared helper — closes a real consolidation loose end.
+
+Let me verify task 2's viability — check that line 1244 fence parsing is a genuine reimplementation of what extract_code_blocks does.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1235,1280p' src/commands… ✓ (3ms)
+
+Line 1244 is inside a test, not production. Let me find the actual production fence-parsing in apply_patch (the TODO said "ad-hoc byte-indexed fence slicing").
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn apply_patch\|fn appl… ✓ (5ms)
+
+So there's no actual ad-hoc byte-indexed fence slicing in production commands_file.rs — the TODO's cited line (2169, now 2168) is inside a test doing prompt.find("toml\n")` for assertion purposes. The production build_explain_prompt builds fences, it doesn't parse them. 
+
+This means the TODO is stale/misleading — there's no real dedup opportunity in production code; the only "byte-indexed fence slicing" is a test assertion, which is fine as-is. Per my Day-130 lesson (a false claim in a doc/comment re-injects as authoritative), the right small action is to correct the stale TODO comment rather than do a non-existent refactor. That's a legitimate tiny task, but honestly it's comment-only and low-value.
+
+Let me reconsider. I don't want to manufacture busywork. Let me verify the build_explain_prompt production path to be 100% sure there's no real fence-parsing worth consolidating.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=700 && NR<=760' src/com… ✓ (3ms)
+
+Confirmed: `build_explain_prompt` builds fences, doesn't parse them. The TODO comment is stale — there's no production dedup opportunity. So task 2 should be a small honest cleanup: **remove the stale/misleading TODO** (correcting a false pointer, per Day-130 wisdom). But that's comment-only and thin.
+
+I'll make a better decision. Given all-green + backlog-empty + dream-blocked, my strongest self-driven move is the **spawn manifest read primitive** (the scatter/gather gather-half — genuinely useful, competitive-frontier, honors my Day-131 planner trigger). For the second slot, rather than manufacture busywork, I'll do the stale-TODO correction as a paired tiny cleanup (it's real: a false pointer in a comment). Two tasks, both small and whole. I won't fill a third slot with noise.
+
+Let me write the task files.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (104 lines) ✓ (57.1s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (49 lines) ✓ (56.9s)
+  2 tools completed in 2m 10s (2 ✓)
+
+Now the issue responses file. #577 is confirmed already-implemented (should close), #575 is filed with no reply (nothing to do), #156 is deferred (large).
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (43 lines) ✓ (59.9s)
+
+Let me verify `SpawnStatus variants and manifest_status_str` so task_01's test guidance is accurate for the implementation agent.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'enum SpawnStatus' src/c… ✓ (6ms)
+
+Good — the variants are Running, Completed, Failed(String). My task_01 guidance references these correctly (uses manifest_status_str for the expected strings). The test can use SpawnStatus::Completed and `SpawnStatus::Failed("x".into())`.
+
+Let me do a final review of the plan and commit.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "==… ✓ (4ms)
+
+  watch: no files changed this turn — skipping
+

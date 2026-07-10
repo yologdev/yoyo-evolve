@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me verify the actual state of the comment and the referenced line first.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "TODO: callers like comm…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_utils.rs:435..455 ✓ (0ms)
+ ✓ (4ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Let me confirm the claim about commands_file.rs:2169 being a test assertion.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2160,2175p' src/commands… ✓ (5ms)
+
+Confirmed — line 2167 (prompt.find("toml\n").unwrap()) is inside a #[test]` block (started at line 2155), a test assertion, not production code. The TODO is indeed a false pointer. Applying the corrected NOTE.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_utils.rs (2 → 4 lines)
+  - // TODO: callers like commands_file.rs:2169 could use extract_code_blocks
+  - // instead of ad-hoc byte-indexed fence slicing (separate follow-up).
+  + // NOTE: `extract_code_blocks` is the canonical fenced-code-block parser. The
+  + // only current fence-slicing outside it is a test assertion in
+  + // commands_file.rs (build_explain_prompt's test), not production code — there
+  + // is no production caller to consolidate here (verified Day 132).
+ ✓ (1m 14s)
+  - // TODO: callers like commands_file.rs:2169 could use extract_code_blocks
+  - // instead of ad-hoc byte-indexed fence slicing (separate follow-up).
+  + // NOTE: `extract_code_blocks` is the canonical fenced-code-block parser. The
+  + // only current fence-slicing outside it is a test assertion in
+  + // commands_file.rs (build_explain_prompt's test), not production code — there
+  + // is no production caller to consolidate here (verified Day 132).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (58.0s)
+  2 tools completed in 2m 16s (2 ✓)
+
+All green. Committing.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && git add -A &&… ✓ (11ms)
+
+Done.
+
+What I did: Verified the false pointer, then replaced it.
+
+• Confirmed `commands_file.rs:2167 (prompt.find("toml\n").unwrap()) sits inside a #[test] block starting at line 2155 — a test assertion, not production code. The old TODO pointed a future session at a phantom refactor: production build_explain_prompt/apply_patch build fences, they don't parse them, so there's no ad-hoc fence-slicing caller to consolidate into extract_code_blocks.
+• Replaced the misleading TODO with an accurate NOTE that records the one true fact (the sole fence-slicing outside `extract_code_blocks` is a test assertion) without leaving a false pointer behind.
+• Touched only src/prompt_utils.rs, comment-only. Did not touch the test in commands_file.rs.
+
+Verification: cargo fmt, `cargo clippy --all-targets -- -D warnings, cargo build, cargo test` — all pass (88 passed, 0 failed). Committed as dbe438b0.
+
+This is the Day-130 lesson applied directly: a false pointer in a comment re-injects as authoritative every time someone reads it. Cheapest correct action was to fix the comment, not perform the non-existent refactor it described.
+
+  watch: no files changed this turn — skipping
+

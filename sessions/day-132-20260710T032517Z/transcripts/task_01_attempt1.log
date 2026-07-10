@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing manifest functions to write a correct inverse.
+  ▶ search 'build_spawn_manifest|manifest_status_str|write_spawn_manifes…' (*.rs) ✓ (17ms)
+  ▶ search 'build_spawn_manifest' ✗ (7.8s)
+    │ Search error: grep: ./target/debug/deps/yoyo-ceaf60d98cc67cde: binary file matches
+  ▶ search 'build_spawn_manifest' in src ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_spawn_manifest… ✓ (4ms)
+  ▶ read src/commands_spawn.rs:18..58 ✓ (1ms)
+  ▶ read src/commands_spawn.rs:1080..1155 ✓ (1ms)
+  6 tools completed in 19.5s (5 ✓, 1 ✗)
+
+Now I have the exact structure. Let me add the parse functions right after write_spawn_manifest.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (1 → 87 lines)
+  + /// A single task entry parsed back out of a fan-out manifest.
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub struct ParsedManifestTask {
+  +     pub index: usize,
+  +     pub task: String,
+  +     pub status: String,
+  + }
+  + 
+  + /// A fan-out manifest read back from disk (inverse of `build_spawn_manifest`).
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub struct ParsedManifest {
+  +     pub run_id: String,
+  +     pub created_ts: String,
+  +     pub task_count: usize,
+  +     pub tasks: Vec<ParsedManifestTask>,
+  + }
+  + 
+  + /// Parse a fan-out manifest JSON string back into structured data.
+  + ///
+  + /// Inverse of `build_spawn_manifest` → `write_spawn_manifest`. This is the
+  ... (67 more lines)
+ ✓ (13.0s)
+  + /// A single task entry parsed back out of a fan-out manifest.
+  + #[derive(Debug, Clone, PartialEq)]
+  + pub struct ParsedManifestTask {
+  +     pub index: usize,
+  +     pub task: String,
+  +     pub status: String,
+  + }
+  + 
+  ... (13 more lines)
+
+Dead-code warnings — the tests I'm about to add will construct/use these. Let me check how build_spawn_manifest/write_spawn_manifest avoid this (they're used by callers). The tests reference them, so once I add tests the usage will appear. Let me add the tests now.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:3175..3205 ✓ (0ms)
+  ▶ edit src/commands_spawn.rs (3 → 46 lines)
+            // No panic occurred (reaching here proves char-boundary safety).
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_spawn_manifest_roundtrips_build_spawn_manifest() {
+  +         let tasks = vec!["task one".to_string(), "task two".to_string()];
+  +         let results = vec![
+  +             ("task one".to_string(), SpawnStatus::Completed),
+  +             ("task two".to_string(), SpawnStatus::Failed("boom".into())),
+  +         ];
+  +         let manifest = build_spawn_manifest("run-abc", &tasks, &results);
+  +         let json = serde_json::to_string(&manifest).expect("serialize manifest");
+  + 
+  +         let parsed = parse_spawn_manifest(&json).expect("parse manifest");
+  +         assert_eq!(parsed.run_id, "run-abc");
+  +         assert_eq!(parsed.task_count, 2);
+  +         assert_eq!(parsed.tasks.len(), 2);
+  +         assert_eq!(parsed.tasks[0].task, "task one");
+  +         assert_eq!(parsed.tasks[0].index, 0);
+  +         assert_eq!(parsed.tasks[1].index, 1);
+  ... (26 more lines)
+ ✓ (13.2s)
+            // No panic occurred (reaching here proves char-boundary safety).
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_spawn_manifest_roundtrips_build_spawn_manifest() {
+  +         let tasks = vec!["task one".to_string(), "task two".to_string()];
+  +         let results = vec![
+  +             ("task one".to_string(), SpawnStatus::Completed),
+  ... (13 more lines)
+  2 tools completed in 24.7s (2 ✓)
+
+The bin build (non-test) still flags dead code because these functions aren't yet wired into any non-test caller. build_spawn_manifest/write_spawn_manifest are used by handle_spawn. Since this is a foundation primitive with no caller yet, I need #[allow(dead_code)] — but let me check whether is_empty/len style helpers use it. Let me look at how other pub-but-unused items are handled here.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "allow(dead_code)" src/c… ✓ (3ms)
+  ▶ read src/commands_spawn.rs:130..142 ✓ (0ms)
+  2 tools completed in 3.3s (2 ✓)
+
+There's the established pattern: #[cfg_attr(not(test), allow(dead_code))]. These functions are test-and-future-caller only (the read-back primitive has no production caller yet — replay is out of scope). I'll apply the same attribute.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (3 → 4 lines)
+    /// A single task entry parsed back out of a fan-out manifest.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ParsedManifestTask {
+ ✓ (13.3s)
+    /// A single task entry parsed back out of a fan-out manifest.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ParsedManifestTask {
+
+Progress — one down. Apply to the remaining three.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (3 → 4 lines)
+    /// A fan-out manifest read back from disk (inverse of `build_spawn_manifest`).
+  + #[cfg_attr(not(test), allow(dead_code))]
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ParsedManifest {
+ ✓ (13.3s)
+    /// A fan-out manifest read back from disk (inverse of `build_spawn_manifest`).
+  + #[cfg_attr(not(test), allow(dead_code))]
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ParsedManifest {
+  ▶ edit src/commands_spawn.rs (2 → 3 lines)
+    /// spawn does not parse or is not an object.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
+ ✗ (1ms)
+    │ old_text not found in src/commands_spawn.rs.
+  ▶ edit src/commands_spawn.rs (2 → 3 lines)
+    /// parse or is not an object.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
+ ✓ (13.6s)
+    /// parse or is not an object.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
+  ▶ edit src/commands_spawn.rs (2 → 3 lines)
+    /// missing/unreadable or the JSON is malformed. Read-only, never panics.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn read_spawn_manifest(path: &std::path::Path) -> Option<ParsedManifest> {
+ ✓ (1m 13s)
+    /// missing/unreadable or the JSON is malformed. Read-only, never panics.
+  + #[cfg_attr(not(test), allow(dead_code))]
+    pub fn read_spawn_manifest(path: &std::path::Path) -> Option<ParsedManifest> {
+  4 tools completed in 1m 51s (3 ✓, 1 ✗)
+
+Auto-check passed (no failure banner). Let me run the full verification suite.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (30.4s)
+
+All 4 new tests pass, clippy clean. Now the full test suite and the CLAUDE.md doc update.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -6 ✓ (43.8s)
+
+  watch: no files changed this turn — skipping
+
