@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current plan code structure, then make my first concrete change.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_plan_task\|build_… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:360..520 ✓ (1ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Now let me see how parse_plan_task result flows to build_plan_prompt in the handler:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:575..615 ✓ (1ms)
+
+Now I understand the structure. I need to:
+1. Add a --deep flag detection (extract from task, since parse_plan_task returns the whole task string)
+2. Change `build_plan_prompt to accept a deep` boolean
+3. Handle the flag in the handler
+
+Let me write the test first, then implement. First, let me change build_plan_prompt signature and add deep handling:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (23 → 66 lines)
+  + /// Strip a leading/trailing `--deep` flag from a plan task string, returning the
+  + /// cleaned task and whether the flag was present. The `--deep` flag is opt-in and
+  + /// requests per-step TDD (RED/GREEN/REFACTOR) structure in the generated plan.
+  + pub fn extract_deep_flag(task: &str) -> (String, bool) {
+  +     let mut deep = false;
+  +     let cleaned: Vec<&str> = task
+  +         .split_whitespace()
+  +         .filter(|word| {
+  +             if *word == "--deep" {
+  +                 deep = true;
+  +                 false
+  +             } else {
+  +                 true
+  +             }
+  +         })
+  +         .collect();
+  +     (cleaned.join(" "), deep)
+  + }
+  + 
+    /// Build a planning-mode prompt that asks the agent to create a structured plan
+  ... (38 more lines)
+ ✓ (10.4s)
+  + /// Strip a leading/trailing `--deep` flag from a plan task string, returning the
+  + /// cleaned task and whether the flag was present. The `--deep` flag is opt-in and
+  + /// requests per-step TDD (RED/GREEN/REFACTOR) structure in the generated plan.
+  + pub fn extract_deep_flag(task: &str) -> (String, bool) {
+  +     let mut deep = false;
+  +     let cleaned: Vec<&str> = task
+  +         .split_whitespace()
+  +         .filter(|word| {
+  ... (13 more lines)
+
+Now update the handler call site and the existing tests. First the handler:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (3 → 8 lines)
+        println!("{DIM}  📋 Planning: {task}{RESET}\n");
+    
+  -     let plan_prompt = build_plan_prompt(&task);
+  +     let (clean_task, deep) = extract_deep_flag(&task);
+  +     if deep {
+  +         println!("{DIM}  🔬 Deep mode — requesting per-step TDD (RED/GREEN/REFACTOR) structure.{RESET}\n");
+  +     }
+  + 
+  +     let plan_prompt = build_plan_prompt(&clean_task, deep);
+ ✓ (10.5s)
+        println!("{DIM}  📋 Planning: {task}{RESET}\n");
+    
+  -     let plan_prompt = build_plan_prompt(&task);
+  +     let (clean_task, deep) = extract_deep_flag(&task);
+  +     if deep {
+  +         println!("{DIM}  🔬 Deep mode — requesting per-step TDD (RED/GREEN/REFACTOR) structure.{RESET}\n");
+  +     }
+  + 
+  +     let plan_prompt = build_plan_prompt(&clean_task, deep);
+
+Now update the existing test call sites. Let me find all of them:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'build_plan_prompt(' src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '686s… (2 lines) ✓ (6ms)
+  2 tools completed in 9.8s (2 ✓)
+
+Now let me add the paired positive/negative tests. Let me find a good spot near the existing build_plan_prompt tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:725..755 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (3 → 3 lines) ✓ (1m 30s)
+  2 tools completed in 1m 37s (2 ✓)
+
+Let me add the new tests after that test block (after line 743):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (4 → 70 lines)
+  +     }
+  + 
+  +     #[test]
+  +     fn build_plan_prompt_deep_adds_tdd_structure() {
+  +         // --deep (opt-in) must request per-step RED/GREEN/REFACTOR TDD structure (#583).
+  +         let prompt = build_plan_prompt("add a config loader", true);
+  +         assert!(
+  +             prompt.contains("TDD RED"),
+  +             "Deep plan should request a TDD RED line per step: {prompt}"
+  +         );
+  +         assert!(
+  +             prompt.contains("TDD GREEN"),
+  +             "Deep plan should request a TDD GREEN line per step: {prompt}"
+  +         );
+  +         assert!(
+  +             prompt.contains("TDD REFACTOR"),
+  +             "Deep plan should request a TDD REFACTOR line per step: {prompt}"
+  +         );
+  +         // The per-file Approach line (Day-132) must remain present in deep mode too.
+  +         assert!(
+  ... (49 more lines)
+ ✓ (1m 34s)
+  +     }
+  + 
+  +     #[test]
+  +     fn build_plan_prompt_deep_adds_tdd_structure() {
+  +         // --deep (opt-in) must request per-step RED/GREEN/REFACTOR TDD structure (#583).
+  +         let prompt = build_plan_prompt("add a config loader", true);
+  +         assert!(
+  +             prompt.contains("TDD RED"),
+  ... (13 more lines)
+
+Now let me check for a flag-completion list in commands.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PLAN_SUBCOMMANDS\|plan"… ✓ (3ms)
+
+There's a PLAN_SUBCOMMANDS const and an arg-hint. Let me look at both:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PLAN_SUBCOMMANDS" src/c… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:359..363 ✓ (0ms)
+  2 tools completed in 3.4s (2 ✓)
+
+`PLAN_SUBCOMMANDS` doubles as the mode-toggle keyword blocklist in parse_plan_task and is asserted for those keywords. Adding --deep here would be safe for completion (it's not in the parse_plan_task blocklist match). Let me add it:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (3 → 3 lines)
+    pub const PLAN_SUBCOMMANDS: &[&str] = &[
+  -     "on", "off", "open", "close", "show", "apply", "clear", "status", "step",
+  +     "on", "off", "open", "close", "show", "apply", "clear", "status", "step", "--deep",
+    ];
+ ✓ (1m 29s)
+    pub const PLAN_SUBCOMMANDS: &[&str] = &[
+  -     "on", "off", "open", "close", "show", "apply", "clear", "status", "step",
+  +     "on", "off", "open", "close", "show", "apply", "clear", "status", "step", "--deep",
+    ];
+
+Now update the arg-hint at line 271 of commands.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs:271..274 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 1 lines)
+  -         "plan" => Some("on | off | show | apply | clear | <task>"),
+  +         "plan" => Some("on | off | show | apply | clear | [--deep] <task>"),
+ ✓ (1m 29s)
+  -         "plan" => Some("on | off | show | apply | clear | <task>"),
+  +         "plan" => Some("on | off | show | apply | clear | [--deep] <task>"),
+  2 tools completed in 1m 33s (2 ✓)
+
+Now run the checks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (53.9s)
+  2 tools completed in 1m 13s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

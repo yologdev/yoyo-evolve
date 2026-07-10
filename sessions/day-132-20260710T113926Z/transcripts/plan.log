@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reviewing the assessment and then produce a focused session plan. The dream milestone blocker is the highest-signal finding, and #575 was just resolved by my human.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l .yoyo/risk_snapshots.jsonl… ✓ (6ms)
+ ✓ (4ms)
+  2 tools completed in 1.7s (2 ✓)
+
+Let me think through this. The key evidence:
+
+1. #575 was just resolved by my human — snapshot now fires from evolve.sh wrap-up. The snapshot half of the meter is now fed. This is a genuine unblock.
+2. The validation half is still starved — .yoyo/risk_validations.jsonl doesn't exist; `auto_validate_after_failure is wired into watch.rs` but the evolve loop doesn't drive that path.
+3. The dream milestone is "measure whether the risk reflex works" — needs both snapshots AND validations to accumulate.
+
+The Day-129/131 lessons are loud here: don't add new sensors, don't do a third feeder-build if the last two were feeder-builds. But #575 just changed the situation — snapshots now flow. The honest next step is either (a) let it run and measure what's now accumulating, or (b) feed the validation half too.
+
+Let me check the release cadence question and the community issues before finalizing.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat DAY_COUNT; echo "---"; git l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk snapshot\|risk val… ✓ (4ms)
+ ✓ (9ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Now I can see the state clearly. evolve.sh (protected) now records a snapshot per session via #575. Let me look at how validation could be fed — is there a risk validate subcommand, and does it need a failure to validate against?
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2025,2055p' scripts/evol…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"validate\"\|risk vali… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"validate\"\|risk vali… ✓ (6ms)
+  3 tools completed in 4.1s (3 ✓)
+
+This is the key insight: /risk validate compares consecutive snapshots against actual git breakage between them, and persists a validation event. So the validation half doesn't need a watch-failure path at all — it just needs `yoyo risk validate to run *after* snapshots accumulate. Let me confirm what handle_risk_validate` writes.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2138,2240p' src/commands… ✓ (4ms)
+
+Now the picture is complete. yoyo risk validate compares the last snapshot's top-10 predictions against files that actually broke in commits since, and persists a validation event. This is exactly the validation-half feeder the dream milestone needs — and it's already CLI-callable via dispatch_sub.rs.
+
+The insight matching my Day-129 lesson: this isn't a new sensor. It's removing the human-in-the-loop dependency from a meter that already exists. And critically — #575 just wired the snapshot feeder into evolve.sh. Adding a risk validate call right before the snapshot (so it validates the previous snapshot against commits made this session) completes the pair.
+
+But wait — `evolve.sh` is protected (do-not-modify). #575 was done by my human. So the validation feeder needs the same treatment: a help-wanted issue with an exact patch + contract test (my Day-58 "do-not-modify boundary" wisdom).
+
+Let me verify risk validate is CLI-routable and check the order concern.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk\|validate\|snapsho…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_VALIDATION_PATH\|r… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+`yoyo risk validate` is already fully CLI-routable — it just isn't called anywhere in the loop. Everything is built; the meter is starved of validation data because nothing runs yoyo risk validate after commits.
+
+So the honest dream-milestone work is: **file the help-wanted issue with an exact patch + contract test** to wire yoyo risk validate into evolve.sh (just like #575 did for snapshot). That's my Day-58 boundary wisdom (ship the patch + test, not a TODO) and it's the *inverse handle to #575's door* — matching my Day-131 scatter/gather lesson.
+
+But that's a research/write task, not really 3 tasks. Let me plan the full session: one dream-milestone task (the validation feeder handoff), plus community issues. Let me look at #582 and #581 which are concrete and editable.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+
+Both #583 and #581 are from @yuanhao (my creator), both concrete, both editable files. Let me get the full bodies to plan precise tasks.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 581 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 583 --repo yologde… ✓ (257ms)
+ ✓ (318ms)
+  2 tools completed in 2.4s (2 ✓)
+
+Now I have everything. Let me plan. #583 was partially done Day 132 (the per-file Approach: line landed) — the remaining gap is the RED/GREEN/REFACTOR TDD structure or a `--deep` flag. Following my Day-126/128 lesson (start at retreat size, small tasks finish whole), I'll scope #583 to the smallest concrete win: a `--deep` flag that adds the TDD structure to the plan prompt.
+
+Here's my allocation:
+• Task 1 (self-driven, dream milestone): File the help-wanted issue with exact patch + contract test to wire `yoyo risk validate into evolve.sh` — the inverse handle to #575. This is dream-milestone work: it feeds the validation half of the meter.
+• Task 2 (community, #581): Add release-cadence rule to skills/release/SKILL.md. Small, editable, concrete.
+• **Task 3 (community, #583):** Add /plan --deep flag with TDD structure. Product-safe, follow-up to Day-132's partial.
+
+Let me write the task files.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (74 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (51 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_03.md (59 lines) ✓ (1m 9s)
+ ✓ (2m 18s)
+ ✓ (3m 29s)
+  3 tools completed in 3m 30s (3 ✓)
+
+Now the issue responses file.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (37 lines) ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && git add … ✓ (5ms)
+  2 tools completed in 1m 18s (2 ✓)
+
+`session_plan/` is gitignored (as documented in CLAUDE.md — it's ephemeral). The files are written; the commit is a no-op by design. The || true in the instructions accounts for this.
+
+Plan complete. Summary of the session plan for Day 132:
+
+**Three tasks, one self-driven (dream milestone) + two community — all from my creator @yuanhao:**
+
+• Task 1 (evolve, self-driven, DREAM milestone): Feed the validation half of the risk meter. My human just wired risk snapshot into the protected evolve.sh (#575) — this task files the **inverse handle**: a help-wanted issue with an exact evolve.sh patch + a green contract test to wire yoyo risk validate into the loop. Everything is already built and CLI-routable; the meter is just starved because nothing calls validate. This is the honest "let the meter run" work (Day-129: removing a human-in-the-loop dependency, not a new sensor) and the scatter/gather handle to #575's door (Day-131). No protected-file edits — a test + a filed issue, per my Day-58 boundary wisdom.
+
+• Task 2 (evolve, #581): Add a git-checkable "When to release" cadence rule to skills/release/SKILL.md (>14-day tag age + non-trivial unreleased commits → release is due self-driven work), with the four steps that got skipped for 58 days enumerated — including the dropped tag push.
+
+• Task 3 (product, #583): Add an opt-in /plan --deep flag for per-step RED/GREEN/REFACTOR TDD structure, keeping the fast broad pass as default. Scoped small (retreat size, Day-128) as a follow-up to Day-132's partial, with a paired positive/negative test (Day-122).
+
+Deferred #582 (commitment-tracker Discussion gap) as next candidate; no-response on #585/tracking issues. Plan committed (session_plan/ is gitignored by design). Stopping here — implementation happens in separate sessions.
+
+  watch: no files changed this turn — skipping
+

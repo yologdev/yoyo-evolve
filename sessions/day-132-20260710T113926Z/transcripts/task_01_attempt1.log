@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by verifying the ground truth claims and understanding the existing routing tests.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .yoyo/risk_validations.js…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk validate\|build_ri… ✓ (4ms)
+ ✓ (6ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Confirmed: .yoyo/risk_validations.jsonl does not exist, snapshots = 2 entries. Let me look at `build_risk_input` and the existing routing tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:20..80  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_risk_input\|risk … ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 4.6s (2 ✓)
+
+Let me look at the existing risk routing tests to mirror them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:983..1053 ✓ (1ms)
+
+The existing test_build_risk_input_snapshot_contract test already asserts build_risk_input(&["validate"]) == "/risk validate" on line 1032-1033. But it's buried inside the snapshot contract test as a secondary assertion. The task wants a **dedicated contract test** pinning the validate routing that the harness patch depends on, so the human can reference it by name in the issue.
+
+Let me add a focused, separately-named test that pins the validate contract explicitly. This makes the handoff reference clean.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (2 → 38 lines)
+  +     #[test]
+  +     fn test_build_risk_input_validate_contract() {
+  +         // Contract test for the `yoyo risk validate` CLI path that the evolve
+  +         // harness's wrap-up patch (issue: "wire risk validate into evolve.sh")
+  +         // depends on. The harness will call `$YOYO_BIN risk validate` once per
+  +         // session so the prediction meter's *validation* half accumulates the
+  +         // same way `risk snapshot` (#575) feeds the snapshot half.
+  +         //
+  +         // `handle_risk` routes on the reconstructed `/risk <sub>` string, so if
+  +         // this mapping ever drifts the harness call silently writes nothing to
+  +         // `.yoyo/risk_validations.jsonl` and the meter stays starved. We assert
+  +         // the pure reconstruction only (no `.yoyo/` write side effect), so the
+  +         // contract is locked without invoking the real validate dispatch.
+  +         let validate_tail = vec!["validate".to_string()];
+  +         assert_eq!(
+  +             build_risk_input(&validate_tail),
+  +             "/risk validate",
+  +             "`yoyo risk validate` must reconstruct exactly `/risk validate`"
+  +         );
+  +     }
+  ... (18 more lines)
+ ✓ (1m 29s)
+  +     #[test]
+  +     fn test_build_risk_input_validate_contract() {
+  +         // Contract test for the `yoyo risk validate` CLI path that the evolve
+  +         // harness's wrap-up patch (issue: "wire risk validate into evolve.sh")
+  +         // depends on. The harness will call `$YOYO_BIN risk validate` once per
+  +         // session so the prediction meter's *validation* half accumulates the
+  +         // same way `risk snapshot` (#575) feeds the snapshot half.
+  +         //
+  ... (13 more lines)
+
+Wait — I need to check whether yoyo risk validate actually invokes the real .yoyo/-writing path in `try_dispatch_subcommand`. The bare-risk test only checks routing but doesn't invoke the write. Let me check the dispatch arm to confirm validate won't trigger a real write during the test (which would violate the read-only test note and the `run_git` guard).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:208..228 ✓ (0ms)
+
+The "risk" arm calls crate::commands_risk::handle_risk(&input) directly — so my test_try_dispatch_subcommand_risk_validate_routes test would actually invoke handle_risk("/risk validate"), which triggers the real `.yoyo/-writing validate path and potentially run_git` destructive commands. That violates the read-only-test discipline the task explicitly warns about.
+
+The existing test_try_dispatch_subcommand_risk_bare test *does* call this arm with bare risk, but bare risk is read-only (just prints scores). `validate is NOT read-only — it writes. Let me remove that risky test and keep only the pure build_risk_input` contract test, which is exactly what the task asked for.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs (17 → 2 lines)
+  -     #[test]
+  -     fn test_try_dispatch_subcommand_risk_validate_routes() {
+  -         // The full CLI path `yoyo risk validate` must be *claimed* by the risk
+  -         // arm (returns Some(...)), not fall through to flag parsing. This pins
+  -         // the routing decision the harness patch relies on: the subcommand
+  -         // reaches handle_risk rather than being treated as an unknown flag.
+  -         let args = vec!["yoyo".into(), "risk".into(), "validate".into()];
+  -         let result = try_dispatch_subcommand(&args);
+  -         assert!(
+  -             result.is_some(),
+  -             "expected `yoyo risk validate` to be claimed by the risk arm (Some(_)), \
+  -              so it reaches handle_risk('/risk validate')"
+  -         );
+  -     }
+  - 
+        #[test]
+        fn test_try_dispatch_subcommand_grep() {
+ ✓ (1m 33s)
+  -     #[test]
+  -     fn test_try_dispatch_subcommand_risk_validate_routes() {
+  -         // The full CLI path `yoyo risk validate` must be *claimed* by the risk
+  -         // arm (returns Some(...)), not fall through to flag parsing. This pins
+  -         // the routing decision the harness patch relies on: the subcommand
+  -         // reaches handle_risk rather than being treated as an unknown flag.
+  -         let args = vec!["yoyo".into(), "risk".into(), "validate".into()];
+  -         let result = try_dispatch_subcommand(&args);
+  ... (9 more lines)
+
+Now let me run the checks. The task said to put the test in commands_risk.rs or tests/integration.rs, but build_risk_input is a private fn in dispatch_sub.rs — the pure contract lives there, right next to the existing snapshot contract test. That's the correct home for a routing-string test.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (16.0s)
+
+Both tests pass, clippy clean. Let me run the full test suite to be safe, then verify the validate file still doesn't exist before filing the issue.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -6  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .yoyo/risk_validations.js… ✓ (3ms)
+ ✓ (53.2s)
+  2 tools completed in 54.6s (2 ✓)
+
+All green. .yoyo/risk_validations.jsonl still does not exist — the "starved" claim is true at filing time. Now let me look at the exact shape of #575's patch in evolve.sh so my proposed patch mirrors it precisely.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk snapshot\|Risk sna… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/evolve.sh:2025..2055 ✓ (1ms)
+  2 tools completed in 6.3s (2 ✓)
+
+I have the exact shape. The validate call must go before the snapshot block (validate the previous snapshot against this session's commits first, then record the new snapshot). Both appended lines get swept into the wrap-up commit at line 2044-2047. Let me file the issue with the exact patch.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/i… (52 lines) ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (4 lines) ✓ (1.1s)
+  2 tools completed in 5.5s (2 ✓)
+
+Issue #587 filed. Now let me verify the label stuck and do a final full check before committing.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 587 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (291ms)
+ ✓ (995ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Everything green: label applied, fmt clean, build clean, only src/dispatch_sub.rs changed. Let me review my diff one last time and commit.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/dispatch_sub.rs ✓ (4ms)
+
+Clean, surgical diff — one dedicated contract test named `test_build_risk_input_validate_contract`, referenced by name in the issue. Committing.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Done. Here's what happened this session.
+
+## What I shipped
+
+**The gather-half to #575's scatter-half.** My human wired `yoyo risk snapshot into evolve.sh` last session (#575), so the prediction meter's snapshot half now accumulates every session. But the meter has two halves, and I verified the validation half was starved: `.yoyo/risk_validations.jsonl` doesn't exist yet. Predictions were being recorded but never scored against reality — so accuracy could never climb, and DREAM.md's "measure whether the risk reflex works" milestone stayed unmeasurable.
+
+The key realization: yoyo risk validate is already fully built and CLI-routable. It needs no new sensor and no code change on my side — it just needs to be called in the loop, exactly like `risk snapshot` now is. This is Day-129's legitimate build-work class (remove a human-in-the-loop dependency from a meter I already have), not a new sensor.
+
+**Two deliverables, per my Day-58 do-not-modify wisdom** (evolve.sh is protected, so I ship the patch + the contract test, not a TODO):
+
+1. Contract test — `test_build_risk_input_validate_contract in src/dispatch_sub.rs, pinning that yoyo risk validate` reconstructs to exactly "/risk validate". It asserts the pure build_risk_input reconstruction only (no .yoyo/-writing side effect), following the read-only routing-test discipline already established in that file. Goes red if the routing the harness depends on ever drifts.
+
+2. Issue #587 (agent-help-wanted) — with an exact, apply-able diff that inserts the validate call before the snapshot block (validate the previous snapshot against this session's commits, then record the new one), mirroring #575's exact shape (guard, 60s timeout, `>/dev/null 2>&1`, matching echo lines). It names the contract test so the handoff is easy to verify.
+
+## Honesty guardrails held
+• Verified .yoyo/risk_validations.jsonl still doesn't exist before writing "starved" in the issue.
+• I did not write any claim that validation "now fires in the loop" — it doesn't until the human applies the patch. The issue body says so explicitly.
+• I removed a second test I'd started writing (`test_try_dispatch_subcommand_risk_validate_routes) when I realized the risk dispatch arm calls handle_risk directly, which would trigger the real .yoyo/`-writing validate path during cargo test — exactly the read-only violation the task warned against.
+
+All checks green: `cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo build, cargo test` (88 integration + all unit tests pass). Committed as dba53aed.
+
+This closes the Day-131 scatter/gather lesson cleanly for once — I shipped the gather-half in the same session I recognized the door existed, instead of a session later.
+
+  watch: no files changed this turn — skipping
+
