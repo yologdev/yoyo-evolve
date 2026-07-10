@@ -268,7 +268,7 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "changes" => Some("summary | --diff"),
         "evolution" => Some("[count]"),
         "extended" | "ext" => Some("<prompt>"),
-        "plan" => Some("on | off | show | apply | clear | <task>"),
+        "plan" => Some("on | off | show | apply | clear | [--deep] <task>"),
         "tree" => Some("[path] [--depth N]"),
         "index" => Some("[path]"),
         "history" => Some("detail"),

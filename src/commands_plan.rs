@@ -357,7 +357,7 @@ Analyze the codebase, explain your plan, and describe what changes you WOULD mak
 
 /// Subcommand names for `/plan <Tab>` completion.
 pub const PLAN_SUBCOMMANDS: &[&str] = &[
-    "on", "off", "open", "close", "show", "apply", "clear", "status", "step",
+    "on", "off", "open", "close", "show", "apply", "clear", "status", "step", "--deep",
 ];
 
 /// Parse a `/plan` command and extract the task description.
@@ -377,10 +377,33 @@ pub fn parse_plan_task(input: &str) -> Option<String> {
     }
 }
 
+/// Strip a leading/trailing `--deep` flag from a plan task string, returning the
+/// cleaned task and whether the flag was present. The `--deep` flag is opt-in and
+/// requests per-step TDD (RED/GREEN/REFACTOR) structure in the generated plan.
+pub fn extract_deep_flag(task: &str) -> (String, bool) {
+    let mut deep = false;
+    let cleaned: Vec<&str> = task
+        .split_whitespace()
+        .filter(|word| {
+            if *word == "--deep" {
+                deep = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    (cleaned.join(" "), deep)
+}
+
 /// Build a planning-mode prompt that asks the agent to create a structured plan
 /// WITHOUT executing any tools. This is the "architect mode" equivalent.
-pub fn build_plan_prompt(task: &str) -> String {
-    format!(
+///
+/// When `deep` is true (the opt-in `/plan --deep` flag), the prompt additionally
+/// requests per-step TDD structure — a RED / GREEN / REFACTOR breakdown for each
+/// implementation step. The default (fast, broad) pass is unchanged.
+pub fn build_plan_prompt(task: &str, deep: bool) -> String {
+    let base = format!(
         r#"Create a detailed step-by-step plan for the following task. Do NOT execute any tools — this is planning only.
 
 ## Task
@@ -398,6 +421,26 @@ Analyze the task and produce a structured plan covering:
 
 Be specific: mention file paths, function names, and concrete code changes where possible.
 Keep the plan actionable — someone (or you, in the next step) should be able to execute it directly."#
+    );
+
+    if !deep {
+        return base;
+    }
+
+    format!(
+        r#"{base}
+
+## Deep TDD structure (--deep)
+For EACH numbered implementation step in the step-by-step approach, add a test-driven
+breakdown with these three lines:
+
+- **TDD RED** — the failing test to write first: name the test and the exact behavior/assertion
+  it checks (the test should fail before the code exists).
+- **TDD GREEN** — the minimal code change that makes that test pass — nothing more.
+- **TDD REFACTOR** — cleanup notes: what to simplify, deduplicate, or rename once the test is green
+  (or "none" if nothing to refactor).
+
+This is language-agnostic: RED/GREEN/REFACTOR applies whether the tests are Go, Python, JS, or Rust."#
     )
 }
 
@@ -586,7 +629,12 @@ pub async fn handle_plan(
 
     println!("{DIM}  📋 Planning: {task}{RESET}\n");
 
-    let plan_prompt = build_plan_prompt(&task);
+    let (clean_task, deep) = extract_deep_flag(&task);
+    if deep {
+        println!("{DIM}  🔬 Deep mode — requesting per-step TDD (RED/GREEN/REFACTOR) structure.{RESET}\n");
+    }
+
+    let plan_prompt = build_plan_prompt(&clean_task, deep);
     run_prompt(agent, &plan_prompt, session_total, model).await;
     auto_compact_if_needed(agent);
 
@@ -635,7 +683,7 @@ mod tests {
 
     #[test]
     fn build_plan_prompt_contains_task() {
-        let prompt = build_plan_prompt("add a /plan command");
+        let prompt = build_plan_prompt("add a /plan command", false);
         assert!(
             prompt.contains("add a /plan command"),
             "Plan prompt should contain the task"
@@ -644,7 +692,7 @@ mod tests {
 
     #[test]
     fn build_plan_prompt_contains_no_tools_instruction() {
-        let prompt = build_plan_prompt("something");
+        let prompt = build_plan_prompt("something", false);
         assert!(
             prompt.contains("Do NOT execute any tools"),
             "Plan prompt should instruct not to use tools"
@@ -653,7 +701,7 @@ mod tests {
 
     #[test]
     fn build_plan_prompt_contains_structure_sections() {
-        let prompt = build_plan_prompt("add feature X");
+        let prompt = build_plan_prompt("add feature X", false);
         assert!(
             prompt.contains("Files to examine"),
             "Should mention files to examine"
@@ -676,7 +724,7 @@ mod tests {
 
     #[test]
     fn build_plan_prompt_demands_per_file_approach() {
-        let prompt = build_plan_prompt("add a config loader");
+        let prompt = build_plan_prompt("add a config loader", false);
         // The first-pass plan must instruct a per-file "Approach:" line (#583),
         // so file-level implementation depth appears without a manual second pass.
         assert!(
@@ -695,6 +743,72 @@ mod tests {
     }
 
     #[test]
+    fn build_plan_prompt_deep_adds_tdd_structure() {
+        // --deep (opt-in) must request per-step RED/GREEN/REFACTOR TDD structure (#583).
+        let prompt = build_plan_prompt("add a config loader", true);
+        assert!(
+            prompt.contains("TDD RED"),
+            "Deep plan should request a TDD RED line per step: {prompt}"
+        );
+        assert!(
+            prompt.contains("TDD GREEN"),
+            "Deep plan should request a TDD GREEN line per step: {prompt}"
+        );
+        assert!(
+            prompt.contains("TDD REFACTOR"),
+            "Deep plan should request a TDD REFACTOR line per step: {prompt}"
+        );
+        // The per-file Approach line (Day-132) must remain present in deep mode too.
+        assert!(
+            prompt.contains("`Approach:` line"),
+            "Deep plan must keep the per-file Approach line: {prompt}"
+        );
+    }
+
+    #[test]
+    fn build_plan_prompt_default_has_no_tdd_structure() {
+        // Paired negative (Day-122 near-miss discipline): the default fast/broad pass
+        // must NOT include the deep TDD structure — --deep is additive/opt-in only.
+        let prompt = build_plan_prompt("add a config loader", false);
+        assert!(
+            !prompt.contains("TDD RED"),
+            "Default plan must not include TDD RED: {prompt}"
+        );
+        assert!(
+            !prompt.contains("TDD GREEN"),
+            "Default plan must not include TDD GREEN: {prompt}"
+        );
+        assert!(
+            !prompt.contains("TDD REFACTOR"),
+            "Default plan must not include TDD REFACTOR: {prompt}"
+        );
+        // But the per-file Approach line must be present in both modes.
+        assert!(
+            prompt.contains("`Approach:` line"),
+            "Default plan must keep the per-file Approach line: {prompt}"
+        );
+    }
+
+    #[test]
+    fn extract_deep_flag_detects_and_strips() {
+        let (task, deep) = extract_deep_flag("add auth --deep");
+        assert!(deep, "Should detect --deep flag");
+        assert_eq!(task, "add auth", "Should strip --deep from the task");
+
+        let (task, deep) = extract_deep_flag("--deep refactor parser");
+        assert!(deep, "Should detect --deep flag at the start");
+        assert_eq!(task, "refactor parser");
+    }
+
+    #[test]
+    fn extract_deep_flag_absent_leaves_task_intact() {
+        // Paired negative: no flag → deep=false, task unchanged.
+        let (task, deep) = extract_deep_flag("add auth to the login flow");
+        assert!(!deep, "Should not report deep when flag absent");
+        assert_eq!(task, "add auth to the login flow");
+    }
+
+    #[test]
     fn test_parse_plan_task_extracts_task() {
         let result = parse_plan_task("/plan add error handling");
         assert_eq!(result, Some("add error handling".to_string()));
@@ -708,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_build_plan_prompt_structure() {
-        let prompt = build_plan_prompt("migrate database schema");
+        let prompt = build_plan_prompt("migrate database schema", false);
         assert!(prompt.contains("migrate database schema"));
         assert!(prompt.contains("Do NOT execute any tools"));
         assert!(prompt.contains("Files to examine"));
