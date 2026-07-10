@@ -4,6 +4,43 @@ All notable changes to **yoyo-agent** (`cargo install yoyo-agent`) are documente
 
 This project is a self-evolving coding agent — every change was planned, implemented, and tested by yoyo itself during automated evolution sessions. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] — 2026-07-10
+
+The catch-up release: Days 87–132, the largest span yet. The headline is the fix for the stop-and-restart friction reported in #389 — auto-continue now consults the provider's own follow-up queue (yoagent 0.9) instead of guessing from response text, so multi-step plans keep moving without manual "continue" prompts. Around it: `/spawn` grows into a real orchestrator (parallel fan-out, background jobs, rerunnable manifests, worktree handoff with optional draft PRs), a full risk-proprioception subsystem lands (`/risk` snapshot / validate / accuracy / effectiveness), `web_search` is rebuilt on the Exa API, yoagent 0.9 brings adaptive thinking and fleet-model pricing (Opus 4.8, Fable 5), and the REPL learns `!` shell passthrough, `/cd`, and `/rewind`.
+
+### Added
+
+- **Auto-continue via follow-up queue** — when the model stops with queued work remaining, yoyo continues automatically using yoagent 0.9's `follow_up_queue_len()` as an authoritative signal, falling back to the text heuristic; pending count surfaces in `/status` (Days 128, 131)
+- **`/spawn --parallel`** — fan out multiple subagent tasks concurrently (max 10), each recorded as a rerunnable JSON manifest; `/spawn manifest` inspects past fan-outs (Days 125–131)
+- **`/spawn --bg` + completion notifications** — background subagent jobs announce when done; collect results with `/spawn collect` (Day 128)
+- **Spawn worktree handoff** — workers commit to their worktree branch and report a ready-to-review branch + diffstat; opt-in `--pr` pushes the branch and opens a draft PR (Days 125–126)
+- **Risk subsystem** — per-file risk scoring from git-history signals: `yoyo risk` CLI subcommand, `/risk validate` against actual breakage, prediction-accuracy tracking in `/status`, `/risk effectiveness` (Days 108–130)
+- **`web_search` rebuilt on Exa** — replaces the broken DDG scraper; selective deep search for synthesis queries (Days 113, 119)
+- **`!` shell passthrough** — run a command directly from the REPL with zero tokens; `!?` feeds the last failed command's output into the conversation (Days 126–127)
+- **`/cd`** — change working directory with `~` and relative-path support (Day 127)
+- **`/rewind` + auto-stash on `/clear`** — `/clear` stashes the outgoing conversation; `/rewind` restores it (Day 126)
+- **`notify_command` config** — run a user command when a long prompt finishes (opt-in) (Day 126)
+- **New providers** — GitHub Models and GitHub Copilot join the provider list (Day 124)
+- **Sub-agent upgrades** — sub-agents inherit skills and can nest one level deep with a hard depth cap (Days 113, 130)
+- **`set -o pipefail` in the bash tool** — mid-pipeline failures surface instead of being masked, with a SIGPIPE-141 guard so `… | head` idioms don't spuriously fail (Day 131)
+- **Sectioned system prompt** — restructured into named behavioral defaults: evidence and honesty, search craft, change discipline, bounded verification (Day 131)
+
+### Improved
+
+- **yoagent 0.9 migration** — adaptive thinking support, `StopReason::Refusal` handling with retreat-size retry, fleet-model pricing (Opus 4.8 / Fable 5 / Sonnet 5) read live from presets (Day 127)
+- **Setup wizard stops clobbering config** — existing `.yoyo.toml` is backed up and unmanaged keys preserved (Day 125)
+- **Auto-context quality** — snake_case/camelCase keyword decomposition and repo-map signatures wired into context injection (Day 116)
+- **Safety hardening** — detects `rm -rf`/`cp` targeting critical system dirs, firewall-flush case variants, `chmod 777`; fewer heap allocations in command analysis (Days 102–124)
+- **Architect editor model is explicit** — the silent auto-downgrade map is gone; the editor model is configured, not guessed (Days 124–125)
+
+### Fixed
+
+- **Reverse-shell false positives** — `rsync -c` / `sync; echo -e` no longer trip the netcat detector (word-boundary matching) (Day 131)
+- **Anthropic `--base-url` double-`/v1`** — guarded after the yoagent 0.9 preset change, with regression tests (Day 127)
+- **Risk-score truncation** — `compute_file_risk_scores` returns all files, not just 15 (Day 112)
+- **Flaky CI tests** — hermetic fixture-repo git helpers, stabilized risk-score sort, env-var race conditions in test suites (Days 110–125)
+- **UTF-8 char-boundary panics** — remaining inline truncation loops replaced with `safe_truncate`/`safe_byte_index` (Days 101–102)
+
 ## [0.1.14] — 2026-05-25
 
 11 sessions spanning Days 82–86. The edit-file experience transforms with SmartEditTool — fuzzy matching shows where the closest match lives when edits fail, and whitespace-only mismatches auto-fix silently. Watch-mode fix prompts now inject the actual source lines around errors. A discoverability arc adds contextual command hints, `/help search`, and `/add` file suggestions. Session instrumentation deepens with per-tool usage breakdowns, estimated remaining turns, and exit summaries with colored diffs. Small models get concrete tool examples via `LiteDescriptionTool`, and `/review` learns effort levels for quick or thorough code critique.
