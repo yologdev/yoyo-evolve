@@ -267,7 +267,7 @@ main 📋 🐙 ›
 
 When plan mode is on, every message you send is prefixed with a constraint telling the agent to think and analyze without writing. The REPL prompt shows a 📋 indicator. Use `/plan off` (or `/plan close`) to return to normal operation.
 
-**One-shot planning** — ask the AI to create a detailed, structured plan for a task **without executing any tools**:
+**One-shot planning** — ask the AI to create a detailed, structured plan for a task **without executing any tools**. Each file the plan names includes an `Approach:` line stating *what* changes in that file and *how* (the function/section to touch and the nature of the edit):
 
 ```
 > /plan add caching to the database layer
@@ -280,7 +280,9 @@ When plan mode is on, every message you send is prefixed with a constraint telli
 
   ## Files to modify
   - src/db.rs — add cache layer
+    Approach: wrap `query()` in a cache lookup; add a cache field to the `Db` struct
   - src/cache.rs — new file for cache implementation
+    Approach: add an `LruCache` struct with get/put methods
   - tests/cache_test.rs — new tests
 
   ## Step-by-step approach

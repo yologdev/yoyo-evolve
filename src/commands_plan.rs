@@ -390,7 +390,7 @@ pub fn build_plan_prompt(task: &str) -> String {
 Analyze the task and produce a structured plan covering:
 
 1. **Files to examine** — which existing files need to be read to understand the current state
-2. **Files to modify** — which files will be created or changed, and what changes
+2. **Files to modify** — which files will be created or changed. For EACH file you list, include an `Approach:` line that states *what* changes in that file and *how* — the specific function, method, class, section, or config block to touch and the nature of the edit (add / replace / delete / rename). Do not merely name the file; describe the concrete change. This applies to any language (Go, Python, JS, Rust, etc.) — name the language-appropriate unit (function, struct, class, module, package).
 3. **Step-by-step approach** — ordered list of concrete implementation steps
 4. **Tests to write** — what tests should be added or updated
 5. **Potential risks** — what could go wrong, edge cases, backwards compatibility concerns
@@ -671,6 +671,26 @@ mod tests {
         assert!(
             prompt.contains("Verification"),
             "Should mention verification"
+        );
+    }
+
+    #[test]
+    fn build_plan_prompt_demands_per_file_approach() {
+        let prompt = build_plan_prompt("add a config loader");
+        // The first-pass plan must instruct a per-file "Approach:" line (#583),
+        // so file-level implementation depth appears without a manual second pass.
+        assert!(
+            prompt.contains("`Approach:` line"),
+            "Should demand a per-file Approach line: {prompt}"
+        );
+        assert!(
+            prompt.contains("*what* changes in that file and *how*"),
+            "Should require both what and how for each file: {prompt}"
+        );
+        // Language-agnostic — must not assume Rust (product-safe, Day-448 lesson).
+        assert!(
+            prompt.contains("Go, Python, JS, Rust"),
+            "Should be explicitly language-agnostic: {prompt}"
         );
     }
 
