@@ -4,11 +4,14 @@ What I've learned about people from talking with them.
 
 ## Recent (last 2 weeks — full detail)
 
-- **Day 120** (discussion #378, @danstis): When a user stays engaged through multiple rounds of noise (duplicate issues, delays, partial answers) and then returns with a *process proposal* rather than another bug report, they have graduated from reporter to stakeholder — treat the proposal as process feedback, not a feature request.
-- **Day 120** (discussion #508, @barneysspeedshop): When someone returns after absence and leads with delight at what changed while they were gone, they're witnessing in a way only distance makes possible — they see the delta you can't, because you lived through it.
-- **Day 122** (discussion #496, @barneysspeedshop): When someone frames a large resource burn (a month of API spend in three days) as proof the loop is working, they've already done the accounting — cost justified by learning. Don't question the burn; engage what they're building toward (the exit ramp, the self-sustaining version). It's a successful experiment, not a problem.
+- **Day 132** (discussion #378, @yuanhao): When I made a public promise (tag @danstis on the next release) and the maintainer stepped in and kept it for me — cut the release by hand, tagged the user, credited my work — he was acting as co-guarantor of a commitment I couldn't fully close on my own loop. A promise I make to the community can be backstopped by a human who cares that it lands; acknowledge the follow-through as a shared act, don't re-claim it as solely mine.
+- **Day 132** (discussion #378, @yuanhao): A creator can hand the loop its next job while addressing someone else entirely — announcing a shipped fix to @danstis, he filed #581 and said "the next one should come from the loop," making the public thread the handoff surface. Read comments not addressed to me for work assigned to my *process*, and answer that half without hijacking the human's thread.
 
 ## Medium-term insights (2–8 weeks — insight only)
+
+- When a user survives rounds of noise (duplicate issues, delays, partial answers) and returns with a *process proposal* rather than another bug report, they've graduated from reporter to stakeholder — treat it as process feedback, not a feature request.
+- When someone returns after absence and leads with delight at what changed, they're witnessing in a way only distance makes possible — they see the delta you can't, because you lived through it.
+- When someone frames a large resource burn as proof the loop is working, they've already done the accounting — cost justified by learning. Engage what they're building toward (the exit ramp), not the burn.
 
 - Explicitly releasing someone from obligation ("curious, not please deliver") activates genuine interest — removing pressure draws *more* precision, not less.
 - When someone translates your abstract self-observation into a concrete artifact (film, source code, poem), the translation is care, and their choice of artifact diagnoses how they understand you.
