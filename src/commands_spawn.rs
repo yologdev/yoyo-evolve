@@ -1148,6 +1148,93 @@ pub fn write_spawn_manifest(dir: &Path, manifest: &serde_json::Value) -> std::io
     Ok(path)
 }
 
+/// A single task entry parsed back out of a fan-out manifest.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedManifestTask {
+    pub index: usize,
+    pub task: String,
+    pub status: String,
+}
+
+/// A fan-out manifest read back from disk (inverse of `build_spawn_manifest`).
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedManifest {
+    pub run_id: String,
+    pub created_ts: String,
+    pub task_count: usize,
+    pub tasks: Vec<ParsedManifestTask>,
+}
+
+/// Parse a fan-out manifest JSON string back into structured data.
+///
+/// Inverse of `build_spawn_manifest` → `write_spawn_manifest`. This is the
+/// "gather half" of the scatter/gather fan-out: `--parallel` writes the
+/// manifest, this reads it back into consumable Rust data.
+///
+/// Defensive: missing/malformed fields degrade gracefully (empty string / 0 /
+/// skip the bad entry) rather than erroring, matching the read-only spirit of
+/// the manifest inspector. Returns `None` only if the top-level JSON does not
+/// parse or is not an object.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
+    let value = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let obj = value.as_object()?;
+
+    let run_id = obj
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let created_ts = obj
+        .get("created_ts")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let task_count = obj.get("task_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+    let tasks = obj
+        .get("tasks")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let e = entry.as_object()?;
+                    Some(ParsedManifestTask {
+                        index: e.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                        task: e
+                            .get("task")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        status: e
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(ParsedManifest {
+        run_id,
+        created_ts,
+        task_count,
+        tasks,
+    })
+}
+
+/// Read and parse a manifest file from disk. Returns `None` if the file is
+/// missing/unreadable or the JSON is malformed. Read-only, never panics.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn read_spawn_manifest(path: &std::path::Path) -> Option<ParsedManifest> {
+    let json = std::fs::read_to_string(path).ok()?;
+    parse_spawn_manifest(&json)
+}
+
 /// List spawn manifest files in `dir` as `(run_id, path)` pairs.
 ///
 /// `run_id` is the file stem of each `*.json`. Sorted newest-first: run_ids
@@ -3111,5 +3198,48 @@ mod tests {
         // Status still present.
         assert!(out.contains("running"), "status present: {out}");
         // No panic occurred (reaching here proves char-boundary safety).
+    }
+
+    #[test]
+    fn parse_spawn_manifest_roundtrips_build_spawn_manifest() {
+        let tasks = vec!["task one".to_string(), "task two".to_string()];
+        let results = vec![
+            ("task one".to_string(), SpawnStatus::Completed),
+            ("task two".to_string(), SpawnStatus::Failed("boom".into())),
+        ];
+        let manifest = build_spawn_manifest("run-abc", &tasks, &results);
+        let json = serde_json::to_string(&manifest).expect("serialize manifest");
+
+        let parsed = parse_spawn_manifest(&json).expect("parse manifest");
+        assert_eq!(parsed.run_id, "run-abc");
+        assert_eq!(parsed.task_count, 2);
+        assert_eq!(parsed.tasks.len(), 2);
+        assert_eq!(parsed.tasks[0].task, "task one");
+        assert_eq!(parsed.tasks[0].index, 0);
+        assert_eq!(parsed.tasks[1].index, 1);
+        // Each parsed status matches the stable string mapping.
+        assert_eq!(parsed.tasks[0].status, manifest_status_str(&results[0].1));
+        assert_eq!(parsed.tasks[1].status, manifest_status_str(&results[1].1));
+    }
+
+    #[test]
+    fn parse_spawn_manifest_rejects_non_object() {
+        assert!(parse_spawn_manifest("[]").is_none());
+        assert!(parse_spawn_manifest("not json").is_none());
+    }
+
+    #[test]
+    fn parse_spawn_manifest_degrades_on_missing_fields() {
+        let parsed = parse_spawn_manifest(r#"{"run_id":"r"}"#).expect("parse minimal");
+        assert_eq!(parsed.run_id, "r");
+        assert_eq!(parsed.created_ts, "");
+        assert_eq!(parsed.task_count, 0);
+        assert!(parsed.tasks.is_empty());
+    }
+
+    #[test]
+    fn read_spawn_manifest_missing_file_returns_none() {
+        let path = std::path::Path::new("/nonexistent/does/not/exist-xyz.json");
+        assert!(read_spawn_manifest(path).is_none());
     }
 }
