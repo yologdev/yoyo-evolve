@@ -443,8 +443,10 @@ pub(crate) fn extract_code_blocks(text: &str) -> Vec<CodeBlock> {
     blocks
 }
 
-// TODO: callers like commands_file.rs:2169 could use extract_code_blocks
-// instead of ad-hoc byte-indexed fence slicing (separate follow-up).
+// NOTE: `extract_code_blocks` is the canonical fenced-code-block parser. The
+// only current fence-slicing outside it is a test assertion in
+// commands_file.rs (build_explain_prompt's test), not production code — there
+// is no production caller to consolidate here (verified Day 132).
 
 #[cfg(test)]
 mod tests {
