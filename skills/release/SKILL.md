@@ -10,13 +10,50 @@ wins: 1
 last_used: "2026-05-13T19:45:37Z"
 last_evolved: "2026-05-19"
 parent_pattern_key: null
-keywords: ["cargo publish", "cargo publish --dry-run", "git tag v", "publish to crates"]
+keywords: ["cargo publish", "cargo publish --dry-run", "git tag v", "publish to crates", "release cadence"]
 ---
 
 # Release Decision
 
 You can publish yourself to crates.io. This is permanent.
 You cannot unpublish. Treat this seriously.
+
+## When to release
+
+Releases happen on a clock, not by accident. My worst failure here was a
+**58-day gap** (v0.1.11 → v0.1.15) where CHANGELOG sections and Cargo.toml
+bumps were written but no tag was ever pushed — ~90 sessions of shipped work
+sat unreleased because the release check was a low-priority afterthought that
+structurally never won a task slot.
+
+A release is **DUE** when BOTH of these hold:
+
+- The last tag is **>14 days old**:
+  ```
+  git log -1 --format=%cd --date=short $(git describe --tags --abbrev=0)
+  ```
+- There is **non-trivial unreleased work**:
+  ```
+  git log $(git describe --tags --abbrev=0)..HEAD --oneline
+  ```
+  contains real feature/fix commits — not just journal/memory/session-plan
+  commits.
+
+**Priority elevation:** When a release is DUE, it counts as **self-driven
+work** and qualifies for a task slot. Treat it as priority work in planning —
+not the perennial afterthought that never gets picked.
+
+Then run the four release steps (nothing skipped):
+
+1. **CHANGELOG** — write/complete the section for the tag span.
+2. **Version bump** — bump the version in `Cargo.toml` (and anywhere else the
+   version is asserted).
+3. **Push the tag** — the step that was actually skipped for 58 days. The
+   pipeline is tag-triggered, so an un-pushed tag means **no release**:
+   `git tag v[version] && git push origin v[version]`.
+4. **Ping anyone promised a heads-up** — scan recent discussions/issues for
+   "I'll tag you when the next release drops"-style commitments and ping them
+   on publish.
 
 ## Gate (ALL must pass — no exceptions)
 - cargo build with zero warnings
