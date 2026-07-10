@@ -1430,6 +1430,26 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_cd_tilde_prefix_not_expanded() {
+        // A leading `~` that is neither bare `~` nor `~/...` (e.g. `~user`)
+        // must NOT be home-expanded — it's a literal path component. This is
+        // the near-miss to the tilde-expansion cases above: it proves the
+        // expansion stays silent on its innocent neighbor, not just that it
+        // fires on `~` and `~/`.
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Create a directory literally named `~alice` under a known root.
+        let literal = tmp.path().join("~alice");
+        std::fs::create_dir(&literal).unwrap();
+        // Resolve it relative to the temp dir; if `~alice` were wrongly
+        // expanded via `home`, the join would target home/alice instead and
+        // fail to exist. Pass a bogus home to make an accidental expansion
+        // resolve somewhere that does not contain the literal dir.
+        let bogus_home = std::path::Path::new("/nonexistent_home_xyz");
+        let result = resolve_cd_target_with_home(tmp.path(), "~alice", Some(bogus_home));
+        assert_eq!(result.unwrap(), literal.canonicalize().unwrap());
+    }
+
+    #[test]
     fn test_resolve_cd_tilde_without_home() {
         let current = std::path::Path::new("/somewhere");
         let err = resolve_cd_target_with_home(current, "~", None).unwrap_err();
