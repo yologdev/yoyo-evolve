@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current plan prompt structure before making changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_plan_prompt\|PLAN… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:382..432 ✓ (0ms)
+  2 tools completed in 3.6s (2 ✓)
+
+`build_plan_prompt is the first-pass prompt. Now let me check the StructuredPlan/PlanStep` shape to see if there's a per-step description field.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,80p' src/commands_plan… ✓ (3ms)
+
+The PlanStep already has a description field (parsed from the ordered step list, not per-file). This task is a prompt-content tweak — I won't touch the struct. Let me confirm the "Files to modify" line 393 currently says "what changes" but doesn't demand a per-file approach line. Now I'll write the test first, then edit the prompt.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:655..680 ✓ (1ms)
+
+Now let me make the edit to the prompt — strengthen the "Files to modify" section to demand a per-file Approach: line, language-agnostic.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (2 → 2 lines)
+  - 2. **Files to modify** — which files will be created or changed, and what changes
+  + 2. **Files to modify** — which files will be created or changed. For EACH file you list, include an `Approach:` line that states *what* changes in that file and *how* — the specific function, method, class, section, or config block to touch and the nature of the edit (add / replace / delete / rename). Do not merely name the file; describe the concrete change. This applies to any language (Go, Python, JS, Rust, etc.) — name the language-appropriate unit (function, struct, class, module, package).
+    3. **Step-by-step approach** — ordered list of concrete implementation steps
+ ✓ (1m 23s)
+  - 2. **Files to modify** — which files will be created or changed, and what changes
+  + 2. **Files to modify** — which files will be created or changed. For EACH file you list, include an `Approach:` line that states *what* changes in that file and *how* — the specific function, method, class, section, or config block to touch and the nature of the edit (add / replace / delete / rename). Do not merely name the file; describe the concrete change. This applies to any language (Go, Python, JS, Rust, etc.) — name the language-appropriate unit (function, struct, class, module, package).
+    3. **Step-by-step approach** — ordered list of concrete implementation steps
+
+Now add the test asserting the per-file approach instruction is present:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (4 → 21 lines)
+        }
+    
+        #[test]
+  -     fn test_parse_plan_task_extracts_task() {
+  +     fn build_plan_prompt_demands_per_file_approach() {
+  +         let prompt = build_plan_prompt("add a config loader");
+  +         // The first-pass plan must instruct a per-file "Approach:" line (#583),
+  +         // so file-level implementation depth appears without a manual second pass.
+  +         assert!(
+  +             prompt.contains("`Approach:` line"),
+  +             "Should demand a per-file Approach line: {prompt}"
+  +         );
+  +         assert!(
+  +             prompt.contains("*what* changes in that file and *how*"),
+  +             "Should require both what and how for each file: {prompt}"
+  +         );
+  +         // Language-agnostic — must not assume Rust (product-safe, Day-448 lesson).
+  +         assert!(
+  +             prompt.contains("Go, Python, JS, Rust"),
+  +             "Should be explicitly language-agnostic: {prompt}"
+  ... (2 more lines)
+ ✓ (189ms)
+        }
+    
+        #[test]
+  -     fn test_parse_plan_task_extracts_task() {
+  +     fn build_plan_prompt_demands_per_file_approach() {
+  +         let prompt = build_plan_prompt("add a config loader");
+  +         // The first-pass plan must instruct a per-file "Approach:" line (#583),
+  +         // so file-level implementation depth appears without a manual second pass.
+  ... (13 more lines)
+
+My edit matched the wrong location — there was a duplicate closing pattern. Let me check where the test landed.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '675,700p' src/commands_p… ✓ (2ms)
+
+The old test_parse_plan_task_extracts_task fn signature line got consumed. I replaced only its opening but left the body dangling. Let me fix by restoring the function header.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (5 → 7 lines)
+        }
+    
+  +     #[test]
+  +     fn test_parse_plan_task_extracts_task() {
+            let result = parse_plan_task("/plan add error handling");
+            assert_eq!(result, Some("add error handling".to_string()));
+        }
+ ✓ (1m 19s)
+        }
+    
+  +     #[test]
+  +     fn test_parse_plan_task_extracts_task() {
+            let result = parse_plan_task("/plan add error handling");
+            assert_eq!(result, Some("add error handling".to_string()));
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.8s)
+  2 tools completed in 1m 38s (2 ✓)
+
+Clippy passed clean. It's a bin package, so run tests without --lib:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_plan 2>&1 | … ✓ (122ms)
+
+All plan tests pass including the new one. Now let me run the full build/test and check docs.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && gr… ✓ (119ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '270,300p' docs/src/usage… ✓ (3ms)
+  2 tools completed in 4.6s (2 ✓)
+
+The docs describe /plan behavior and even show a "Files to modify" example. Let me add a one-line note about the per-file approach detail and update the example to reflect it.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (4 → 6 lines)
+      ## Files to modify
+      - src/db.rs — add cache layer
+  +     Approach: wrap `query()` in a cache lookup; add a cache field to the `Db` struct
+      - src/cache.rs — new file for cache implementation
+  +     Approach: add an `LruCache` struct with get/put methods
+      - tests/cache_test.rs — new tests
+ ✓ (1m 3s)
+      ## Files to modify
+      - src/db.rs — add cache layer
+  +     Approach: wrap `query()` in a cache lookup; add a cache field to the `Db` struct
+      - src/cache.rs — new file for cache implementation
+  +     Approach: add an `LruCache` struct with get/put methods
+      - tests/cache_test.rs — new tests
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (1 → 1 lines)
+  - **One-shot planning** — ask the AI to create a detailed, structured plan for a task **without executing any tools**:
+  + **One-shot planning** — ask the AI to create a detailed, structured plan for a task **without executing any tools**. Each file the plan names includes an `Approach:` line stating *what* changes in that file and *how* (the function/section to touch and the nature of the edit):
+ ✓ (1m 12s)
+  - **One-shot planning** — ask the AI to create a detailed, structured plan for a task **without executing any tools**:
+  + **One-shot planning** — ask the AI to create a detailed, structured plan for a task **without executing any tools**. Each file the plan names includes an `Approach:` line stating *what* changes in that file and *how* (the function/section to touch and the nature of the edit):
+  2 tools completed in 2m 22s (2 ✓)
+
+Now final full verification and commit.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1m 17s)
+
+All green: fmt clean, clippy clean, tests pass. Committing.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (17 lines) ✓ (12ms)
+
+Committed. Done.
+
+## Summary
+
+Task #583 (retreat scope): `/plan` per-file implementation approach — shipped.
+
+What I changed (2 files, +24/-2):
+
+1. **`src/commands_plan.rs** — Strengthened build_plan_prompt` (the first-pass plan prompt) so the "Files to modify" section now demands an Approach: line for each file: what changes and how (function/section to touch + nature of the edit). Made it explicitly language-agnostic (Go, Python, JS, Rust) so it helps @danstis's Go brownfield project and any product user's setup — not just this Rust repo (Day-448 product-safety lesson). Added an always-asserting unit test (build_plan_prompt_demands_per_file_approach) checking the instruction, the what/how requirement, and the language-agnostic phrasing (no vacuous/conditional test, Day-124 lesson).
+
+2. `docs/src/usage/commands.md` — One-line note + updated example showing the Approach: lines.
+
+Retreat scope held exactly as the task demanded:
+• No two-pass plan→refine pipeline (the ambitious version — deferred).
+• PlanStep already has a description field, but it's parsed from the ordered step list, not per-file — so I did not add a struct field. The structural follow-up is forwarded honestly in the commit message rather than laundered into this task.
+
+Verification: `cargo fmt --check clean, cargo clippy --all-targets -- -D warnings clean, cargo test` → 88 passed, 0 failed.
+
+One honest note on process: my edit_file first matched a duplicate } boundary and broke the test module — I caught it immediately from the auto-check compile error, saw the dangling function body, and restored the header. Fixed on the next edit before any commit.
+
+  watch: no files changed this turn — skipping
+

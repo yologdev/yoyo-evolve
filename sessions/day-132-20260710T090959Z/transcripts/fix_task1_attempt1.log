@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by finding all remaining occurrences of the deprecated DeepSeek names.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'deepseek-chat\|deepsee… ✓ (7ms)
+
+Let me see the full grep output to understand all occurrences.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'deepseek-chat\|deepsee… ✓ (6ms)
+
+The output is truncated. Let me get the full list without truncation.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'deepseek-chat\|deepsee… ✓ (6ms)
+
+The tool is truncating. Let me write results to a file to see everything.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'deepseek-chat\|deepsee… ✓ (7ms)
+  ▶ read /tmp/grep_out.txt ✓ (0ms)
+  2 tools completed in 3.1s (2 ✓)
+
+Now I understand the full scope. The evaluator specifically flagged commands_info.rs, tools.rs, and prompt_retry.rs. There's also format/cost.rs which has pricing logic. Let me first verify the current state of providers.rs and the yoagent preset, then look at each file.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'deepseek' src/provider… ✓ (4ms)
+
+providers.rs and agent_builder.rs are correctly updated. Let me verify against the yoagent preset, then handle the remaining files.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'deepseek' ~/.cargo/reg… ✓ (5ms)
+
+Confirmed: deepseek-v4-pro and deepseek-v4-flash. Now let me look at each remaining file. Start with cost.rs pricing logic since it's the most complex.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:120..150 ✓ (0ms)
+
+The pricing table already handles the v4 names. The old names in the contains checks are keeping backward-compat pricing for legacy model strings. The task says to remove/update occurrences of the old names. Since these are retiring, I should remove the deprecated name checks (the v4 names are already covered). Let me update cost.rs pricing logic — removing the retired names while keeping v4/v3/r1 coverage.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (13 → 6 lines)
+  -     if model.contains("deepseek-chat")
+  -         || model.contains("deepseek-v4-pro")
+  -         || model.contains("deepseek-v3")
+  -     {
+  +     if model.contains("deepseek-v4-pro") || model.contains("deepseek-v3") {
+            return Some((0.27, 0.0, 0.0, 1.10));
+        }
+  -     if model.contains("deepseek-reasoner")
+  -         || model.contains("deepseek-v4-flash")
+  -         || model.contains("deepseek-r1")
+  -         || model.contains("deepseek-r2")
+  -     {
+  +     if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
+            return Some((0.55, 0.0, 0.0, 2.19));
+        }
+ ✓ (1m 16s)
+  -     if model.contains("deepseek-chat")
+  -         || model.contains("deepseek-v4-pro")
+  -         || model.contains("deepseek-v3")
+  -     {
+  +     if model.contains("deepseek-v4-pro") || model.contains("deepseek-v3") {
+            return Some((0.27, 0.0, 0.0, 1.10));
+        }
+  -     if model.contains("deepseek-reasoner")
+  ... (7 more lines)
+
+Now let me update the cost.rs tests that reference old names.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:1140..1170 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:1130..1140 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (30 → 30 lines)
+                cache_write: 0,
+                total_tokens: 0,
+            };
+  -         // deepseek-chat: $0.27/MTok input, $1.10/MTok output
+  -         let cost = estimate_cost(&usage, "deepseek-chat").unwrap();
+  -         assert!((cost - 1.37).abs() < 0.001, "deepseek-chat cost: {cost}");
+  +         // deepseek-v4-pro: $0.27/MTok input, $1.10/MTok output
+  +         let cost = estimate_cost(&usage, "deepseek-v4-pro").unwrap();
+  +         assert!((cost - 1.37).abs() < 0.001, "deepseek-v4-pro cost: {cost}");
+        }
+    
+        #[test]
+  ···
+                cache_write: 0,
+                total_tokens: 0,
+            };
+  -         // deepseek-reasoner: $0.55/MTok input, $2.19/MTok output
+  -         let cost = estimate_cost(&usage, "deepseek-reasoner").unwrap();
+  +         // deepseek-v4-flash: $0.55/MTok input, $2.19/MTok output
+  +         let cost = estimate_cost(&usage, "deepseek-v4-flash").unwrap();
+  ... (6 more lines)
+ ✓ (1m 17s)
+                cache_write: 0,
+                total_tokens: 0,
+            };
+  -         // deepseek-chat: $0.27/MTok input, $1.10/MTok output
+  -         let cost = estimate_cost(&usage, "deepseek-chat").unwrap();
+  -         assert!((cost - 1.37).abs() < 0.001, "deepseek-chat cost: {cost}");
+  +         // deepseek-v4-pro: $0.27/MTok input, $1.10/MTok output
+  +         let cost = estimate_cost(&usage, "deepseek-v4-pro").unwrap();
+  ... (13 more lines)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:1690..1702 ✓ (0ms)
+  4 tools completed in 1m 33s (4 ✓)
+
+The deepseek-r2 was dropped entirely (no successor). I'll update this test to use `deepseek-v4-flash` which has the same pricing.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (7 → 7 lines)
+        #[test]
+  -     fn test_pricing_deepseek_r2() {
+  -         assert!(model_pricing("deepseek-r2").is_some());
+  -         let (inp, _, _, out) = model_pricing("deepseek-r2").unwrap();
+  +     fn test_pricing_deepseek_v4_flash() {
+  +         assert!(model_pricing("deepseek-v4-flash").is_some());
+  +         let (inp, _, _, out) = model_pricing("deepseek-v4-flash").unwrap();
+            assert!((inp - 0.55).abs() < 0.001);
+            assert!((out - 2.19).abs() < 0.001);
+        }
+ ✓ (1m 20s)
+        #[test]
+  -     fn test_pricing_deepseek_r2() {
+  -         assert!(model_pricing("deepseek-r2").is_some());
+  -         let (inp, _, _, out) = model_pricing("deepseek-r2").unwrap();
+  +     fn test_pricing_deepseek_v4_flash() {
+  +         assert!(model_pricing("deepseek-v4-flash").is_some());
+  +         let (inp, _, _, out) = model_pricing("deepseek-v4-flash").unwrap();
+            assert!((inp - 0.55).abs() < 0.001);
+            assert!((out - 2.19).abs() < 0.001);
+        }
+
+Now commands_info.rs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:2225..2280 ✓ (1ms)
+
+Let me check the `model_context_window and find_provider_for_model` functions to confirm the deepseek catch-all handles v4 names.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'deepseek' src/commands_… ✓ (2ms)
+
+Both use contains("deepseek") catch-all, so v4 names work. Update the tests:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (1 → 1 lines)
+  -         assert_eq!(model_context_window("deepseek-chat"), Some(128_000));
+  +         assert_eq!(model_context_window("deepseek-v4-pro"), Some(128_000));
+ ✓ (1m 18s)
+  -         assert_eq!(model_context_window("deepseek-chat"), Some(128_000));
+  +         assert_eq!(model_context_window("deepseek-v4-pro"), Some(128_000));
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (2 → 2 lines)
+  -         // deepseek-r2 — covered by deepseek catch-all
+  -         assert_eq!(model_context_window("deepseek-r2"), Some(128_000));
+  +         // deepseek-v4-flash — covered by deepseek catch-all
+  +         assert_eq!(model_context_window("deepseek-v4-flash"), Some(128_000));
+ ✓ (1m 23s)
+  -         // deepseek-r2 — covered by deepseek catch-all
+  -         assert_eq!(model_context_window("deepseek-r2"), Some(128_000));
+  +         // deepseek-v4-flash — covered by deepseek catch-all
+  +         assert_eq!(model_context_window("deepseek-v4-flash"), Some(128_000));
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (1 → 1 lines)
+  -         assert_eq!(find_provider_for_model("deepseek-chat"), Some("deepseek"));
+  +         assert_eq!(find_provider_for_model("deepseek-v4-pro"), Some("deepseek"));
+ ✓ (1m 20s)
+  -         assert_eq!(find_provider_for_model("deepseek-chat"), Some("deepseek"));
+  +         assert_eq!(find_provider_for_model("deepseek-v4-pro"), Some("deepseek"));
+  3 tools completed in 4m 12s (3 ✓)
+
+Now tools.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (1 → 1 lines)
+  -         let config = test_agent_config("deepseek", "deepseek-chat");
+  +         let config = test_agent_config("deepseek", "deepseek-v4-pro");

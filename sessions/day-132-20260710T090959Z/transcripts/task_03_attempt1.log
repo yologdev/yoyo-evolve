@@ -1,0 +1,129 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing patterns before making changes. Let me look at the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 src/commands_run.rs && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "expand_tilde\|expand_h… ✓ (5ms)
+ ✓ (15ms)
+  2 tools completed in 1.1s (2 ✓)
+
+No existing tilde-expand helper found. Let me search more broadly and look at the dispatch pattern.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "HOME\|home_dir\|tilde\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_run\b" src/*.rs … ✓ (11ms)
+ ✓ (12ms)
+  2 tools completed in 1.3s (2 ✓)
+
+Let me examine the dispatch mechanism (CommandRoute) and the KNOWN_COMMANDS + short description patterns.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,200p' src/dispatch.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '95,115p' src/commands.rs… ✓ (4ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/run"\|"/loop"\|comman…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'Run\|Loop' src/dispatch… ✓ (4ms)
+ ✓ (5ms)
+  4 tools completed in 5.7s (4 ✓)
+
+Interesting — there's already a test referencing command_short_description("cd") at line 1519. Let me check that, and look at the help_data.rs pattern and the CommandRoute enum.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1505,1530p' src/dispatch…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,120p' src/dispatch.rs… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 4.1s (2 ✓)
+
+There's already substantial /cd help infrastructure! Let me check what exists — help_data.rs already has cd short description and detailed help. Let me see the state and what's missing.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1050,1075p' src/help_dat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_cd\|CommandRout… ✓ (4ms)
+ ✓ (9ms)
+  2 tools completed in 4.8s (2 ✓)
+
+The /cd command is already substantially wired up — it's registered in KNOWN_COMMANDS, has a CommandRoute::Cd, dispatch routing, help entries, and short description. Let me see the actual dispatch handler at line 1349 to understand what handle_cd it calls.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1349,1370p' src/dispatch… ✓ (3ms)
+
+The /cd command is already fully implemented — including a resolve_cd_target pure resolver. Let me examine the full existing implementation and its tests to understand what's there and whether the task is already satisfied.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1349,1400p' src/dispatch… ✓ (4ms)
+
+The task is already fully implemented. Let me examine the existing implementation thoroughly to confirm it meets all task requirements, then verify tests pass — per the evolve skill, if the code already satisfies the task, I add the smallest real verification rather than claiming done.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '285,360p' src/dispatch.r… ✓ (3ms)
+
+The /cd command is completely implemented already — with a pure testable resolver (resolve_cd_target / resolve_cd_target_with_home), full dispatch handling, help entries, short description, and registration in KNOWN_COMMANDS. This was landed in a prior session but the task file wasn't aware of it.
+
+Let me check the existing test coverage and the docs to see if anything is genuinely missing.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "resolve_cd\|test_resolv… ✓ (4ms)
+
+The /cd command is **fully implemented, tested (10 test cases), documented, and registered** — landed in a prior session, more complete than this task file's retreat scope even envisioned. The task file was written without awareness that /cd already exists.
+
+Per the evolve skill and Day-125 lesson (never claim a completion I haven't verified), let me confirm everything is green and check for any genuine gap the task names that isn't covered. The task's "not-a-directory error and tilde-expansion" tests both already exist. Let me verify the build/tests pass and look for a real gap.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet resolve_cd 2>… ✓ (148ms)
+
+All existing /cd resolver tests pass. The task is already satisfied by prior work. 
+
+Now let me look for a genuine gap the current implementation has. The task specified `handle_cd in commands_run.rs`, but the existing implementation inlines the logic in the dispatch handler at dispatch.rs:1349. There's a real gap: the dispatch handler's /cd-with-arg path inlines the print logic rather than exercising it in a testable way, and there's no test verifying the success message format or that the pwd/no-arg path is coherent.
+
+Let me look at the full inlined dispatch block to see if there's a testable extraction gap worth closing.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1349,1375p' src/dispatch… ✓ (4ms)
+
+The implementation is complete and well-structured. The core resolver logic — the pure, testable heart of the task — is already extracted into resolve_cd_target_with_home and thoroughly tested (9 passing tests covering absolute, relative, parent, tilde, tilde-without-home, nonexistent, not-a-directory, empty-arg, and home-env cases).
+
+This task is **already done** by prior work. The honest thing (Day-125, Day-130 lessons) is to not manufacture busywork or claim a fresh implementation. But let me verify there's truly nothing missing versus the task — specifically checking whether the resolver's canonicalization would surprise a symlink-following user, and whether the one gap I can see (the /cd arg parse uses strip_prefix("/cd") which would mishandle `/cdfoo`) is a real bug worth a regression test.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/cd"\|"cd"' src/dispat… ✓ (4ms)
+
+Let me check how the routing splits words — whether /cdfoo routes to Cd (which would be a bug given the handler uses strip_prefix("/cd")).
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '225,245p' src/dispatch.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,225p' src/dispatch.r… ✓ (3ms)
+  2 tools completed in 6.4s (2 ✓)
+
+Routing splits on whitespace and matches the first word exactly, so /cdfoo → `UnknownSlash (no bug there). The strip_prefix("/cd") in the handler is safe because only exact /cd or /cd <args>` reach it.
+
+The implementation is genuinely complete, correct, and well-tested. This is the Day-125/Day-105 situation: the task was already done in a prior session (the task planner didn't know /cd already existed — the same "false completion awareness" gap, but inverted: the work exists, the plan didn't know).
+
+The honest move is to state this plainly and not fabricate change. But the evolve skill says: if current code already satisfies the task, add the smallest real verification (a regression test) instead of claiming done. 
+
+Looking at the existing tests, there's one genuine gap: no test asserts that `resolve_cd_target **rejects a trailing-slash on a file** or that a relative ~`-prefix that isn't ~/ (like ~user) is treated as a literal path, not expanded. Let me verify the ~user behavior — that's a real boundary (Day-122 near-miss lesson).
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1419,1440p' src/dispatch… ✓ (3ms)
+
+There's a genuine untested boundary (Day-122 lesson: the discriminator is only trusted when the near-miss is verified). The tilde-expansion logic has three branches: ~ exactly, ~/..., and everything else literal. The test verifies ~ fires and `~/sub fires — but there's **no negative case** verifying that ~foo (a path starting with ~ but not ~` or ~/) is treated as a literal path, not expanded. That's exactly the near-miss the Day-122 lesson warns about: the test proves the guard fires but never that it stays silent on the innocent neighbor.
+
+This is the smallest real verification I can add. Let me write that regression test.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (2 → 22 lines)
+  +     #[test]
+  +     fn test_resolve_cd_tilde_prefix_not_expanded() {
+  +         // A leading `~` that is neither bare `~` nor `~/...` (e.g. `~user`)
+  +         // must NOT be home-expanded — it's a literal path component. This is
+  +         // the near-miss to the tilde-expansion cases above: it proves the
+  +         // expansion stays silent on its innocent neighbor, not just that it
+  +         // fires on `~` and `~/`.
+  +         let tmp = tempfile::TempDir::new().unwrap();
+  +         // Create a directory literally named `~alice` under a known root.
+  +         let literal = tmp.path().join("~alice");
+  +         std::fs::create_dir(&literal).unwrap();
+  +         // Resolve it relative to the temp dir; if `~alice` were wrongly
+  +         // expanded via `home`, the join would target home/alice instead and
+  +         // fail to exist. Pass a bogus home to make an accidental expansion
+  +         // resolve somewhere that does not contain the literal dir.
+  +         let bogus_home = std::path::Path::new("/nonexistent_home_xyz");
+  +         let result = resolve_cd_target_with_home(tmp.path(), "~alice", Some(bogus_home));
+  +         assert_eq!(result.unwrap(), literal.canonicalize().unwrap());
+  +     }
+  + 
+  ... (2 more lines)
+ ✓ (1m 31s)
+  +     #[test]
+  +     fn test_resolve_cd_tilde_prefix_not_expanded() {
+  +         // A leading `~` that is neither bare `~` nor `~/...` (e.g. `~user`)
+  +         // must NOT be home-expanded — it's a literal path component. This is
+  +         // the near-miss to the tilde-expansion cases above: it proves the
+  +         // expansion stays silent on its innocent neighbor, not just that it
+  +         // fires on `~` and `~/`.
+  +         let tmp = tempfile::TempDir::new().unwrap();
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet resolve_cd 2>… ✓ (143ms)
+  2 tools completed in 1m 33s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

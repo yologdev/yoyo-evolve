@@ -1,0 +1,45 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the key requirements: the grep sweep must be empty, and the v4 names should match yoagent's preset.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== grep for old names in …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== yoagent preset deepsee… ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 1.5s (2 ✓)
+
+The grep for old names in src/ is not empty — the task explicitly required it to return nothing. There are remaining occurrences in `commands_info.rs, tools.rs, prompt_retry.rs, and format/cost.rs`. Let me check the yoagent 0.9 preset to see the actual v4 names.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n 'deepseek' /home/runner/.cargo/registry/src/*/yoagent-0.9.0/src/provider…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== count files with old n… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The v4 names are correct (deepseek-v4-pro, deepseek-v4-flash match the preset). But the task's explicit verification requirement — `grep -rn 'deepseek-chat\|deepseek-reasoner\|deepseek-r2' src/` must return nothing — fails. Four files still contain old names.
+
+Now, the scope guard says: if the sweep surfaces more than 3 files, do the two core files + tests and note remaining in commit message. Let me check what those remaining occurrences actually are and whether they're legacy-alias handling (which the preset says are still accepted) vs. things that must change.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== tools.rs 2885 ===" && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== git log commit message… ✓ (3ms)
+ ✓ (5ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Now I have the full picture. The task's verification section has a hard, explicit requirement stated twice:
+
+│ grep -rn 'deepseek-chat\|deepseek-reasoner\|deepseek-r2' src/ returns nothing.
+│ "the grep must come back empty."
+
+That grep does NOT come back empty — 4 files still contain old names. The commit message is a single generic line with no note of remaining occurrences, so the scope-guard escape hatch ("note remaining doc occurrences in the commit message for a follow-up") was not used either.
+
+Assessing what remains: these aren't all trivial. commands_info.rs:2233 asserts model_context_window("deepseek-chat") and `find_provider_for_model("deepseek-chat") — these are functional tests keyed on names no longer in KNOWN_MODELS`. The core deliverables (providers.rs default, agent_builder test pair, known-models list, pricing) are correct and the v4 names match the preset. But the task was explicit that "a point-fix that leaves a sibling occurrence is a half-sweep" — and the scope guard offered a legitimate way to defer (note in commit message) that was not taken.
+
+The core change is correct and product-safe, but the task's own explicit, twice-stated pass criterion (empty grep) is violated with no commit-message note. This is exactly the "half-sweep" the task warned against.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (59.8s)
+
+**Verdict: FAIL**
+
+The core change is correct — deepseek-v4-pro/deepseek-v4-flash match yoagent 0.9's preset, providers.rs default and the agent_builder test pair are updated properly. But the task defined an explicit, twice-stated pass gate:
+
+│ grep -rn 'deepseek-chat\|deepseek-reasoner\|deepseek-r2' src/ returns nothing. / "the grep must come back empty."
+
+That grep returns 4 files with lingering old names (commands_info.rs, tools.rs, `prompt_retry.rs, plus intentional pricing back-compat in cost.rs). Some are functional test assertions on names no longer in KNOWN_MODELS`. The scope guard offered a legitimate deferral path (note remaining occurrences in the commit message), but the commit is a single generic line with no such note. This is the exact "half-sweep" the task warned against, so it fails its own verification criteria.
+
+  watch: no files changed this turn — skipping
+
