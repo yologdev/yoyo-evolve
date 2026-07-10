@@ -1038,6 +1038,27 @@ mod tests {
     }
 
     #[test]
+    fn test_build_risk_input_validate_contract() {
+        // Contract test for the `yoyo risk validate` CLI path that the evolve
+        // harness's wrap-up patch (issue: "wire risk validate into evolve.sh")
+        // depends on. The harness will call `$YOYO_BIN risk validate` once per
+        // session so the prediction meter's *validation* half accumulates the
+        // same way `risk snapshot` (#575) feeds the snapshot half.
+        //
+        // `handle_risk` routes on the reconstructed `/risk <sub>` string, so if
+        // this mapping ever drifts the harness call silently writes nothing to
+        // `.yoyo/risk_validations.jsonl` and the meter stays starved. We assert
+        // the pure reconstruction only (no `.yoyo/` write side effect), so the
+        // contract is locked without invoking the real validate dispatch.
+        let validate_tail = vec!["validate".to_string()];
+        assert_eq!(
+            build_risk_input(&validate_tail),
+            "/risk validate",
+            "`yoyo risk validate` must reconstruct exactly `/risk validate`"
+        );
+    }
+
+    #[test]
     fn test_try_dispatch_subcommand_grep() {
         let args = vec!["yoyo".into(), "grep".into(), "TODO".into()];
         let result = try_dispatch_subcommand(&args);
