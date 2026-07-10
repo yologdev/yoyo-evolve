@@ -175,9 +175,8 @@ pub const KNOWN_MODELS: &[&str] = &[
     "gemini-2.5-flash-lite",
     "grok-4",
     "grok-4-mini",
-    "deepseek-chat",
-    "deepseek-reasoner",
-    "deepseek-r2",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
 ];
 
 /// Thinking level names for `/think <Tab>` completion.

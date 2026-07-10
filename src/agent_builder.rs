@@ -1787,7 +1787,7 @@ mod tests {
             ("anthropic", "claude-opus-4-6"),
             ("google", "gemini-2.5-pro"),
             ("openai", "gpt-4o"),
-            ("deepseek", "deepseek-chat"),
+            ("deepseek", "deepseek-v4-pro"),
         ];
         for (provider, model) in &providers {
             let config = test_agent_config(provider, model);

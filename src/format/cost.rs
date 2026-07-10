@@ -126,10 +126,14 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── DeepSeek ──────────────────────────────────────────────────────
     // https://platform.deepseek.com/api-docs/pricing/
-    if model.contains("deepseek-chat") || model.contains("deepseek-v3") {
+    if model.contains("deepseek-chat")
+        || model.contains("deepseek-v4-pro")
+        || model.contains("deepseek-v3")
+    {
         return Some((0.27, 0.0, 0.0, 1.10));
     }
     if model.contains("deepseek-reasoner")
+        || model.contains("deepseek-v4-flash")
         || model.contains("deepseek-r1")
         || model.contains("deepseek-r2")
     {
