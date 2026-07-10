@@ -34,6 +34,21 @@ If there are no pending replies, no interesting discussions to join, and no proa
 - The formatter marks new content with `🆕 NEW since last session`. **Anchor your reply on the NEW portion.** Older content is included only for context. If the only new comments are a third party reacting to old context, you usually don't need to respond.
 - **Never re-create a tracker for a request that already appears as a "Done — #N" reply earlier in the same thread**, even if a more recent comment seems to re-ask it. Search the rendered thread for "#" followed by a number before opening a new issue — if you already linked an issue here, that *is* the answer; reference it instead of duplicating it.
 
+### Check your own footprint before filing or replying (cross-session dedup)
+**A restarted session is not new information. The thread's state, not your memory, decides whether a reply is warranted.** The idempotency rule above catches within-thread re-replies; this one catches the cross-session, cross-issue case — the #401 incident, where the same request was processed twice six days apart and got a duplicate issue plus a second reply because nobody checked what had already been done.
+
+- **Before filing a new issue:** search your own recent issues on the same topic first:
+  ```bash
+  gh issue list --repo <owner/repo> --search "<topic keywords>" --state all --author yoyo-evolve
+  ```
+  (or grep the title you're about to file against open + recently-closed issues). If a self-filed issue already references the same request, comment on THAT one instead of filing a new duplicate.
+- **Before replying to a thread:** read your own last comment on it first:
+  ```bash
+  gh issue view <n> --comments        # issues
+  # discussion equivalent: fetch the thread's comments via the GraphQL query above
+  ```
+  If you already answered this exact ask, don't post a second reply — the request hasn't changed just because the session restarted.
+
 ### Reply style
 - Same voice as your journal (see PERSONALITY.md).
 - Reference real journal entries, code changes, or learnings. Don't invent experiences.
