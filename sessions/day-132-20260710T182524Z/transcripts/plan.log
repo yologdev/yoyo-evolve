@@ -1,0 +1,124 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll analyze the evidence and produce a session plan. Let me start by understanding the key signals.
+
+The assessment is clear: build is green, 0 reverts, backlog clear on `agent-self`. The DREAM milestone is accumulation-blocked (don't add sensors). Let me identify the highest-value work.
+
+Key candidates:
+• #582 (agent-input): `scan_commitments.py` scans issues only, misses Discussion promises. Concrete, self-editable, and this session's social wisdom directly names a discussion-thread promise (@danstis release tag) that this tooling would catch. Strong.
+• **DREAM self-driven slot**: accumulation-blocked — don't build more sensors. But there may be an anticipatory-vs-reactive angle... no, the assessment says let it run.
+• #341 orchestration: north star, but big — needs a small decomposable slice.
+
+Let me set up the plan directory and check a couple of specifics before finalizing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && head -60 scripts/scan_commitment… ✓ (5ms)
+ ✓ (7ms)
+  2 tools completed in 1.4s (2 ✓)
+
+`scan_commitments.py` takes a JSON array of issues on stdin. #582 wants it to also scan discussion promises. Let me check how the input is shaped and whether there's an existing discussion-fetch script I can align with.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "scan_commitments" scrip…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "def _build_payload\|def… ✓ (4ms)
+ ✓ (6ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Now I understand the structure. The scan function keys everything off issue number and comments[]. Discussions have a similar shape (number, title, comments with author/body). But evolve.sh invocation and the stdin JSON are constructed in the protected evolve.sh — so the feed of discussion data can't be wired by me. However, `scan_commitments.py` itself is NOT protected.
+
+The clean, self-editable slice: make scan_commitments.py **accept a source field** on each input item (defaulting to "issue") so discussion items can flow through the same triage, with output labeled correctly (### Discussion #N vs ### Issue #N). Ship it with tests. The actual wiring of discussion data into stdin belongs in evolve.sh (protected) → filed as a help-wanted follow-up. This is exactly the Day-58 pattern: ship the self-editable half + contract test, file the harness half.
+
+Let me confirm evolve.sh is what builds reply_issues.json.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reply_issues\|format_di… ✓ (202ms)
+
+This confirms #582 exactly. Part 1 (discussion promises) is the clean self-editable slice — extend scan_commitments.py to handle a source field so discussion items triage through the same call and render as ### Discussion #N. Part 2 (dedup check) is separate and can be a second task or deferred.
+
+Now let me finalize my 3 slots:
+
+1. #582 part 1 (evolve) — make scan_commitments.py source-aware (issue/discussion). Self-editable, tests exist, directly addresses this session's fresh social wisdom about the @danstis promise. **Self-driven-adjacent + community.**
+2. #582 part 2 (evolve) — the "check your own footprint before filing/replying" dedup guidance. But this is vaguer/lower-code — risk of decision-heavy stall. I'll keep it smaller: add explicit dedup instruction to the social skill (self-editable). Actually, let me make this the concrete anti-duplicate note.
+3. Self-driven / DREAM slot — DREAM is accumulation-blocked; per Days 125/129 lessons, building more sensors is procrastination. But the "check your own past actions" (#582 part 2) is a self-continuity improvement. Let me reconsider: I have #582 (two parts) which naturally fills 2 slots, plus I want one genuinely self-driven capability-gap slot.
+
+For the self-driven slot, DREAM says let-it-run. The next-biggest gap is orchestration (#341), but that's too big. Given my scoping lessons (start at retreat size), let me pick a small, concrete slice. Actually #582 part 1 IS the self-driven-quality work (fixing my own promise-tracking blind spot — self-continuity, tier 5). Let me make the three tasks:
+
+• Task 1: #582 part 1 — source-aware scan_commitments (the promise-tracking fix)
+• Task 2: #582 part 2 — self-footprint dedup note in social skill
+• Task 3: A small self-driven capability improvement — the release cadence. Actually the assessment notes #582's discussion promise was about release cadence (tag every 10-15 days). Let me check release timing instead as tier 8.
+
+Let me check the last release to decide on a release-check task.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git tag --sort=-creatordate | he… ✓ (24ms)
+
+v0.1.15 was released today (Day 132). So a release check is not warranted — just released. That frees the third slot for genuine self-driven work.
+
+Given DREAM is accumulation-blocked and just-released, the two-part #582 covers promise-tracking (self-continuity, directly evidenced this session). For the third slot, I'll keep it tight and thematically coherent with #582: both parts of #582 are about "yoyo not seeing its own past actions." That's exactly 2 tasks. Let me make the third a genuinely self-driven capability gap that's small and shippable.
+
+The sharpest small self-driven improvement: the assessment noted #341 orchestration is the north star but too big. A retreat-sized slice already exists (manifest). A genuinely small, concrete, test-first self-driven task independent of #582 would be risky to invent under time pressure. Per my lessons (don't fill silence with busywork; start at retreat size), I'll do just 2 tasks — both #582 halves, done well — rather than force a third. This honors "one thing at a time, done well" and the confound lesson.
+
+Actually, re-reading: the guidance requires ≥1 self-driven slot. #582 part 1 (fixing my own promise-blindness) IS self-continuity/self-driven work (tier 5), and it's a real capability gap in my own machinery. That satisfies the self-driven requirement. Let me write the two tasks.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (84 lines)  ▶ write session_plan/task_02.md (58 lines) ✓ (1m 19s)
+ ✓ (2m 37s)
+  2 tools completed in 2m 39s (2 ✓)
+
+Now the issue_responses.md and the help-wanted follow-up for the evolve.sh discussion-feed wiring.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (45 lines) ✓ (1m 18s)
+
+Now let me file the help-wanted follow-up for the evolve.sh discussion-feed wiring (the protected half of #582 part 1), then commit the plan.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (50 lines) ✓ (1.2s)
+
+Filed as #589. Let me update the issue_responses to reference it, then commit the plan.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/issue_responses.md (1 → 2 lines)
+  -   the harness half).
+  +   the harness half). Follow-up filed: **#589** (agent-help-wanted) with the
+  +   exact `gh api graphql` + `jq` feed patch.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ && git add sess… ✗ (8ms)
+    │ old_text not found in session_plan/issue_responses.md.
+ ✓ (8ms)
+  2 tools completed in 1.2s (1 ✓, 1 ✗)
+
+`session_plan/` is gitignored (expected). Let me fix the edit (the text spans a line break) and force-add the plan.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/issue_responses.md (1 → 2 lines)
+  -   the harness half).
+  +   the harness half of #582 part 1). Follow-up filed: **#589**
+  +   (agent-help-wanted) with the exact `gh api graphql` + `jq` feed patch.
+ ✗ (8ms)
+    │ old_text not found in session_plan/issue_responses.md.
+  ▶ read session_plan/issue_responses.md (12 lines) ✓ (0ms)
+  2 tools completed in 5.6s (1 ✓, 1 ✗)
+
+The harness half). is on its own line (line 11). Let me match exactly.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/issue_responses.md (1 → 2 lines)
+  -   harness half).
+  +   harness half). Follow-up filed: **#589** (agent-help-wanted) with the exact
+  +   `gh api graphql` + `jq` feed patch.
+ ✓ (1m 18s)
+  -   harness half).
+  +   harness half). Follow-up filed: **#589** (agent-help-wanted) with the exact
+  +   `gh api graphql` + `jq` feed patch.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -f session_plan/ && git … ✓ (13ms)
+  2 tools completed in 1m 27s (2 ✓)
+
+Plan committed. Summary:
+
+## Session Plan — Day 132 (17:47)
+
+Context: Build green, 0 reverts, `agent-self` backlog clear, v0.1.15 released today (no release check needed). DREAM milestone is accumulation-blocked — per Days 125/129 lessons, building more risk sensors is progress-shaped procrastination. Let it run.
+
+**Two tasks, both from #582** (a precise diagnosis of a real self-blind-spot: yoyo's promise-tracker can't see half the places it makes promises — the @danstis release promise rotted for weeks as living proof):
+
+• **Task 1 (evolve, self-driven):** Make scan_commitments.py source-aware — items tagged source: "discussion" triage through the same call and render as ### Discussion #N. Test-first, at most 2 files, self-editable. The protected evolve.sh feed-wiring half is filed as #589 (Day-58 pattern: ship the editable half + contract test, file the harness half).
+
+• Task 2 (evolve): Add a concrete, trigger-shaped "check your own footprint before filing/replying" step to the social/communicate skills — directly addressing the #401 double-reply incident. Guardrail: verify origin: yoyo frontmatter before editing.
+
+Deliberately only 2 tasks rather than forcing a third under time pressure — honoring "one thing at a time, done well" and the Day-128 confound lesson (don't fill silence with busywork). Task 1 fixes a real gap in my own machinery, satisfying the self-driven-slot requirement.
+
+**Deferred/no-op:** #587 (blocked on human, accumulation-blocked), #583 (partially done Day 132), #341 (north star, too big), #585 (out of scope).
+
+Plan committed. Stopping here — implementation is the next phase's job.
+
+  watch: no files changed this turn — skipping
+

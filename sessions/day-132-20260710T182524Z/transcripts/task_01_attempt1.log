@@ -1,0 +1,198 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current state of the two files I'm allowed to edit.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/scan_commitments.py ✓ (5ms)
+
+Let me read the truncated middle section to understand the full scan() function and how items are processed.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/scan_commitments.py:99..319 ✓ (2ms)
+
+Now let me look at the test file to understand the existing test style.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/test_scan_commitments.py ✓ (4ms)
+
+Now I understand the full structure. Let me write the tests first (test-first per the evolve skill). The key insight: I need a source-aware composite key so issue #5 and discussion #5 don't collide.
+
+Let me write the failing tests first:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/test_scan_commitments.py (2 → 5 lines)
+  - def _issue(num, title, comments):
+  -     return {"number": num, "title": title, "comments": comments}
+  + def _issue(num, title, comments, source=None):
+  +     item = {"number": num, "title": title, "comments": comments}
+  +     if source is not None:
+  +         item["source"] = source
+  +     return item
+ ✓ (1m 17s)
+  - def _issue(num, title, comments):
+  -     return {"number": num, "title": title, "comments": comments}
+  + def _issue(num, title, comments, source=None):
+  +     item = {"number": num, "title": title, "comments": comments}
+  +     if source is not None:
+  +         item["source"] = source
+  +     return item
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/test_scan_commitments.py (2 → 1 lines)
+        def test_request_body_shape(self):
+  -         """Pins the wire format so a refactor that renames `output_config`,
+ ✓ (1m 16s)
+        def test_request_body_shape(self):
+  -         """Pins the wire format so a refactor that renames `output_config`,
+  2 tools completed in 2m 38s (2 ✓)
+
+Oops, that broke the docstring. Let me revert that edit — it was a mistake.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/test_scan_commitments.py (1 → 2 lines)
+        def test_request_body_shape(self):
+  +         """Pins the wire format so a refactor that renames `output_config`,
+ ✓ (1m 18s)
+        def test_request_body_shape(self):
+  +         """Pins the wire format so a refactor that renames `output_config`,
+
+Good, restored. Now let me add a new test class for source-awareness before the RetryPolicy class:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/test_scan_commitments.py (1 → 100 lines)
+  + class SourceAwareness(unittest.TestCase):
+  +     """Discussions and issues share the stdin shape; only the header noun
+  +     differs. A `source` field ("issue" | "discussion") selects it, defaulting
+  +     to "issue" for backward-compat callers that pass no source.
+  +     """
+  + 
+  +     def _mock_response(self, outstanding):
+  +         text = json.dumps({"outstanding_commitments": outstanding})
+  +         return {"content": [{"type": "text", "text": text}]}
+  + 
+  +     def test_discussion_source_renders_discussion_header(self):
+  +         issue = _issue(
+  +             37,
+  +             "Tag a release every 10-15 days",
+  +             [_comment(BOT, "I'll tag @danstis on the next release.")],
+  +             source="discussion",
+  +         )
+  +         resp = self._mock_response([{
+  +             "issue_number": 37,
+  +             "promise_quote": "I'll tag @danstis on the next release.",
+  ... (80 more lines)
+ ✓ (1m 19s)
+  + class SourceAwareness(unittest.TestCase):
+  +     """Discussions and issues share the stdin shape; only the header noun
+  +     differs. A `source` field ("issue" | "discussion") selects it, defaulting
+  +     to "issue" for backward-compat callers that pass no source.
+  +     """
+  + 
+  +     def _mock_response(self, outstanding):
+  +         text = json.dumps({"outstanding_commitments": outstanding})
+  ... (13 more lines)
+
+Now run the tests to confirm they fail (test-first):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 scripts/test_scan_commit… ✓ (136ms)
+
+Two of the four new tests fail as expected (the other two already pass because default rendering is ### Issue). Now I'll implement the source-awareness in scan_commitments.py.
+
+First, thread source through `_build_payload` (normalized: unknown/missing → "issue"):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/scan_commitments.py (16 → 24 lines)
+                    "created_at": c.get("createdAt", ""),
+                    "body": body,
+                }
+  + 
+  +         # Source distinguishes issues from discussions (same stdin shape;
+  +         # only the rendered header noun differs). Default/unknown → "issue"
+  +         # so existing callers that pass no `source` are unchanged.
+  +         source = issue.get("source", "issue")
+  +         if source != "discussion":
+  +             source = "issue"
+    
+            trimmed_issues.append({
+                "number": issue.get("number"),
+                "title": issue.get("title", ""),
+  +             "source": source,
+                "prior_comments": [trim(c) for c in prior],
+                "last_bot_comment": trim(last_bot),
+            })
+ ✓ (1m 20s)
+                    "created_at": c.get("createdAt", ""),
+                    "body": body,
+                }
+  + 
+  +         # Source distinguishes issues from discussions (same stdin shape;
+  +         # only the rendered header noun differs). Default/unknown → "issue"
+  +         # so existing callers that pass no `source` are unchanged.
+  +         source = issue.get("source", "issue")
+  ... (10 more lines)
+
+Now update the `by_number lookup and rendering. The challenge: the LLM only returns issue_number` (no source). I need to match a verdict back to the right item. Strategy: build a list of items per number, and consume them in order — but that's fragile. 
+
+Better: the LLM sees each trimmed item includes `source and number. But the schema only has issue_number`. Per the task guidance: "prefer the item whose source+number both match; fall back to number-only". Since the LLM verdict lacks source, I'll match by pairing verdicts to items by number, and when multiple items share a number, consume them in input order (each verdict pops the next unmatched item of that number). Let me implement a robust matcher:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/scan_commitments.py (28 → 41 lines)
+        # Build a lookup so we can render title alongside the LLM's verdict.
+  -     by_number = {i.get("number"): i for i in trimmed_issues}
+  +     # Issues and discussions can share a number (issue #5 vs discussion #5),
+  +     # so the value is a LIST of items keyed on number. The LLM verdict only
+  +     # carries `issue_number` (we don't churn the prompt schema), so we match
+  +     # each verdict back to the next unconsumed item with that number, in
+  +     # input order — this keeps distinct-source same-number items from
+  +     # overwriting each other.
+  +     by_number = {}
+  +     for i in trimmed_issues:
+  +         by_number.setdefault(i.get("number"), []).append(i)
+    
+        blocks = []
+        for item in items:
+  ···
+            if num is None:
+                _warn(f"item missing issue_number: {item!r}")
+                continue
+  -         if num not in by_number:
+  -             # LLM hallucinated an issue number not in our input. Drop it (we
+  ... (25 more lines)
+ ✓ (1m 20s)
+        # Build a lookup so we can render title alongside the LLM's verdict.
+  -     by_number = {i.get("number"): i for i in trimmed_issues}
+  +     # Issues and discussions can share a number (issue #5 vs discussion #5),
+  +     # so the value is a LIST of items keyed on number. The LLM verdict only
+  +     # carries `issue_number` (we don't churn the prompt schema), so we match
+  +     # each verdict back to the next unconsumed item with that number, in
+  +     # input order — this keeps distinct-source same-number items from
+  +     # overwriting each other.
+  ... (13 more lines)
+
+There's one edge case in my same-number test: both items share number 5 but the verdicts must map to the right source. My pop(0) approach maps verdict-order to input-order. In the test, input order is [issue, discussion] and verdict order is [issue, discussion], so it works. But the LLM might reorder. The task says "prefer the item whose source+number both match" — but the verdict lacks source. Let me improve robustness: match by promise_quote when multiple candidates exist, since that disambiguates. Let me refine:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/scan_commitments.py (16 → 27 lines)
+                # hallucinations are a signal the prompt or model is misbehaving.
+                _warn(f"LLM returned unknown issue #{num} (not in input); dropping")
+                continue
+  -         matched = candidates.pop(0)
+  +         promise = (item.get("promise_quote") or "").strip()
+  +         # When multiple items share a number (issue #5 + discussion #5), the
+  +         # verdict's `issue_number` alone is ambiguous. Disambiguate on the
+  +         # promise_quote — it's lifted verbatim from one specific item's
+  +         # comment — and fall back to input order if no text match is found.
+  +         matched = None
+  +         if len(candidates) > 1 and promise:
+  +             for idx, cand in enumerate(candidates):
+  +                 if promise in (cand.get("last_bot_comment") or {}).get("body", ""):
+  +                     matched = candidates.pop(idx)
+  +                     break
+  +         if matched is None:
+  +             matched = candidates.pop(0)
+            source = matched.get("source", "issue")
+            noun = "Discussion" if source == "discussion" else "Issue"
+            title = matched.get("title", "(no title)")
+  ... (4 more lines)
+ ✓ (1m 17s)
+                # hallucinations are a signal the prompt or model is misbehaving.
+                _warn(f"LLM returned unknown issue #{num} (not in input); dropping")
+                continue
+  -         matched = candidates.pop(0)
+  +         promise = (item.get("promise_quote") or "").strip()
+  +         # When multiple items share a number (issue #5 + discussion #5), the
+  +         # verdict's `issue_number` alone is ambiguous. Disambiguate on the
+  +         # promise_quote — it's lifted verbatim from one specific item's
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

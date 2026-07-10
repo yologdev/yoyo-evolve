@@ -1,0 +1,83 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me start by verifying the frontmatter provenance of both skill files before editing.
+  ▶ $ head -20 skills/social/SKILL.md; echo "---COMMUNICATE---"; head -20 skills/commu… ✓ (7ms)
+
+`communicate is core: true / origin: creator — **off-limits**. social is origin: yoyo` — editable. I'll put the note only in social.
+
+Let me find the dedup/response guidance section in the social skill.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n -i "dedup\|duplicate\|before\|reply\|respond\|filing\|footprint\|last co…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (20ms)
+
+There's a strong "Before replying" idempotency section (line 31-35). The issue #582 is about issue filing and cross-session footprint — the #401 double-filing. Let me read the full "Before replying" section to place the new note well.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read skills/social/SKILL.md:24..64 ✓ (1ms)
+
+The existing idempotency guidance is about the within-thread case. The #582/#401 case is a distinct, cross-session, cross-issue footprint check. I'll add a new concrete subsection right after the "Before replying" block. Let me add it as a dedicated subsection so the trigger is clear.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit skills/social/SKILL.md (3 → 18 lines)
+    - **Never re-create a tracker for a request that already appears as a "Done — #N" reply earlier in the same thread**, even if a more recent comment seems to re-ask it. Search the rendered thread for "#" followed by a number before opening a new issue — if you already linked an issue here, that *is* the answer; reference it instead of duplicating it.
+  + 
+  + ### Check your own footprint before filing or replying (cross-session dedup)
+  + **A restarted session is not new information. The thread's state, not your memory, decides whether a reply is warranted.** The idempotency rule above catches within-thread re-replies; this one catches the cross-session, cross-issue case — the #401 incident, where the same request was processed twice six days apart and got a duplicate issue plus a second reply because nobody checked what had already been done.
+  + 
+  + - **Before filing a new issue:** search your own recent issues on the same topic first:
+  +   ```bash
+  +   gh issue list --repo <owner/repo> --search "<topic keywords>" --state all --author yoyo-evolve
+  +   ```
+  +   (or grep the title you're about to file against open + recently-closed issues). If a self-filed issue already references the same request, comment on THAT one instead of filing a new duplicate.
+  + - **Before replying to a thread:** read your own last comment on it first:
+  +   ```bash
+  +   gh issue view <n> --comments        # issues
+  +   # discussion equivalent: fetch the thread's comments via the GraphQL query above
+  +   ```
+  +   If you already answered this exact ask, don't post a second reply — the request hasn't changed just because the session restarted.
+    
+    ### Reply style
+ ✓ (1m 19s)
+    - **Never re-create a tracker for a request that already appears as a "Done — #N" reply earlier in the same thread**, even if a more recent comment seems to re-ask it. Search the rendered thread for "#" followed by a number before opening a new issue — if you already linked an issue here, that *is* the answer; reference it instead of duplicating it.
+  + 
+  + ### Check your own footprint before filing or replying (cross-session dedup)
+  + **A restarted session is not new information. The thread's state, not your memory, decides whether a reply is warranted.** The idempotency rule above catches within-thread re-replies; this one catches the cross-session, cross-issue case — the #401 incident, where the same request was processed twice six days apart and got a duplicate issue plus a second reply because nobody checked what had already been done.
+  + 
+  + - **Before filing a new issue:** search your own recent issues on the same topic first:
+  +   ```bash
+  +   gh issue list --repo <owner/repo> --search "<topic keywords>" --state all --author yoyo-evolve
+  ... (10 more lines)
+
+Now let me verify the edit and sanity-check the build.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read skills/social/SKILL.md:35..59 ✓ (0ms)
+
+The edit reads accurately. Now the build sanity check.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -3 ✓ (177ms)
+
+Build is clean. communicate was skipped because it's core: true / origin: creator (protected) — the note went only into the editable social skill (`origin: yoyo`). Let me commit.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 132 (17:47): Add self-footp… (14 lines) ✓ (14ms)
+
+Committed. Done.
+
+## Summary
+
+Task: Add a self-footprint dedup check to the respond-phase social guidance (#582 part 2).
+
+What I did:
+• Verified frontmatter provenance first (per guardrails). skills/communicate/SKILL.md is core: true / origin: creator — **protected, off-limits** — so I dropped it from the task. skills/social/SKILL.md is origin: yoyo — editable.
+• Added a concrete, trigger-shaped subsection to skills/social/SKILL.md right after the existing within-thread idempotency rule: **"Check your own footprint before filing or replying (cross-session dedup)."** It names the exact cheap checks:
+  • Before filing: `gh issue list --repo <owner/repo> --search "<topic keywords>" --state all --author yoyo-evolve`
+  • Before replying: `gh issue view <n> --comments`
+  • Framed as: "A restarted session is not new information. The thread's state, not your memory, decides whether a reply is warranted."
+• Cited the #401 incident so the guidance is anchored to the actual failure it prevents.
+
+Verification: cargo build clean (no code change — markdown only). Re-read the edited section for accuracy.
+
+Why only one file: communicate is a protected core file; forcing the edit would violate the safety rules. The note lives entirely in the editable social skill, which yoyo consults during the respond phase — satisfying "documented in at least one editable skill."
+
+Committed as d5134f40.
+
+  watch: no files changed this turn — skipping
+
