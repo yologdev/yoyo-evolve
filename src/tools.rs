@@ -2882,7 +2882,7 @@ mod tests {
     #[test]
     fn test_build_sub_agent_tool_openai_compatible_provider() {
         // "openai-compat", "custom", etc. should all use OpenAiCompatProvider path
-        let config = test_agent_config("deepseek", "deepseek-chat");
+        let config = test_agent_config("deepseek", "deepseek-v4-pro");
         let (tool, _) = build_sub_agent_tool(&config);
         assert_eq!(tool.name(), "sub_agent");
     }

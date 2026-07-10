@@ -2230,7 +2230,7 @@ More text.
         // xAI
         assert_eq!(model_context_window("grok-4"), Some(131_072));
         // DeepSeek
-        assert_eq!(model_context_window("deepseek-chat"), Some(128_000));
+        assert_eq!(model_context_window("deepseek-v4-pro"), Some(128_000));
         // Mistral
         assert_eq!(model_context_window("mistral-large"), Some(128_000));
         assert_eq!(model_context_window("codestral"), Some(128_000));
@@ -2256,8 +2256,8 @@ More text.
         // grok-4-mini — covered by grok catch-all
         assert_eq!(model_context_window("grok-4-mini"), Some(131_072));
 
-        // deepseek-r2 — covered by deepseek catch-all
-        assert_eq!(model_context_window("deepseek-r2"), Some(128_000));
+        // deepseek-v4-flash — covered by deepseek catch-all
+        assert_eq!(model_context_window("deepseek-v4-flash"), Some(128_000));
 
         // o4-mini-high — covered by o4 prefix
         assert_eq!(model_context_window("o4-mini-high"), Some(200_000));
@@ -2279,7 +2279,7 @@ More text.
         assert_eq!(find_provider_for_model("gpt-4o"), Some("openai"));
         assert_eq!(find_provider_for_model("gemini-2.5-pro"), Some("google"));
         assert_eq!(find_provider_for_model("grok-4"), Some("xai"));
-        assert_eq!(find_provider_for_model("deepseek-chat"), Some("deepseek"));
+        assert_eq!(find_provider_for_model("deepseek-v4-pro"), Some("deepseek"));
     }
 
     #[test]

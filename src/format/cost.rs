@@ -126,17 +126,10 @@ fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── DeepSeek ──────────────────────────────────────────────────────
     // https://platform.deepseek.com/api-docs/pricing/
-    if model.contains("deepseek-chat")
-        || model.contains("deepseek-v4-pro")
-        || model.contains("deepseek-v3")
-    {
+    if model.contains("deepseek-v4-pro") || model.contains("deepseek-v3") {
         return Some((0.27, 0.0, 0.0, 1.10));
     }
-    if model.contains("deepseek-reasoner")
-        || model.contains("deepseek-v4-flash")
-        || model.contains("deepseek-r1")
-        || model.contains("deepseek-r2")
-    {
+    if model.contains("deepseek-v4-flash") || model.contains("deepseek-r1") {
         return Some((0.55, 0.0, 0.0, 2.19));
     }
 
@@ -1149,9 +1142,9 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // deepseek-chat: $0.27/MTok input, $1.10/MTok output
-        let cost = estimate_cost(&usage, "deepseek-chat").unwrap();
-        assert!((cost - 1.37).abs() < 0.001, "deepseek-chat cost: {cost}");
+        // deepseek-v4-pro: $0.27/MTok input, $1.10/MTok output
+        let cost = estimate_cost(&usage, "deepseek-v4-pro").unwrap();
+        assert!((cost - 1.37).abs() < 0.001, "deepseek-v4-pro cost: {cost}");
     }
 
     #[test]
@@ -1163,11 +1156,11 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // deepseek-reasoner: $0.55/MTok input, $2.19/MTok output
-        let cost = estimate_cost(&usage, "deepseek-reasoner").unwrap();
+        // deepseek-v4-flash: $0.55/MTok input, $2.19/MTok output
+        let cost = estimate_cost(&usage, "deepseek-v4-flash").unwrap();
         assert!(
             (cost - 2.74).abs() < 0.001,
-            "deepseek-reasoner cost: {cost}"
+            "deepseek-v4-flash cost: {cost}"
         );
     }
 
@@ -1698,9 +1691,9 @@ mod tests {
     }
 
     #[test]
-    fn test_pricing_deepseek_r2() {
-        assert!(model_pricing("deepseek-r2").is_some());
-        let (inp, _, _, out) = model_pricing("deepseek-r2").unwrap();
+    fn test_pricing_deepseek_v4_flash() {
+        assert!(model_pricing("deepseek-v4-flash").is_some());
+        let (inp, _, _, out) = model_pricing("deepseek-v4-flash").unwrap();
         assert!((inp - 0.55).abs() < 0.001);
         assert!((out - 2.19).abs() < 0.001);
     }
