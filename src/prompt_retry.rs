@@ -381,7 +381,11 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
 /// 5. **Model not found** (404/invalid model) — suggests known models for the provider
 pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
     let lower = error.to_lowercase();
-    let provider = infer_provider_from_model(model);
+    // Prefer the provider the user *configured* this session (recorded by main.rs
+    // after setup/flags resolve) over one guessed from the model name. Without this,
+    // an OpenRouter user on `claude-sonnet-4-6` was wrongly told to set
+    // `ANTHROPIC_API_KEY` instead of `OPENROUTER_API_KEY` (#590).
+    let provider = resolve_diagnostic_provider(crate::cli::configured_provider().as_deref(), model);
 
     if lower.contains("401")
         || lower.contains("unauthorized")
@@ -532,6 +536,20 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Resolve which provider the diagnostic message should name.
+///
+/// Prefers the *configured* provider (recorded at startup once setup/flags
+/// resolve) so an auth-failure message names the env var the user actually
+/// needs. Falls back to inferring from the model name only when no configured
+/// provider was recorded. Pure — takes the configured provider as an argument
+/// so it's testable without touching the process-global `OnceLock` (#590).
+fn resolve_diagnostic_provider(configured: Option<&str>, model: &str) -> String {
+    match configured {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => infer_provider_from_model(model),
+    }
 }
 
 /// Infer the provider name from a model identifier.
@@ -1336,6 +1354,31 @@ mod tests {
             msg.contains("ANTHROPIC_API_KEY"),
             "should mention env var: {msg}"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // resolve_diagnostic_provider — #590: prefer configured provider over
+    // model-name guess. Pure helper so we test without touching the OnceLock.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_provider_prefers_configured_over_model_guess() {
+        // HIT: OpenRouter user on a claude-* model. The configured provider
+        // must win so the auth diagnostic names OPENROUTER_API_KEY, not
+        // ANTHROPIC_API_KEY (which the model name alone would infer).
+        let provider = resolve_diagnostic_provider(Some("openrouter"), "claude-sonnet-4-6");
+        assert_eq!(provider, "openrouter");
+    }
+
+    #[test]
+    fn test_resolve_provider_falls_back_to_model_when_unconfigured() {
+        // NEAR-MISS (Day-122 paired test): no configured provider recorded, so
+        // the same claude-* model must still infer "anthropic".
+        let provider = resolve_diagnostic_provider(None, "claude-sonnet-4-6");
+        assert_eq!(provider, "anthropic");
+        // An empty configured string is treated as unset, same fallback.
+        let provider = resolve_diagnostic_provider(Some(""), "claude-sonnet-4-6");
+        assert_eq!(provider, "anthropic");
     }
 
     #[test]

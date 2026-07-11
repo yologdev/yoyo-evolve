@@ -744,6 +744,10 @@ async fn main() {
 
     apply_bedrock_credentials(&mut agent_config);
 
+    // Record the resolved provider so error diagnosis names the *configured*
+    // provider's env var (not one guessed from the model name) on auth failures (#590).
+    cli::set_configured_provider(&agent_config.provider);
+
     let mut agent = agent_config.build_agent();
 
     // Connect to external servers (MCP + OpenAPI) — skip when --no-tools is active
