@@ -1,0 +1,59 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick one small, concrete improvement and implement it. Let me start by looking for a quick win in a focused area.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && cargo bu… ✓ (164ms)
+
+Build is green. Let me look for a small improvement — checking a utility function with potential edge cases.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_token_count\|… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:239..284 ✓ (1ms)
+  2 tools completed in 5.5s (2 ✓)
+
+These are well-tested. Let me check format_token_count for the rollover boundary test coverage, since it has a subtle edge case comment.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "999_9\|999_950\|1_000_0… ✓ (5ms)
+
+That's well-covered. Let me look at format_duration — its boundaries aren't tested for the near-1000ms and near-60000ms transitions.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test.*duration\|form… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:696..766 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+This is thoroughly tested already. Let me pick a different area — checking a function that lacks near-miss/boundary tests. Let me look at format/output.rs truncation, which the Day-123 lesson flagged for byte-vs-line axes.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn tail_for_capture" sr… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:326..381 ✓ (1ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Let me check the test coverage for tail_for_capture — specifically the multi-byte boundary case at the byte cut, which is exactly the Day-123 axis lesson.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tail_for_capture" src/r… ✓ (4ms)
+
+Well-covered including multibyte boundaries. This file is solid. Let me pick a genuinely under-tested spot. Let me check format_followup_hint, a newer function.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_followup_hint… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:1457..1497 ✓ (1ms)
+  2 tools completed in 3.3s (2 ✓)
+
+Let me check test coverage for format_followup_hint and first_followup_text.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_followup_hint\|f… ✓ (4ms)
+
+`format_followup_hint is tested but first_followup_text` has no direct test. That's a real gap — a pure function that extracts text from a snapshot, untested. Let me verify and add a test.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "first_followup_text" sr… ✓ (3ms)
+
+`first_followup_text` is used but has zero test coverage. Let me check the yoagent types to construct a correct test.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AgentMessage\b" src/re… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && Y=~/.cargo/registry/src/index.cr… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && Y=~/.cargo/registry/src/index.cr… ✓ (4ms)
+  3 tools completed in 7.0s (3 ✓)
+
+I have what I need. AgentMessage::from(Message::user(...)) gives a User LLM message. Let me look at the existing test module imports to write a clean test.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2765,2790p' src/repl.rs ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,76 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me check the current state and find one small improvement to make and commit.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline … ✓ (9ms)
+
+Working tree is clean. Let me find one small, concrete improvement quickly. Let me look for a low-risk target — perhaps a helper with a small gap.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_token_count" … ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:257..297 ✓ (1ms)
+  2 tools completed in 4.4s (2 ✓)
+
+`format_token_count` handles billions poorly — a value ≥ 1 billion prints as e.g. "1234.5M". Let me check whether that's a real gap and add a "B" (billion) tier plus a test. This is small and concrete.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_token_count" src… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:631..661 ✓ (0ms)
+  2 tools completed in 3.5s (2 ✓)
+
+There's a real gap: values ≥ 1 billion print as e.g. "1000.0M" instead of "1.0B". Let me add a "B" tier with the same rollover discipline.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (8 → 12 lines)
+            // Upper bound is 999_950, not 1_000_000: values in 999_950..1_000_000
+            // round to "1000.0k" at one decimal place, so roll them over to "M".
+            format!("{:.1}k", count as f64 / 1000.0)
+  -     } else {
+  +     } else if count < 999_950_000 {
+  +         // Same rollover discipline: values in 999_950_000..1_000_000_000 round
+  +         // to "1000.0M" at one decimal place, so roll them over to "B".
+            format!("{:.1}M", count as f64 / 1_000_000.0)
+  +     } else {
+  +         format!("{:.1}B", count as f64 / 1_000_000_000.0)
+        }
+    }
+ ✓ (1m 35s)
+            // Upper bound is 999_950, not 1_000_000: values in 999_950..1_000_000
+            // round to "1000.0k" at one decimal place, so roll them over to "M".
+            format!("{:.1}k", count as f64 / 1000.0)
+  -     } else {
+  +     } else if count < 999_950_000 {
+  +         // Same rollover discipline: values in 999_950_000..1_000_000_000 round
+  +         // to "1000.0M" at one decimal place, so roll them over to "B".
+            format!("{:.1}M", count as f64 / 1_000_000.0)
+  ... (4 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (2 → 7 lines)
+            assert_eq!(format_token_count(999_949), "999.9k");
+  +         // Billion tier: values >= 1e9 roll over to "B" instead of "1000.0M".
+  +         assert_eq!(format_token_count(999_949_999), "999.9M");
+  +         assert_eq!(format_token_count(999_950_000), "1.0B");
+  +         assert_eq!(format_token_count(1_000_000_000), "1.0B");
+  +         assert_eq!(format_token_count(2_500_000_000), "2.5B");
+        }
+ ✓ (1m 36s)
+            assert_eq!(format_token_count(999_949), "999.9k");
+  +         // Billion tier: values >= 1e9 roll over to "B" instead of "1000.0M".
+  +         assert_eq!(format_token_count(999_949_999), "999.9M");
+  +         assert_eq!(format_token_count(999_950_000), "1.0B");
+  +         assert_eq!(format_token_count(1_000_000_000), "1.0B");
+  +         assert_eq!(format_token_count(2_500_000_000), "2.5B");
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.9s)
+  3 tools completed in 3m 38s (3 ✓)
+
+All green. Let me run the full test suite once to be safe, then commit.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -6 ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (5 lines) ✓ (14ms)
+  2 tools completed in 1m 5s (2 ✓)
+
+Done. Committed one small, concrete src/ improvement.
+
+What I did: format_token_count in src/format/cost.rs previously rendered any count ≥ 1 billion as e.g. "1000.0M". I added a "B" (billion) tier using the same rounding-boundary rollover discipline already used for the k→M transition (values in 999_950_000..1_000_000_000 round to `"1000.0M" at one decimal, so they roll over to "1.0B"`), plus tests covering the new boundary and the billion range.
+
+All four checks pass (fmt, clippy -D warnings, build, test — 88+ tests green), and the change is committed as 8a741e83.
+
+  watch: no files changed this turn — skipping
+
