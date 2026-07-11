@@ -1,0 +1,157 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current state of the code to understand what needs wiring.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:40..60  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:360..420 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.8s (2 ✓)
+
+Let me look at `infer_provider_from_model and see how provider` is used throughout the function.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'infer_provider_from_model|fn diagnose_api_error|provider' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "infer_provider_from_mod… ✓ (7ms)
+  2 tools completed in 7.8s (2 ✓)
+
+Now I understand the structure. The cleanest approach (option a) is to extract a pure helper for provider resolution. Let me refactor `diagnose_api_error to use a pure helper resolve_diagnostic_provider`.
+
+Let me write the test first, then wire. First, let me look at the exact test region and the main.rs wiring point.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:537..552  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:578..598 ✓ (0ms)
+ ✓ (1ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The setup wizard also isn't the only place the provider is resolved. But #590's scenario is: setup wizard picks a provider. Let me wire the setter right at line 586. But I should also consider the case where provider is set via CLI flags (not just wizard). Let me check how provider gets resolved generally in main.rs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "agent_config.provider\|… ✓ (3ms)
+
+The task specifies wiring at the setup resolution point (line 586). But to fully fix #590 for all users (not just wizard users), the ideal spot is wherever agent_config.provider is finalized. Line 697 builds the config. Let me look at where `run_setup_wizard_if_needed` is called and the surrounding flow to find the single point where the final provider is known.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:255..285 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_setup_wizard_if_nee… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:741..756 ✓ (0ms)
+  3 tools completed in 5.8s (3 ✓)
+
+Line 745-747 is the single point where agent_config.provider is finalized for ALL users (wizard, CLI flags, config file). Wiring set_configured_provider right before `build_agent()` at line 745 covers every path — better than only the wizard branch. The task said "~line 586" but also "verify the exact line/context first; place the call right where the resolved provider becomes known." Line 745 is where it's fully resolved for all paths.
+
+Let me write the tests first. I'll refactor diagnose_api_error to use a pure helper. Let me look at the test module structure and existing diagnose tests.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:1323..1353 ✓ (0ms)
+
+Now let me implement. First, refactor diagnose_api_error to use a pure helper resolve_diagnostic_provider. Then wire the reader through the pure helper and the setter in main.rs.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (3 → 7 lines)
+    pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
+        let lower = error.to_lowercase();
+  -     let provider = infer_provider_from_model(model);
+  +     // Prefer the provider the user *configured* this session (recorded by main.rs
+  +     // after setup/flags resolve) over one guessed from the model name. Without this,
+  +     // an OpenRouter user on `claude-sonnet-4-6` was wrongly told to set
+  +     // `ANTHROPIC_API_KEY` instead of `OPENROUTER_API_KEY` (#590).
+  +     let provider = resolve_diagnostic_provider(crate::cli::configured_provider().as_deref(), model);
+ ✓ (11.1s)
+    pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
+        let lower = error.to_lowercase();
+  -     let provider = infer_provider_from_model(model);
+  +     // Prefer the provider the user *configured* this session (recorded by main.rs
+  +     // after setup/flags resolve) over one guessed from the model name. Without this,
+  +     // an OpenRouter user on `claude-sonnet-4-6` was wrongly told to set
+  +     // `ANTHROPIC_API_KEY` instead of `OPENROUTER_API_KEY` (#590).
+  +     let provider = resolve_diagnostic_provider(crate::cli::configured_provider().as_deref(), model);
+
+Now add the pure helper next to infer_provider_from_model.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (3 → 17 lines)
+  + /// Resolve which provider the diagnostic message should name.
+  + ///
+  + /// Prefers the *configured* provider (recorded at startup once setup/flags
+  + /// resolve) so an auth-failure message names the env var the user actually
+  + /// needs. Falls back to inferring from the model name only when no configured
+  + /// provider was recorded. Pure — takes the configured provider as an argument
+  + /// so it's testable without touching the process-global `OnceLock` (#590).
+  + fn resolve_diagnostic_provider(configured: Option<&str>, model: &str) -> String {
+  +     match configured {
+  +         Some(p) if !p.is_empty() => p.to_string(),
+  +         _ => infer_provider_from_model(model),
+  +     }
+  + }
+  + 
+    /// Infer the provider name from a model identifier.
+    /// Used by `diagnose_api_error` so it doesn't need `provider` threaded through every caller.
+    fn infer_provider_from_model(model: &str) -> String {
+ ✓ (17.1s)
+  + /// Resolve which provider the diagnostic message should name.
+  + ///
+  + /// Prefers the *configured* provider (recorded at startup once setup/flags
+  + /// resolve) so an auth-failure message names the env var the user actually
+  + /// needs. Falls back to inferring from the model name only when no configured
+  + /// provider was recorded. Pure — takes the configured provider as an argument
+  + /// so it's testable without touching the process-global `OnceLock` (#590).
+  + fn resolve_diagnostic_provider(configured: Option<&str>, model: &str) -> String {
+  ... (9 more lines)
+
+Reader wired. Now set_configured_provider is the remaining dead code. Wire the setter in main.rs at the finalization point (line 745).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (3 → 7 lines)
+        apply_bedrock_credentials(&mut agent_config);
+  + 
+  +     // Record the resolved provider so error diagnosis names the *configured*
+  +     // provider's env var (not one guessed from the model name) on auth failures (#590).
+  +     cli::set_configured_provider(&agent_config.provider);
+    
+        let mut agent = agent_config.build_agent();
+ ✓ (1m 39s)
+        apply_bedrock_credentials(&mut agent_config);
+  + 
+  +     // Record the resolved provider so error diagnosis names the *configured*
+  +     // provider's env var (not one guessed from the model name) on auth failures (#590).
+  +     cli::set_configured_provider(&agent_config.provider);
+    
+        let mut agent = agent_config.build_agent();
+
+Now add the two tests near diagnose_api_error. Let me add them after the existing auth tests.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (2 → 2 lines) ✓ (1m 39s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs (2 → 27 lines)
+  +     // ---------------------------------------------------------------
+  +     // resolve_diagnostic_provider — #590: prefer configured provider over
+  +     // model-name guess. Pure helper so we test without touching the OnceLock.
+  +     // ---------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_resolve_provider_prefers_configured_over_model_guess() {
+  +         // HIT: OpenRouter user on a claude-* model. The configured provider
+  +         // must win so the auth diagnostic names OPENROUTER_API_KEY, not
+  +         // ANTHROPIC_API_KEY (which the model name alone would infer).
+  +         let provider = resolve_diagnostic_provider(Some("openrouter"), "claude-sonnet-4-6");
+  +         assert_eq!(provider, "openrouter");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_resolve_provider_falls_back_to_model_when_unconfigured() {
+  +         // NEAR-MISS (Day-122 paired test): no configured provider recorded, so
+  +         // the same claude-* model must still infer "anthropic".
+  +         let provider = resolve_diagnostic_provider(None, "claude-sonnet-4-6");
+  +         assert_eq!(provider, "anthropic");
+  ... (7 more lines)
+ ✓ (1m 36s)
+  +     // ---------------------------------------------------------------
+  +     // resolve_diagnostic_provider — #590: prefer configured provider over
+  +     // model-name guess. Pure helper so we test without touching the OnceLock.
+  +     // ---------------------------------------------------------------
+  + 
+  +     #[test]
+  +     fn test_resolve_provider_prefers_configured_over_model_guess() {
+  +         // HIT: OpenRouter user on a claude-* model. The configured provider
+  ... (13 more lines)
+  2 tools completed in 3m 27s (2 ✓)
+
+Now I need to verify provider_api_key_env handles "openrouter". Let me check.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "openrouter\|OPENROUTER"… ✓ (3ms)
+
+Good, "openrouter" → "OPENROUTER_API_KEY" is supported. Let me add one end-to-end test through diagnose_api_error for the None-fallback path (the near-miss at the full-diagnosis level, which doesn't touch the OnceLock). The pure helper covers the Some path. Now run all checks.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.3s)
+
+  watch: no files changed this turn — skipping
+

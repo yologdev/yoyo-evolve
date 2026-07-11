@@ -1,0 +1,93 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The assessment is crystal clear: CI is red on main because of dead `CONFIGURED_PROVIDER` plumbing, and fixing it properly closes community bug #590. That's my priority-0 task and it's a single, one-hand-sized fix. Let me plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+Now let me write the plan. The assessment's recommendation is authoritative: finish the #590 wiring (unbreaks CI + closes bug + retires facade), one small task in one hand.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (82 lines) ✓ (17.5s)
+
+Good — the auto-check confirms the assessment: CONFIGURED_PROVIDER is a OnceLock<String>, which matters for the test-isolation note (a OnceLock can't be reset once set, so the two tests can't both set_configured_provider — the reader test must be structured accordingly). Let me refine that test guidance in task_01.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/task_01.md (4 → 16 lines)
+  - NOTE on test isolation: `CONFIGURED_PROVIDER` is process-global state. If the two tests
+  - can race under the test harness, either serialize them (single test with both phases) or
+  - use whatever locking pattern the codebase already uses for global test state. Confirm the
+  - static's type (Mutex / OnceLock / etc.) and set/reset it safely so tests don't interfere.
+  + NOTE on test isolation — IMPORTANT: `CONFIGURED_PROVIDER` is a
+  + `std::sync::OnceLock<String>` (confirmed in cli.rs:44). A `OnceLock` can be set **only
+  + once per process** and cannot be reset. So you CANNOT write two independent tests that each
+  + call `set_configured_provider(...)` — the second call is a silent no-op and the tests will
+  + interfere unpredictably depending on run order. Options:
+  +   (a) Refactor `diagnose_api_error` so the provider-resolution logic lives in a **pure
+  +       helper** that takes the configured-provider `Option<&str>` (or `Option<String>`) as
+  +       an argument, and unit-test that pure helper directly (pass `Some("openrouter")` for
+  +       the hit, `None` for the near-miss fallback). This is the cleanest: no global state in
+  +       tests at all, and it's the more testable shape. Prefer this.
+  +   (b) If (a) is out of scope, write a single `#[test]` that only exercises the `None`
+  +       fallback (near-miss) without ever calling the setter, plus the pure-helper test for
+  +       the `Some(...)` hit. Do NOT rely on setting the `OnceLock` inside a test.
+  + The setter (`set_configured_provider`) is exercised for real at runtime by main.rs wiring;
+  + its correctness is covered by the pure helper's `Some(...)` branch. Do not fight the
+  + OnceLock in tests.
+ ✓ (17.1s)
+  - NOTE on test isolation: `CONFIGURED_PROVIDER` is process-global state. If the two tests
+  - can race under the test harness, either serialize them (single test with both phases) or
+  - use whatever locking pattern the codebase already uses for global test state. Confirm the
+  - static's type (Mutex / OnceLock / etc.) and set/reset it safely so tests don't interfere.
+  + NOTE on test isolation — IMPORTANT: `CONFIGURED_PROVIDER` is a
+  + `std::sync::OnceLock<String>` (confirmed in cli.rs:44). A `OnceLock` can be set **only
+  + once per process** and cannot be reset. So you CANNOT write two independent tests that each
+  + call `set_configured_provider(...)` — the second call is a silent no-op and the tests will
+  ... (12 more lines)
+
+The auto-check failure is the pre-existing red-main state (that's exactly what task_01 fixes) — my planning edits don't cause it.
+
+Now, task_01 alone fixes CI and closes the top community bug. That's the highest-value work and it's product-safe. For the remaining slots: the assessment says agent-self backlog is empty, and the two open help-wanted issues (#587/#589) are harness-side (protected evolve.sh) — I can't do those myself, and #589 already got a human reply worth acknowledging. The dream milestone is accumulation-blocked (needs those exact harness feeds to fire). 
+
+Rather than pad with low-value aesthetic tasks (exactly the Day-133 laundering trap I just journaled), I'll add one genuinely useful self-driven task: a regression guard so a future half-wired facade like this one is caught at write-time, not by CI. But that risks overreach. Let me keep it small and honest — a single second task that adds real value and is one-hand-sized. Let me check what's truly available.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (358ms)
+
+The open issues match the assessment. #590 is my task_01. The help-wanted issues (#587/#589) are blocked on protected evolve.sh — I can't touch them, but #589 got a substantive human reply about pagination that deserves acting on: **making the contract test explicit about the pagination limitation**. That's self-editable, real, and one-hand-sized. That's a strong task_02.
+
+For task_03, I'll be disciplined and stop at two rather than pad with an aesthetic third — but there's one genuinely useful low-risk self-driven option: a write-time regression guard against the exact facade class that broke CI today. Let me keep task_02 (act on #589's reply) and add a focused task_03 only if it's real value. The #589 pagination fixture is real. The facade-guard is real too. I'll write both, both small.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_02.md (69 lines) ✓ (17.0s)
+
+Two solid tasks: the CI/bug fix (task_01) and acting on the human reply (task_02). 
+
+Now, task_03. My Day-133 lesson warns explicitly against padding with same-shape aesthetic tasks. But there IS a genuinely valuable, differently-shaped self-driven task: a write-time regression guard against the facade class that broke CI today. The root cause was #[allow(dead_code)]-free dead plumbing that only CI caught, because the evolve fix-loop doesn't run clippy. That's a real structural gap — my own Day-133 assessment named it: "the evolve loop commits with raw git commit and does not run clippy in the fix loop the way CI does, so a clippy-only failure slipped to main."
+
+That fix lives in evolve.sh (protected). So I can't fix the loop directly. But this is a legitimate help-wanted issue to file — and it's the durable fix for the class, not a one-off. Let me make task_03 a small self-driven improvement I can do: I'll defer and instead keep the session honest at two real tasks plus filing the structural issue. Let me file that issue now and write it into the plan as guidance.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "clippy" scripts/evolve.… ✓ (4ms)
+
+Interesting — evolve.sh does reference clippy in the fix loop (line 1651). So the clippy check exists in the harness, yet the dead code still reached main. That means the facade was committed in a session where clippy either wasn't run at the safety-commit point or the fix-loop path that runs it wasn't hit. This is a real harness gap but diagnosing it precisely requires reading protected evolve.sh internals — genuinely a help-wanted, not a self-fix. Let me file it and make task_03 a genuinely different-shaped, self-doable improvement instead.
+
+Actually — the most honest move: the assessment found the facade shipped because safety_commit() gates on "build + test" but not clippy. Let me verify.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/safety_commit()/,/^}/p'… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '/^safety_commit\(\)/{f=1} f… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safety_commit" scripts/… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '950,1010p' scripts/evolv… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/scripts/evolve.sh:950..1005 ✓ (1ms)
+  5 tools completed in 12.3s (5 ✓)
+
+Now I have the root cause precisely: safety_commit() (line 950-968) commits based on protected-file + (per the CLAUDE.md description) build + test checks — but it does not run clippy before committing. So a change that builds and tests green but fails clippy -D warnings (like today's dead code) gets safety-committed and pushed to main, breaking CI. The build/test re-checks happen elsewhere but clippy isn't in the safety-commit gate.
+
+This is the durable structural fix for today's failure class — but safety_commit lives in protected evolve.sh. I can't edit it; I must file help-wanted with the exact patch (Day-58 discipline). Let me file that, then decide on task_03.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cargo clippy\|cargo bui… ✓ (4ms)
+
+Confirmed. At line 1231-1235, the post-task gate before safety_commit runs cargo build then cargo test — but not cargo clippy. That's exactly why today's clippy-only dead-code failure slipped to main. The final-verify at line 1231 gates the commit on build+test, clippy is absent. This is the durable fix for the class. Let me file it as help-wanted with the precise patch.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1225,1265p' scripts/evol… ✓ (3ms)
+
+Root cause fully confirmed: the build-fix loop (line 1227-1265) gates only on `cargo build + cargo test, never cargo clippy --all-targets -- -D warnings`. So clippy-only failures (dead code, unused imports) pass this gate, get safety_committed, and break main's CI. Adding a clippy branch here — mirroring the existing build/test branches — is the durable class fix. It's in protected evolve.sh, so I file it with the exact patch.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (72 lines) ✓ (1.0s)
+
+  watch: no files changed this turn — skipping
+

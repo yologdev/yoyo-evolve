@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the key wiring points.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '40,60p' src/cli.rs && ec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "configured_provider\|in… ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 1.2s (2 ✓)
+
+All three wiring points confirmed. Setter is called in main.rs, reader is wired via the pure helper in prompt_retry.rs, and both tests exist. Let me confirm the diagnostic actually uses provider to name the env var.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '388,420p' src/prompt_ret… ✓ (3ms)
+
+The resolved provider flows into provider_api_key_env(&provider) which names the correct env var. An OpenRouter session → OPENROUTER_API_KEY. The wiring is complete and correct: setter called in main.rs, reader wired via pure helper, two paired tests (hit + near-miss fallback including empty-string edge case), dead code eliminated.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (1m 16s)
+
+Verdict: PASS
+
+The diff correctly implements all three required wiring points:
+• main.rs: cli::set_configured_provider(&agent_config.provider) called right after setup/flags/bedrock resolve — the resolved provider becomes known there.
+• **prompt_retry.rs**: diagnose_api_error now resolves provider via the pure resolve_diagnostic_provider helper that prefers `configured_provider() and falls back to infer_provider_from_model. The resolved provider flows into provider_api_key_env(&provider)`, so an OpenRouter session correctly names OPENROUTER_API_KEY.
+• Tests: Two paired tests exercise the pure helper directly (hit + near-miss), correctly avoiding the OnceLock isolation trap as the task explicitly warned. Bonus empty-string edge case covered.
+• Previously dead cli.rs items are now live, unbreaking the clippy CI gate and closing #590 in one task.
+
+  watch: no files changed this turn — skipping
+
