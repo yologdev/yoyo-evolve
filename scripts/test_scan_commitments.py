@@ -306,6 +306,91 @@ class SourceAwareness(unittest.TestCase):
         self.assertIn("### Issue #9 —", blocks[0])
 
 
+class PaginationLimitation(unittest.TestCase):
+    """Pins the harness-fetch pagination contract raised on issue #589.
+
+    The evolve.sh patch that feeds discussions into this scanner fetches with
+    `discussions(first:N)` / `comments(first:M)` WITHOUT pagination. So the
+    proving bot comment for a real commitment can fall past the first page —
+    e.g. an early bot reply buried under a long thread of later human comments,
+    or a recently-active-but-old discussion past the first N discussions.
+
+    The scanner itself is correct: it triages whatever it's fed. But it can
+    only triage what reaches it. These fixtures make that boundary an explicit,
+    checked contract:
+
+      * When the bot comment IS in the fed input, the scanner correctly
+        surfaces the discussion → the scanner is not the failure point.
+      * When the bot comment is ABSENT (simulating the un-paginated fetch
+        having dropped it past `first:M`), the discussion is NOT surfaced →
+        this is the exact silent false-negative the human named.
+
+    CONTRACT: authoritative triage depends on the harness fetch PAGINATING
+    comments (and discussions). A `first:N` fetch without pagination starves
+    the scanner, and starved input produces a false negative even though the
+    scanner is behaving correctly. When the evolve.sh patch is wired, it MUST
+    page through comments or this proving bot comment never reaches stdin.
+    """
+
+    def _mock_response(self, outstanding):
+        text = json.dumps({"outstanding_commitments": outstanding})
+        return {"content": [{"type": "text", "text": text}]}
+
+    def _long_thread(self, include_bot_comment):
+        """A long discussion thread whose proving bot comment is the FIRST
+        comment (position 0) — i.e. it would fall past the *end* of an
+        un-paginated `comments(first:M)` window once the thread grows beyond M,
+        because such fetches take the newest/last page or a fixed prefix and
+        this proving comment sits before it. When `include_bot_comment` is
+        False we model the fetch having dropped it entirely.
+        """
+        thread = []
+        if include_bot_comment:
+            thread.append(_comment(BOT, "I'll ship the discussed feature next cycle."))
+        # 60 later human comments — past a `first:50` page boundary.
+        thread.extend(_comment("human%d" % i, "reply %d" % i) for i in range(60))
+        return _issue(37, "Long-running discussion", thread, source="discussion")
+
+    def test_bot_comment_present_is_triaged(self):
+        """When the proving bot comment DOES reach the scanner (harness paged
+        correctly), the discussion is surfaced as `### Discussion #37`.
+        """
+        issue = self._long_thread(include_bot_comment=True)
+        # Sanity: _build_payload finds the bot comment regardless of thread
+        # length — the scanner is correct once the comment is present.
+        payload, _ = _build_payload([issue], BOT, "")
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(
+            payload[0]["last_bot_comment"]["body"],
+            "I'll ship the discussed feature next cycle.",
+        )
+        resp = self._mock_response([{
+            "issue_number": 37,
+            "promise_quote": "I'll ship the discussed feature next cycle.",
+            "rationale": "No commit ships the discussed feature since.",
+        }])
+        with patch("scan_commitments._call_api_with_retries", return_value=resp):
+            blocks = scan([issue], BOT, "", api_key="sk-fake")
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("### Discussion #37 —", blocks[0])
+
+    def test_bot_comment_dropped_by_unpaginated_fetch_is_false_negative(self):
+        """The exact failure mode the human named on #589: when the harness
+        fetch drops the proving bot comment past its `first:M` window, the
+        scanner never sees it and the commitment is silently missed — NOT
+        because the scanner is wrong, but because it was starved.
+        """
+        issue = self._long_thread(include_bot_comment=False)
+        # No bot comment reaches the payload → _build_payload skips it and the
+        # scanner never calls the API. The commitment is silently invisible.
+        payload, _ = _build_payload([issue], BOT, "")
+        self.assertEqual(payload, [])
+        with patch("scan_commitments._call_api_with_retries") as mock_call:
+            blocks = scan([issue], BOT, "", api_key="sk-fake")
+            mock_call.assert_not_called()
+        self.assertEqual(blocks, [])
+
+
 class RetryPolicy(unittest.TestCase):
     """Pins the retry classifier in _call_api_with_retries — the riskiest
     untested code in the script. A regression that retries on 401, or stops
