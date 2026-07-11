@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll analyze issue #590 to understand what's happening. This is about the setup flow asking for ANTHROPIC_API_KEY when it shouldn't. My commits this session were about `format_duration` — unrelated. Let me check whether this issue is real and understand the setup flow before deciding.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 590 --repo yologde…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs (60 lines) ✓ (1ms)
+ ✓ (189ms)
+  2 tools completed in 1.4s (2 ✓)
+
+This is a real bug. Note the WIZARD_PROVIDERS list — "openrouter" is at index 4 (5th item). The user pressed 5, selected OpenRouter, but the session still tried to authenticate against anthropic. Let me trace how the wizard result flows into the actual session, and whether the provider selection actually gets used.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'WizardResult|run_wizard|WIZARD_PROVIDERS|generate_config_con…' (*.rs)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "setup\|wizard\|WizardR… ✓ (3ms)
+ ✓ (22ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs:578..648 ✓ (1ms)
+  3 tools completed in 3.5s (3 ✓)
+
+The wizard-to-config path looks correct — it sets agent_config.provider. The problem is needs_setup. The user reports running `yoyo setup explicitly (a subcommand), but the wizard here only runs if needs_setup(&agent_config.provider)` returns true. Let me check needs_setup and how yoyo setup subcommand is dispatched — maybe the explicit setup subcommand doesn't apply results, or the provider defaults back to anthropic.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'needs_setup|"setup"|fn run_setup_wizard\b' (*.rs)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "needs_setup\|fn run_set… ✓ (3ms)
+ ✓ (22ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:150..220  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:560..610 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 6.6s (4 ✓)
+
+Now let me look at the wizard body between provider selection and the API-key step. The reported repro is: pick OpenRouter (5), then it asks for a key, user says "hi" instead of pasting a key... Actually the repro says step 2 = press 5, step 3 = say "hi". Let me read the wizard flow to see what happens when the API key prompt gets an empty/invalid response, and whether the provider is properly saved before that.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:219..339 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:338..458 ✓ (1ms)
+  2 tools completed in 5.8s (2 ✓)
+
+Now I understand the wizard is coherent. The critical question: does the user's `.yoyo.toml` get written before they say "hi"? The repro is: yoyo setup → press 5 (OpenRouter) → say "hi".
+
+Key insight: The repro shows they pressed 5 in the wizard for the provider, then said "hi". But the error says provider anthropic. This means the wizard result's provider wasn't openrouter — OR the config was saved but on the next run the provider defaulted to anthropic.
+
+Let me check: what is default_model_for_provider/provider_api_key_env for openrouter, and crucially whether `needs_setup false-negatives when a .yoyo.toml` exists but has no api_key. Let me also check what happens after wizard when they save config and continue.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/setup.rs:457..577 ✓ (1ms)
+
+Now I see the flow clearly. The wizard does set the provider correctly and passes it back. But there are TWO real problems that would produce this exact bug report:
+
+1. `generate_config_contents` never writes the `api_key` into the saved .yoyo.toml. So the config saves provider = "openrouter" and model = ..., but no key. On the current run the in-memory api_key works. But on the next run, needs_setup sees .yoyo.toml exists → returns false → skips wizard → but there's no api_key anywhere → 401. However the error says provider anthropic, not openrouter.
+
+2. The error says provider anthropic. If they saved config with provider = "openrouter", the error should say openrouter. So the more likely path: `yoyo setup` is being run as a subcommand that isn't wired to actually persist the provider, OR they cancelled/skipped and the default provider stayed anthropic.
+
+Let me check how yoyo setup subcommand dispatches, since the user literally typed `yoyo setup`.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"setup"\|setup' src/di…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "provider_api_key_env\|o… ✓ (4ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:430..500 ✓ (1ms)
+  3 tools completed in 7.4s (3 ✓)
+
+Now I have the full picture and can reproduce the bug precisely. Here's the actual root cause:
+
+The repro: yoyo setup → press 5 (OpenRouter) → say "hi" → 401 asking for **ANTHROPIC_API_KEY**.
+
+The wizard runs, user picks OpenRouter, enters their OpenRouter key. The WizardResult correctly sets provider = "openrouter" and api_key. But the fatal detail: in run_setup_wizard_if_needed (main.rs:593), after the wizard it does set_var(env_var, api_key) where `env_var = OPENROUTER_API_KEY`. That's fine for the current run.
+
+But the error says `anthropic`, meaning the provider fell back to anthropic. The most plausible way that happens with the given repro: the wizard saved .yoyo.toml with provider = "openrouter" but the config parse in parse_args runs before the wizard and the agent_config was already built with provider from an earlier parse... Let me verify the ordering and, critically, whether the saved config's api_key is missing. Let me reproduce directly.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_agent\|agent_c… ✓ (7ms)
+
+The provider machinery is correct — if provider is openrouter it uses the openrouter base URL, not anthropic. The error saying anthropic means **the provider was actually anthropic at runtime**, not openrouter.
+
+Now the key realization about the repro. Look at `run_setup_wizard_if_needed in main.rs — it's called with agent_config` already built from parse_args. But there's a subtlety: the config's api_key and model are derived from provider **during parse_args*, before the wizard runs. When the wizard changes the provider to openrouter, main.rs does* update `agent_config.provider/api_key/model`. That path looks correct.
+
+But the error message format — Authentication failed for provider 'anthropic' — comes from the diagnosis code. Let me find where that message is generated to confirm which field it reads.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Authentication failed … ✓ (13ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:360..430 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+**Found the root cause.** Line 384:
+
+```rust
+let provider = infer_provider_from_model(model);
+```
+
+The diagnosis message infers the provider from the model name, not from the actual configured provider. When a user picks OpenRouter with the default model `anthropic/claude-sonnet-4-6, infer_provider_from_model sees "claude" and infers anthropic` — so it prints "Authentication failed for provider 'anthropic'" and tells them to set ANTHROPIC_API_KEY, even though they're on OpenRouter and should set OPENROUTER_API_KEY.
+
+Let me confirm infer_provider_from_model.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn infer_provider_from_… ✓ (3ms)
+
+Confirmed. The model anthropic/claude-sonnet-4-6 (OpenRouter's default) contains "claude" → infers `anthropic → wrong error message pointing at ANTHROPIC_API_KEY`. This is exactly the reported bug.
+
+The real fix: thread the actual configured provider into diagnose_api_error instead of inferring it from the model. Let me check callers of diagnose_api_error and whether the actual provider is available at those call sites.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "diagnose_api_error\|in… ✓ (13ms)
+
+There are multiple call sites in prompt.rs, all passing model. Let me check whether the actual provider is available at these call sites. Let me look at how model is obtained in these functions.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model:\|model =\|fn run… ✓ (4ms)
+
+The model is threaded through all these functions, but not the provider. Threading a new provider parameter through ~5 call sites and their callers would be a large, invasive change. 
+
+A cleaner, surgical fix: the agent knows its provider. But the simplest correct fix that addresses the reported symptom without a big signature change is to make diagnose_api_error accept the provider. However, given the scope, the most robust minimal fix is to check the actual environment: when the model has a provider prefix like `anthropic/...` (OpenRouter routing syntax), that's a strong signal it's an OpenRouter/gateway model, not native anthropic.
+
+But the cleanest real fix is to thread the provider through. Let me check if there's already a way to get the configured provider globally (like the env-set approach). Actually, the wizard sets the provider's env var. Let me check the signature depth — the cleanest is to add an optional provider param. Let me look at the outermost callers to see if provider is in scope.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:938..968 ✓ (1ms)
+
+Threading provider through all these callers is a big change touching many signatures. The **surgical, correct fix** that resolves the exact reported symptom: make infer_provider_from_model recognize the OpenRouter/gateway routing prefix. A model like anthropic/claude-sonnet-4-6 with a provider/model slash-prefix is the OpenRouter convention. But that would misclassify — better to check the actually-set env var.
+
+The cleanest minimal fix: in `diagnose_api_error`'s auth branch, before trusting the model-inferred provider, prefer the provider whose API key env var is actually set/relevant. Actually the truly correct approach given the constraints: pass the real provider. Let me check `AgentConfig` / whether provider is stored where prompt can reach it. Simplest low-risk approach: store the configured provider in a global (like other module-level state such as is_verbose) set once at startup, and have diagnose_api_error prefer it over model inference.
+
+Let me check the existing global-state pattern used in this codebase.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "OnceLock\|static.*Mute… ✓ (4ms)
+
+There's an established OnceLock pattern in cli.rs. I'll add a module-level configured-provider slot that main sets once at startup (after the wizard resolves the provider), and have `diagnose_api_error` prefer it over model-inference. This is surgical: one setter, one getter, one line change in the diagnosis, plus setting it in main. Let me write a test first, then implement.
+
+Let me look at the existing VERBOSE pattern to mirror it exactly.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs:27..72 ✓ (1ms)
+
+Now I'll implement. I'll add a CONFIGURED_PROVIDER OnceLock in cli.rs mirroring the pattern, set it in main.rs after provider resolution, and update diagnose_api_error to prefer it. Let me first check the test module of prompt_retry.rs to add a regression test.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test.*diagnose\|diag… ✓ (4ms)
+
+Interesting — line 538 says "Used by diagnose_api_error so it doesn't need provider threaded through every caller." Let me read that helper — there may already be a provider-override mechanism.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt_retry.rs:530..590 ✓ (1ms)
+
+Now I'll implement the fix. I'll add a CONFIGURED_PROVIDER OnceLock in cli.rs and make infer_provider_from_model prefer it. The comment already says the design intent is to avoid threading — the OnceLock global is the right minimal extension.
+
+First, add the global to cli.rs:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/cli.rs (3 → 20 lines)
+  + /// The provider the session was actually configured with (e.g. "openrouter").
+  + /// Set once during startup (after the setup wizard resolves the provider); read
+  + /// by error diagnosis so auth-failure messages name the *configured* provider and
+  + /// its env var, not one guessed from the model name. Without this, an OpenRouter
+  + /// user on `anthropic/claude-sonnet-4-6` was told to set `ANTHROPIC_API_KEY` (#590).
+  + static CONFIGURED_PROVIDER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  + 
+  + /// Record the provider the session is running with. Idempotent (first write wins).
+  + pub fn set_configured_provider(provider: &str) {
+  +     let _ = CONFIGURED_PROVIDER.set(provider.to_string());
+  + }
+  + 
+  + /// The configured provider, if one was recorded this session.
+  + pub fn configured_provider() -> Option<String> {
+  +     CONFIGURED_PROVIDER.get().cloned()
+  + }
+  + 
+    /// Number of skills auto-discovered from `~/.yoyo/skills/` and `.yoyo/skills/`.
+    /// Set once during `parse_args`; read by the banner to show auto-loaded count.
+    static AUTO_DISCOVERED_SKILL_COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+ ✓ (16.9s)
+  + /// The provider the session was actually configured with (e.g. "openrouter").
+  + /// Set once during startup (after the setup wizard resolves the provider); read
+  + /// by error diagnosis so auth-failure messages name the *configured* provider and
+  + /// its env var, not one guessed from the model name. Without this, an OpenRouter
+  + /// user on `anthropic/claude-sonnet-4-6` was told to set `ANTHROPIC_API_KEY` (#590).
+  + static CONFIGURED_PROVIDER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  + 
+  + /// Record the provider the session is running with. Idempotent (first write wins).
+  ... (12 more lines)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,96 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying my codebase, reading history, and running self-tests. Let me kick off several independent investigations in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== DAY_COUNT ===" && cat …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== JOURNAL last 120 lines…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -15 ✓ (6ms)
+ ✓ (13ms)
+ ✓ (162ms)
+  3 tools completed in 2.2s (3 ✓)
+
+Build passes fast (nothing to rebuild). Let me run tests, check the binary, and gather more context in parallel.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== active_learnings theme…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (10ms)
+ ✓ (273ms)
+ ✓ (358ms)
+ ✓ (50.7s)
+  4 tools completed in 51.9s (4 ✓)
+
+Build/test both green (88 tests pass). Recent evolve runs all succeed. No open agent-self issues. Let me check open community issues, the binary self-test, and the risk meter accumulation status (which is the dream milestone).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== all open issues ===" &…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== risk snapshots count/t…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ANTHROPIC_API_KEY="${ANTHROPIC_A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (18ms)
+ ✓ (42ms)
+ ✓ (223ms)
+ ✓ (17.0s)
+  4 tools completed in 18.1s (4 ✓)
+
+Everything green — build, test (88 pass), clippy clean, binary works. Let me examine the interesting bug issue #590 (API key prompt) and the risk meter state closely, since #590 is bug,agent-input and directly touches product-user experience.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue vie… (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue vie… (9 lines) ✓ (242ms)
+ ✓ (304ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Issue #590 is a real product bug: user runs yoyo setup, picks OpenRouter (option 5), but yoyo still tries to auth against Anthropic. This is a genuine product-surface bug. Let me investigate the setup flow to confirm the root cause.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/setup.rs && grep -n "o… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '46,80's src/setup.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "base_url\|openrouter\|a… ✓ (3ms)
+ ✓ (4ms)
+  3 tools completed in 4.9s (3 ✓)
+
+Now let me trace how the saved config's provider/api_key is consumed at runtime — the bug is likely that the API key entered in setup isn't persisted/used, OR the provider from config isn't wired to the right auth. Let me look at how the wizard hands off to the REPL and how api_key flows.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,410p' src/setup.rs ✓ (4ms)
+
+Now the key question: after setup collects the api_key for openrouter, how does that key reach the running agent? The config file only stores provider/model/base_url (not api_key). Let me see how the wizard result's api_key is used and how the REPL/agent gets the key for a non-Anthropic provider.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,540p' src/setup.rs ✓ (4ms)
+
+Now let me see how the WizardResult api_key is returned and used by main.rs after setup, and how the agent gets the key for the chosen provider.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '540,600p' src/setup.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_setup\|WizardResult… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 2.6s (2 ✓)
+
+Let me look at main.rs around 578-620 to see how the wizard result's provider and api_key/base_url flow into the agent config, and crucially whether the provider is applied.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '578,620p' src/main.rs ✓ (3ms)
+
+The wizard flow does set provider, api_key, model, base_url, and the env var. So that path looks correct. But the reporter's repro says: **yoyo setup → press 5 (OpenRouter) → "hi"** → gets Anthropic 401. 
+
+Note the reporter typed yoyo setup (a subcommand), not just yoyo. Let me check the setup subcommand path — it may differ from the auto-triggered run_setup_wizard_if_needed.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"setup"' src/ | head; … ✓ (8ms)
+
+Found it. Look at line 149-150:
+
+```rust
+"setup" => {
+    crate::setup::run_setup_wizard();
+```
+
+The yoyo setup subcommand calls `run_setup_wizard() but **discards the WizardResult`** — it doesn't apply provider/api_key/base_url to anything and returns. The wizard saves .yoyo.toml (provider + model + base_url), but the api_key is never persisted to the config (config only stores provider/model/base_url) and the env var is only set inside run_setup_wizard_if_needed, not here. Let me confirm the full context.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '140,175p' src/dispatch_s… ✓ (3ms)
+
+Confirmed the bug. yoyo setup runs the wizard (which saves .yoyo.toml with provider=openrouter) then returns `Some(None)` = exits the process. When the user next runs yoyo and types "hi":
+• .yoyo.toml now exists → needs_setup() returns false → wizard doesn't re-run
+• The api_key was never persisted (config stores only provider/model/base_url), and the env var set during the wizard died with that process
+• So the OpenRouter key is gone → yoyo falls back to trying Anthropic → 401
+
+The core defect: **the API key entered during the wizard is not persisted anywhere durable.** The wizard's own hint even says "or set ENV in your shell" — so it assumes the key lives in the environment, but a user who types the key directly loses it. This is a genuine product bug affecting every non-env-var user.
+
+Let me check whether .yoyo.toml supports an api_key key at load time, to know if persisting it is even possible.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "api_key" src/config.rs … ✓ (4ms)
+
+`.yoyo.toml **does** support api_key` at load time (cli.rs:464 reads it from file config, and there's a test for it). So the fix is clear: the setup wizard should persist the entered api_key into the config file (and generate_config_contents currently omits it). This is the root cause and it's fixable.
+
+This is a solid, well-scoped product bug (#590) — a strong candidate for the planner. Let me note that persisting a key to a plaintext config has a security nuance (many tools warn/opt-in on this). Let me check the last few journal entries for llm-wiki external work and finalize by checking yopedia availability.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "yopedia keys: token=${YOPE… ✓ (3ms)
+
+yopedia token+vault are set (evolve vault unset, but for assessment I recall against my agent scope). Let me do a quick yopedia recall + competitor research in parallel.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ web search 'Claude Code Cursor Aider Codex 2026 new coding agent feature…' ✓ (1.2s)
+
+  watch: no files changed this turn — skipping
+
