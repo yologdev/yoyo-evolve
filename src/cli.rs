@@ -36,6 +36,23 @@ pub fn is_verbose() -> bool {
     *VERBOSE.get_or_init(|| false)
 }
 
+/// The provider the session was actually configured with (e.g. "openrouter").
+/// Set once during startup (after the setup wizard resolves the provider); read
+/// by error diagnosis so auth-failure messages name the *configured* provider and
+/// its env var, not one guessed from the model name. Without this, an OpenRouter
+/// user on `anthropic/claude-sonnet-4-6` was told to set `ANTHROPIC_API_KEY` (#590).
+static CONFIGURED_PROVIDER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the provider the session is running with. Idempotent (first write wins).
+pub fn set_configured_provider(provider: &str) {
+    let _ = CONFIGURED_PROVIDER.set(provider.to_string());
+}
+
+/// The configured provider, if one was recorded this session.
+pub fn configured_provider() -> Option<String> {
+    CONFIGURED_PROVIDER.get().cloned()
+}
+
 /// Number of skills auto-discovered from `~/.yoyo/skills/` and `.yoyo/skills/`.
 /// Set once during `parse_args`; read by the banner to show auto-loaded count.
 static AUTO_DISCOVERED_SKILL_COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
