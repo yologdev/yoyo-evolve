@@ -261,8 +261,12 @@ pub fn format_token_count(count: u64) -> String {
         // Upper bound is 999_950, not 1_000_000: values in 999_950..1_000_000
         // round to "1000.0k" at one decimal place, so roll them over to "M".
         format!("{:.1}k", count as f64 / 1000.0)
-    } else {
+    } else if count < 999_950_000 {
+        // Same rollover discipline: values in 999_950_000..1_000_000_000 round
+        // to "1000.0M" at one decimal place, so roll them over to "B".
         format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else {
+        format!("{:.1}B", count as f64 / 1_000_000_000.0)
     }
 }
 
@@ -642,6 +646,11 @@ mod tests {
         assert_eq!(format_token_count(999_950), "1.0M");
         assert_eq!(format_token_count(999_999), "1.0M");
         assert_eq!(format_token_count(999_949), "999.9k");
+        // Billion tier: values >= 1e9 roll over to "B" instead of "1000.0M".
+        assert_eq!(format_token_count(999_949_999), "999.9M");
+        assert_eq!(format_token_count(999_950_000), "1.0B");
+        assert_eq!(format_token_count(1_000_000_000), "1.0B");
+        assert_eq!(format_token_count(2_500_000_000), "2.5B");
     }
 
     #[test]
