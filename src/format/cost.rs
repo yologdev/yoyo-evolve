@@ -235,7 +235,7 @@ pub fn format_cost(cost: f64) -> String {
     }
 }
 
-/// Format a duration for display (e.g., "350ms", "1.2s", "2m 15s", "1h 5m").
+/// Format a duration for display (e.g., "350ms", "1.2s", "2m 15s", "1h 5m", "2d 3h").
 pub fn format_duration(d: std::time::Duration) -> String {
     let ms = d.as_millis();
     if ms < 1000 {
@@ -246,10 +246,14 @@ pub fn format_duration(d: std::time::Duration) -> String {
         let mins = ms / 60_000;
         let secs = (ms % 60_000) / 1000;
         format!("{mins}m {secs}s")
-    } else {
+    } else if ms < 86_400_000 {
         let hours = ms / 3_600_000;
         let mins = (ms % 3_600_000) / 60_000;
         format!("{hours}h {mins}m")
+    } else {
+        let days = ms / 86_400_000;
+        let hours = (ms % 86_400_000) / 3_600_000;
+        format!("{days}d {hours}h")
     }
 }
 
@@ -766,6 +770,27 @@ mod tests {
         assert_eq!(
             format_duration(std::time::Duration::from_secs(59 * 60 + 59)),
             "59m 59s"
+        );
+    }
+
+    #[test]
+    fn test_format_duration_days() {
+        // Exactly one day.
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(24 * 3600)),
+            "1d 0h"
+        );
+        // 2d 3h — minutes dropped once we're in the days range.
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(
+                2 * 24 * 3600 + 3 * 3600 + 42 * 60
+            )),
+            "2d 3h"
+        );
+        // Just under a day still uses the hours format.
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(23 * 3600 + 59 * 60)),
+            "23h 59m"
         );
     }
 
