@@ -454,6 +454,70 @@ pub fn build_apply_prompt(plan_text: &str) -> String {
     )
 }
 
+/// Returns true when a generated plan names files to modify but gives no per-file
+/// implementation detail (no `Approach:` line and no RED/GREEN/REFACTOR structure).
+///
+/// Used to surface a "want more depth? try /plan --deep" hint (#583) when the first
+/// pass is broad. Pure — no I/O. Language-agnostic: a "file reference" is any line that
+/// looks like a path (contains `/` or a `.<ext>` token) or a "Files to modify" section.
+/// A plan with no file references returns `false` (there's nothing to deepen — don't nag).
+pub fn plan_is_shallow(plan_text: &str) -> bool {
+    let trimmed = plan_text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lower = plan_text.to_lowercase();
+
+    // Depth signals: a per-file Approach line or any RED/GREEN/REFACTOR TDD structure.
+    let has_depth = lower.contains("approach:")
+        || lower.contains("tdd red")
+        || lower.contains("tdd green")
+        || lower.contains("tdd refactor");
+    if has_depth {
+        return false;
+    }
+
+    // File references: an explicit "Files to modify" section, or any line that looks
+    // like a file path (a `/` separator, or a `word.ext` token with a short extension).
+    let has_file_refs =
+        lower.contains("files to modify") || plan_text.lines().any(line_has_file_ref);
+
+    // Shallow = names files but has no per-file/per-step implementation detail.
+    has_file_refs
+}
+
+/// Heuristic: does a single line look like it references a file path?
+/// True if it contains a `/` path separator or a `word.ext` token (extension 1–5
+/// alphanumerics). Language-agnostic; deliberately conservative to avoid false hits.
+fn line_has_file_ref(line: &str) -> bool {
+    if line.contains('/') {
+        return true;
+    }
+    // Look for a `.<ext>` where ext is 1–5 alphanumeric chars preceded by a name char.
+    let bytes: Vec<char> = line.chars().collect();
+    for (i, &c) in bytes.iter().enumerate() {
+        if c != '.' {
+            continue;
+        }
+        // Preceding char must be alphanumeric (part of a filename).
+        if i == 0 || !bytes[i - 1].is_ascii_alphanumeric() {
+            continue;
+        }
+        // Following run: 1–5 alphanumeric chars, then a non-alphanumeric boundary.
+        let mut ext_len = 0;
+        let mut j = i + 1;
+        while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+            ext_len += 1;
+            j += 1;
+        }
+        if (1..=5).contains(&ext_len) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Result of handling a `/plan` command.
 pub enum PlanResult {
     /// Command handled internally (toggle, show, clear, or no-op). Continue the REPL.
@@ -640,6 +704,13 @@ pub async fn handle_plan(
 
     // Capture the plan text from the last assistant message for later retrieval
     if let Some(plan_text) = crate::commands_web::extract_last_assistant_text(agent.messages()) {
+        // If the first pass is broad (names files but has no per-file/per-step detail)
+        // and the user didn't already ask for depth, point them at `/plan --deep` (#583).
+        if !deep && plan_is_shallow(&plan_text) {
+            println!(
+                "{DIM}  (this plan is broad — run `/plan --deep {clean_task}` for per-step TDD implementation detail){RESET}"
+            );
+        }
         set_last_plan(plan_text);
     }
 
@@ -1024,6 +1095,69 @@ Step 2: Second step
         assert!(status.contains("no parseable steps"));
 
         clear_last_plan();
+    }
+
+    #[test]
+    fn plan_is_shallow_true_for_file_list_without_approach() {
+        let plan = "\
+## Files to modify
+- src/parser.rs
+- src/lexer.rs
+
+## Step-by-step
+1. Add the new token
+2. Wire it into the parser";
+        assert!(
+            plan_is_shallow(plan),
+            "A file list with no Approach:/TDD detail should be shallow"
+        );
+    }
+
+    #[test]
+    fn plan_is_shallow_false_when_approach_present() {
+        let plan = "\
+## Files to modify
+- src/parser.rs
+  Approach: add a match arm for the new token, then re-run the parser tests
+- src/lexer.rs
+  Approach: emit the new token kind from the scanner";
+        assert!(
+            !plan_is_shallow(plan),
+            "A plan with per-file Approach: lines is not shallow"
+        );
+    }
+
+    #[test]
+    fn plan_is_shallow_false_when_deep_structure_present() {
+        let plan = "\
+## Files to modify
+- src/parser.rs
+
+## Step 1
+TDD RED: write a failing test for the new token
+TDD GREEN: implement the match arm
+TDD REFACTOR: none";
+        assert!(
+            !plan_is_shallow(plan),
+            "A plan with TDD RED/GREEN structure is not shallow"
+        );
+    }
+
+    #[test]
+    fn plan_is_shallow_false_for_empty() {
+        assert!(!plan_is_shallow(""));
+        assert!(!plan_is_shallow("   \n\n  "));
+    }
+
+    #[test]
+    fn plan_is_shallow_false_when_no_file_references() {
+        let plan = "\
+This plan describes the general approach in prose. We will improve the login flow
+by validating inputs earlier and returning clearer errors. No specific files named.";
+        assert!(
+            !plan_is_shallow(plan),
+            "Prose with no file references has nothing to deepen — don't nag"
+        );
     }
 
     #[test]
