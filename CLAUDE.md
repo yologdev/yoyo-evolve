@@ -87,6 +87,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `session.rs` — session tracking types: SessionChanges, TurnSnapshot, TurnHistory, format_changes (extracted from `prompt.rs`)
 - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
 - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
+- `commands_search.rs` — `/find`, `/grep`, `/index`, `/outline`, `/def` (`handle_def` — find symbol definition: reuses `symbols::detect_language`/`extract_symbols` to locate where a symbol is defined, prints `path:line` + source line; a small go-to-definition gesture, no LSP)
 - `commands_revisit.rs` — `/revisit` command: scan closed/shelved GitHub issues, check feasibility, track revisit candidates in `.yoyo/revisit.json`
 - `commands_risk.rs` — /risk command: file risk scoring (`compute_file_risk_scores`, `learn_weights_from_history`, `detect_emerging_risks`), history, predict, co-change coupling, `top_risk_files` helper for cross-module risk queries
 - `commands_risk_report.rs` — report/context formatting for /risk: `format_risk_report`, `format_risk_context`, `risk_context_for_files`, `file_risk_summary`, `prediction_accuracy_summary`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)

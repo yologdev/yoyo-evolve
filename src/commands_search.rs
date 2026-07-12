@@ -1667,6 +1667,46 @@ mod tests {
     // ── tokenize_quoted ────────────────────────────────────────────
 
     #[test]
+    fn parse_def_query_extracts_symbol_name() {
+        assert_eq!(parse_def_query("/def foo"), "foo");
+        assert_eq!(parse_def_query("/def   bar  "), "bar");
+        assert_eq!(parse_def_query("foo"), "foo");
+    }
+
+    #[test]
+    fn parse_def_query_empty_input_is_empty() {
+        assert_eq!(parse_def_query("/def"), "");
+        assert_eq!(parse_def_query("/def "), "");
+        assert_eq!(parse_def_query("/def    "), "");
+    }
+
+    #[test]
+    fn extract_symbols_finds_pub_fn_at_line() {
+        let src = "// header\n\npub fn target() {}\n";
+        let syms = extract_symbols(src, detect_language("x.rs").unwrap());
+        let hit = syms
+            .iter()
+            .find(|s| s.name == "target")
+            .expect("should find `target`");
+        // `pub fn target() {}` is on the third line (1-indexed).
+        assert_eq!(hit.line, 3);
+        assert_eq!(hit.kind, SymbolKind::Function);
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_no_panic_on_multibyte() {
+        // A line whose byte at `max_bytes` falls inside a multi-byte char (✓ = 3 bytes).
+        let line = "let check = \"✓✓✓✓✓✓✓✓✓✓\"; // done";
+        // Try every truncation length up to the full byte length — none may panic.
+        for max in 0..=line.len() {
+            let out = truncate_at_char_boundary(line, max);
+            // Result is always a valid &str slice (compiles/runs = no panic).
+            assert!(out.len() <= line.len());
+            assert!(line.is_char_boundary(out.len()));
+        }
+    }
+
+    #[test]
     fn tokenize_quoted_simple_words() {
         assert_eq!(tokenize_quoted("hello world"), vec!["hello", "world"]);
     }
