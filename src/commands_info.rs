@@ -1248,6 +1248,18 @@ pub fn parse_iso8601_to_epoch(ts: &str) -> Option<u64> {
         return None;
     }
 
+    let days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    // Validate the day against the actual length of the month (leap-year aware).
+    // Without this, nonexistent dates like 2021-02-30 or 2021-04-31 slipped past
+    // the range check above and produced a garbage epoch by overflowing forward.
+    let mut max_day = days_in_month[(month - 1) as usize] as u64;
+    if month == 2 && is_leap_year(year) {
+        max_day = 29;
+    }
+    if day > max_day {
+        return None;
+    }
+
     // Days from year 1970 to the given year (simplified, ignoring leap seconds)
     let mut total_days: u64 = 0;
     for y in 1970..year {
@@ -1255,7 +1267,6 @@ pub fn parse_iso8601_to_epoch(ts: &str) -> Option<u64> {
     }
 
     // Days from months in current year
-    let days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     for m in 1..month {
         total_days += days_in_month[(m - 1) as usize] as u64;
         if m == 2 && is_leap_year(year) {
@@ -2172,6 +2183,22 @@ More text.
         assert!(parse_iso8601_to_epoch("2026-13-01T00:00:00Z").is_none()); // month 13
         assert!(parse_iso8601_to_epoch("2026-01-32T00:00:00Z").is_none()); // day 32
         assert!(parse_iso8601_to_epoch("").is_none());
+    }
+
+    #[test]
+    fn test_parse_iso8601_to_epoch_day_valid_for_month() {
+        // Days must be valid for the specific month, not just <= 31.
+        // Nonexistent dates used to slip past the range check and produce a
+        // garbage epoch by overflowing into the next month.
+        assert!(parse_iso8601_to_epoch("2021-02-30T00:00:00Z").is_none()); // Feb 30 never exists
+        assert!(parse_iso8601_to_epoch("2021-02-29T00:00:00Z").is_none()); // 2021 not a leap year
+        assert!(parse_iso8601_to_epoch("2021-04-31T00:00:00Z").is_none()); // April has 30 days
+        assert!(parse_iso8601_to_epoch("2021-06-31T00:00:00Z").is_none()); // June has 30 days
+
+        // Paired near-miss: the valid neighbor one day earlier must still parse.
+        assert!(parse_iso8601_to_epoch("2020-02-29T00:00:00Z").is_some()); // 2020 IS a leap year
+        assert!(parse_iso8601_to_epoch("2021-02-28T00:00:00Z").is_some()); // last valid Feb day
+        assert!(parse_iso8601_to_epoch("2021-04-30T00:00:00Z").is_some()); // last valid April day
     }
 
     #[test]
