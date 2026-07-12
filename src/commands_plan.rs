@@ -445,13 +445,31 @@ This is language-agnostic: RED/GREEN/REFACTOR applies whether the tests are Go, 
 }
 
 /// Build a prompt that instructs the agent to execute a previously generated plan.
-pub fn build_apply_prompt(plan_text: &str) -> String {
+///
+/// `verify_cmd` is the project-aware verification command (e.g. `cargo test`,
+/// `go test ./...`, or a generic fallback for unknown projects) — never hardcoded
+/// to a single language, so `/plan apply` gives correct guidance to non-Rust users
+/// (issue #448 failure class).
+pub fn build_apply_prompt(plan_text: &str, verify_cmd: &str) -> String {
     format!(
         "Execute the following plan. Implement each step, writing code and running tests as you go.\n\n\
          ## Plan\n{plan_text}\n\n\
-         Work through each step. After completing all steps, verify with `cargo build && cargo test` \
+         Work through each step. After completing all steps, verify with `{verify_cmd}` \
          (or the project's equivalent)."
     )
+}
+
+/// Derive the project-aware verify command for `/plan apply`, reusing the same
+/// project-detection + test-command helpers as `/test`. Falls back to a generic,
+/// language-neutral string when the project type is unrecognized so no wrong tool
+/// is ever named (issue #448 class).
+fn apply_verify_command() -> String {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let project_type = crate::commands_project::detect_project_type(&cwd);
+    match crate::commands_lint::test_command_for_project(&project_type) {
+        Some((label, _)) => label.to_string(),
+        None => "your project's build and test commands".to_string(),
+    }
 }
 
 /// Returns true when a generated plan names files to modify but gives no per-file
@@ -638,7 +656,7 @@ pub async fn handle_plan(
         }
         "apply" => match get_last_plan() {
             Some(plan) => {
-                let prompt = build_apply_prompt(&plan.raw_text);
+                let prompt = build_apply_prompt(&plan.raw_text, &apply_verify_command());
                 println!("{GREEN}  🚀 Applying stored plan…{RESET}\n");
                 clear_last_plan();
                 return PlanResult::Apply(prompt);
@@ -724,6 +742,50 @@ pub async fn handle_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_apply_prompt_contains_verify_cmd() {
+        let prompt = build_apply_prompt("- step one", "go build ./... && go test ./...");
+        assert!(
+            prompt.contains("go build ./... && go test ./..."),
+            "prompt should contain the project-aware verify command"
+        );
+        assert!(
+            !prompt.contains("cargo"),
+            "prompt must not name a Rust-only tool for a Go project"
+        );
+    }
+
+    #[test]
+    fn build_apply_prompt_contains_plan_text() {
+        let prompt = build_apply_prompt("- implement the widget\n- add tests", "cargo test");
+        assert!(
+            prompt.contains("- implement the widget"),
+            "plan text must be embedded in the apply prompt"
+        );
+        assert!(
+            prompt.contains("- add tests"),
+            "full plan text must be embedded in the apply prompt"
+        );
+    }
+
+    #[test]
+    fn build_apply_prompt_generic_fallback() {
+        let fallback = "your project's build and test commands";
+        let prompt = build_apply_prompt("- do the thing", fallback);
+        assert!(
+            prompt.contains(fallback),
+            "prompt should contain the generic fallback string"
+        );
+        assert!(
+            !prompt.contains("cargo"),
+            "generic fallback must not name a Rust-only tool"
+        );
+        assert!(
+            !prompt.contains("npm") && !prompt.contains("go test"),
+            "generic fallback must not name any language-specific tool"
+        );
+    }
 
     #[test]
     fn parse_plan_task_with_description() {
