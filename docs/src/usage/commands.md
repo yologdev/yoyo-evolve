@@ -321,6 +321,19 @@ This is especially useful for:
 - **Trust and transparency** — see the full plan before any files are modified
 - **Teaching moments** — the plan itself teaches you about the codebase structure
 
+**Planning depth:** By default `/plan <task>` produces a fast, broad first pass. A
+non-trivial task (long, multiple deliverables, or containing implementation-verb cues
+like *refactor / migrate / implement / integrate / redesign*) now **auto-escalates to
+depth** — the deep per-step RED/GREEN/REFACTOR breakdown — so you don't have to know to
+ask for it. When this happens you'll see a dim note:
+`(task looks non-trivial — planning at depth; use /plan --shallow to skip)`.
+
+- `/plan --deep <task>` — always request the deep per-step TDD structure.
+- `/plan --shallow <task>` — force the fast broad pass even on a big task (suppresses
+  auto-escalation).
+- Auto-escalation only fires when *neither* flag is given, and is conservative: when
+  unsure, it stays shallow.
+
 ### `/spawn` — Subagent
 
 The `/spawn` command creates a fresh AI agent with its own independent context window, sends it your task, runs it to completion, and injects the result back into your main conversation.

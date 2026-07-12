@@ -357,7 +357,17 @@ Analyze the codebase, explain your plan, and describe what changes you WOULD mak
 
 /// Subcommand names for `/plan <Tab>` completion.
 pub const PLAN_SUBCOMMANDS: &[&str] = &[
-    "on", "off", "open", "close", "show", "apply", "clear", "status", "step", "--deep",
+    "on",
+    "off",
+    "open",
+    "close",
+    "show",
+    "apply",
+    "clear",
+    "status",
+    "step",
+    "--deep",
+    "--shallow",
 ];
 
 /// Parse a `/plan` command and extract the task description.
@@ -394,6 +404,93 @@ pub fn extract_deep_flag(task: &str) -> (String, bool) {
         })
         .collect();
     (cleaned.join(" "), deep)
+}
+
+/// Strip a leading/trailing `--shallow` flag from a plan task string, returning the
+/// cleaned task and whether the flag was present. `--shallow` forces the fast broad
+/// pass and suppresses auto-escalation (#583 fourth route). It's the opt-out escape
+/// hatch that preserves the old default behavior on a per-invocation basis.
+pub fn extract_shallow_flag(task: &str) -> (String, bool) {
+    let mut shallow = false;
+    let cleaned: Vec<&str> = task
+        .split_whitespace()
+        .filter(|word| {
+            if *word == "--shallow" {
+                shallow = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    (cleaned.join(" "), shallow)
+}
+
+/// Conservative, language-agnostic heuristic: does a `/plan` task look non-trivial
+/// enough to warrant the deep (RED/GREEN/REFACTOR) planning pass by default? (#583)
+///
+/// Biased toward `false` — a false shallow is the old behavior (harmless), while a
+/// false deep costs tokens and nags. A task is non-trivial if ANY of:
+/// - it's "large" by word count (≥ 12 words), OR
+/// - it names multiple deliverables (conjunction / enumeration markers), OR
+/// - it contains implementation-verb cues (refactor / migrate / implement / integrate /
+///   redesign).
+pub fn task_looks_nontrivial(task: &str) -> bool {
+    let trimmed = task.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let words: Vec<&str> = trimmed.split_whitespace().collect();
+
+    // Signal 1: large by word count.
+    if words.len() >= 12 {
+        return true;
+    }
+
+    let lower = trimmed.to_lowercase();
+
+    // Signal 2: multiple deliverables (conjunctions / enumeration markers).
+    // " and " / " then " join clauses; a comma joining clauses; numbered "1." "2." lists.
+    if lower.contains(" and ")
+        || lower.contains(" then ")
+        || lower.contains(',')
+        || lower.contains("1.")
+        || lower.contains("2.")
+    {
+        return true;
+    }
+
+    // Signal 3: implementation-verb cues — match whole words to avoid substring noise.
+    const IMPL_VERBS: &[&str] = &["refactor", "migrate", "implement", "integrate", "redesign"];
+    if words.iter().any(|w| {
+        let cleaned = w
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        IMPL_VERBS.contains(&cleaned.as_str())
+    }) {
+        return true;
+    }
+
+    false
+}
+
+/// Pure decision helper combining the explicit flags with the auto-escalation
+/// heuristic (#583 fourth route). Returns `(deep, auto_escalated)`:
+/// - explicit `--shallow` always wins → shallow, never auto-escalated
+/// - explicit `--deep` → deep (not counted as auto-escalation)
+/// - neither flag → auto-escalate to deep iff `task_looks_nontrivial`
+pub fn should_plan_deep(clean_task: &str, deep_flag: bool, shallow_flag: bool) -> (bool, bool) {
+    if shallow_flag {
+        return (false, false);
+    }
+    if deep_flag {
+        return (true, false);
+    }
+    if task_looks_nontrivial(clean_task) {
+        return (true, true);
+    }
+    (false, false)
 }
 
 /// Build a planning-mode prompt that asks the agent to create a structured plan
@@ -712,6 +809,13 @@ pub async fn handle_plan(
     println!("{DIM}  📋 Planning: {task}{RESET}\n");
 
     let (clean_task, deep) = extract_deep_flag(&task);
+    let (clean_task, shallow) = extract_shallow_flag(&clean_task);
+    let (deep, auto_escalated) = should_plan_deep(&clean_task, deep, shallow);
+    if auto_escalated {
+        println!(
+            "{DIM}  (task looks non-trivial — planning at depth; use /plan --shallow to skip){RESET}"
+        );
+    }
     if deep {
         println!("{DIM}  🔬 Deep mode — requesting per-step TDD (RED/GREEN/REFACTOR) structure.{RESET}\n");
     }
@@ -939,6 +1043,104 @@ mod tests {
         let (task, deep) = extract_deep_flag("add auth to the login flow");
         assert!(!deep, "Should not report deep when flag absent");
         assert_eq!(task, "add auth to the login flow");
+    }
+
+    #[test]
+    fn extract_shallow_flag_detects_and_strips() {
+        let (task, shallow) = extract_shallow_flag("add auth --shallow");
+        assert!(shallow, "Should detect --shallow flag");
+        assert_eq!(task, "add auth", "Should strip --shallow from the task");
+
+        let (task, shallow) = extract_shallow_flag("do the thing");
+        assert!(!shallow, "No flag → shallow=false");
+        assert_eq!(task, "do the thing");
+    }
+
+    #[test]
+    fn task_looks_nontrivial_short_single_clause_is_trivial() {
+        assert!(!task_looks_nontrivial("fix typo in README"));
+        assert!(!task_looks_nontrivial("rename foo to bar"));
+        assert!(!task_looks_nontrivial("widget")); // bare single word
+        assert!(!task_looks_nontrivial("")); // empty
+        assert!(!task_looks_nontrivial("   ")); // whitespace only
+    }
+
+    #[test]
+    fn task_looks_nontrivial_verbs_and_conjunctions_and_length() {
+        // verbs + conjunctions + length
+        assert!(task_looks_nontrivial(
+            "refactor the risk subsystem and add a new accuracy report then wire it into /status"
+        ));
+        // implementation-verb cue alone (short)
+        assert!(task_looks_nontrivial(
+            "implement LSP-backed go-to-definition across all supported languages"
+        ));
+    }
+
+    #[test]
+    fn task_looks_nontrivial_word_count_signal() {
+        // ≥ 12 words, no verbs/conjunctions.
+        assert!(task_looks_nontrivial(
+            "one two three four five six seven eight nine ten eleven twelve"
+        ));
+        // 11 words, no other signal → trivial.
+        assert!(!task_looks_nontrivial(
+            "one two three four five six seven eight nine ten eleven"
+        ));
+    }
+
+    #[test]
+    fn task_looks_nontrivial_conjunction_signals() {
+        assert!(task_looks_nontrivial("add a button and a form"));
+        assert!(task_looks_nontrivial("build the parser then run it"));
+        assert!(task_looks_nontrivial("add logging, metrics"));
+        assert!(task_looks_nontrivial("do step 1. and step 2."));
+    }
+
+    #[test]
+    fn task_looks_nontrivial_no_substring_false_positive() {
+        // "reimplemented" should NOT match the whole-word "implement" cue
+        // as a standalone verb — but a short trivial phrase must stay shallow.
+        assert!(!task_looks_nontrivial("clean up whitespace"));
+    }
+
+    #[test]
+    fn should_plan_deep_shallow_flag_wins() {
+        // Explicit --shallow must NOT auto-escalate even for a non-trivial task.
+        let nontrivial = "refactor the risk subsystem and add a report then wire it in";
+        assert!(task_looks_nontrivial(nontrivial));
+        let (deep, auto) = should_plan_deep(nontrivial, false, true);
+        assert!(!deep, "shallow flag forces shallow");
+        assert!(!auto, "shallow flag never counts as auto-escalation");
+    }
+
+    #[test]
+    fn should_plan_deep_explicit_deep_not_auto() {
+        let (deep, auto) = should_plan_deep("fix typo", true, false);
+        assert!(deep, "explicit --deep forces deep");
+        assert!(!auto, "explicit deep is not auto-escalation");
+    }
+
+    #[test]
+    fn should_plan_deep_auto_escalates_nontrivial() {
+        let (deep, auto) = should_plan_deep("implement a new caching layer", false, false);
+        assert!(deep, "non-trivial task auto-escalates to deep");
+        assert!(auto, "and it's reported as auto-escalation");
+    }
+
+    #[test]
+    fn should_plan_deep_stays_shallow_for_trivial() {
+        let (deep, auto) = should_plan_deep("fix typo in README", false, false);
+        assert!(!deep, "trivial task stays shallow");
+        assert!(!auto);
+    }
+
+    #[test]
+    fn should_plan_deep_shallow_wins_over_deep() {
+        // If both flags somehow present, shallow wins (checked first).
+        let (deep, auto) = should_plan_deep("implement a big feature here now", true, true);
+        assert!(!deep, "shallow wins when both flags given");
+        assert!(!auto);
     }
 
     #[test]
