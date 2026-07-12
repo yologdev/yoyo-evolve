@@ -545,18 +545,114 @@ echo ""
 # errors fail-soft (warn + empty output). Config/auth errors (missing key,
 # 401/403/400) exit non-zero so this banner fires — a broken cron should
 # not silently lose commitment visibility for hours.
+
+# Discussions where the bot commented recently, merged into the same scan
+# tagged source=discussion (#589, the harness half of #582) — promises made
+# in discussion threads (e.g. the #378 release-tag promise) were invisible
+# to the tracker before this. Comments use `last:` (not `first:`) because
+# promises live in RECENT comments — a bot comment reachable only on the
+# first page of a long thread is an old promise by construction. Fail-soft:
+# any fetch/shape failure degrades to "[]" and the scan proceeds with issues.
+REPLY_DISCUSSIONS="[]"
+if command -v gh &>/dev/null; then
+    # Chronic failures (scope loss, schema drift, shaper crashes) must be
+    # VISIBLE, not just soft — a silent [] forever is the #582 failure
+    # reintroduced one level up. Fetch/shaper stderr collects here and is
+    # surfaced below, while the data path still degrades to [].
+    : > /tmp/scan_discussions.stderr
+    DISC_RAW=$(gh api graphql -f query='
+      query($owner:String!, $name:String!) {
+        repository(owner:$owner, name:$name) {
+          discussions(first:50, orderBy:{field:UPDATED_AT, direction:DESC}) {
+            nodes {
+              number title updatedAt
+              comments(last:50) { nodes { author{login} body createdAt } }
+            }
+          }
+        }
+      }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" 2>>/tmp/scan_discussions.stderr || true)
+    if [ -n "$DISC_RAW" ]; then
+        REPLY_DISCUSSIONS=$(echo "$DISC_RAW" | BOT_LOGIN="$BOT_LOGIN" python3 -c "
+import json, sys, os
+from datetime import datetime, timedelta, timezone
+
+bot_login = os.environ['BOT_LOGIN']
+cutoff = datetime.now(timezone.utc) - timedelta(days=60)
+out = []
+raw = sys.stdin.read()
+try:
+    nodes = json.loads(raw)['data']['repository']['discussions']['nodes']
+except Exception as e:
+    # GraphQL error bodies ({data: null, errors: [...]}), scope loss, and
+    # schema drift all land here — warn with a payload snippet so a chronic
+    # break is diagnosable from the session log, then degrade to [].
+    print('discussions shaper: unexpected payload (%s: %s); first 200 chars: %r'
+          % (type(e).__name__, e, raw[:200]), file=sys.stderr)
+    nodes = []
+for d in nodes or []:
+    try:
+        updated = datetime.fromisoformat((d.get('updatedAt') or '').replace('Z', '+00:00'))
+        if updated < cutoff:
+            continue
+    except Exception:
+        pass  # unparseable date: keep the discussion rather than drop a promise
+    # 'if c' guards null comment nodes (deleted comments/authors), which
+    # GraphQL connections can contain and which would otherwise crash here.
+    comments = ((d.get('comments') or {}).get('nodes')) or []
+    if not any(((c.get('author') or {}).get('login') == bot_login) for c in comments if c):
+        continue
+    out.append({
+        'number': d.get('number'),
+        'title': d.get('title', ''),
+        'source': 'discussion',
+        'comments': [
+            {'author': c.get('author') or {}, 'body': (c.get('body') or '')[:2000],
+             'createdAt': c.get('createdAt', '')}
+            for c in comments if c
+        ],
+    })
+print(json.dumps(out))
+" 2>>/tmp/scan_discussions.stderr || echo "[]")
+    fi
+    DISC_COUNT=$(echo "$REPLY_DISCUSSIONS" | jq 'length' 2>/dev/null || echo 0)
+    echo "  $DISC_COUNT recent discussions with bot comments feed the commitment scan."
+    if [ -s /tmp/scan_discussions.stderr ]; then
+        echo "  ⚠️ discussions feed degraded (fed [] to the scan):"
+        sed 's/^/    /' /tmp/scan_discussions.stderr
+    fi
+fi
+
 YOYO_COMMITMENTS=""
-if command -v gh &>/dev/null && [ -n "$REPLY_ISSUES" ]; then
+if command -v gh &>/dev/null && { [ -n "$REPLY_ISSUES" ] || [ "$REPLY_DISCUSSIONS" != "[]" ]; }; then
     echo "→ Scanning for outstanding yoyo commitments..."
     GIT_LOG_RECENT=$(git log --since="30 days ago" --pretty=format:"%H%n%B%n---COMMITSEP---" 2>/dev/null || true)
     : > /tmp/scan_commitments.stderr  # truncate so stale warnings from a prior session don't surface
+    # Merge issues + discussions into one input array (issues carry no
+    # `source` field and default to "issue" inside the scanner). The merge is
+    # guarded separately from the scanner call: a jq failure degrades to
+    # issues-only (pre-#589 behavior) instead of feeding the scanner empty
+    # stdin, which it would treat as a clean "no commitments" — silently
+    # disabling the whole tracker.
+    SCAN_ISSUES_FILE=$(mktemp)
+    SCAN_DISC_FILE=$(mktemp)
+    printf '%s' "${REPLY_ISSUES:-[]}" > "$SCAN_ISSUES_FILE"
+    printf '%s' "$REPLY_DISCUSSIONS" > "$SCAN_DISC_FILE"
+    MERGED_SCAN_INPUT=$(jq -s 'add' "$SCAN_ISSUES_FILE" "$SCAN_DISC_FILE" 2>>/tmp/scan_commitments.stderr) || {
+        echo "  ⚠️ jq merge of issues+discussions failed — scanning issues only this session."
+        MERGED_SCAN_INPUT="${REPLY_ISSUES:-[]}"
+    }
+    rm -f "$SCAN_ISSUES_FILE" "$SCAN_DISC_FILE"
+    # `|| SCAN_RC=$?` suppresses errexit for the assignment and captures the
+    # real exit status — without it, set -e kills the whole session at this
+    # line on a scanner config-error exit(2), and the loud-fail banner that
+    # scan_commitments.py's contract promises would never fire.
+    SCAN_RC=0
     YOYO_COMMITMENTS=$(
-        echo "$REPLY_ISSUES" | \
+        printf '%s' "$MERGED_SCAN_INPUT" | \
             BOT_LOGIN="$BOT_LOGIN" \
             GIT_LOG_RECENT="$GIT_LOG_RECENT" \
-            python3 scripts/scan_commitments.py 2>/tmp/scan_commitments.stderr
-    )
-    SCAN_RC=$?
+            python3 scripts/scan_commitments.py 2>>/tmp/scan_commitments.stderr
+    ) || SCAN_RC=$?
     if [ "$SCAN_RC" -ne 0 ]; then
         echo "  ⚠️ scan_commitments.py exited $SCAN_RC — commitments scan FAILED this session."
         YOYO_COMMITMENTS=""
@@ -565,7 +661,7 @@ if command -v gh &>/dev/null && [ -n "$REPLY_ISSUES" ]; then
         echo "  scan_commitments stderr:"
         sed 's/^/    /' /tmp/scan_commitments.stderr
     fi
-    COMMITMENT_COUNT=$(echo "$YOYO_COMMITMENTS" | grep -c '^### Issue' || true)
+    COMMITMENT_COUNT=$(echo "$YOYO_COMMITMENTS" | grep -cE '^### (Issue|Discussion)' || true)
     COMMITMENT_COUNT="${COMMITMENT_COUNT:-0}"
     if [ "$COMMITMENT_COUNT" -gt 0 ]; then
         echo "  $COMMITMENT_COUNT outstanding commitments detected."
