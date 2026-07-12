@@ -292,6 +292,7 @@ pub fn format_cache_stats(usage: &yoagent::Usage) -> Option<String> {
 }
 
 pub fn context_bar(used: u64, max: u64) -> String {
+    // Clamped fraction drives the bar fill (never over-draws past full).
     let pct = if max == 0 {
         0.0
     } else {
@@ -301,7 +302,14 @@ pub fn context_bar(used: u64, max: u64) -> String {
     let filled = (pct * width as f64).round() as usize;
     let empty = width - filled;
     let bar: String = "█".repeat(filled) + &"░".repeat(empty);
-    let pct_int = (pct * 100.0) as u32;
+    // The label uses the *true* (unclamped) percentage so an over-budget
+    // context reads ">100%" instead of a misleading flat "100%".
+    let true_pct = if max == 0 {
+        0.0
+    } else {
+        used as f64 / max as f64
+    };
+    let pct_int = (true_pct * 100.0) as u32;
     // Issue #263: integer truncation rendered tiny non-zero usage as "0%".
     // Show "<1%" so the user can tell tokens were actually consumed.
     let label = if used > 0 && pct_int == 0 {
@@ -693,6 +701,31 @@ mod tests {
     fn context_bar_normal_usage_unchanged() {
         let bar = context_bar(50_000, 200_000);
         assert!(bar.contains("25%"), "expected 25%, got: {bar}");
+    }
+
+    // When usage exceeds max (over budget), the old code clamped the label to a
+    // flat "100%", hiding the fact that the context is genuinely over the limit.
+    // Show the true percentage (>100%) so the user can tell they've blown past it.
+    #[test]
+    fn context_bar_over_budget_shows_true_percentage() {
+        let bar = context_bar(300_000, 200_000);
+        assert!(
+            bar.contains("150%"),
+            "expected true over-budget percentage, got: {bar}"
+        );
+        // The bar itself stays fully filled (clamped), never over-drawn.
+        assert!(bar.contains('█'), "expected filled bar, got: {bar}");
+        assert!(
+            !bar.contains('░'),
+            "over-budget bar should be full, got: {bar}"
+        );
+    }
+
+    // Exactly at the limit is still a clean "100%", not ">100%".
+    #[test]
+    fn context_bar_exactly_full_is_100() {
+        let bar = context_bar(200_000, 200_000);
+        assert!(bar.contains("100%"), "expected 100%, got: {bar}");
     }
 
     #[test]
