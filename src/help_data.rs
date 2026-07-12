@@ -380,6 +380,17 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /outline handle --all     Show all matches (no limit)\n\n\
              Uses the same symbol extraction as /map (regex or ast-grep).",
         ),
+        "def" => Some(
+            "/def <symbol> — Find where a symbol is defined\n\n\
+             Searches the project for the definition of the named symbol and prints\n\
+             each match as path:line with the symbol kind and source line. A small\n\
+             go-to-definition gesture, built on the same symbol extraction as /outline.\n\n\
+             Exact name matches are shown first; if none are found, similar names\n\
+             (case-insensitive substring) are shown and labeled.\n\n\
+             Usage:\n\
+             \x20 /def handle_def          Find where handle_def is defined\n\
+             \x20 /def Config              Find definitions matching Config",
+        ),
         "status" => Some(
             "/status — Show session dashboard\n\n\
              Displays a comprehensive session overview: model, git branch,\n\
@@ -1327,6 +1338,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "context" => Some("Show project context, system prompt, tokens, or relevant files"),
         "copy" => Some("Copy text to the system clipboard"),
         "cost" => Some("Show estimated session cost"),
+        "def" => Some("Find where a symbol is defined"),
         "diff" => Some("Show git changes"),
         "doctor" => Some("Run environment diagnostics"),
         "docs" => Some("Look up crate documentation"),

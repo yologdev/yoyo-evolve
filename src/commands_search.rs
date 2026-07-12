@@ -3,7 +3,9 @@
 
 #[cfg(test)]
 use crate::commands_map::Symbol;
-use crate::commands_map::{build_repo_map, FileSymbols, SymbolKind};
+use crate::commands_map::{
+    build_repo_map, detect_language, extract_symbols, FileSymbols, SymbolKind,
+};
 use crate::format::*;
 
 // ── shell-like tokenizer ─────────────────────────────────────────────────
@@ -669,6 +671,164 @@ pub fn handle_outline(input: &str) {
         println!();
     }
     println!("{DIM}  {} symbol(s) matching \"{query}\"{RESET}", total);
+}
+
+/// Maximum definition matches to display before truncating.
+const DEF_MAX_MATCHES: usize = 50;
+
+/// Human-readable label for a symbol kind (used by `/def`).
+fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
+    match kind {
+        SymbolKind::Function => "fn",
+        SymbolKind::Struct => "struct",
+        SymbolKind::Enum => "enum",
+        SymbolKind::Trait => "trait",
+        SymbolKind::Interface => "interface",
+        SymbolKind::Class => "class",
+        SymbolKind::Type => "type",
+        SymbolKind::Const => "const",
+        SymbolKind::Impl => "impl",
+        SymbolKind::Module => "mod",
+        SymbolKind::Macro => "macro",
+        SymbolKind::Namespace => "namespace",
+    }
+}
+
+/// Parse the symbol name out of a `/def ...` command line.
+/// Returns the trimmed symbol name, or an empty string when none was given.
+pub(crate) fn parse_def_query(input: &str) -> String {
+    input
+        .strip_prefix("/def")
+        .unwrap_or(input)
+        .trim()
+        .to_string()
+}
+
+/// Truncate a string to at most `max_bytes`, snapping to a UTF-8 char boundary
+/// so we never slice through a multi-byte character (see CLAUDE.md byte rule).
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut b = max_bytes;
+    while b > 0 && !s.is_char_boundary(b) {
+        b -= 1;
+    }
+    &s[..b]
+}
+
+/// A single definition-site match for `/def`.
+struct DefMatch {
+    path: String,
+    line: usize,
+    kind: SymbolKind,
+    name: String,
+    /// The source line at `line` (1-indexed), trimmed and byte-safely truncated.
+    context: String,
+    /// True when this was a fuzzy (case-insensitive substring) fallback match.
+    similar: bool,
+}
+
+/// Maximum bytes of the source context line shown per match.
+const DEF_CONTEXT_MAX_BYTES: usize = 120;
+
+/// Collect definition matches for `query` across all project source files.
+/// Exact name matches are preferred; if there are none, falls back to
+/// case-insensitive substring ("similar") matches.
+fn collect_def_matches(query: &str) -> Vec<DefMatch> {
+    let query_lower = query.to_lowercase();
+    let mut exact: Vec<DefMatch> = Vec::new();
+    let mut similar: Vec<DefMatch> = Vec::new();
+
+    for path in list_project_files() {
+        let Some(lang) = detect_language(&path) else {
+            continue;
+        };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            // Unreadable / binary files are skipped silently.
+            continue;
+        };
+        let syms = extract_symbols(&content, lang);
+        if syms.is_empty() {
+            continue;
+        }
+        let file_lines: Vec<&str> = content.lines().collect();
+        for sym in syms {
+            let is_exact = sym.name == query;
+            let is_similar = !is_exact && sym.name.to_lowercase().contains(&query_lower);
+            if !is_exact && !is_similar {
+                continue;
+            }
+            let context = sym
+                .line
+                .checked_sub(1)
+                .and_then(|idx| file_lines.get(idx))
+                .map(|l| truncate_at_char_boundary(l.trim(), DEF_CONTEXT_MAX_BYTES).to_string())
+                .unwrap_or_default();
+            let m = DefMatch {
+                path: path.clone(),
+                line: sym.line,
+                kind: sym.kind,
+                name: sym.name.clone(),
+                context,
+                similar: is_similar,
+            };
+            if is_exact {
+                exact.push(m);
+            } else {
+                similar.push(m);
+            }
+        }
+    }
+
+    if !exact.is_empty() {
+        exact
+    } else {
+        similar
+    }
+}
+
+/// `/def <symbol>` — find where a symbol is defined across the project.
+///
+/// A small go-to-definition gesture built on the regex symbol extractor
+/// (no LSP/AST server). Prefers exact name matches; falls back to
+/// case-insensitive substring matches labeled "similar".
+pub fn handle_def(input: &str) {
+    let query = parse_def_query(input);
+    if query.is_empty() {
+        println!("{DIM}  usage: /def <symbol-name>{RESET}");
+        return;
+    }
+
+    let matches = collect_def_matches(&query);
+    if matches.is_empty() {
+        println!("{DIM}  no definition found for '{query}'{RESET}");
+        return;
+    }
+
+    let total = matches.len();
+    let shown = total.min(DEF_MAX_MATCHES);
+    println!();
+    for m in &matches[..shown] {
+        let kind = symbol_kind_label(&m.kind);
+        let similar_tag = if m.similar {
+            format!(" {YELLOW}(similar){RESET}")
+        } else {
+            String::new()
+        };
+        println!(
+            "  {DIM}{}:{}{RESET}  {CYAN}{kind}{RESET} {}{similar_tag}",
+            m.path, m.line, m.name
+        );
+        if !m.context.is_empty() {
+            println!("    {DIM}{}{RESET}", m.context);
+        }
+    }
+
+    if total > shown {
+        println!("\n{DIM}  ({} more){RESET}", total - shown);
+    }
+    println!();
 }
 
 /// Maximum matches to display before truncating.

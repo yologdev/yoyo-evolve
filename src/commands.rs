@@ -133,6 +133,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/map",
     "/open",
     "/outline",
+    "/def",
     "/stash",
     "/rewind",
     "/teach",
@@ -531,7 +532,9 @@ pub use crate::commands_skill::handle_skill;
 
 pub use crate::commands_ast_grep::handle_ast_grep;
 pub use crate::commands_map::handle_map;
-pub use crate::commands_search::{handle_find, handle_grep, handle_index, handle_outline};
+pub use crate::commands_search::{
+    handle_def, handle_find, handle_grep, handle_index, handle_outline,
+};
 
 pub use crate::commands_dev::{handle_doctor, handle_fix, handle_health};
 
