@@ -1,0 +1,104 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the session plan directory and reviewing the evidence to make my planning decisions.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+Let me think through the planning based on the evidence.
+
+Key signals from the assessment:
+• Build/test/clippy all green, 0 reverts in 10 sessions, no self-backlog.
+• Day-134 learning + assessment both flag: **break the boundary-guard streak — pick something off-shape, user-facing, harder**.
+• The dream (allostasis milestone) is blocked on accumulation (#587 human-wired feed), not code — Day-129 says don't add more sensors.
+• Best off-shape candidates: #215 (TUI — large, needs scoping), #583 (deepen /plan default pass — largely addressed).
+• Human replied on #589 about pagination limitation.
+
+Let me verify a couple of things before committing to the plan — checking the state of the scan_commitments pagination fixture and the #583 status.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PaginationLimitation\|p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --label agent-self… ✓ (4ms)
+ ✓ (456ms)
+  2 tools completed in 5.5s (2 ✓)
+
+The pagination fixture already exists (added Day 133). The agent-self backlog is empty. Let me look at the #583 plan situation and think about the off-shape self-driven task. Let me check what `/plan` currently does and what deepening would look like.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 583 --json title,b…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_plan_prompt\|A… ✓ (4ms)
+ ✓ (204ms)
+  2 tools completed in 1.4s (2 ✓)
+
+#583's core is already addressed (per-file Approach: in default + --deep TDD structure, both tested). The issue mentions a third route: "Auto-run a refinement pass when the first output contains file names but no in-file detail." That's a concrete, off-shape (behavioral, product-facing), sized-to-fit deepening — not another boundary guard.
+
+But let me weigh this against the assessment's strongest recommendation. The assessment says the two real frontiers are benchmark legibility (#156) and interactive polish (#215). Both are off-shape. #215 is large — the guidance says start with "a minimal proof / research doc". That fits "size to one hand."
+
+Let me decide the self-driven slot. The dream is blocked on human-wired accumulation (#587). Per Day-129/Day-134, I should pick one genuinely off-shape, user-facing, small task. Let me examine two candidates and pick the strongest, plus check what community issues need responses.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+
+Only one community issue (#583), and it's the one I already partially addressed. The remaining route is the auto-refinement pass. That's a genuine product improvement and off-shape (behavioral, not a boundary guard).
+
+Now let me finalize my plan. I'll allocate:
+
+1. **Self-driven / off-shape (product):** #215 minimal proof — a TUI-library research doc + minimal spike. Actually, let me reconsider — a research doc that doesn't touch src/ and can't cargo test is weak as a "verifiable task." The assessment warns #215 is large.
+
+Let me pick tasks that are genuinely off-shape AND verifiable with cargo build && cargo test:
+
+• Task 1 (product, self-driven, off-shape): #583 auto-refinement — detect a shallow first-pass plan (file names but no in-file `Approach:` detail) and offer/run a refinement. This is behavioral, user-facing, verifiable via prompt/detection tests. Different failure class from boundary guards.
+• **Task 2 (product, off-shape):** A small /plan output-quality helper or a distinct user-facing capability.
+
+Let me check the plan module more to scope Task 1 precisely and find a second good candidate.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '405,470p' src/commands_p… ✓ (3ms)
+
+Now I have a clear picture. Let me design the auto-refinement task for #583 (Task 1). The clean, verifiable route: after a plan is generated, detect whether it's shallow (file names present but no Approach: lines), and if so, emit a hint suggesting `/plan --deep` or an auto-refinement pass. This is a pure, testable detector plus a wiring point.
+
+Let me check where the plan output is handled to wire the detection.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PlanGenerated\|parse_pl… ✓ (5ms)
+
+I have enough to plan precisely. The set_last_plan at line 250 stores the generated plan text after the agent produces it — a natural place to add a shallow-plan detector that surfaces a hint. Let me write the tasks.
+
+**Final allocation:**
+• Task 1 (product, self-driven, off-shape — #583 third route): shallow-plan detector + hint. Pure function plan_is_shallow(plan_text) (has file-list-like lines but no Approach: detail) + a hint printed after a shallow plan suggesting `/plan --deep`. Behavioral/UX, verifiable, different failure class.
+• Task 2 (product, off-shape): a distinct small user-facing win. Let me pick the `/plan apply` verify command to be project-aware, OR a genuinely different area. Given only 1 community issue and empty backlog, I'll keep it to 2 solid tasks rather than pad with a boundary guard.
+
+Let me verify the second candidate area — build_apply_prompt hardcodes cargo build && cargo test, which is a product bug for non-Rust users (issue #448 class).
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "cargo build && cargo t… ✓ (5ms)
+
+Confirmed: build_apply_prompt hardcodes cargo build && cargo test — a real product bug for non-Rust users (the #448 class). There's already a test_command_for_project / detect_project_type helper to make it project-aware. This is an excellent off-shape, product-facing Task 2: a concrete UX/correctness fix, different failure class from boundary guards, verifiable via test, reusing existing infrastructure.
+
+Now let me write the three task files.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (78 lines) ✓ (1m 15s)
+  ▶ write session_plan/task_02.md (74 lines) ✓ (1m 15s)
+  2 tools completed in 2m 58s (2 ✓)
+
+Two strong, off-shape, product-facing tasks. Both reuse existing infrastructure, are sized to fit in one hand, and break the boundary-guard streak with different failure classes (UX discoverability + correctness). I'll stop at two rather than pad with a weaker third task — the assessment is all-green with only one community issue (already partially done), and Day-128 favors fewer whole tasks over more with corners.
+
+Now the issue responses file.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/issue_responses.md (48 lines) ✓ (1m 15s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (5ms)
+  2 tools completed in 1m 21s (2 ✓)
+
+`session_plan/` is gitignored (as documented — it's ephemeral). The commit is a no-op by design; the task files are written to disk for the implementation agents to read, which is done. Let me verify the files are all in place.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/task_*.md sessio… ✓ (3ms)
+
+All plan files are written. session_plan/ is gitignored (ephemeral by design), so the commit is a no-op — the deliverable is the files on disk, which the implementation agents read.
+
+## Plan summary — Day 134
+
+The mirror is green (0 reverts in 10 sessions, empty self-backlog, clippy clean), so direction comes from the window and my own Day-134 cue: **break the three-session boundary-guard streak — pick off-shape, user-facing work.** Both tasks are product-facing, reuse existing infrastructure, and are sized to fit in one hand.
+
+**Task 1 (product, self-driven, off-shape) — #583 third route.** A pure `plan_is_shallow detector + a one-line dim hint routing users to /plan --deep` when a plan is broad but lacks per-file depth. Takes the safe slice of the "auto-refine" route the issue named — surfacing the deeper pass instead of silently spending tokens on a second agent turn. Different failure class (UX discoverability), not another boundary guard.
+
+Task 2 (product, off-shape) — #448 class bug. build_apply_prompt hardcodes `cargo build && cargo test` for all users — the canonical evolve-assumption-leaking-into-product-surface failure. Make the verify step project-aware by reusing the existing detect_project_type / test_command_for_project helpers so a Go/Python/JS user isn't told to run cargo.
+
+**Deliberately held to two tasks** rather than padding with a weaker third (Day-128: fewer whole tasks beat more with corners).
+
+Deferred/held: #587, #591, #589 are all protected-file (evolve.sh) changes awaiting the human — patches + contract tests already shipped; per Day-129 I won't add more sensors around the dream's blocked accumulation feed. #215 (TUI) and #156 (SWE-bench) are off-shape but too big for one hand today.
+
+Planning complete. Stopping — no implementation.
+
+  watch: no files changed this turn — skipping
+

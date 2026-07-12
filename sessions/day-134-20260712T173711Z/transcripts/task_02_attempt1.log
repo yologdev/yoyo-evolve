@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current build_apply_prompt function and understanding the existing project-detection helpers.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_apply_prompt" src…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "build_apply_prompt" sr… ✓ (5ms)
+ ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:445..475  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:620..660 ✓ (1ms)
+ ✓ (1ms)
+  4 tools completed in 5.0s (4 ✓)
+
+Now let me examine the existing project-detection and test-command helpers.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn detect_project_type\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "test_command_for_proje… ✓ (4ms)
+ ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_lint.rs:1..61  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn build_command_for_pr… ✓ (2ms)
+ ✓ (4ms)
+  4 tools completed in 11.2s (4 ✓)
+
+`test_command_for_project returns Option<(&'static str, Vec<...>)>` where the first element is the human-readable label (e.g. "cargo test", "go test ./..."). That's exactly what I need for the prompt. Let me check imports in `commands_plan.rs`.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:1..16 ✓ (0ms)
+
+Now I'll write the test first (TDD), then update the function and call site. Let me find the test module.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]\|mod tes… ✓ (3ms)
+
+Now let me update the function signature:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (9 → 27 lines)
+    /// Build a prompt that instructs the agent to execute a previously generated plan.
+  - pub fn build_apply_prompt(plan_text: &str) -> String {
+  + ///
+  + /// `verify_cmd` is the project-aware verification command (e.g. `cargo test`,
+  + /// `go test ./...`, or a generic fallback for unknown projects) — never hardcoded
+  + /// to a single language, so `/plan apply` gives correct guidance to non-Rust users
+  + /// (issue #448 failure class).
+  + pub fn build_apply_prompt(plan_text: &str, verify_cmd: &str) -> String {
+        format!(
+            "Execute the following plan. Implement each step, writing code and running tests as you go.\n\n\
+             ## Plan\n{plan_text}\n\n\
+  -          Work through each step. After completing all steps, verify with `cargo build && cargo test` \
+  +          Work through each step. After completing all steps, verify with `{verify_cmd}` \
+             (or the project's equivalent)."
+        )
+  + }
+  + 
+  + /// Derive the project-aware verify command for `/plan apply`, reusing the same
+  + /// project-detection + test-command helpers as `/test`. Falls back to a generic,
+  + /// language-neutral string when the project type is unrecognized so no wrong tool
+  ... (9 more lines)
+ ✓ (10.4s)
+    /// Build a prompt that instructs the agent to execute a previously generated plan.
+  - pub fn build_apply_prompt(plan_text: &str) -> String {
+  + ///
+  + /// `verify_cmd` is the project-aware verification command (e.g. `cargo test`,
+  + /// `go test ./...`, or a generic fallback for unknown projects) — never hardcoded
+  + /// to a single language, so `/plan apply` gives correct guidance to non-Rust users
+  + /// (issue #448 failure class).
+  + pub fn build_apply_prompt(plan_text: &str, verify_cmd: &str) -> String {
+  ... (13 more lines)
+
+Now update the call site:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (1 → 1 lines)
+  -                 let prompt = build_apply_prompt(&plan.raw_text);
+  +                 let prompt = build_apply_prompt(&plan.raw_text, &apply_verify_command());
+ ✓ (1m 36s)
+  -                 let prompt = build_apply_prompt(&plan.raw_text);
+  +                 let prompt = build_apply_prompt(&plan.raw_text, &apply_verify_command());
+
+Now add the tests. Let me look at the test module structure:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:742..757 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (6 → 50 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn build_apply_prompt_contains_verify_cmd() {
+  +         let prompt = build_apply_prompt("- step one", "go build ./... && go test ./...");
+  +         assert!(
+  +             prompt.contains("go build ./... && go test ./..."),
+  +             "prompt should contain the project-aware verify command"
+  +         );
+  +         assert!(
+  +             !prompt.contains("cargo"),
+  +             "prompt must not name a Rust-only tool for a Go project"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn build_apply_prompt_contains_plan_text() {
+  +         let prompt = build_apply_prompt("- implement the widget\n- add tests", "cargo test");
+  ... (30 more lines)
+ ✓ (1m 37s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn build_apply_prompt_contains_verify_cmd() {
+  +         let prompt = build_apply_prompt("- step one", "go build ./... && go test ./...");
+  +         assert!(
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.0s)
+  3 tools completed in 2m 11s (3 ✓)
+
+All three new tests pass, clippy clean. Let me verify no other callers were missed and run the full test suite.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "build_apply_prompt" sr… ✓ (59.5s)
+
+All callers updated (only the definition, call site, and test). Full test suite green (88 + unit tests passed). Let me do a final combined verification and commit.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (18.0s)
+
+All four checks green (fmt, clippy, build, test). Committing.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (12ms)
+
+Done. Committed.
+
+## What I did
+
+/plan apply was telling every user — Go, Python, JS, whoever — to verify their work with cargo build && cargo test. That's a Rust-only assumption leaking onto product surface: exactly the #448 failure class CLAUDE.md warns about. The (or the project's equivalent) parenthetical was a band-aid; the model was still nudged toward cargo.
+
+The fix (one file, src/commands_plan.rs):
+
+1. Made build_apply_prompt take a verify_cmd: &str parameter and interpolate it in place of the hardcoded string — keeping the function pure and the fallback wording.
+2. Added a small apply_verify_command() helper at the call site that reuses the existing `/test` machinery — detect_project_type + `test_command_for_project — to derive the right command per project (go test ./..., npm test, python -m pytest, etc.). Unknown project → a language-neutral fallback ("your project's build and test commands"`), so no wrong tool is ever named.
+3. No new project-detection path invented; commands_project.rs and commands_lint.rs are only use-imported, not edited.
+
+Tests (written first, TDD): verify-cmd interpolation with a Go command that asserts cargo is absent; plan-text regression guard; generic-fallback with no language-specific tool named. All three pass; full suite green; clippy/fmt clean.
+
+A Go user running /plan apply now gets verify with go test ./..., not cargo.
+
+────────────────────────────────────────
+
+A note to myself, honestly: my Day-134 lesson was that a matured reflex biases me toward its own comfortable shape, and I should deliberately pick off-shape work. This task was off-shape — a correctness/UX product bug, not another near-miss boundary guard — and it landed clean. Reusing the /test helpers instead of reinventing detection is the "don't reinvent the wheel" discipline working. The whole change is one signature edit, one derivation, three tests: small enough to hold in one hand, which is why it finished whole.
+
+  watch: no files changed this turn — skipping
+

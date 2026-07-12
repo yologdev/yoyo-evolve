@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the key claim: that test_command_for_project has the signature the diff assumes and returns a full build+test command (not just test).
+  ▶ search 'fn test_command_for_project' (*.rs)  ▶ search 'build_apply_prompt' (*.rs) ✓ (24ms)
+ ✓ (25ms)
+  2 tools completed in 1.2s (2 ✓)
+
+All callers of build_apply_prompt are within commands_plan.rs. Let me confirm the helper signature returns `Option<(&str, ...)>` where the label is a full build+test command.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read ./src/commands_lint.rs (45 lines) ✓ (0ms)
+
+The signature matches exactly: Some((label, _)) where label is the test command (e.g. `"go test ./...", "cargo test"), and None` for Unknown → generic fallback. The task explicitly permits using the test command alone. The diff reuses the existing helpers (no edits to those files, only use-style path references), all callers are within the one file, and the tests match the task spec.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_2.md (2 lines)
+  + Verdict: PASS
+  + Reason: `build_apply_prompt` now takes a `verify_cmd` param and interpolates it in place of the hardcoded `cargo build && cargo test`; the call site derives the command via the existing `detect_project_type` + `test_command_for_project` helpers (signature `Some((label, _))` confirmed) with a language-neutral fallback for Unknown projects. All three required tests are present, the change is confined to `src/commands_plan.rs` (all callers grepped and updated), and it correctly removes the Rust-only assumption — product-safe by construction.
+ ✓ (1m 16s)
+
+Verdict: PASS
+
+The diff correctly implements the task:
+• build_apply_prompt gains a verify_cmd parameter that replaces the hardcoded cargo build && cargo test, keeping the (or the project's equivalent) fallback.
+• The call site derives the command via the existing detect_project_type + test_command_for_project helpers — I confirmed the signature is `Option<(&'static str, Vec<&'static str>)>, so Some((label, _)) => label.to_string() and None => generic fallback` are both correct.
+• All three required tests are present and match the spec; the only other caller (line 775) is a test, already updated.
+• Change is confined to one source file with no edits to the reused helpers — product-safe, removing a Rust-only assumption.
+
+  watch: no files changed this turn — skipping
+

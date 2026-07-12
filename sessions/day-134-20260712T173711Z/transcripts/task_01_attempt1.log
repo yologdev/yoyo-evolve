@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the relevant code in src/commands_plan.rs to understand the existing parsing helpers and where plans are displayed.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:1..121 ✓ (1ms)
+
+Let me look at `set_last_plan and the handle_plan` display path.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:240..360 ✓ (1ms)
+
+Now let me look at the `handle_plan function and where PlanResult::PlanGenerated` is handled and displayed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:870..1050 ✓ (1ms)
+
+Now let me find the handle_plan function and where PlanGenerated is handled/displayed.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'PlanGenerated|set_last_plan|extract_deep_flag|deep' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (*.rs) ✓ (3ms)
+  ▶ search 'PlanGenerated|set_last_plan|extract_deep_flag' in /home/runner/work/yoyo-evolve/yoyo-evolve/src (*.rs) ✓ (5ms)
+  2 tools completed in 3.7s (2 ✓)
+
+Odd — the repo structure said those exist. Let me search more broadly.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "PlanGenerated\|set_las… ✓ (13ms)
+
+The search tool may filter differently. Let me look at the dispatch handling and the `handle_plan function + extract_deep_flag`.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1180..1220 ✓ (1ms)
+
+Now let me look at `handle_plan to see where the plan text is produced and displayed, and how the --deep` flag is detected.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:660..860 ✓ (1ms)
+
+Now let me see the `handle_plan` function itself (where it generates and displays the plan).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:440..620 ✓ (1ms)
+
+Now let me see the remainder of handle_plan (the task-generation path, where the plan is produced and stored).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs:619..679 ✓ (1ms)
+
+I have the full picture. The plan is captured at line 642-644 and the hint should fire right after storing the plan when `plan_is_shallow is true and deep` is false. 
+
+Now let me write the tests first, then the plan_is_shallow function, then wire it in.
+
+Let me first add the detector function. I'll place it near parse_plan_steps / after set_last_plan. Let me add it right before the PlanResult enum. First, the tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (2 → 65 lines)
+  + /// Returns true when a generated plan names files to modify but gives no per-file
+  + /// implementation detail (no `Approach:` line and no RED/GREEN/REFACTOR structure).
+  + ///
+  + /// Used to surface a "want more depth? try /plan --deep" hint (#583) when the first
+  + /// pass is broad. Pure — no I/O. Language-agnostic: a "file reference" is any line that
+  + /// looks like a path (contains `/` or a `.<ext>` token) or a "Files to modify" section.
+  + /// A plan with no file references returns `false` (there's nothing to deepen — don't nag).
+  + pub fn plan_is_shallow(plan_text: &str) -> bool {
+  +     let trimmed = plan_text.trim();
+  +     if trimmed.is_empty() {
+  +         return false;
+  +     }
+  + 
+  +     let lower = plan_text.to_lowercase();
+  + 
+  +     // Depth signals: a per-file Approach line or any RED/GREEN/REFACTOR TDD structure.
+  +     let has_depth = lower.contains("approach:")
+  +         || lower.contains("tdd red")
+  +         || lower.contains("tdd green")
+  +         || lower.contains("tdd refactor");
+  ... (45 more lines)
+ ✓ (16.5s)
+  + /// Returns true when a generated plan names files to modify but gives no per-file
+  + /// implementation detail (no `Approach:` line and no RED/GREEN/REFACTOR structure).
+  + ///
+  + /// Used to surface a "want more depth? try /plan --deep" hint (#583) when the first
+  + /// pass is broad. Pure — no I/O. Language-agnostic: a "file reference" is any line that
+  + /// looks like a path (contains `/` or a `.<ext>` token) or a "Files to modify" section.
+  + /// A plan with no file references returns `false` (there's nothing to deepen — don't nag).
+  + pub fn plan_is_shallow(plan_text: &str) -> bool {
+  ... (13 more lines)
+
+Expected — now let me wire it in at the display path and add tests. First, wire the hint:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (4 → 11 lines)
+        // Capture the plan text from the last assistant message for later retrieval
+        if let Some(plan_text) = crate::commands_web::extract_last_assistant_text(agent.messages()) {
+  +         // If the first pass is broad (names files but has no per-file/per-step detail)
+  +         // and the user didn't already ask for depth, point them at `/plan --deep` (#583).
+  +         if !deep && plan_is_shallow(&plan_text) {
+  +             println!(
+  +                 "{DIM}  (this plan is broad — run `/plan --deep {clean_task}` for per-step TDD implementation detail){RESET}"
+  +             );
+  +         }
+            set_last_plan(plan_text);
+        }
+ ✓ (1m 34s)
+        // Capture the plan text from the last assistant message for later retrieval
+        if let Some(plan_text) = crate::commands_web::extract_last_assistant_text(agent.messages()) {
+  +         // If the first pass is broad (names files but has no per-file/per-step detail)
+  +         // and the user didn't already ask for depth, point them at `/plan --deep` (#583).
+  +         if !deep && plan_is_shallow(&plan_text) {
+  +             println!(
+  +                 "{DIM}  (this plan is broad — run `/plan --deep {clean_task}` for per-step TDD implementation detail){RESET}"
+  +             );
+  ... (3 more lines)
+
+Now add the tests. Let me insert them into the test module:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (2 → 2 lines) ✓ (1m 34s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_plan.rs (2 → 65 lines)
+  +     #[test]
+  +     fn plan_is_shallow_true_for_file_list_without_approach() {
+  +         let plan = "\
+  + ## Files to modify
+  + - src/parser.rs
+  + - src/lexer.rs
+  + 
+  + ## Step-by-step
+  + 1. Add the new token
+  + 2. Wire it into the parser";
+  +         assert!(
+  +             plan_is_shallow(plan),
+  +             "A file list with no Approach:/TDD detail should be shallow"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn plan_is_shallow_false_when_approach_present() {
+  +         let plan = "\
+  + ## Files to modify
+  ... (45 more lines)
+ ✓ (1m 35s)
+  +     #[test]
+  +     fn plan_is_shallow_true_for_file_list_without_approach() {
+  +         let plan = "\
+  + ## Files to modify
+  + - src/parser.rs
+  + - src/lexer.rs
+  + 
+  + ## Step-by-step
+  ... (13 more lines)
+  2 tools completed in 3m 20s (2 ✓)
+
+Now run the checks:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test plan_is_shallow 2>&1 … ✓ (20.0s)
+  2 tools completed in 49.3s (2 ✓)
+
+All 5 tests pass. Now the full test suite and build:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (58.6s)
+
+  watch: no files changed this turn — skipping
+
