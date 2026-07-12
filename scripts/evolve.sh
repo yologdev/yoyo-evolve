@@ -2148,16 +2148,59 @@ RESPONDEOF
     rm -f "$RESPOND_LOG"
 fi
 
+# Risk-meter feed, validation half (#587): score the PREVIOUS snapshot's
+# predictions against files that actually broke in this session's commits.
+# Must run BEFORE the snapshot block below — validating after would compare
+# the brand-new snapshot against zero subsequent commits, always a no-op.
+# The CLI only appends a .yoyo/risk_validations.jsonl event when something
+# broke (clean sessions record nothing, by design), so the log line checks
+# whether the file actually grew instead of pre-announcing success.
+# Non-fatal: the meter must never block a session.
+if [ -x "$YOYO_BIN" ]; then
+    RV_BEFORE=$([ -f .yoyo/risk_validations.jsonl ] && wc -l < .yoyo/risk_validations.jsonl || echo 0)
+    : > /tmp/risk_validate.stderr
+    if ${TIMEOUT_CMD:+$TIMEOUT_CMD 60} "$YOYO_BIN" risk validate >/dev/null 2>/tmp/risk_validate.stderr; then
+        RV_AFTER=$([ -f .yoyo/risk_validations.jsonl ] && wc -l < .yoyo/risk_validations.jsonl || echo 0)
+        if [ "$RV_AFTER" -gt "$RV_BEFORE" ]; then
+            echo "  Risk validation recorded (#587)."
+        elif [ -s /tmp/risk_validate.stderr ]; then
+            # The CLI warns to stderr but exits 0 on ledger-write failure —
+            # without this branch a chronic write failure reads as "no
+            # breakage" forever (the starvation this wiring exists to fix).
+            echo "  ⚠️ risk validation degraded (ledger unchanged; CLI reported):"
+            sed 's/^/    /' /tmp/risk_validate.stderr
+        else
+            echo "  Risk validation ran — no breakage to record since last snapshot."
+        fi
+    else
+        echo "  Risk validation skipped (non-fatal)."
+        [ -s /tmp/risk_validate.stderr ] && sed 's/^/    /' /tmp/risk_validate.stderr
+    fi
+fi
+
 # Risk-meter feed (#575): record one risk snapshot per session so the
 # prediction meter accumulates ground truth. Runs before the wrap-up commit
 # so the appended .yoyo/risk_snapshots.jsonl line is swept into that commit
 # and pushed (the runner is ephemeral — an uncommitted snapshot is lost).
+# Same growth-check honesty as the validation block above: the CLI exits 0
+# even when its ledger write fails (warning to stderr only), and a silently
+# failing snapshot also breaks future validations once its hash ages out of
+# the shallow fetch window — so "recorded" must mean the file actually grew.
 # Non-fatal: the meter must never block a session.
 if [ -x "$YOYO_BIN" ]; then
-    if ${TIMEOUT_CMD:+$TIMEOUT_CMD 60} "$YOYO_BIN" risk snapshot >/dev/null 2>&1; then
-        echo "  Risk snapshot recorded (#575)."
+    RS_BEFORE=$([ -f .yoyo/risk_snapshots.jsonl ] && wc -l < .yoyo/risk_snapshots.jsonl || echo 0)
+    : > /tmp/risk_snapshot.stderr
+    if ${TIMEOUT_CMD:+$TIMEOUT_CMD 60} "$YOYO_BIN" risk snapshot >/dev/null 2>/tmp/risk_snapshot.stderr; then
+        RS_AFTER=$([ -f .yoyo/risk_snapshots.jsonl ] && wc -l < .yoyo/risk_snapshots.jsonl || echo 0)
+        if [ "$RS_AFTER" -gt "$RS_BEFORE" ]; then
+            echo "  Risk snapshot recorded (#575)."
+        else
+            echo "  ⚠️ risk snapshot degraded (ledger unchanged):"
+            [ -s /tmp/risk_snapshot.stderr ] && sed 's/^/    /' /tmp/risk_snapshot.stderr
+        fi
     else
         echo "  Risk snapshot failed (non-fatal)."
+        [ -s /tmp/risk_snapshot.stderr ] && sed 's/^/    /' /tmp/risk_snapshot.stderr
     fi
 fi
 
