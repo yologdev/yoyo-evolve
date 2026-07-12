@@ -1228,6 +1228,7 @@ and commit if needed."
         BUILD_FAILED=""
         BUILD_OUT=""
         TEST_OUT=""
+        CLIPPY_OUT=""
         if ! BUILD_OUT=$(cargo build 2>&1); then
             BUILD_FAILED="build"
             echo "    BLOCKED: Task $TASK_NUM broke the build"
@@ -1236,6 +1237,12 @@ and commit if needed."
             BUILD_FAILED="tests"
             echo "    BLOCKED: Task $TASK_NUM broke tests"
             echo "$TEST_OUT" | tail -20 | sed 's/^/      /'
+        elif ! CLIPPY_OUT=$(cargo clippy --all-targets -- -D warnings 2>&1); then
+            # CI treats clippy warnings as errors; gate here too so a
+            # clippy-only failure can't reach main (#591, Day 133 incident).
+            BUILD_FAILED="clippy"
+            echo "    BLOCKED: Task $TASK_NUM failed clippy -D warnings"
+            echo "$CLIPPY_OUT" | tail -20 | sed 's/^/      /'
         fi
 
         if [ -z "$BUILD_FAILED" ]; then
@@ -1245,9 +1252,11 @@ and commit if needed."
         BUILD_FIX_ATTEMPT=$((BUILD_FIX_ATTEMPT + 1))
         if [ "$BUILD_FIX_ATTEMPT" -gt "$MAX_BUILD_FIX" ]; then
             TASK_OK=false
-            REVERT_REASON="Build/tests failed after $MAX_BUILD_FIX fix attempts"
+            REVERT_REASON="$BUILD_FAILED failed after $MAX_BUILD_FIX fix attempts"
             if [ "$BUILD_FAILED" = "build" ]; then
                 FAIL_OUT="$BUILD_OUT"
+            elif [ "$BUILD_FAILED" = "clippy" ]; then
+                FAIL_OUT="$CLIPPY_OUT"
             else
                 FAIL_OUT="$TEST_OUT"
             fi
@@ -1264,6 +1273,8 @@ $(echo "$FAIL_OUT" | tail -30)
         BFIX_PROMPT=$(mktemp)
         if [ "$BUILD_FAILED" = "build" ]; then
             BFIX_ERRORS=$(echo "$BUILD_OUT" | tail -40)
+        elif [ "$BUILD_FAILED" = "clippy" ]; then
+            BFIX_ERRORS=$(echo "$CLIPPY_OUT" | tail -40)
         else
             BFIX_ERRORS=$(echo "$TEST_OUT" | tail -40)
         fi
@@ -1278,7 +1289,7 @@ $BFIX_ERRORS
 
 === WHAT TO DO ===
 Fix the $BUILD_FAILED errors. Do not start over — fix the specific errors shown above.
-After fixing, run: cargo fmt && cargo build && cargo test
+After fixing, run: cargo fmt && cargo build && cargo test && cargo clippy --all-targets -- -D warnings
 BFIXEOF
         BFIX_LOG=$(mktemp)
         BFIX_EXIT=0
@@ -1485,6 +1496,20 @@ $(echo "$BUILD_OUT" | tail -30)
                     REVERT_DETAILS="Test errors after eval-fix:
 \`\`\`
 $(echo "$TEST_OUT" | tail -30)
+\`\`\`"
+                    break
+                fi
+                # Same clippy gate as the build-fix loop (#591): an eval-fix
+                # agent can introduce a clippy-only failure, and this re-check
+                # feeds a safety-commit that CI will judge with -D warnings.
+                if ! CLIPPY_OUT=$(cargo clippy --all-targets -- -D warnings 2>&1); then
+                    echo "    Clippy failed after fix attempt"
+                    echo "$CLIPPY_OUT" | tail -20 | sed 's/^/      /'
+                    TASK_OK=false
+                    REVERT_REASON="Clippy failed after fix attempt"
+                    REVERT_DETAILS="Clippy errors after eval-fix:
+\`\`\`
+$(echo "$CLIPPY_OUT" | tail -30)
 \`\`\`"
                     break
                 fi
