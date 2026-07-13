@@ -91,6 +91,7 @@ pub(crate) enum CommandRoute {
     Map,
     Outline,
     Def,
+    Refs,
     Retry,
     Tree,
     Web,
@@ -165,6 +166,7 @@ pub(crate) fn route_command(input: &str) -> CommandRoute {
         "/docs" => CommandRoute::Docs,
         "/find" => CommandRoute::Find,
         "/def" => CommandRoute::Def,
+        "/refs" => CommandRoute::Refs,
         "/grep" => CommandRoute::Grep,
         "/search" => CommandRoute::Search,
         "/tips" => CommandRoute::Tips,
@@ -917,6 +919,10 @@ async fn dispatch_file_command(
             commands::handle_def(ctx.input);
             Some(CommandResult::Continue)
         }
+        CommandRoute::Refs => {
+            commands::handle_refs(ctx.input);
+            Some(CommandResult::Continue)
+        }
         CommandRoute::Tree => {
             commands::handle_tree(ctx.input);
             Some(CommandResult::Continue)
@@ -1333,6 +1339,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
         | CommandRoute::Map
         | CommandRoute::Outline
         | CommandRoute::Def
+        | CommandRoute::Refs
         | CommandRoute::Tree
         | CommandRoute::Web
         | CommandRoute::Rename

@@ -391,6 +391,18 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /def handle_def          Find where handle_def is defined\n\
              \x20 /def Config              Find definitions matching Config",
         ),
+        "refs" => Some(
+            "/refs <symbol> — Find where a symbol is used\n\n\
+             Searches the project for every word-boundary usage of the named symbol and\n\
+             prints each match as path:line with the source line, grouped by file, with a\n\
+             total-count footer. A small find-references gesture, companion to /def.\n\n\
+             Matching is grep-based with a word-boundary regex, so partial-word noise\n\
+             (e.g. foobar when searching foo) is excluded. The symbol name is treated\n\
+             literally (regex metachars are escaped).\n\n\
+             Usage:\n\
+             \x20 /refs handle_def         Find where handle_def is used\n\
+             \x20 /refs Config             Find usages of Config",
+        ),
         "status" => Some(
             "/status — Show session dashboard\n\n\
              Displays a comprehensive session overview: model, git branch,\n\
@@ -1339,6 +1351,7 @@ pub fn command_short_description(cmd: &str) -> Option<&'static str> {
         "copy" => Some("Copy text to the system clipboard"),
         "cost" => Some("Show estimated session cost"),
         "def" => Some("Find where a symbol is defined"),
+        "refs" => Some("Find where a symbol is used"),
         "diff" => Some("Show git changes"),
         "doctor" => Some("Run environment diagnostics"),
         "docs" => Some("Look up crate documentation"),

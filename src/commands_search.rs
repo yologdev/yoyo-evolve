@@ -831,6 +831,101 @@ pub fn handle_def(input: &str) {
     println!();
 }
 
+/// Parse the symbol name out of a `/refs ...` command line.
+/// Returns the trimmed symbol name, or an empty string when none was given.
+pub(crate) fn parse_refs_query(input: &str) -> String {
+    input
+        .strip_prefix("/refs")
+        .unwrap_or(input)
+        .trim()
+        .to_string()
+}
+
+/// Maximum references to display before truncating.
+const REFS_MAX_MATCHES: usize = 100;
+
+/// Maximum bytes of the source line shown per reference.
+const REFS_CONTEXT_MAX_BYTES: usize = 120;
+
+/// A single word-boundary usage of a symbol.
+struct RefMatch {
+    path: String,
+    line: usize,
+    /// The source line, trimmed and byte-safely truncated.
+    context: String,
+}
+
+/// Collect every word-boundary usage of `name` across all project files.
+/// Matching is literal (via `find_word_boundary_matches`), so a symbol
+/// containing regex metacharacters (e.g. `a.b`) is matched as itself, not
+/// as a pattern — and partial-word noise (`foobar` for `foo`) is excluded.
+fn collect_ref_matches(name: &str) -> Vec<RefMatch> {
+    let mut matches: Vec<RefMatch> = Vec::new();
+    for path in list_project_files() {
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            // Unreadable / binary files are skipped silently.
+            continue;
+        };
+        for (idx, line) in content.lines().enumerate() {
+            if crate::commands_rename::find_word_boundary_matches(line, name).is_empty() {
+                continue;
+            }
+            matches.push(RefMatch {
+                path: path.clone(),
+                line: idx + 1,
+                context: truncate_at_char_boundary(line.trim(), REFS_CONTEXT_MAX_BYTES).to_string(),
+            });
+        }
+    }
+    matches
+}
+
+/// `/refs <symbol>` — find every word-boundary usage of a symbol across the
+/// project. Companion to `/def` (which answers "where is it defined?"): this
+/// answers "where is it used?". Grep-based, not AST — no external binary.
+pub fn handle_refs(input: &str) {
+    let query = parse_refs_query(input);
+    if query.is_empty() {
+        println!("{DIM}  usage: /refs <symbol-name>{RESET}");
+        return;
+    }
+
+    let matches = collect_ref_matches(&query);
+    if matches.is_empty() {
+        println!("{DIM}  no references found for '{query}'{RESET}");
+        return;
+    }
+
+    let total = matches.len();
+    let shown = total.min(REFS_MAX_MATCHES);
+
+    // Count distinct files across ALL matches, not just the shown slice.
+    let mut file_count = 0usize;
+    let mut last_file: Option<&str> = None;
+    for m in &matches {
+        if last_file != Some(m.path.as_str()) {
+            file_count += 1;
+            last_file = Some(m.path.as_str());
+        }
+    }
+
+    println!();
+    let mut current_file: Option<&str> = None;
+    for m in &matches[..shown] {
+        if current_file != Some(m.path.as_str()) {
+            println!("{CYAN}{}{RESET}", m.path);
+            current_file = Some(m.path.as_str());
+        }
+        println!("  {DIM}{}:{RESET}  {}", m.line, m.context);
+    }
+
+    if total > shown {
+        println!("\n{DIM}  ({} more){RESET}", total - shown);
+    }
+    println!("\n{DIM}  {total} references to '{query}' across {file_count} files{RESET}");
+    println!();
+}
+
 /// Maximum matches to display before truncating.
 const GREP_MAX_MATCHES: usize = 50;
 
@@ -1678,6 +1773,61 @@ mod tests {
         assert_eq!(parse_def_query("/def"), "");
         assert_eq!(parse_def_query("/def "), "");
         assert_eq!(parse_def_query("/def    "), "");
+    }
+
+    #[test]
+    fn parse_refs_query_extracts_symbol_name() {
+        assert_eq!(parse_refs_query("/refs foo"), "foo");
+        assert_eq!(parse_refs_query("/refs   bar  "), "bar");
+        assert_eq!(parse_refs_query("foo"), "foo");
+    }
+
+    #[test]
+    fn parse_refs_query_empty_input_is_empty() {
+        assert_eq!(parse_refs_query("/refs"), "");
+        assert_eq!(parse_refs_query("/refs "), "");
+        assert_eq!(parse_refs_query("/refs    "), "");
+    }
+
+    #[test]
+    fn refs_word_boundary_excludes_partial_words() {
+        // `\bfoo\b` semantics: `foo` matches, `foobar` does not.
+        let buffer = "let foo = 1;\nlet foobar = 2;";
+        let mut hits = 0usize;
+        for line in buffer.lines() {
+            if !crate::commands_rename::find_word_boundary_matches(line, "foo").is_empty() {
+                hits += 1;
+            }
+        }
+        assert_eq!(hits, 1, "only the exact-word `foo` line should match");
+    }
+
+    #[test]
+    fn refs_query_with_metachar_is_matched_literally() {
+        // A query with a regex metachar (`.`) must match literally, not as
+        // "a-any-char-b". `find_word_boundary_matches` is literal by design.
+        assert_eq!(
+            crate::commands_rename::find_word_boundary_matches("call a.b here", "a.b").len(),
+            1,
+            "`a.b` should match the literal `a.b`"
+        );
+        assert!(
+            crate::commands_rename::find_word_boundary_matches("call axb here", "a.b").is_empty(),
+            "`a.b` must NOT match `axb` (metachar treated literally)"
+        );
+    }
+
+    #[test]
+    fn refs_truncation_multibyte_no_panic() {
+        // A source line with multi-byte chars must not panic on truncation.
+        let line = "✓✓✓ foo ✓✓✓ some long tail to force truncation ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓";
+        // Should snap to a char boundary well below the byte length.
+        for max in [1usize, 2, 3, 5, 10, 20] {
+            let _ = truncate_at_char_boundary(line, max); // must not panic
+        }
+        // Sanity: result is always valid UTF-8 (returning &str proves it) and
+        // no longer than requested.
+        assert!(truncate_at_char_boundary(line, 5).len() <= 5);
     }
 
     #[test]

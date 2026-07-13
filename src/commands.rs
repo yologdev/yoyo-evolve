@@ -134,6 +134,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/open",
     "/outline",
     "/def",
+    "/refs",
     "/stash",
     "/rewind",
     "/teach",
@@ -256,6 +257,8 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "explain" => Some("<file>"),
         "map" => Some("[path] [--depth N]"),
         "outline" => Some("<query> [--all]"),
+        "def" => Some("<symbol-name>"),
+        "refs" => Some("<symbol-name>"),
         "stash" => Some("push | pop | list | drop"),
         "mark" => Some("<name>"),
         "jump" => Some("<name>"),
@@ -533,7 +536,7 @@ pub use crate::commands_skill::handle_skill;
 pub use crate::commands_ast_grep::handle_ast_grep;
 pub use crate::commands_map::handle_map;
 pub use crate::commands_search::{
-    handle_def, handle_find, handle_grep, handle_index, handle_outline,
+    handle_def, handle_find, handle_grep, handle_index, handle_outline, handle_refs,
 };
 
 pub use crate::commands_dev::{handle_doctor, handle_fix, handle_health};

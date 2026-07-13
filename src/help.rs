@@ -534,6 +534,7 @@ pub fn cli_help_text() -> String {
         "    /outline <query|file>  Search for symbols or show file structure"
     );
     let _ = writeln!(s, "    /def <symbol>      Find where a symbol is defined");
+    let _ = writeln!(s, "    /refs <symbol>     Find where a symbol is used");
     let _ = writeln!(s, "    /tree [depth]      Show project directory tree");
     let _ = writeln!(
         s,
@@ -805,6 +806,7 @@ pub fn help_text() -> String {
     );
     out.push_str("  /outline <query|file>  Search for symbols or show file structure\n");
     out.push_str("  /def <symbol>      Find where a symbol is defined\n");
+    out.push_str("  /refs <symbol>     Find where a symbol is used\n");
     out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
     out.push_str("  /web <url>         Fetch a web page and display clean readable text content\n");
     out.push_str(
