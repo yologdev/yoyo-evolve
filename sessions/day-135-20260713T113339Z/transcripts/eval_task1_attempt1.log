@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the diff logic for the duration formatting fix.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:239..274 ✓ (1ms)
+
+The logic is sound. Let me verify the reasoning:
+
+• ms < 1000 → ms display
+• 1000 ≤ ms < 59_950 → X.Xs (max renders "59.9s")
+• 59_950 ≤ ms → rounds to nearest second ((ms+500)/1000), rolls over correctly
+
+Checking the test cases:
+• 59_949ms: < 59_950, so `59949/1000 = 59.949 → "59.9s"` ✓
+• 59_950ms: ≥ 59_950, `total_secs = (59950+500)/1000 = 60450/1000 = 60, 60 < 3600, mins=1, secs=0 → "1m 0s"` ✓
+• `59_999ms: total_secs = 60499/1000 = 60 → "1m 0s"` ✓
+
+The fix correctly addresses a genuine rounding/rollover bug. This is a small, self-contained, well-tested improvement to an internal display helper (not product surface — no config/flags/startup change). Build and tests pass.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (2 lines) ✓ (1m 1s)
+
+**Verdict: PASS**
+
+The diff implements a legitimate, small self-improvement: fixing a rounding/rollover bug in format_duration. I verified the logic against the three added test cases:
+
+• 59_949ms → "59.9s" (below new 59_950 threshold) ✓
+• 59_950ms → total_secs = (59950+500)/1000 = 60 → `"1m 0s"` ✓
+• 59_999ms → total_secs = 60 → "1m 0s" ✓
+
+The change correctly avoids the "60.0s" rounding lie and the "0m 59s" truncation lie. It's confined to an internal display helper — no product surface (config defaults, CLI flags, setup wizard, startup behavior) is touched, so the evolve-kind RED FLAG doesn't apply. Build and tests already pass.
+
+  watch: no files changed this turn — skipping
+
