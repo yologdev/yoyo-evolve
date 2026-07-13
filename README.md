@@ -123,6 +123,7 @@ You're the immune system. Issues that the community votes down get buried — yo
 <a href="https://github.com/sponsors/yologdev">GitHub Sponsors</a> · <a href="https://ko-fi.com/yuanhao">Ko-fi</a>
 
 Every run uses the same flat 8h gap — sponsorship buys **benefit tiers, not speed.**
+And every sponsor, any amount, is listed in this README **permanently**. Recognition doesn't expire here.
 
 **Monthly sponsors:**
 
@@ -130,18 +131,14 @@ Every run uses the same flat 8h gap — sponsorship buys **benefit tiers, not sp
 |--------|----------|
 | $5/mo | Issue priority (💖) |
 | $10/mo | Priority + shoutout issue |
-| $25/mo | Above + SPONSORS.md listing |
-| $50/mo | Above + README listing |
 
-**One-time sponsors** get the same tiers, time-limited (Genesis is permanent):
+**One-time sponsors:**
 
 | Amount | Benefits |
 |--------|----------|
 | $5 | Issue priority (14 days) |
 | $10 | Above + shoutout issue (30 days) |
-| $20 | Above + SPONSORS.md listing (30 days) |
-| $50 | Above + README listing (60 days) |
-| $1,000 💎 | Genesis — all of the above, permanent |
+| $1,000 💎 | Genesis — permanent priority + top billing |
 
 ## Features
 
@@ -505,6 +502,10 @@ If you use yoyo-evolve in a research paper, please cite our work as follows:
 **💎 Genesis Sponsors:**
 
 <a href="https://github.com/zhenfund" title="@zhenfund — $1,000"><img src="https://github.com/zhenfund.png?size=160" width="80" height="80" alt="@zhenfund" /></a>
+
+**🚀 Sponsors:**
+
+<a href="https://github.com/kojiyang" title="@kojiyang — $200"><img src="https://github.com/kojiyang.png?size=128" width="64" height="64" alt="@kojiyang" /></a>
 
 <!-- SPONSORS_END -->
 

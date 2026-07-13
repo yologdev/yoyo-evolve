@@ -238,7 +238,6 @@ def build_sponsor_info(recurring, onetime_from_api, existing_state, today):
       sponsors linger 90 days after first_seen even after they leave the
       API, so we remember whether they used their accelerated run.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=GRACE_DAYS)).strftime("%Y-%m-%d")
     sponsor_info = {}
 
     # --- Recurring entries ---
@@ -295,16 +294,12 @@ def build_sponsor_info(recurring, onetime_from_api, existing_state, today):
             info.get("first_seen") or today,
         )
 
-    # Expire entries past the grace window. Genesis never expires. Rows
-    # with an empty first_seen are KEPT (treated as seen-today), since a
-    # lexicographic compare against "" would drop them, which is the
-    # exact silent-data-loss class the refactor exists to eliminate.
-    onetime_state = {
-        login: info
-        for login, info in onetime_state.items()
-        if info.get("benefit_expires") == "never"
-        or (info.get("first_seen") or today) >= cutoff
-    }
+    # Sponsors are permanent: every one-time sponsor stays in sponsor_info
+    # (and therefore in the README/SPONSORS.md listings) forever. The old
+    # 90-day grace-window prune is deliberately gone — with a small roster,
+    # recognition should not expire (creator decision, 2026-07-13). Only the
+    # time-limited *benefits* (issue priority, shoutout window) still use
+    # benefit_expires; listing does not.
 
     # --- Fold one-time entries into sponsor_info ---
     for login, info in onetime_state.items():
@@ -399,24 +394,26 @@ def update_sponsors_md(sponsor_info, path=SPONSORS_MD):
 def render_readme_block(sponsor_info):
     """Render the auto-maintained sponsors block for README.md.
 
-    Only sponsors with the 'readme' or 'genesis' benefit appear here.
+    EVERY sponsor appears here, permanently — Genesis in its own section,
+    everyone else (any amount, recurring or one-time) below it. Listing
+    ignores `benefits`/`benefit_expires` entirely; those only govern the
+    time-limited perks (issue priority, shoutout window).
     Returns the full block including START/END markers.
     """
     genesis = []
-    patrons = []  # $50+/mo recurring or $50+ one-time with active readme benefit
+    patrons = []  # everyone who isn't Genesis, any amount
 
     for login, info in sponsor_info.items():
         benefits = info.get("benefits", [])
         if "genesis" in benefits:
             dollars = info.get("total_cents", 0) // 100
             genesis.append((login, f"${dollars:,}"))
-        elif "readme" in benefits:
-            if info.get("type") == "recurring":
-                dollars = info.get("monthly_cents", 0) // 100
-                patrons.append((login, f"${dollars}/mo"))
-            else:
-                dollars = info.get("total_cents", 0) // 100
-                patrons.append((login, f"${dollars}"))
+        elif info.get("type") == "recurring":
+            dollars = info.get("monthly_cents", 0) // 100
+            patrons.append((login, f"${dollars}/mo"))
+        else:
+            dollars = info.get("total_cents", 0) // 100
+            patrons.append((login, f"${dollars}"))
 
     def avatar_tag(login, amount, size):
         # Raw HTML so we can control pixel size; markdown image syntax can't.
@@ -432,7 +429,7 @@ def render_readme_block(sponsor_info):
     lines.append("")
 
     if not genesis and not patrons:
-        lines.append("_No top-tier sponsors yet. Be the first — [sponsor yoyo](https://github.com/sponsors/yologdev)._")
+        lines.append("_No sponsors yet. Be the first — [sponsor yoyo](https://github.com/sponsors/yologdev)._")
     else:
         if genesis:
             lines.append("**💎 Genesis Sponsors:**")
@@ -442,7 +439,7 @@ def render_readme_block(sponsor_info):
             )
             lines.append("")
         if patrons:
-            lines.append("**🚀 Patron Sponsors ($50+):**")
+            lines.append("**🚀 Sponsors:**")
             lines.append("")
             lines.append(
                 " ".join(avatar_tag(login, amount, 64) for login, amount in sorted(patrons))

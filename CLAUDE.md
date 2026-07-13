@@ -4,23 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A self-evolving coding agent CLI built on [yoagent](https://github.com/yologdev/yoagent). The agent spans multiple Rust source files under `src/`. A GitHub Actions cron job (`scripts/evolve.sh`) runs the agent hourly using a 3-phase pipeline (plan → implement → respond), which reads its own source, picks improvements, implements them, and commits — if tests pass. All runs use a flat 8h gap (~3/day). Sponsors get benefit tiers (issue priority, shoutout issues, listing eligibility) but no run-frequency speedup. One-time sponsors ($2+) get 1 accelerated run that bypasses the gap (only consumed when they have open issues; tracked in `sponsors/credits.json`).
+A self-evolving coding agent CLI built on [yoagent](https://github.com/yologdev/yoagent). The agent spans multiple Rust source files under `src/`. A GitHub Actions cron job (`scripts/evolve.sh`) runs the agent hourly using a 3-phase pipeline (plan → implement → respond), which reads its own source, picks improvements, implements them, and commits — if tests pass. All runs use a flat 8h gap (~3/day). Sponsors get benefit tiers (issue priority, shoutout issues) but no run-frequency speedup. Every sponsor, any amount, is listed in README.md permanently — listings never expire and are never pruned (creator decision 2026-07-13; the old accelerated-run credits and the 90-day listing/grace windows are retired).
 
 **Sponsor benefit tiers:**
 
-Monthly recurring (benefits only):
+All sponsors (any amount, recurring or one-time): permanent README listing.
+
+Monthly recurring:
 - $5/mo: Issue priority (💖)
 - $10/mo: Priority + shoutout issue
-- $25/mo: Above + SPONSORS.md eligible
-- $50/mo: Above + README eligible
 
-One-time (cumulative — each tier includes all benefits below it):
-- $2: 1 accelerated run (bypasses 8h gap)
-- $5: Accelerated run + issue priority (14 days)
+One-time (cumulative):
+- $5: Issue priority (14 days)
 - $10: Above + shoutout issue (30 days)
-- $20: Above + SPONSORS.md eligible (30 days)
-- $50: Above + priority for 60 days + SPONSORS.md + README eligible
-- $1,000 💎 Genesis: All above + permanent priority + SPONSORS.md + README + journal acknowledgment (never expires)
+- $1,000 💎 Genesis: Permanent priority + top billing + journal acknowledgment
 
 ## Build & Test Commands
 
@@ -157,7 +154,7 @@ Additional skills (`origin: yoyo`, eligible for skill-evolve to refine/retire):
 - `ISSUES_TODAY.md` — ephemeral, generated during evolution from GitHub issues (gitignored)
 - `ECONOMICS.md` — what money and sponsorship mean to yoyo (DO NOT MODIFY)
 - `SPONSORS.md` — auto-maintained sponsor recognition (only additions, never removals; amounts shown so yoyo understands the investment)
-- `sponsors/sponsor_info.json` — single source of truth for sponsor state (recurring + one-time, with run_used, shouted_out, benefit_expires). Rebuilt by `scripts/refresh_sponsors.py`; only the `run_used` flag is mutated by `evolve.sh` when consuming an accelerated run.
+- `sponsors/sponsor_info.json` — single source of truth for sponsor state (recurring + one-time, with shouted_out and benefit_expires for the time-limited perks). Rebuilt by `scripts/refresh_sponsors.py`; entries are permanent — no grace-window pruning, and every sponsor is listed in README.md forever (the legacy `run_used` flag is inert).
 
 **Skill evolution loop** (decoupled from main evolve pipeline):
 - `skills/skill-evolve/SKILL.md` — meta-skill that refines/creates/retires *other* skills based on past-session evidence. Four hard rules: (1) only edit skills declaring `origin: yoyo` (allow-list); (2) never edit itself; (3) one mutation per cycle; (4) every refine/create event must include an `expected:` line — freeform prose naming a concrete observable signal, a horizon, and a fallback if the prediction fails. This is decision-observability discipline (paper: arxiv 2604.25850) at the cognitive layer only — no automated validation harness; future cycles re-read the line as informal evidence and humans use it as an audit trail.
