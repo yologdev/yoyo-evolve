@@ -239,20 +239,28 @@ pub fn format_cost(cost: f64) -> String {
 pub fn format_duration(d: std::time::Duration) -> String {
     let ms = d.as_millis();
     if ms < 1000 {
-        format!("{ms}ms")
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else if ms < 3_600_000 {
-        let mins = ms / 60_000;
-        let secs = (ms % 60_000) / 1000;
+        return format!("{ms}ms");
+    }
+    if ms < 59_950 {
+        // Upper bound is 59_950, not 60_000: values in 59_950..60_000 round to
+        // "60.0s" at one decimal place, so roll them over to the "m s" form.
+        return format!("{:.1}s", ms as f64 / 1000.0);
+    }
+    // From here up we render whole seconds, so round to the nearest second
+    // first — otherwise a value like 59_999ms truncates to "0m 59s" instead of
+    // rolling over to "1m 0s" (the same rollover lie the seconds branch avoids).
+    let total_secs = (ms + 500) / 1000;
+    if total_secs < 3600 {
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
         format!("{mins}m {secs}s")
-    } else if ms < 86_400_000 {
-        let hours = ms / 3_600_000;
-        let mins = (ms % 3_600_000) / 60_000;
+    } else if total_secs < 86_400 {
+        let hours = total_secs / 3600;
+        let mins = (total_secs % 3600) / 60;
         format!("{hours}h {mins}m")
     } else {
-        let days = ms / 86_400_000;
-        let hours = (ms % 86_400_000) / 3_600_000;
+        let days = total_secs / 86_400;
+        let hours = (total_secs % 86_400) / 3600;
         format!("{days}d {hours}h")
     }
 }
@@ -763,6 +771,20 @@ mod tests {
         assert_eq!(
             format_duration(std::time::Duration::from_millis(30000)),
             "30.0s"
+        );
+        // Rollover discipline: 59_950..60_000 ms rounds to "60.0s" at one
+        // decimal place, which is a lie — it must roll over to "1m 0s".
+        assert_eq!(
+            format_duration(std::time::Duration::from_millis(59_949)),
+            "59.9s"
+        );
+        assert_eq!(
+            format_duration(std::time::Duration::from_millis(59_950)),
+            "1m 0s"
+        );
+        assert_eq!(
+            format_duration(std::time::Duration::from_millis(59_999)),
+            "1m 0s"
         );
     }
 
