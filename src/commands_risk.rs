@@ -1688,6 +1688,28 @@ fn handle_risk_effectiveness() {
     print!("{}", format_effectiveness_report(&report));
 }
 
+/// Map an effectiveness verdict to a short, color-free word for ambient display.
+/// `Insufficient` maps to `None` so /status stays quiet until the verdict unlocks.
+fn verdict_word(v: &EffectivenessVerdict) -> Option<&'static str> {
+    match v {
+        EffectivenessVerdict::Learning => Some("learning ↑"),
+        EffectivenessVerdict::Flat => Some("flat"),
+        EffectivenessVerdict::Decorative => Some("decorative ↓"),
+        EffectivenessVerdict::Insufficient => None,
+    }
+}
+
+/// One-line effectiveness verdict for ambient display in /status.
+/// Returns `None` when there aren't enough validation events yet
+/// (fewer than `MIN_EFFECTIVENESS_EVENTS`) so /status stays quiet.
+/// Returns `Some(&'static str)` — a short verdict word like
+/// "learning ↑", "flat", or "decorative ↓" (no ANSI color codes;
+/// the caller formats its own line).
+pub(crate) fn reflex_effectiveness_summary() -> Option<&'static str> {
+    let report = effectiveness_report_from(std::path::Path::new(RISK_VALIDATION_PATH));
+    verdict_word(&report.verdict)
+}
+
 /// Parsed git-log entry: one commit message + the files it touched.
 struct CommitEntry {
     message: String,
@@ -3595,6 +3617,21 @@ src/baz.rs
         let formatted = format_effectiveness_report(&report);
         assert!(formatted.contains("reflex may be decorative ↓"));
         assert!(formatted.contains("DREAM.md"));
+    }
+
+    #[test]
+    fn test_verdict_word_mapping() {
+        // Pure mapping used by reflex_effectiveness_summary for /status.
+        assert_eq!(verdict_word(&EffectivenessVerdict::Insufficient), None);
+        assert_eq!(
+            verdict_word(&EffectivenessVerdict::Learning),
+            Some("learning ↑")
+        );
+        assert_eq!(verdict_word(&EffectivenessVerdict::Flat), Some("flat"));
+        assert_eq!(
+            verdict_word(&EffectivenessVerdict::Decorative),
+            Some("decorative ↓")
+        );
     }
 
     #[test]

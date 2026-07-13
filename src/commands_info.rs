@@ -239,6 +239,11 @@ pub fn handle_status(
     if let Some((hit_rate, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
         println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
     }
+    // Show the risk-reflex effectiveness verdict once enough validation events
+    // have accumulated (the dream question: is the reflex cutting failures?).
+    if let Some(verdict) = crate::commands_risk::reflex_effectiveness_summary() {
+        println!("  reflex:  {verdict}");
+    }
     println!("{RESET}");
 }
 

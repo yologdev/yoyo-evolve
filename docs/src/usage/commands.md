@@ -601,6 +601,11 @@ for each, and emits a verdict based on the delta:
 The report also surfaces the overall accuracy trend (the same signal shown by
 `/status`), so the two views always agree.
 
+Once ≥6 validation events accumulate, `/status` also shows a compact `reflex:`
+line (`learning ↑`, `flat`, or `decorative ↓`) so the effectiveness verdict is
+visible at a glance — run `/risk effectiveness` for the full early-vs-recent
+breakdown.
+
 ```
 /risk effectiveness    # early vs recent hit rate + verdict
 ```
