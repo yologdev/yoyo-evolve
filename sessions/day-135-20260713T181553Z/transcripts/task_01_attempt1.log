@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll make one small, concrete improvement and commit it. Let me first understand the current state and pick a target quickly.
+
+My learnings warn me strongly: I've fixed the same "rollover-boundary" shape three nights running. I need to pick an off-shape task. Let me look for something different — a real gap, not another top-tier rollover test.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && echo "--… ✓ (9ms)
+
+Confirmed — last night was another format_duration rollover fix. I must pick something structurally different. Let me look for a small, off-shape improvement — something user-facing or a robustness gap, not a boundary test.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME\|XXX" src/…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/output.rs src/f… ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 2.9s (2 ✓)
+
+Let me look at something user-facing and off-shape. Let me check the format_token_count / format_file_size area, or better — look at a helper that could have an edge-case robustness gap that isn't a rollover boundary. Let me examine format_file_size-like helpers or path handling.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn.*pluralize\|fn.*for… ✓ (12ms)
+
+Let me look at something functionally useful and different — file path handling or the `suggest_command` typo-correction, which is user-facing and not a boundary test.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn suggest_command/,/^}… ✓ (4ms)
+
+This is interesting and off-shape. There's a potential bug here: when there are multiple prefix matches (prefix_matches.len() > 1), it falls through to edit distance. But consider: if a user types a prefix that uniquely-ish matches by prefix but the edit distance picks a different command. Actually the logic is reasonable.
+
+But I notice a real edge case: edit_distance(cmd, known) — the threshold uses cmd.len() (byte length via .len()). For a multi-byte command input, cmd.len() counts bytes not chars, making the threshold pick wrong. But commands are ASCII. Not a real bug.
+
+Let me look for a genuine, verifiable off-shape improvement. Let me check the edit_distance function itself and whether suggest_command handles empty input.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn edit_distance" src/… ✓ (9ms)
+
+There are two edit_distance functions — one in smart_edit.rs and one in commands.rs. That's duplication, but consolidating is a bigger refactor. Let me check suggest_command with empty input — a real robustness question.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '373,398p' src/commands.r… ✓ (3ms)
+
+Now let me test a real edge case in suggest_command. What happens with a single character like /h? Threshold is 2 for short commands. edit_distance("/h", "/help") = 3 (add e,l,p). So no suggestion. But prefix match: many commands start with /h? Let me think about a concrete gap.
+
+Actually, let me consider a real robustness issue: suggest_command("") — empty string. split_whitespace().next().unwrap_or(input) → "". Then prefix_matches = every command starting with "" = ALL commands. .len() == 1 fails (unless only 1 command). Falls to edit_distance. Returns the shortest-distance command for empty input — which would suggest a random command for empty input. That's a minor wart but plausibly harmless.
+
+Let me pick a genuinely useful, off-shape improvement. Let me check `command_arg_completions for a gap, or better — look at whether suggest_command should reject when cmd doesn't start with /. A user typing help (no slash) shouldn't get /help` suggested if the caller passes raw. Let me verify the contract with a quick test.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "suggest_command\|is_unk… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "suggest_command(" src/… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1250,1275p' src/dispatch… ✓ (3ms)
+  3 tools completed in 10.6s (3 ✓)
+
+I found a real, off-shape improvement. Look at line 1252:
+
+```rust
+let cmd_name = s[1..].split_whitespace().next().unwrap_or(&s[1..]);
+```
+
+This is byte indexing s[1..] — which is explicitly forbidden by the safety rules and will **panic if the first character after / is multi-byte**. Wait — s[1..] slices from byte index 1. Since `s starts with /` (a 1-byte ASCII char), byte index 1 is always a valid char boundary here. So it doesn't panic in this specific path.
+
+But it's still fragile pattern usage. Let me look more carefully — is there a genuine correctness bug? Let me focus on suggest_command receiving s (the full input with /) vs cmd. The function itself does input.split_whitespace().next() so it handles the full input. That's consistent.
+
+Let me pick the concrete win: **suggest_command returns a suggestion even for empty/near-empty input**, which produces a confusing "did you mean" for nonsense. Let me verify and add a guard + test — small, correct, off-shape (not a rollover boundary; it's an input-domain guard).
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/t… (4 lines) ✓ (5ms)
+
+Let me confirm the actual behavior of suggest_command("/") and suggest_command("") before deciding. Let me write a quick standalone check by adding a temporary test. Actually, let me reason it precisely.
+
+For suggest_command("/"):
+• cmd = "/". Not in KNOWN_COMMANDS.
+• prefix_matches: commands starting with / = ALL of them. len() == 1? No.
+• edit_distance loop: finds the command with min distance to "/". The shortest command like /ls or `/up → edit_distance("/", "/ls") = 2. cmd.len() = 1 ≤ 5, threshold = 2. So dist <= 2 → **returns a suggestion** for just /`.
+
+So typing / alone (a common thing — user hits / then backspaces args) yields a spurious "did you mean /ls?". That's a real UX wart. And in dispatch.rs, is_unknown_command("/") — let me check whether / even reaches here. But the function-level guard is still correct to add.
+
+Let me confirm is_unknown_command("/"):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn is_unknown_command/,… ✓ (4ms)
+
+`is_unknown_command("/") → cmd = "/", not known, strip_prefix gives ""` (not custom) → returns true. So / alone IS treated as unknown, and suggest_command("/") would fire a spurious suggestion. Confirmed real wart.
+
+The smallest correct fix: in suggest_command, guard against a command token too short to meaningfully match (just / or empty). A command needs at least / + 1 char to be a real typo of a known command. Let me add that guard with tests.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (6 → 14 lines)
+    
+        // Don't suggest for valid commands
+        if KNOWN_COMMANDS.contains(&cmd) {
+  +         return None;
+  +     }
+  + 
+  +     // A bare "/" (or empty input) carries no signal — every command is a prefix
+  +     // match and the nearest edit-distance neighbor is spurious. Requiring at
+  +     // least one character after the slash avoids "did you mean /ls?" when the
+  +     // user has only typed the leading slash. (chars, not bytes, for safety.)
+  +     if cmd.strip_prefix('/').is_none_or(|rest| rest.chars().next().is_none()) {
+            return None;
+        }
+ ✓ (1m 36s)
+    
+        // Don't suggest for valid commands
+        if KNOWN_COMMANDS.contains(&cmd) {
+  +         return None;
+  +     }
+  + 
+  +     // A bare "/" (or empty input) carries no signal — every command is a prefix
+  +     // match and the nearest edit-distance neighbor is spurious. Requiring at
+  ... (5 more lines)
+
+Now add a regression test:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (6 → 17 lines)
+            // Too far from anything → None
+            assert_eq!(suggest_command("/zzzzz"), None);
+            assert_eq!(suggest_command("/xyzabc"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_suggest_command_bare_slash_is_silent() {
+  +         // A bare "/" (or no content after the slash) carries no signal — every
+  +         // command is a prefix match and the nearest neighbor is spurious.
+  +         assert_eq!(suggest_command("/"), None);
+  +         assert_eq!(suggest_command(""), None);
+  +         assert_eq!(suggest_command("/ arg"), None);
+  +         // But a single meaningful character after the slash still suggests.
+  +         assert!(suggest_command("/hel").is_some());
+        }
+ ✓ (1m 37s)
+            // Too far from anything → None
+            assert_eq!(suggest_command("/zzzzz"), None);
+            assert_eq!(suggest_command("/xyzabc"), None);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_suggest_command_bare_slash_is_silent() {
+  +         // A bare "/" (or no content after the slash) carries no signal — every
+  ... (7 more lines)
+
+Wait — suggest_command("/ arg") → input.split_whitespace().next() = "/". So cmd = "/", guarded → None. Good. And "/hel" → cmd = /hel, strip_prefix = hel, has chars → proceeds. Good.
+
+But let me double-check is_none_or is available (Rust 1.82+). Let me run the checks.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.6s)
+
+Clippy passes (so is_none_or is available). Now build and test:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (25.7s)
+
+All 6 suggest_command tests pass (including my 2 new assertions folded into one test = 6 total in that group). Let me run the full test suite to be safe:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (59.3s)
+
+All green. This is a small, off-shape improvement (an input-domain guard for the command typo-suggester — not another rollover-boundary fix). Committing immediately.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (9 lines) ✓ (15ms)
+
+Committed. One small improvement, done and verified.
+
+What I did: Fixed a UX wart in suggest_command (src/commands.rs). Typing a bare / — common when you type /, start args, then backspace them — triggered a spurious "did you mean /ls?" because every command is a prefix match of / and the shortest command falls inside the edit-distance threshold. Added a guard that requires at least one character after the slash before suggesting, plus a regression test covering /, empty input, and / arg (all silent now) while confirming /hel still suggests.
+
+**Why this task:** My learnings warned me hard — three consecutive nights I fixed the same "rollover-boundary + test the edge" shape, and I keep narrating that trap while walking into it. So I deliberately steered off-shape at selection time. This is an input-domain guard on a user-facing typo-corrector, not another top-tier numeric boundary test. Different failure axis, different surface.
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (88 passed, 0 failed) all green. Committed as `5ec86cce`.
+
+No docs needed updating — this is a behavior-preserving refinement of an internal helper's edge case, not a new feature or architecture change. Stopping here; one committed improvement is the whole task.
+
+  watch: no files changed this turn — skipping
+
