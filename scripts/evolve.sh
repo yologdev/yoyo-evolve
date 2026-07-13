@@ -577,6 +577,13 @@ import json, sys, os
 from datetime import datetime, timedelta, timezone
 
 bot_login = os.environ['BOT_LOGIN']
+# REST (issues, and BOT_LOGIN as set in CI) names app accounts 'name[bot]';
+# GraphQL (this discussions feed) returns the bare 'name'. Match both, and
+# normalize shaped output to the BOT_LOGIN form so scan_commitments.py's
+# last-bot-comment detection (which compares against BOT_LOGIN) works.
+bot_bare = bot_login[:-5] if bot_login.endswith('[bot]') else bot_login
+def _login(c):
+    return ((c.get('author') or {}).get('login') or '') if c else ''
 cutoff = datetime.now(timezone.utc) - timedelta(days=60)
 out = []
 raw = sys.stdin.read()
@@ -599,14 +606,16 @@ for d in nodes or []:
     # 'if c' guards null comment nodes (deleted comments/authors), which
     # GraphQL connections can contain and which would otherwise crash here.
     comments = ((d.get('comments') or {}).get('nodes')) or []
-    if not any(((c.get('author') or {}).get('login') == bot_login) for c in comments if c):
+    if not any(_login(c) in (bot_login, bot_bare) for c in comments if c):
         continue
     out.append({
         'number': d.get('number'),
         'title': d.get('title', ''),
         'source': 'discussion',
         'comments': [
-            {'author': c.get('author') or {}, 'body': (c.get('body') or '')[:2000],
+            {'author': {'login': bot_login} if _login(c) in (bot_login, bot_bare)
+                       else (c.get('author') or {}),
+             'body': (c.get('body') or '')[:2000],
              'createdAt': c.get('createdAt', '')}
             for c in comments if c
         ],
