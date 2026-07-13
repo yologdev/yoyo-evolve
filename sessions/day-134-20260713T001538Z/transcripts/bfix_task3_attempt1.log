@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the specific errors. There are two issues: an unused handle_refs import and a missing CommandRoute::Retry variant.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:28..88  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:150..175 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Interesting — the Retry errors are pre-existing/unrelated to my task. The enum has Def and Index but no Retry variant. But wait, /retry was likely already there. Let me check the enum for Def, Refs, Index, Retry, and search for where Retry should be handled.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'Retry|Refs|Index|Def' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (*.rs) ✓ (2ms)
+
+The pattern didn't work as expected. Let me search more specifically.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Retry\|Refs\|Index\|Def… ✓ (5ms)
+
+So `Refs variant exists (line 94) but Retry` does NOT exist in the enum, yet it's used at lines 162, 1121, etc. This suggests the Retry variant was accidentally removed/overwritten when adding Refs. Let me check around lines 90-95.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:86..101 ✓ (1ms)
+
+`Refs was added but Retry is missing from the enum. Let me check git to confirm Retry` existed before and was likely accidentally replaced by Refs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/dispatch.rs | grep … ✓ (5ms)
+
+Confirmed. The task overwrote the Retry variant with Refs instead of adding a new one. I need to restore Retry and keep Refs.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (3 → 4 lines)
+        Def,
+        Refs,
+  +     Retry,
+        Tree,
+ ✓ (10.3s)
+        Def,
+        Refs,
+  +     Retry,
+        Tree,
+
+Now Refs isn't handled anywhere, and handle_refs is imported but unused. The wiring wasn't completed. Let me look at how `/def is routed to use as a template, and check the /refs` route in the match.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:904..934 ✓ (1ms)
+
+I need to add a Refs route arm. Also need to check /refs is in the route_command string match and route_command_prefix. Let me check where /def and /refs string-route, and confirm `handle_refs` exists in commands_search.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_refs\|\"/refs\"\… ✓ (3ms)
+
+`handle_refs exists. But /refs` is never routed in dispatch.rs — no string match maps /refs to CommandRoute::Refs, and no match arm handles it. Let me add both. First the string routing (near /def):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 2 lines)
+            "/def" => CommandRoute::Def,
+  +         "/refs" => CommandRoute::Refs,
+ ✓ (10.1s)
+            "/def" => CommandRoute::Def,
+  +         "/refs" => CommandRoute::Refs,
+
+Now add the match arm. The handle_refs is re-exported in commands.rs, so I'll call commands::handle_refs.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (4 → 8 lines)
+            CommandRoute::Def => {
+                commands::handle_def(ctx.input);
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Refs => {
+  +             commands::handle_refs(ctx.input);
+                Some(CommandResult::Continue)
+            }
+ ✓ (10.0s)
+            CommandRoute::Def => {
+                commands::handle_def(ctx.input);
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Refs => {
+  +             commands::handle_refs(ctx.input);
+                Some(CommandResult::Continue)
+            }
+
+The unused import is resolved. There's a second match route at line 1064 — likely a classification helper (e.g. read-only/mutating). Let me check where Def is grouped there.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1320..1360 ✓ (1ms)
+
+This is the second match route (main dispatch fallthrough). Def is handled by `dispatch_file_command. My Refs handling in the first match (dispatch_file_command) I added — good. But this second exhaustive match needs Refs` added to the file-command group.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (2 → 3 lines)
+            | CommandRoute::Def
+  +         | CommandRoute::Refs
+            | CommandRoute::Tree
+ ✓ (1m 46s)
+            | CommandRoute::Def
+  +         | CommandRoute::Refs
+            | CommandRoute::Tree
+
+Let me verify my handle_refs call is actually in dispatch_file_command (the first match). Let me check the context around line 917 more broadly to ensure it's the right function.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn dispatch_file_comman… ✓ (4ms)
+
+Good — Refs handling at 922 is in dispatch_file_command (starts 826), matching Def. Now let me build and test.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (9.2s)
+
+Build passes. Now let me check that /refs is wired in commands.rs (KNOWN_COMMANDS, arg hints) since the task required it. Then run tests and clippy.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/refs"\|"/def"' src/co… ✓ (3ms)
+
+`/refs is missing from KNOWN_COMMANDS and arg hints. Let me check /def` usages in commands.rs to mirror.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '/def\|/grep' src/comman… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs:134..140 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 2 lines)
+        "/def",
+  +     "/refs",
+ ✓ (1m 36s)
+        "/def",
+  +     "/refs",
+  3 tools completed in 1m 44s (3 ✓)
+
+Now let me check arg hints/completions for /def to mirror for /refs.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/def"\|"/grep"' src/co… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '/def\|/grep' src/comman… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs:218..278 ✓ (1ms)
+  3 tools completed in 6.3s (3 ✓)
+
+Let me check if def has an arg hint, and add both def (if missing) and refs.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"def"' src/commands.rs ✓ (3ms)
+
+`def has no arg hint. I'll add both def and refs for consistency, placed near outline`/grep.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 3 lines)
+            "outline" => Some("<query> [--all]"),
+  +         "def" => Some("<symbol-name>"),
+  +         "refs" => Some("<symbol-name>"),
+ ✓ (1m 43s)
+            "outline" => Some("<query> [--all]"),
+  +         "def" => Some("<symbol-name>"),
+  +         "refs" => Some("<symbol-name>"),
+
+Now let me run the full verification suite.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (57.1s)
+
+Adding /refs to KNOWN_COMMANDS triggers coverage tests requiring help text. Let me see the failures.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -A6 "test… ✓ (56.1s)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,88 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The errors are all about the /def command missing a short description entry in help_data.rs, and a help_text entry. Let me look at how /outline is handled to mirror it.
+  ▶ search 'outline' (src/help_data.rs)  ▶ search '"/outline"' (src/help.rs)  ▶ search 'outline' (src/cli.rs) ✓ (18ms)
+ ✓ (21ms)
+ ✓ (19ms)
+  3 tools completed in 2.4s (3 ✓)
+
+Let me search more broadly to find where outline short description lives.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'outline' (*.rs) ✓ (25ms)
+
+Good, /def help entries already partly exist. Let me look at help_data.rs around where short descriptions are defined.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help_data.rs:360..400  ▶ read src/help_data.rs:1368..1388 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 2.7s (2 ✓)
+
+The detailed help for def exists but the short description is missing. Let me find the right alphabetical spot. def should go before diff/docs. Let me find where the short descriptions around "d" are.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search '"docs" =>|"diff" =>|"doctor" =>|"config" =>|"cost" =>' (src/help_data.rs) ✓ (17ms)
+  ▶ read src/help_data.rs:1340..1385 ✓ (1ms)
+  ▶ edit src/help_data.rs (2 → 3 lines)
+            "cost" => Some("Show estimated session cost"),
+  +         "def" => Some("Find where a symbol is defined"),
+            "diff" => Some("Show git changes"),
+ ✓ (1m 35s)
+            "cost" => Some("Show estimated session cost"),
+  +         "def" => Some("Find where a symbol is defined"),
+            "diff" => Some("Show git changes"),
+  3 tools completed in 1m 45s (3 ✓)
+
+Now let me fix the remaining failures: help_text (cli.rs) and the repl padding test. Let me look at the help.rs entries and cli.rs help_text.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:528..543  ▶ read src/help.rs:800..815  ▶ read src/repl.rs:2245..2260 ✓ (1ms)
+ ✓ (1ms)
+ ✓ (2ms)
+  3 tools completed in 2.5s (3 ✓)
+
+The repl test failure was because command_short_description("def") returned None (no padding/description added). Now that I've added it, that should pass. Let me add the /def lines in help.rs (both /help output and cli help text). Let me add after /outline in both spots.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/help.rs (4 → 5 lines)
+            s,
+            "    /outline <query|file>  Search for symbols or show file structure"
+        );
+  +     let _ = writeln!(s, "    /def <symbol>      Find where a symbol is defined");
+ ✓ (1m 32s)
+            s,
+            "    /outline <query|file>  Search for symbols or show file structure"
+        );
+  +     let _ = writeln!(s, "    /def <symbol>      Find where a symbol is defined");
+  ▶ edit src/help.rs (1 → 2 lines)
+        out.push_str("  /outline <query|file>  Search for symbols or show file structure\n");
+  +     out.push_str("  /def <symbol>      Find where a symbol is defined\n");
+ ✓ (1m 39s)
+        out.push_str("  /outline <query|file>  Search for symbols or show file structure\n");
+  +     out.push_str("  /def <symbol>      Find where a symbol is defined\n");
+  2 tools completed in 3m 19s (2 ✓)
+
+Now let me check the cli.rs help_text test — line 282 has "outline" in some list. Let me look at that.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read src/cli.rs:276..291 ✓ (1ms)
+
+This is a subcommand list, likely not related. Let me check what test `cli::tests::help_text_documents_all_repl_commands` checks — it probably validates KNOWN_COMMANDS appear in help_text. Now that I've added /def to help.rs, let me verify by running the specific failing tests.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo help:: cli… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (45.8s)
+  2 tools completed in 53.1s (2 ✓)
+
+All tests pass. Let me run clippy to confirm no warnings.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.6s)
+
+All green. 
+
+## What was wrong
+
+The /def command was added to `KNOWN_COMMANDS` and its detailed help existed, but three pieces were missing, tripping the coverage-invariant tests:
+
+1. `src/help_data.rs` — no command_short_description entry for def. Added "def" => Some("Find where a symbol is defined") in alphabetical position. This fixed 5 failing tests, including the repl padding test (which relies on the short description to make the completion display wider than the replacement).
+
+2. `src/help.rs` — `/def was absent from both the /help REPL output and the CLI help text. Added a /def <symbol> line after /outline` in both, fixing the remaining help-text coverage tests.
+
+Final: cargo fmt && cargo build && cargo test → 4277 passed, 0 failed; cargo clippy --all-targets -- -D warnings → clean.
+
+  watch: no files changed this turn — skipping
+

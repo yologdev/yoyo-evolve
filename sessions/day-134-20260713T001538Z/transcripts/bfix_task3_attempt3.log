@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The test says /refs is in KNOWN_COMMANDS but missing from help_text(). Let me look at how /def is handled in help_text to mirror it.
+  ▶ search '/def' in src/help.rs ✓ (3ms)
+  ▶ read src/help.rs:533..541 ✓ (1ms)
+  2 tools completed in 3.6s (2 ✓)
+
+That one's present. The test checks help_text() output. Let me check line 808's context and what help_text() vs cli_help_text() covers, and the test itself.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:1465..1480 ✓ (1ms)
+
+The test calls help_text(), not the one at line 536. Line 808 is likely inside help_text(). It has /def but not /refs. Let me check.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/help.rs:806..812 ✓ (0ms)
+  ▶ edit src/help.rs (2 → 3 lines)
+        out.push_str("  /def <symbol>      Find where a symbol is defined\n");
+  +     out.push_str("  /refs <symbol>     Find where a symbol is used\n");
+        out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
+ ✓ (1m 49s)
+        out.push_str("  /def <symbol>      Find where a symbol is defined\n");
+  +     out.push_str("  /refs <symbol>     Find where a symbol is used\n");
+        out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -5 && cargo test help::tests::all_help_comm… ✓ (1.2s)
+  3 tools completed in 1m 57s (3 ✓)
+
+The failing test now passes. Let me run the full suite and clippy.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test 2>&1 | tail -5 && cargo clippy --all-targets -- -D warnings 2>&1 | ta… ✓ (1m 16s)
+
+All green. 
+
+Fix: The help_text() function (the one exercised by help::tests::all_help_commands_in_help_text) listed /def but not /refs. The /refs entry existed in a different help function (line 537, likely cli_help_text()), but not in help_text() at line 808. I added the missing `/refs <symbol>     Find where a symbol is used line right after /def`, mirroring the existing pattern.
+
+• cargo fmt ✓
+• cargo build ✓
+• `cargo test` ✓ (all pass, including the previously failing test)
+• cargo clippy --all-targets -- -D warnings ✓
+
+  watch: no files changed this turn — skipping
+

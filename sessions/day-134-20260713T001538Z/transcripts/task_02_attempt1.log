@@ -1,0 +1,173 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current structure of the deep/shallow decision in handle_plan.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "extract_deep_flag\|fn h… ✓ (6ms)
+  ▶ read src/commands_plan.rs:378..408  ▶ read src/commands_plan.rs:700..745 ✓ (1ms)
+ ✓ (1ms)
+  3 tools completed in 5.4s (3 ✓)
+
+Now I understand the structure. Let me write the tests first, then the implementation. I'll add:
+1. extract_shallow_flag (mirror of `extract_deep_flag`)
+2. task_looks_nontrivial(task: &str) -> bool
+3. A pure decision helper `should_plan_deep(clean_task, deep_flag, shallow_flag) -> (bool, bool)` returning (deep, auto_escalated)
+
+Let me look at how --shallow should integrate with the KNOWN_COMMANDS list at line 360.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_plan.rs:355..365 ✓ (1ms)
+
+Now let me implement. First, add --shallow to the completions and the flag extraction + heuristic functions:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (2 → 3 lines)
+        "on", "off", "open", "close", "show", "apply", "clear", "status", "step", "--deep",
+  +     "--shallow",
+    ];
+ ✓ (1m 50s)
+        "on", "off", "open", "close", "show", "apply", "clear", "status", "step", "--deep",
+  +     "--shallow",
+    ];
+
+Now add the --shallow extraction, the heuristic, and the pure decision helper after extract_deep_flag:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (2 → 89 lines)
+        (cleaned.join(" "), deep)
+  + }
+  + 
+  + /// Strip a leading/trailing `--shallow` flag from a plan task string, returning the
+  + /// cleaned task and whether the flag was present. `--shallow` forces the fast broad
+  + /// pass and suppresses auto-escalation (#583 fourth route). It's the opt-out escape
+  + /// hatch that preserves the old default behavior on a per-invocation basis.
+  + pub fn extract_shallow_flag(task: &str) -> (String, bool) {
+  +     let mut shallow = false;
+  +     let cleaned: Vec<&str> = task
+  +         .split_whitespace()
+  +         .filter(|word| {
+  +             if *word == "--shallow" {
+  +                 shallow = true;
+  +                 false
+  +             } else {
+  +                 true
+  +             }
+  +         })
+  +         .collect();
+  ... (69 more lines)
+ ✓ (18.2s)
+        (cleaned.join(" "), deep)
+  + }
+  + 
+  + /// Strip a leading/trailing `--shallow` flag from a plan task string, returning the
+  + /// cleaned task and whether the flag was present. `--shallow` forces the fast broad
+  + /// pass and suppresses auto-escalation (#583 fourth route). It's the opt-out escape
+  + /// hatch that preserves the old default behavior on a per-invocation basis.
+  + pub fn extract_shallow_flag(task: &str) -> (String, bool) {
+  ... (13 more lines)
+
+Expected — now I'll wire them into handle_plan:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (4 → 11 lines)
+        let (clean_task, deep) = extract_deep_flag(&task);
+  +     let (clean_task, shallow) = extract_shallow_flag(&clean_task);
+  +     let (deep, auto_escalated) = should_plan_deep(&clean_task, deep, shallow);
+  +     if auto_escalated {
+  +         println!(
+  +             "{DIM}  (task looks non-trivial — planning at depth; use /plan --shallow to skip){RESET}"
+  +         );
+  +     }
+        if deep {
+            println!("{DIM}  🔬 Deep mode — requesting per-step TDD (RED/GREEN/REFACTOR) structure.{RESET}\n");
+        }
+ ✓ (1m 52s)
+        let (clean_task, deep) = extract_deep_flag(&task);
+  +     let (clean_task, shallow) = extract_shallow_flag(&clean_task);
+  +     let (deep, auto_escalated) = should_plan_deep(&clean_task, deep, shallow);
+  +     if auto_escalated {
+  +         println!(
+  +             "{DIM}  (task looks non-trivial — planning at depth; use /plan --shallow to skip){RESET}"
+  +         );
+  +     }
+  ... (3 more lines)
+
+Now the shallow-plan hint at line ~727 should not fire when we auto-escalated (since we're already deep, !deep covers it). That's fine. Now add tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_plan.rs (2 → 2 lines) ✓ (1m 51s)
+
+Let me find a good spot to insert the tests, near the extract_deep_flag tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_plan.rs:1020..1040 ✓ (0ms)
+  ▶ edit src/commands_plan.rs (9 → 107 lines)
+            let (task, deep) = extract_deep_flag("add auth to the login flow");
+            assert!(!deep, "Should not report deep when flag absent");
+            assert_eq!(task, "add auth to the login flow");
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_shallow_flag_detects_and_strips() {
+  +         let (task, shallow) = extract_shallow_flag("add auth --shallow");
+  +         assert!(shallow, "Should detect --shallow flag");
+  +         assert_eq!(task, "add auth", "Should strip --shallow from the task");
+  + 
+  +         let (task, shallow) = extract_shallow_flag("do the thing");
+  +         assert!(!shallow, "No flag → shallow=false");
+  +         assert_eq!(task, "do the thing");
+  +     }
+  + 
+  +     #[test]
+  +     fn task_looks_nontrivial_short_single_clause_is_trivial() {
+  +         assert!(!task_looks_nontrivial("fix typo in README"));
+  +         assert!(!task_looks_nontrivial("rename foo to bar"));
+  ... (84 more lines)
+ ✓ (1m 49s)
+            let (task, deep) = extract_deep_flag("add auth to the login flow");
+            assert!(!deep, "Should not report deep when flag absent");
+            assert_eq!(task, "add auth to the login flow");
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_shallow_flag_detects_and_strips() {
+  +         let (task, shallow) = extract_shallow_flag("add auth --shallow");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.8s)
+  3 tools completed in 2m 34s (3 ✓)
+
+It's a bin, not a lib. Let me run tests correctly:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_plan 2>&1 | … ✓ (19.5s)
+
+All passing. Now let me verify the full build/test and update docs. First the docs:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\-\-deep\|deep" docs/s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "plan" docs/src/usage/c… ✓ (4ms)
+  ▶ read docs/src/usage/commands.md:273..313 ✓ (0ms)
+  ▶ read docs/src/usage/commands.md:312..337 ✓ (0ms)
+  ▶ edit docs/src/usage/commands.md (6 → 19 lines)
+    - **Unfamiliar codebases** where you want the agent to map things out first
+    - **Trust and transparency** — see the full plan before any files are modified
+    - **Teaching moments** — the plan itself teaches you about the codebase structure
+  + 
+  + **Planning depth:** By default `/plan <task>` produces a fast, broad first pass. A
+  + non-trivial task (long, multiple deliverables, or containing implementation-verb cues
+  + like *refactor / migrate / implement / integrate / redesign*) now **auto-escalates to
+  + depth** — the deep per-step RED/GREEN/REFACTOR breakdown — so you don't have to know to
+  + ask for it. When this happens you'll see a dim note:
+  + `(task looks non-trivial — planning at depth; use /plan --shallow to skip)`.
+  + 
+  + - `/plan --deep <task>` — always request the deep per-step TDD structure.
+  + - `/plan --shallow <task>` — force the fast broad pass even on a big task (suppresses
+  +   auto-escalation).
+  + - Auto-escalation only fires when *neither* flag is given, and is conservative: when
+  +   unsure, it stays shallow.
+    
+ ✓ (1m 11s)
+    - **Unfamiliar codebases** where you want the agent to map things out first
+    - **Trust and transparency** — see the full plan before any files are modified
+    - **Teaching moments** — the plan itself teaches you about the codebase structure
+  + 
+  + **Planning depth:** By default `/plan <task>` produces a fast, broad first pass. A
+  + non-trivial task (long, multiple deliverables, or containing implementation-verb cues
+  + like *refactor / migrate / implement / integrate / redesign*) now **auto-escalates to
+  + depth** — the deep per-step RED/GREEN/REFACTOR breakdown — so you don't have to know to
+  ... (9 more lines)
+  5 tools completed in 1m 25s (5 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,116 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing machinery I need to reuse. Let me look at the relevant files.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "list_project_files\|fn …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,60p' src/symbols.rs ✓ (4ms)
+ ✓ (7ms)
+  2 tools completed in 1.4s (2 ✓)
+
+Let me look at the `Symbol struct and the handle_outline` function for reference.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct Symbol\|pub …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_outline\|fn l… ✓ (4ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '240,290p' src/symbols.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '595,700p' src/commands_s… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 5.5s (4 ✓)
+
+Now let me look at `SymbolKind and the color constants, and how list_project_files` works.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enum SymbolKind\|Symbol…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/commands_sear… ✓ (3ms)
+ ✓ (6ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Symbols come from commands_map. Let me check SymbolKind and how it's displayed, plus how `format_outline_match` works.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "enum SymbolKind\|fn for…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '225,242p' src/symbols.rs ✓ (2ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '522,560p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_language\|extrac… ✓ (4ms)
+ ✓ (3ms)
+  4 tools completed in 6.8s (4 ✓)
+
+Now I have enough understanding. Let me check what detect_language/extract_symbols are imported as in commands_map, then write my implementation. Let me look at the imports in commands_search.rs and how kind is a full label string.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::symbols\|det… ✓ (7ms)
+
+Now let me look at the full format_outline_match kind_plain match to reuse a label helper, and check the dispatch.rs routing for /outline.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '536,548p' src/commands_s… ✓ (6ms)
+
+Let me see how /outline and /find routes are structured (both the enum variant and where handlers are called), since these take args (prefix-matched).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Outline\|Find\b\|outlin… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '220,245p' src/dispatch.r… ✓ (8ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Now let me look at how the first-word routing works (the match first_word at line ~230 with prefix) and where /outline gets mapped from the "/outline" literal. Let me check around line 165-230 more.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '195,220p' src/dispatch.r… ✓ (3ms)
+
+I understand the routing now. Let me check how kind labels are done — I want a helper. Let me look at the full `kind_plain match, then write the tests + implementation. First, let me write the tests and handle_def` in commands_search.rs.
+
+Let me check the end of commands_search.rs tests section and existing helper for reading file lines safely.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '536,552p' src/commands_s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_outline\|handle_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '70,140p' src/commands.rs ✓ (3ms)
+  3 tools completed in 8.7s (3 ✓)
+
+Now I have all context. Let me implement. First, add handle_def + a parse helper + tests to `commands_search.rs. Let me find a good insertion point (after handle_outline` and its helpers, before the grep section).
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// Maximum matches to… ✓ (4ms)
+
+I'll insert handle_def right before line 674 (the grep section). Let me write it now.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (2 → 160 lines)
+  + /// Maximum definition matches to display before truncating.
+  + const DEF_MAX_MATCHES: usize = 50;
+  + 
+  + /// Human-readable label for a symbol kind (used by `/def`).
+  + fn symbol_kind_label(kind: SymbolKind) -> &'static str {
+  +     match kind {
+  +         SymbolKind::Function => "fn",
+  +         SymbolKind::Struct => "struct",
+  +         SymbolKind::Enum => "enum",
+  +         SymbolKind::Trait => "trait",
+  +         SymbolKind::Interface => "interface",
+  +         SymbolKind::Class => "class",
+  +         SymbolKind::Type => "type",
+  +         SymbolKind::Const => "const",
+  +         SymbolKind::Impl => "impl",
+  +         SymbolKind::Module => "mod",
+  +         SymbolKind::Macro => "macro",
+  +         SymbolKind::Namespace => "namespace",
+  +     }
+  + }
+  ... (140 more lines)
+ ✓ (10.5s)
+  + /// Maximum definition matches to display before truncating.
+  + const DEF_MAX_MATCHES: usize = 50;
+  + 
+  + /// Human-readable label for a symbol kind (used by `/def`).
+  + fn symbol_kind_label(kind: SymbolKind) -> &'static str {
+  +     match kind {
+  +         SymbolKind::Function => "fn",
+  +         SymbolKind::Struct => "struct",
+  ... (13 more lines)
+
+Need to import the two functions. They're re-exported via commands_map::*. Let me add to the imports.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (1 → 1 lines)
+  - use crate::commands_map::{build_repo_map, FileSymbols, SymbolKind};
+  + use crate::commands_map::{build_repo_map, detect_language, extract_symbols, FileSymbols, SymbolKind};
+ ✓ (10.6s)
+  - use crate::commands_map::{build_repo_map, FileSymbols, SymbolKind};
+  + use crate::commands_map::{build_repo_map, detect_language, extract_symbols, FileSymbols, SymbolKind};
+
+`SymbolKind isn't Copy`. Let me change the label helper to take a reference.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (1 → 1 lines)
+  - fn symbol_kind_label(kind: SymbolKind) -> &'static str {
+  + fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
+ ✓ (10.6s)
+  - fn symbol_kind_label(kind: SymbolKind) -> &'static str {
+  + fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
+
+  watch: no files changed this turn — skipping
+

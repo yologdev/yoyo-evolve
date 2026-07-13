@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The error is clear — I need to borrow m.kind when passing to `symbol_kind_label`. Let me look at the exact line.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs:808..814 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (1 → 1 lines)
+  -         let kind = symbol_kind_label(m.kind);
+  +         let kind = symbol_kind_label(&m.kind);
+ ✓ (17.0s)
+  -         let kind = symbol_kind_label(m.kind);
+  +         let kind = symbol_kind_label(&m.kind);
+  2 tools completed in 22.8s (2 ✓)
+
+The type error is fixed. Now there's dead-code warnings because handle_def isn't wired up yet. Let me check the wiring in commands.rs and dispatch.rs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_def\|handle_outl… ✓ (6ms)
+
+The wiring wasn't done. Let me look at how /outline is handled in each spot to mirror it.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs:133..139 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Outline\|CommandRoute::… ✓ (4ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Let me look at how Outline routes — the match arms that map prefix commands (like /outline foo) and the dispatch handler.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Outline\|Find\b\|starts… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:225..243 ✓ (1ms)
+  2 tools completed in 10.9s (2 ✓)
+
+Now let me make the four edits. First the enum, the two route arms, and the handler.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:90..94 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (3 → 4 lines)
+        Map,
+        Outline,
+  +     Def,
+        Retry,
+ ✓ (10.6s)
+        Map,
+        Outline,
+  +     Def,
+        Retry,
+  2 tools completed in 16.7s (2 ✓)
+
+Now add the string route arms and the handler. Let me look at the Outline handler and the exhaustive match list around line 1323.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:909..915 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (4 → 8 lines)
+            CommandRoute::Outline => {
+                commands::handle_outline(ctx.input);
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Def => {
+  +             commands::handle_def(ctx.input);
+                Some(CommandResult::Continue)
+            }
+ ✓ (10.7s)
+            CommandRoute::Outline => {
+                commands::handle_outline(ctx.input);
+  +             Some(CommandResult::Continue)
+  +         }
+  +         CommandRoute::Def => {
+  +             commands::handle_def(ctx.input);
+                Some(CommandResult::Continue)
+            }
+  2 tools completed in 16.6s (2 ✓)
+
+Now the re-export in commands.rs, the string route arms, and the second match at 1056. Let me do the re-export and route arms.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 3 lines)
+  - pub use crate::commands_search::{handle_find, handle_grep, handle_index, handle_outline};
+  + pub use crate::commands_search::{
+  +     handle_def, handle_find, handle_grep, handle_index, handle_outline,
+  + };
+ ✓ (10.8s)
+  - pub use crate::commands_search::{handle_find, handle_grep, handle_index, handle_outline};
+  + pub use crate::commands_search::{
+  +     handle_def, handle_find, handle_grep, handle_index, handle_outline,
+  + };
+
+Now the second match at line 1056 and the string route arms. Let me look at 1323 area (the exhaustive list where Outline is) and the string route arms.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1325..1337 ✓ (0ms)
+
+This is the second match (match route at 1056). Let me see what this match returns for these arms.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1336..1348 ✓ (1ms)
+
+`Def` is dispatched in the same handler as Outline. Let me check where Outline's handler is grouped — it was at line 910 in `dispatch_file_command` presumably. Let me verify Def is in the right dispatch function. The handler I added at 910 is next to Outline. So Def should be in the same "handled by dispatch_file_command" group. Let me add it to that unreachable list.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (2 → 3 lines)
+            | CommandRoute::Outline
+  +         | CommandRoute::Def
+            | CommandRoute::Tree
+ ✓ (17.5s)
+            | CommandRoute::Outline
+  +         | CommandRoute::Def
+            | CommandRoute::Tree
+
+Now I need to add the string route arms so Def gets constructed. Add to the "/def" exact match and the `"def"` prefix match.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 1 lines) ✓ (17.2s)
+
+I need to check how /def foo (with arg) routes. `/def takes an argument so it's routed via the prefix match first_word`. Let me look at that prefix routing block.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:218..233 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 2 lines)
+                "outline" => CommandRoute::Outline,
+  +             "def" => CommandRoute::Def,
+ ✓ (1m 37s)
+                "outline" => CommandRoute::Outline,
+  +             "def" => CommandRoute::Def,
+  2 tools completed in 1m 44s (2 ✓)
+
+Now let me also add the bare /def exact route (for usage hint) and add to KNOWN_COMMANDS. Let me check the exact match block and add /def.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 2 lines)
+            "/find" => CommandRoute::Find,
+  +         "/def" => CommandRoute::Def,
+ ✓ (1m 38s)
+            "/find" => CommandRoute::Find,
+  +         "/def" => CommandRoute::Def,
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (3 → 4 lines)
+        "/map",
+        "/open",
+        "/outline",
+  +     "/def",
+ ✓ (1m 31s)
+        "/map",
+        "/open",
+        "/outline",
+  +     "/def",
+  2 tools completed in 3m 20s (2 ✓)
+
+Compiles now. Let me run the full check to confirm everything passes.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 24s)
+
+These test failures are because I added /def to KNOWN_COMMANDS but haven't added help text. I need to add help data. Let me check help_data.rs for how /outline is described.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "outline" src/help_data.… ✓ (3ms)
+
+The task said keep it to ≤3 source files, but adding to KNOWN_COMMANDS requires help data or the exhaustive coverage tests fail. I need help_data.rs entries. Let me add both the short description and full help.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs:369..385 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (2 → 13 lines)
+                 Uses the same symbol extraction as /map (regex or ast-grep).",
+  +         ),
+  +         "def" => Some(
+  +             "/def <symbol> — Find where a symbol is defined\n\n\
+  +              Searches the project for the definition of the named symbol and prints\n\
+  +              each match as path:line with the symbol kind and source line. A small\n\
+  +              go-to-definition gesture, built on the same symbol extraction as /outline.\n\n\
+  +              Exact name matches are shown first; if none are found, similar names\n\
+  +              (case-insensitive substring) are shown and labeled.\n\n\
+  +              Usage:\n\
+  +              \x20 /def handle_def          Find where handle_def is defined\n\
+  +              \x20 /def Config              Find definitions matching Config",
+            ),

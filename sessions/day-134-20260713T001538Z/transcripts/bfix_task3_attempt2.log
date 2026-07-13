@@ -1,0 +1,123 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the errors. The issue is that /refs was added to KNOWN_COMMANDS but is missing help entries. Let me look at how `/def (or /grep`) is handled in the help files to mirror it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/def"' src/help_data.r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'refs' src/cli.rs src/he… ✓ (3ms)
+ ✓ (7ms)
+  2 tools completed in 1.2s (2 ✓)
+
+`/def` isn't in help_data.rs directly. Let me search more broadly.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '/def' src/help_data.rs …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '/grep' src/help_data.rs ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Let me look at the `/def` entry in help_data.rs (both command_help and short_description) to mirror it for /refs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs:382..396  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"/def"' src/help_data.r… ✓ (1ms)
+ ✓ (3ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The match is on the stripped name ("def" not "/def"). Let me find the short description for def too.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"def"' src/help_data.rs ✓ (3ms)
+
+Now let me add both entries for refs.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (3 → 15 lines)
+                 \x20 /def handle_def          Find where handle_def is defined\n\
+                 \x20 /def Config              Find definitions matching Config",
+  +         ),
+  +         "refs" => Some(
+  +             "/refs <symbol> — Find where a symbol is used\n\n\
+  +              Searches the project for every word-boundary usage of the named symbol and\n\
+  +              prints each match as path:line with the source line, grouped by file, with a\n\
+  +              total-count footer. A small find-references gesture, companion to /def.\n\n\
+  +              Matching is grep-based with a word-boundary regex, so partial-word noise\n\
+  +              (e.g. foobar when searching foo) is excluded. The symbol name is treated\n\
+  +              literally (regex metachars are escaped).\n\n\
+  +              Usage:\n\
+  +              \x20 /refs handle_def         Find where handle_def is used\n\
+  +              \x20 /refs Config             Find usages of Config",
+            ),
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (1 → 2 lines)
+            "def" => Some("Find where a symbol is defined"),
+  +         "refs" => Some("Find where a symbol is used"),
+ ✓ (1m 44s)
+                 \x20 /def handle_def          Find where handle_def is defined\n\
+                 \x20 /def Config              Find definitions matching Config",
+  +         ),
+  +         "refs" => Some(
+  +             "/refs <symbol> — Find where a symbol is used\n\n\
+  +              Searches the project for every word-boundary usage of the named symbol and\n\
+  +              prints each match as path:line with the source line, grouped by file, with a\n\
+  +              total-count footer. A small find-references gesture, companion to /def.\n\n\
+  ... (7 more lines)
+ ✓ (3m 8s)
+            "def" => Some("Find where a symbol is defined"),
+  +         "refs" => Some("Find where a symbol is used"),
+  2 tools completed in 3m 10s (2 ✓)
+
+Now the help.rs test failures. Let me look at the /def entries in help.rs (lines 536, 807, 665) to mirror them for /refs.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:535..538  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:806..809  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:1663..1667 ✓ (0ms)
+ ✓ (1ms)
+ ✓ (2ms)
+  3 tools completed in 1.1s (3 ✓)
+
+The recent list is in a test. /refs needs to be either in help text or in that recent-exclusion list. Let me check what those tests require. First let me add the help text lines mirroring /def.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 2 lines)
+        let _ = writeln!(s, "    /def <symbol>      Find where a symbol is defined");
+  +     let _ = writeln!(s, "    /refs <symbol>     Find where a symbol is used");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 2 lines)
+        out.push_str("  /def <symbol>      Find where a symbol is defined\n");
+  +     out.push_str("  /refs <symbol>     Find where a symbol is used\n");
+ ✓ (1m 43s)
+        let _ = writeln!(s, "    /def <symbol>      Find where a symbol is defined");
+  +     let _ = writeln!(s, "    /refs <symbol>     Find where a symbol is used");
+ ✓ (3m 7s)
+        out.push_str("  /def <symbol>      Find where a symbol is defined\n");
+  +     out.push_str("  /refs <symbol>     Find where a symbol is used\n");
+  2 tools completed in 3m 8s (2 ✓)
+
+Now the repl.rs test test_slash_completion_display_is_padded — "Display '/refs' should be wider than replacement '/refs'". This means the completion for /refs has no description/padding. Let me look at how completions build display text.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/repl.rs:2235..2260 ✓ (1ms)
+
+The display width comes from the short description. Since I've added the short description in help_data.rs, this should now be resolved. Let me verify all pieces are wired by running the specific failing tests.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 ✓ (159ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -20 ✓ (55.1s)
+  2 tools completed in 59.3s (2 ✓)
+
+Progress—short description and repl tests pass now. But command_help still not found. The command_help function must strip the leading slash differently, or there's a normalization. Let me check how command_help matches the name.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/help_data.rs ✓ (4ms)
+
+The match arms use bare names without slash. My refs edit should be correct. Let me verify it's actually in the file—maybe the edit landed but there's a duplicate `def`? Let me check.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"refs"' src/help_data.r… ✓ (3ms)
+
+The command_help (first function) edit didn't land—only the short_description one at line 1342. The def block I targeted must not have matched. Let me check.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'refs\|Find where a symb… ✓ (4ms)
+
+The first edit was reverted by the auto-check failure (edits that fail auto-check may still apply, but here the command_help block is missing). Let me re-add it after line 393.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (3 → 15 lines)
+                 \x20 /def handle_def          Find where handle_def is defined\n\
+                 \x20 /def Config              Find definitions matching Config",
+  +         ),
+  +         "refs" => Some(
+  +             "/refs <symbol> — Find where a symbol is used\n\n\
+  +              Searches the project for every word-boundary usage of the named symbol and\n\
+  +              prints each match as path:line with the source line, grouped by file, with a\n\
+  +              total-count footer. A small find-references gesture, companion to /def.\n\n\
+  +              Matching is grep-based with a word-boundary regex, so partial-word noise\n\
+  +              (e.g. foobar when searching foo) is excluded. The symbol name is treated\n\
+  +              literally (regex metachars are escaped).\n\n\
+  +              Usage:\n\
+  +              \x20 /refs handle_def         Find where handle_def is used\n\
+  +              \x20 /refs Config             Find usages of Config",
+            ),

@@ -1,0 +1,144 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the evaluator's feedback: add the three required unit tests and the docs updates. Let me first examine the existing implementation.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_def_query\|handle…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "outline\|handle_def" do… ✓ (3ms)
+ ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs:699..879 ✓ (2ms)
+  3 tools completed in 3.4s (3 ✓)
+
+The implementation looks complete. Let me check the imports (SymbolKind, extract_symbols, etc.) and existing test module to add tests correctly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^use \|use crate\|use s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|#\[test\]\|#… ✓ (4ms)
+ ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs:1659..1689 ✓ (1ms)
+  3 tools completed in 6.8s (3 ✓)
+
+Now I have enough context. Let me add the three required tests. I'll insert them right after the test module's opening imports.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (4 → 44 lines)
+  +     #[test]
+  +     fn parse_def_query_extracts_symbol_name() {
+  +         assert_eq!(parse_def_query("/def foo"), "foo");
+  +         assert_eq!(parse_def_query("/def   bar  "), "bar");
+  +         assert_eq!(parse_def_query("foo"), "foo");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_def_query_empty_input_is_empty() {
+  +         assert_eq!(parse_def_query("/def"), "");
+  +         assert_eq!(parse_def_query("/def "), "");
+  +         assert_eq!(parse_def_query("/def    "), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn extract_symbols_finds_pub_fn_at_line() {
+  +         let src = "// header\n\npub fn target() {}\n";
+  +         let syms = extract_symbols(src, detect_language("x.rs").unwrap());
+  +         let hit = syms
+  +             .iter()
+  ... (23 more lines)
+ ✓ (1m 39s)
+  +     #[test]
+  +     fn parse_def_query_extracts_symbol_name() {
+  +         assert_eq!(parse_def_query("/def foo"), "foo");
+  +         assert_eq!(parse_def_query("/def   bar  "), "bar");
+  +         assert_eq!(parse_def_query("foo"), "foo");
+  +     }
+  + 
+  +     #[test]
+  ... (13 more lines)
+
+Now the docs. Let me find how /outline is described in the commands doc.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "outline\|/grep\|/find\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "outline" docs/src/usage… ✓ (3ms)
+  2 tools completed in 10.8s (2 ✓)
+
+`/outline` isn't in the docs table. Let me look at the surrounding table for the best insertion spot.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md:708..720 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (1 → 2 lines)
+    | `/grep <pattern> [path]` | Search file contents directly — no AI, no tokens, instant results |
+  + | `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture) |
+ ✓ (1m 17s)
+    | `/grep <pattern> [path]` | Search file contents directly — no AI, no tokens, instant results |
+  + | `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture) |
+  2 tools completed in 1m 24s (2 ✓)
+
+Now the CLAUDE.md commands_search.rs description note.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ search 'commands_search' in /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md ✓ (3ms)
+
+CLAUDE.md doesn't have a commands_search.rs description line. The task said "if help lives elsewhere... but keep total files touched ≤ 3 source files". The CLAUDE.md note references a `commands_search.rs description line that doesn't exist. Let me check how commands_search.rs` is described in CLAUDE.md.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_grep\|handle_fin… ✓ (3ms)
+
+CLAUDE.md doesn't enumerate commands_search.rs's handlers at all (there's no such description line). The task's instruction was conditional ("if that's where /outline's short description lives — check how /outline is described"). Since CLAUDE.md has no such line, adding one would be inventing a new structure. Let me verify by checking what the module list in CLAUDE.md looks like — it may not list commands_search.rs explicitly.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search\|comman… ✓ (5ms)
+
+The help data (/def in help_data.rs) is already present, so /help works. CLAUDE.md doesn't list commands_search.rs, so there's no line to amend without inventing structure. But the task explicitly asks to "Note the new command in CLAUDE.md's commands_search.rs description line". Since none exists, let me add a concise commands_search.rs description line to CLAUDE.md near the other command module entries, mentioning handle_def.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md:88..91 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 2 lines)
+    - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
+  + - `commands_search.rs` — `/find`, `/grep`, `/index`, `/outline`, `/def` (`handle_def` — find symbol definition: reuses `symbols::detect_language`/`extract_symbols` to locate where a symbol is defined, prints `path:line` + source line; a small go-to-definition gesture, no LSP)
+ ✓ (1m 17s)
+    - `commands_rename.rs` — rename symbol across project files, word-boundary matching, preview and apply
+  + - `commands_search.rs` — `/find`, `/grep`, `/index`, `/outline`, `/def` (`handle_def` — find symbol definition: reuses `symbols::detect_language`/`extract_symbols` to locate where a symbol is defined, prints `path:line` + source line; a small go-to-definition gesture, no LSP)
+  2 tools completed in 1m 23s (2 ✓)
+
+Now let me run the full verification suite.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test def 2>&1 | tail -30 ✓ (6.4s)
+  2 tools completed in 30.3s (2 ✓)
+
+Let me confirm my three new tests specifically ran and passed.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib 2>&1 | grep -E … ✓ (112ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib -- --nocapture … ✓ (112ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib parse_def_query… ✓ (342ms)
+  3 tools completed in 10.4s (3 ✓)
+
+The grep filtering is odd. Let me run the tests by name directly and see output.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib parse_def_query… ✓ (114ms)
+
+No lib target — it's a binary. That's why --lib failed. Let me run against the bin test target.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo-agent pars… ✓ (334ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A3 "\[\[bin\]\]\|^name" Ca… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (54.8s)
+  3 tools completed in 1m 2s (3 ✓)
+
+All four new tests pass (two parse_def_query variants, one symbol-match, one byte-safety). Let me run the complete final verification.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (49.0s)
+
+All green. Here's what I completed to address the evaluator's FAIL:
+
+## Fixed
+
+The /def implementation itself was already correct and working — the evaluator confirmed it. The two gaps were the skipped tests and missing docs. I added both:
+
+Tests (src/commands_search.rs, in the existing tests module) — all three required by the task:
+1. parse_def_query_extracts_symbol_name + parse_def_query_empty_input_is_empty — parse helper: /def foo → "foo", /def  → empty.
+2. extract_symbols_finds_pub_fn_at_line — feeds pub fn target() {} through `symbols::extract_symbols directly (no shelling out) and asserts it finds target at line 3 with SymbolKind::Function`.
+3. truncate_at_char_boundary_no_panic_on_multibyte — truncates a ✓-containing line at every byte length 0..=len and asserts each result lands on a char boundary and never panics.
+
+Docs (both required updates):
+• docs/src/usage/commands.md — added a /def <symbol> table row mirroring /grep//find.
+• `CLAUDE.md — CLAUDE.md had no commands_search.rs module line at all, so I added one describing /find, /grep, /index, /outline, /def and noting handle_def` (find symbol definition, no LSP).
+
+Verification (all passing):
+• cargo fmt ✅
+• `cargo clippy --all-targets -- -D warnings` ✅ (clean)
+• cargo build ✅
+• cargo test ✅ — 4281 + 88 tests pass, 0 failed; the four new tests confirmed passing by name.
+
+No changes to the working /def command logic or wiring — only added the missing tests and docs, per the "complete the missing work, don't refactor" guidance.
+
+  watch: no files changed this turn — skipping
+
