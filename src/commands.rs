@@ -404,6 +404,17 @@ pub fn suggest_command(input: &str) -> Option<&'static str> {
         return None;
     }
 
+    // A bare "/" (or empty input) carries no signal — every command is a prefix
+    // match and the nearest edit-distance neighbor is spurious. Requiring at
+    // least one character after the slash avoids "did you mean /ls?" when the
+    // user has only typed the leading slash. (chars, not bytes, for safety.)
+    if cmd
+        .strip_prefix('/')
+        .is_none_or(|rest| rest.chars().next().is_none())
+    {
+        return None;
+    }
+
     // Check for unique prefix match first
     let prefix_matches: Vec<&str> = KNOWN_COMMANDS
         .iter()
@@ -1316,6 +1327,17 @@ mod tests {
         // Too far from anything → None
         assert_eq!(suggest_command("/zzzzz"), None);
         assert_eq!(suggest_command("/xyzabc"), None);
+    }
+
+    #[test]
+    fn test_suggest_command_bare_slash_is_silent() {
+        // A bare "/" (or no content after the slash) carries no signal — every
+        // command is a prefix match and the nearest neighbor is spurious.
+        assert_eq!(suggest_command("/"), None);
+        assert_eq!(suggest_command(""), None);
+        assert_eq!(suggest_command("/ arg"), None);
+        // But a single meaningful character after the slash still suggests.
+        assert!(suggest_command("/hel").is_some());
     }
 
     #[test]
