@@ -1,0 +1,110 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by setting up the session plan directory and reviewing the key context.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+Let me review the key evidence. The assessment is comprehensive. Key findings:
+
+1. **CI: all green** — no failures to fix (the `configured_provider` warning is already resolved).
+2. **Dream milestone is BLOCKED-then-UNBLOCKED**: The human just resolved #575, #587, #589, #591 — both meter halves (snapshot + validate) are now wired into evolve.sh. The dream's "measure whether the reflex works" milestone now has both halves of its meter fed.
+3. Capability gap: Background/async subagents — Claude Code runs subagents in background by default; yoyo's /spawn is synchronous.
+4. No open agent-self issues. Community issues are mostly off-mission or tracking.
+
+Let me verify a couple things before planning.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15; echo "---… ✓ (7ms)
+  2 tools completed in 7.6s (2 ✓)
+
+The meter halves are now wired in evolve.sh (thanks to the human). The validation JSONL doesn't exist yet because it only accumulates when reality disagrees with a prediction, and evolve.sh sessions have been all-green. Let me check the accuracy subsystem to understand what would surface the reflex measurement.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/commands_ris… ✓ (3ms)
+
+Now let me understand the dream milestone better. The infrastructure is now fully wired (snapshot + validate both fire in evolve.sh). The dream's next milestone is "measure whether the reflex works" — but the accuracy report compares hit rates over time; what's missing is the baseline comparison: failures on high-risk files where the reflex fired vs. the baseline period before it existed.
+
+Let me check the `detect_emerging_risks` (anticipatory) piece, since the dream also mentions moving from reactive to anticipatory if the reflex is decorative.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn detect_emerging_risk… ✓ (6ms)
+
+Now I understand the landscape well. Let me look at what yoyo risk effectiveness and accuracy currently report, and check the handle_risk_accuracy to see if there's a baseline-vs-reflex comparison already.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_risk_accuracy… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1497,1560p' src/commands… ✓ (3ms)
+  2 tools completed in 3.4s (2 ✓)
+
+The whole measurement machinery (/risk accuracy, /risk effectiveness with a Learning/`Flat/Decorative` verdict) is already built. The only missing piece for the dream milestone is data accumulation, which the human just wired into evolve.sh. The dream is now in a *wait-for-accumulation* state.
+
+Given the D129 lesson ("for milestones blocked on accumulation, automate the feed; don't add more sensors") and D134 ("deliberately pick the next task off-shape"), the feed is now automated. Adding more risk sensors would be exactly the mistake. 
+
+Let me now decide the self-driven slot. The dream's structural gap is closed. The biggest capability gap is background/async subagents. But that's a large orchestration change — too big for 3-file/20-min tasks. Let me check the /spawn structure to find a small, off-shape, product-facing improvement.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn\|fn handle_spawn… ✓ (4ms)
+
+Interesting — `/spawn **already has** background support (--bg, SpawnTracker with JoinHandles, newly_finished_background`). So the "biggest gap" the assessment named (background subagents) is partially already there. Let me verify what's actually missing and how `--bg` collection surfaces.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "newly_finished_backgrou… ✓ (5ms)
+
+Background spawn is wired into the REPL loop (line 800 surfaces newly-finished background spawns). So the background-subagent gap is largely closed already. The assessment overstated it.
+
+Now I have a clear picture. Let me decide my plan:
+
+• CI: green, nothing to fix.
+• Community issues: none today.
+• Dream slot: The dream milestone is now in accumulation wait — the human wired both meter halves into evolve.sh. Adding more sensors = the D129 mistake. The right dream-move is something that makes the accumulated data legible or advances the anticipatory half. But the effectiveness verdict machinery already exists. 
+
+Given D134's lesson to pick off-shape work, and that the codebase is all-green, let me find genuine product-user friction. Let me check the /spawn collect command and whether there's a discoverability/robustness gap there, plus check for any small honest bugs in areas not recently touched.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '790,810p' src/repl.rs ✓ (3ms)
+
+The background spawn surfacing only happens inside the if files_modified block or a broader conditional. Let me verify the scope — if a background spawn finishes during a turn where the *main* prompt changed no files, does the notification still appear?
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '770,802p' src/repl.rs ✓ (3ms)
+
+The background-spawn surfacing is inside if !is_quiet() — that's fine. It fires every non-quiet turn regardless of files_modified. Good, that's correct.
+
+I now have enough context. Let me finalize the plan. Given:
+• All-green codebase, no community issues, no CI failures
+• Dream milestone is in accumulation-wait (feed automated — D129 says don't add sensors)
+• D134 lesson: pick off-shape work; D128: size to fit in one hand
+
+I'll plan **modest, genuinely-small, product-facing tasks** that fill real gaps. Let me check a couple candidate areas for small honest improvements: the /risk effectiveness verdict's discoverability (does /status surface it?), and whether the effectiveness verdict is documented for humans.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "risk effectiveness\|ri… ✓ (4ms)
+
+Well-documented already. Let me check handle_status — does it surface the risk effectiveness verdict so the human running yoyo sees whether the reflex is working? That's the dream's legibility surface.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effectiveness\|reflex\|… ✓ (3ms)
+
+`/status` already surfaces prediction accuracy when data exists. The dream's legibility is wired. Everything is in place — this genuinely is an all-green, mature codebase waiting on data accumulation.
+
+Now let me make my final decision. Per D120 (reach for the window when the mirror is green) and the assessment's strategic gaps, plus D134 (off-shape work), I'll plan:
+
+1. **Self-driven / dream-legibility (evolve+product)**: A small honest improvement — make `/status`'s predict line also surface the effectiveness verdict (Learning/Flat/Decorative) once enough data exists. This directly advances the dream's "measure whether the reflex works" by putting the verdict where the human sees it every session — without adding a new sensor. It's the legibility placement the D116-118 wisdom names ("a signal becomes a sense when wired into a surface people already watch").
+
+Let me verify the effectiveness verdict has a public/reusable accessor.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1560,1690p' src/commands… ✓ (4ms)
+
+The effectiveness machinery is complete. There's a small reusable-accessor gap: effectiveness_report_from and EffectivenessVerdict are private, so /status can't cheaply surface a one-line verdict. That's a clean, small, dream-advancing task: add a public one-line summary accessor and wire it into `/status`.
+
+Now let me write the plan. I'll produce three tasks, all appropriately sized. Let me finalize with the tasks.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (99 lines) ✓ (1m 15s)
+
+Now let me find a genuinely off-shape second task. Let me look for small product-user friction that isn't risk/dream-shaped. Let me check a couple areas that haven't been touched recently.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== help_data risk block =… ✓ (4ms)
+
+I notice the /risk help text lists usage subcommands but doesn't mention effectiveness — the exact command a human would use to answer "is the reflex working?". That's a small discoverability gap. But that overlaps too much with task 1's shape.
+
+Let me deliberately pick something off-shape. Let me check for a genuine product bug or UX gap in a non-risk area — the /spawn collect flow or something a real user hits. Let me look at what an end-user encounters when they have no validation data but run `/risk effectiveness`.
+
+Actually, let me reconsider. Per D128, "when nothing is urgent, prefer one genuinely-small task done whole." The codebase is all-green with no issues. Rather than manufacture three tasks, I should plan fewer, high-quality tasks. Let me pick one more genuinely off-shape, product-facing task and stop at two.
+
+Let me check a real product-user surface: model listing / provider defaults, or the setup wizard.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_tips\|generat… ✓ (6ms)
+
+  watch: no files changed this turn — skipping
+

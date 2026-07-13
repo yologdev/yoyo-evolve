@@ -1,0 +1,153 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the existing code to understand the structures I need to work with.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EffectivenessVerdict\|e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "EffectivenessVerdict\|… ✓ (7ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "EffectivenessVerdict\|e… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1536..1696 ✓ (2ms)
+  4 tools completed in 8.5s (4 ✓)
+
+Now let me look at the existing prediction_accuracy_summary in commands_risk_report.rs and how it's re-exported:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "prediction_accuracy_sum…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '230,245p' src/commands_i… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_report\|p… ✓ (3ms)
+  3 tools completed in 4.6s (3 ✓)
+
+`prediction_accuracy_summary lives in commands_risk_report.rs but EffectivenessVerdict/effectiveness_report_from live in commands_risk.rs`. The task says the accessor can go wherever keeps the call site crate::commands_risk::.... Since the effectiveness machinery is in commands_risk.rs, I'll put reflex_effectiveness_summary and verdict_word there directly. Let me check the #[cfg(test)] mod and the current re-exports usage.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3596..3626 ✓ (1ms)
+
+Now I'll write the test first. Let me find the test mod boundary:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (3ms)
+
+Now let me add the test first (test-first per rules). I'll place it near the existing effectiveness tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 17 lines)
+  +     #[test]
+  +     fn test_verdict_word_mapping() {
+  +         // Pure mapping used by reflex_effectiveness_summary for /status.
+  +         assert_eq!(verdict_word(&EffectivenessVerdict::Insufficient), None);
+  +         assert_eq!(
+  +             verdict_word(&EffectivenessVerdict::Learning),
+  +             Some("learning ↑")
+  +         );
+  +         assert_eq!(verdict_word(&EffectivenessVerdict::Flat), Some("flat"));
+  +         assert_eq!(
+  +             verdict_word(&EffectivenessVerdict::Decorative),
+  +             Some("decorative ↓")
+  +         );
+  +     }
+  + 
+        #[test]
+        fn test_effectiveness_verdict_boundary_exactly_five_points() {
+ ✓ (9.9s)
+  +     #[test]
+  +     fn test_verdict_word_mapping() {
+  +         // Pure mapping used by reflex_effectiveness_summary for /status.
+  +         assert_eq!(verdict_word(&EffectivenessVerdict::Insufficient), None);
+  +         assert_eq!(
+  +             verdict_word(&EffectivenessVerdict::Learning),
+  +             Some("learning ↑")
+  +         );
+  ... (9 more lines)
+
+Test fails as expected (test-first). Now let me add verdict_word and reflex_effectiveness_summary:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (5 → 27 lines)
+    fn handle_risk_effectiveness() {
+        let report = effectiveness_report_from(std::path::Path::new(RISK_VALIDATION_PATH));
+        print!("{}", format_effectiveness_report(&report));
+  + }
+  + 
+  + /// Map an effectiveness verdict to a short, color-free word for ambient display.
+  + /// `Insufficient` maps to `None` so /status stays quiet until the verdict unlocks.
+  + fn verdict_word(v: &EffectivenessVerdict) -> Option<&'static str> {
+  +     match v {
+  +         EffectivenessVerdict::Learning => Some("learning ↑"),
+  +         EffectivenessVerdict::Flat => Some("flat"),
+  +         EffectivenessVerdict::Decorative => Some("decorative ↓"),
+  +         EffectivenessVerdict::Insufficient => None,
+  +     }
+  + }
+  + 
+  + /// One-line effectiveness verdict for ambient display in /status.
+  + /// Returns `None` when there aren't enough validation events yet
+  + /// (fewer than `MIN_EFFECTIVENESS_EVENTS`) so /status stays quiet.
+  + /// Returns `Some(&'static str)` — a short verdict word like
+  ... (6 more lines)
+ ✓ (16.1s)
+    fn handle_risk_effectiveness() {
+        let report = effectiveness_report_from(std::path::Path::new(RISK_VALIDATION_PATH));
+        print!("{}", format_effectiveness_report(&report));
+  + }
+  + 
+  + /// Map an effectiveness verdict to a short, color-free word for ambient display.
+  + /// `Insufficient` maps to `None` so /status stays quiet until the verdict unlocks.
+  + fn verdict_word(v: &EffectivenessVerdict) -> Option<&'static str> {
+  ... (13 more lines)
+
+Now wire the call site in commands_info.rs to make it used:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs (4 → 9 lines)
+        // Show prediction accuracy if enough data exists (ambient self-awareness)
+        if let Some((hit_rate, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+            println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
+  +     }
+  +     // Show the risk-reflex effectiveness verdict once enough validation events
+  +     // have accumulated (the dream question: is the reflex cutting failures?).
+  +     if let Some(verdict) = crate::commands_risk::reflex_effectiveness_summary() {
+  +         println!("  reflex:  {verdict}");
+        }
+ ✓ (1m 34s)
+        // Show prediction accuracy if enough data exists (ambient self-awareness)
+        if let Some((hit_rate, count, trend)) = crate::commands_risk::prediction_accuracy_summary() {
+            println!("  predict: {hit_rate:.0}% accuracy ({count} validations, {trend})");
+  +     }
+  +     // Show the risk-reflex effectiveness verdict once enough validation events
+  +     // have accumulated (the dream question: is the reflex cutting failures?).
+  +     if let Some(verdict) = crate::commands_risk::reflex_effectiveness_summary() {
+  +         println!("  reflex:  {verdict}");
+        }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (20.5s)
+  2 tools completed in 1m 59s (2 ✓)
+
+All green. Let me run the full test suite and verify the specific test passes:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_verdict_word_map… ✓ (1m 1s)
+
+All tests pass. Now update the docs. Let me find the /status section in commands.md:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "status\|predict\|reflex… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md:585..600 ✓ (0ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md:599..605 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (2 → 7 lines)
+    The report also surfaces the overall accuracy trend (the same signal shown by
+    `/status`), so the two views always agree.
+  + 
+  + Once ≥6 validation events accumulate, `/status` also shows a compact `reflex:`
+  + line (`learning ↑`, `flat`, or `decorative ↓`) so the effectiveness verdict is
+  + visible at a glance — run `/risk effectiveness` for the full early-vs-recent
+  + breakdown.
+ ✓ (1m 17s)
+    The report also surfaces the overall accuracy trend (the same signal shown by
+    `/status`), so the two views always agree.
+  + 
+  + Once ≥6 validation events accumulate, `/status` also shows a compact `reflex:`
+  + line (`learning ↑`, `flat`, or `decorative ↓`) so the effectiveness verdict is
+  + visible at a glance — run `/risk effectiveness` for the full early-vs-recent
+  + breakdown.
+  4 tools completed in 1m 28s (4 ✓)
+
+Now verify the manual sanity check (no validation file → no reflex line, no panic) and run final checks:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .yoyo/risk_validations.js… ✓ (1m 18s)
+
+All green: fmt clean, clippy clean, 4298+88 tests pass. The validation file is absent (confirming Insufficient → None → no reflex: line today, which is correct). Let me commit:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (18ms)
+
+  watch: no files changed this turn — skipping
+
