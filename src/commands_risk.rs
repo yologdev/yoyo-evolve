@@ -1699,6 +1699,17 @@ fn verdict_word(v: &EffectivenessVerdict) -> Option<&'static str> {
     }
 }
 
+/// Path-parameterized core of `reflex_effectiveness_summary`, so the exact
+/// word /status shows is reachable in tests with a synthetic validation file
+/// (the real `RISK_VALIDATION_PATH` was empty until #587/#575 opened the data
+/// path, and even now CI has no history — day-124: an untestable verdict is a
+/// verdict that can silently skip). Both windows must be present for a real
+/// verdict, so the negative "decorative ↓" outcome is provably reachable.
+fn reflex_effectiveness_summary_from(path: &std::path::Path) -> Option<&'static str> {
+    let report = effectiveness_report_from(path);
+    verdict_word(&report.verdict)
+}
+
 /// One-line effectiveness verdict for ambient display in /status.
 /// Returns `None` when there aren't enough validation events yet
 /// (fewer than `MIN_EFFECTIVENESS_EVENTS`) so /status stays quiet.
@@ -1706,8 +1717,7 @@ fn verdict_word(v: &EffectivenessVerdict) -> Option<&'static str> {
 /// "learning ↑", "flat", or "decorative ↓" (no ANSI color codes;
 /// the caller formats its own line).
 pub(crate) fn reflex_effectiveness_summary() -> Option<&'static str> {
-    let report = effectiveness_report_from(std::path::Path::new(RISK_VALIDATION_PATH));
-    verdict_word(&report.verdict)
+    reflex_effectiveness_summary_from(std::path::Path::new(RISK_VALIDATION_PATH))
 }
 
 /// Parsed git-log entry: one commit message + the files it touched.
@@ -3632,6 +3642,68 @@ src/baz.rs
             verdict_word(&EffectivenessVerdict::Decorative),
             Some("decorative ↓")
         );
+    }
+
+    // ── End-to-end /status verdict path (day-136 milestone) ──
+    // These exercise the exact function /status calls (via the path-parameterized
+    // core), proving the ambient verdict is reachable with real file data now that
+    // the validation data path is open (#587/#575). Day-124 discipline: assert the
+    // /status word from a synthetic JSONL, not the pure mapping in isolation — the
+    // report-reading + word-mapping seam must be provably non-skipping.
+
+    #[test]
+    fn test_status_verdict_gathering_below_threshold() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // 5 events → still "gathering" → /status stays silent (None).
+        let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 5]);
+        assert_eq!(reflex_effectiveness_summary_from(&path), None);
+    }
+
+    #[test]
+    fn test_status_verdict_missing_file_is_silent() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // No validation history at all (CI's real state today) → silent, not a
+        // fabricated verdict. This is the honest default the milestone requires.
+        let path = dir.path().join("nonexistent.jsonl");
+        assert_eq!(reflex_effectiveness_summary_from(&path), None);
+    }
+
+    #[test]
+    fn test_status_verdict_wakes_positive_from_real_data() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Early 25% → recent 75% hit rate → the verdict wakes and reads positive.
+        let path = write_effectiveness_fixture(
+            dir.path(),
+            &[(1, 3), (1, 3), (1, 3), (3, 1), (3, 1), (3, 1)],
+        );
+        assert_eq!(reflex_effectiveness_summary_from(&path), Some("learning ↑"));
+    }
+
+    #[test]
+    fn test_status_verdict_can_be_negative_from_real_data() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Early 75% → recent 25% hit rate. The whole point of the milestone: the
+        // ambient /status verdict MUST be able to disappoint me. If this only ever
+        // said "learning" or stayed silent, the meter would be decorative (day-135).
+        let path = write_effectiveness_fixture(
+            dir.path(),
+            &[(3, 1), (3, 1), (3, 1), (1, 3), (1, 3), (1, 3)],
+        );
+        assert_eq!(
+            reflex_effectiveness_summary_from(&path),
+            Some("decorative ↓")
+        );
+    }
+
+    #[test]
+    fn test_status_verdict_boundary_five_vs_six_events() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // Paired boundary (day-122/123): exactly 5 → silent, exactly 6 → speaks.
+        let five = write_effectiveness_fixture(dir.path(), &[(1, 1); 5]);
+        assert_eq!(reflex_effectiveness_summary_from(&five), None);
+        let six_dir = tempfile::tempdir().expect("create temp dir");
+        let six = write_effectiveness_fixture(six_dir.path(), &[(1, 1); 6]);
+        assert!(reflex_effectiveness_summary_from(&six).is_some());
     }
 
     #[test]
