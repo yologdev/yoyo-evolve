@@ -117,13 +117,17 @@ pub(crate) fn parse_git_status_counts(porcelain: &str) -> (u32, u32, u32) {
 
         if index == b'?' && worktree == b'?' {
             untracked += 1;
+        } else if index == b'!' && worktree == b'!' {
+            // `!!` = ignored (only present with `git status --ignored`).
+            // Ignored files are neither staged, modified, nor untracked.
+            continue;
         } else {
-            // Staged changes (index column has a letter, not space or ?)
-            if index != b' ' && index != b'?' {
+            // Staged changes (index column has a letter, not space/?/!)
+            if index != b' ' && index != b'?' && index != b'!' {
                 staged += 1;
             }
-            // Worktree changes (worktree column has a letter, not space or ?)
-            if worktree != b' ' && worktree != b'?' {
+            // Worktree changes (worktree column has a letter, not space/?/!)
+            if worktree != b' ' && worktree != b'?' && worktree != b'!' {
                 modified += 1;
             }
         }
@@ -359,6 +363,16 @@ mod tests {
         // Lines shorter than 2 bytes are skipped
         assert_eq!(parse_git_status_counts("X"), (0, 0, 0));
         assert_eq!(parse_git_status_counts(""), (0, 0, 0));
+    }
+
+    #[test]
+    fn test_parse_git_status_counts_ignored() {
+        // `git status --porcelain --ignored` emits `!!` for ignored files;
+        // they must count as neither staged nor modified (nor untracked).
+        assert_eq!(parse_git_status_counts("!! target/"), (0, 0, 0));
+        // Ignored entries mixed with real changes: only the real ones count.
+        let porcelain = "!! target/\n M src/main.rs\n?? new.txt\n";
+        assert_eq!(parse_git_status_counts(porcelain), (0, 1, 1));
     }
 
     #[test]
