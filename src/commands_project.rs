@@ -1923,20 +1923,24 @@ mod tests {
     fn test_context_default_behavior() {
         // Verify handle_context with empty input doesn't panic
         // (it just calls show_project_context_files which prints)
-        let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let agent = yoagent::Agent::from_provider(
+            yoagent::provider::AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt("test")
+        .with_api_key("test-key");
         handle_context("/context", "", &agent);
     }
 
     #[test]
     fn test_context_system_subcommand() {
         // Verify handle_context with "system" doesn't panic
-        let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let agent = yoagent::Agent::from_provider(
+            yoagent::provider::AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt("test")
+        .with_api_key("test-key");
         handle_context("/context system", "# Test\nHello world.\n", &agent);
     }
 
@@ -1950,10 +1954,12 @@ mod tests {
     #[test]
     fn test_context_tokens_subcommand() {
         // Verify handle_context with "tokens" doesn't panic
-        let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
-            .with_system_prompt("You are a test assistant.")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let agent = yoagent::Agent::from_provider(
+            yoagent::provider::AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt("You are a test assistant.")
+        .with_api_key("test-key");
         handle_context("/context tokens", "You are a test assistant.", &agent);
     }
 
@@ -1963,10 +1969,12 @@ mod tests {
         let prompt = "# Project context\nThis is the project.\nIt has details.\n\n\
                        ## Git status\nOn branch main\n\n\
                        ## Recently changed\nfile1.rs\nfile2.rs\n";
-        let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
-            .with_system_prompt(prompt)
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let agent = yoagent::Agent::from_provider(
+            yoagent::provider::AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt(prompt)
+        .with_api_key("test-key");
         // Should not panic and should exercise the section breakdown path
         handle_context("/context tokens", prompt, &agent);
     }
@@ -1975,10 +1983,12 @@ mod tests {
     fn test_context_tokens_single_section_no_breakdown() {
         // Single-section prompt should NOT show breakdown (just the total)
         let prompt = "You are a helpful assistant.";
-        let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
-            .with_system_prompt(prompt)
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let agent = yoagent::Agent::from_provider(
+            yoagent::provider::AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt(prompt)
+        .with_api_key("test-key");
         handle_context("/context tokens", prompt, &agent);
     }
 
@@ -2397,20 +2407,24 @@ mod tests {
     #[test]
     fn test_show_context_files_no_panic() {
         // Smoke test: calling with an empty agent shouldn't panic
-        let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let agent = yoagent::Agent::from_provider(
+            yoagent::provider::AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt("test")
+        .with_api_key("test-key");
         show_context_files(&agent);
     }
 
     #[test]
     fn test_context_files_dispatch() {
         // Verify handle_context routes "files" correctly (shouldn't panic)
-        let agent = yoagent::Agent::new(yoagent::provider::AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let agent = yoagent::Agent::from_provider(
+            yoagent::provider::AnthropicProvider,
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_system_prompt("test")
+        .with_api_key("test-key");
         handle_context("/context files", "", &agent);
     }
 

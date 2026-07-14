@@ -1462,8 +1462,7 @@ mod tests {
         use yoagent::Agent;
 
         let provider = MockProvider::text("hello back");
-        let mut agent = Agent::new(provider)
-            .with_model("mock-model")
+        let mut agent = Agent::from_provider(provider, yoagent::provider::ModelConfig::mock())
             .with_api_key("not-a-real-key");
 
         // Sanity: starts empty.

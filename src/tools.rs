@@ -1135,7 +1135,12 @@ fn build_sub_agent_tool_at_depth(
         _ => Arc::new(OpenAiCompatProvider),
     };
 
-    SubAgentTool::new("sub_agent", provider)
+    let model_config = crate::agent_builder::create_model_config(
+        &config.provider,
+        &config.model,
+        config.base_url.as_deref(),
+    );
+    SubAgentTool::from_provider("sub_agent", provider, model_config)
         .with_description(
             "Delegate a subtask to a fresh sub-agent with its own context window. \
              Use for complex, self-contained subtasks like: researching a codebase, \
@@ -1150,7 +1155,6 @@ fn build_sub_agent_tool_at_depth(
              using the tools available. Be thorough but concise in your final \
              response — summarize what you did, what you found, and any issues.",
         )
-        .with_model(&config.model)
         .with_api_key(&config.api_key)
         .with_tools(child_tools)
         .with_thinking(config.thinking)

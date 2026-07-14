@@ -474,10 +474,10 @@ mod tests {
             let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
             stash.clear();
         }
-        let mut agent = Agent::new(AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let mut agent =
+            Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
+                .with_system_prompt("test")
+                .with_api_key("test-key");
         let result = handle_stash_pop(&mut agent);
         assert!(
             result.contains("empty"),
@@ -492,10 +492,10 @@ mod tests {
             let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
             stash.clear();
         }
-        let mut agent = Agent::new(AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let mut agent =
+            Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
+                .with_system_prompt("test")
+                .with_api_key("test-key");
 
         // Turn 5 should trigger a checkpoint
         let saved = auto_checkpoint(&mut agent, 5);
@@ -520,10 +520,10 @@ mod tests {
             let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
             stash.clear();
         }
-        let mut agent = Agent::new(AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let mut agent =
+            Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
+                .with_system_prompt("test")
+                .with_api_key("test-key");
 
         // Turns 1-4 should not trigger
         for t in 1..5 {
@@ -607,9 +607,8 @@ mod tests {
     #[test]
     fn test_stash_pre_clear_noop_on_empty_conversation() {
         use yoagent::provider::AnthropicProvider;
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
 
         // No messages → no-op, and the global stash is never touched.
@@ -703,10 +702,10 @@ mod tests {
             let mut stash = rw_write_or_recover(&CONVERSATION_STASH);
             stash.clear();
         }
-        let mut agent = Agent::new(AnthropicProvider)
-            .with_system_prompt("test")
-            .with_model("test-model")
-            .with_api_key("test-key");
+        let mut agent =
+            Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
+                .with_system_prompt("test")
+                .with_api_key("test-key");
 
         // Create 12 auto-checkpoints (turns 5, 10, 15, ..., 60)
         for i in 1..=12 {

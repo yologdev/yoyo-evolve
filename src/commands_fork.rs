@@ -862,9 +862,8 @@ mod tests {
         use yoagent::agent::Agent;
         use yoagent::provider::AnthropicProvider;
 
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
         let mut agent = agent;
         let result = handle_fork(&mut agent, "/fork");

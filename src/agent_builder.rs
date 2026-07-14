@@ -521,7 +521,6 @@ impl AgentConfig {
 
         agent = agent
             .with_system_prompt(&self.system_prompt)
-            .with_model(&self.model)
             .with_api_key(&self.api_key)
             .with_thinking(self.thinking)
             .with_skills(self.skills.clone());
@@ -645,30 +644,30 @@ impl AgentConfig {
 
         if self.provider == "anthropic" {
             // Anthropic path — native protocol; a custom --base-url (proxy or
-            // gateway) is honored by yoagent 0.9 and normalized in
+            // gateway) is honored by yoagent 0.13 and normalized in
             // create_model_config, so it no longer falls through to the
             // OpenAI-compat unknown-provider path.
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let agent = Agent::new(AnthropicProvider).with_model_config(model_config);
+            let agent = Agent::from_provider(AnthropicProvider, model_config);
             self.configure_agent(agent, context_window)
         } else if self.provider == "google" {
             // Google uses its own provider
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let agent = Agent::new(GoogleProvider).with_model_config(model_config);
+            let agent = Agent::from_provider(GoogleProvider, model_config);
             self.configure_agent(agent, context_window)
         } else if self.provider == "bedrock" {
             // Bedrock uses AWS SigV4 signing with ConverseStream protocol
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let agent = Agent::new(BedrockProvider).with_model_config(model_config);
+            let agent = Agent::from_provider(BedrockProvider, model_config);
             self.configure_agent(agent, context_window)
         } else {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);
             let context_window = model_config.context_window;
-            let agent = Agent::new(OpenAiCompatProvider).with_model_config(model_config);
+            let agent = Agent::from_provider(OpenAiCompatProvider, model_config);
             self.configure_agent(agent, context_window)
         }
     }
@@ -716,21 +715,20 @@ impl AgentConfig {
 
         let agent = if self.provider == "anthropic" {
             let model_config = create_model_config(&self.provider, &self.model, base_url);
-            Agent::new(AnthropicProvider).with_model_config(model_config)
+            Agent::from_provider(AnthropicProvider, model_config)
         } else if self.provider == "google" {
             let model_config = create_model_config(&self.provider, &self.model, base_url);
-            Agent::new(GoogleProvider).with_model_config(model_config)
+            Agent::from_provider(GoogleProvider, model_config)
         } else if self.provider == "bedrock" {
             let model_config = create_model_config(&self.provider, &self.model, base_url);
-            Agent::new(BedrockProvider).with_model_config(model_config)
+            Agent::from_provider(BedrockProvider, model_config)
         } else {
             let model_config = create_model_config(&self.provider, &self.model, base_url);
-            Agent::new(OpenAiCompatProvider).with_model_config(model_config)
+            Agent::from_provider(OpenAiCompatProvider, model_config)
         };
 
         let mut agent = agent
             .with_system_prompt(side_prompt)
-            .with_model(&self.model)
             .with_api_key(&self.api_key)
             .with_cache_config(CacheConfig {
                 enabled: true,
@@ -756,21 +754,20 @@ impl AgentConfig {
 
         let agent = if self.provider == "anthropic" {
             let model_config = create_model_config(&self.provider, architect_model, base_url);
-            Agent::new(AnthropicProvider).with_model_config(model_config)
+            Agent::from_provider(AnthropicProvider, model_config)
         } else if self.provider == "google" {
             let model_config = create_model_config(&self.provider, architect_model, base_url);
-            Agent::new(GoogleProvider).with_model_config(model_config)
+            Agent::from_provider(GoogleProvider, model_config)
         } else if self.provider == "bedrock" {
             let model_config = create_model_config(&self.provider, architect_model, base_url);
-            Agent::new(BedrockProvider).with_model_config(model_config)
+            Agent::from_provider(BedrockProvider, model_config)
         } else {
             let model_config = create_model_config(&self.provider, architect_model, base_url);
-            Agent::new(OpenAiCompatProvider).with_model_config(model_config)
+            Agent::from_provider(OpenAiCompatProvider, model_config)
         };
 
         let mut agent = agent
             .with_system_prompt(&self.system_prompt)
-            .with_model(architect_model)
             .with_api_key(&self.api_key)
             .with_cache_config(CacheConfig {
                 enabled: true,
@@ -1852,8 +1849,13 @@ mod tests {
             lite: false,
         };
         // This should not panic — context config and execution limits are wired
-        let agent =
-            config.configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
+        let agent = config.configure_agent(
+            Agent::from_provider(
+                yoagent::provider::AnthropicProvider,
+                yoagent::provider::ModelConfig::mock(),
+            ),
+            200_000,
+        );
         // Agent built successfully with context config
         let _ = agent;
     }
@@ -1889,8 +1891,13 @@ mod tests {
             lite: false,
         };
         // Should not panic — limits are set with defaults
-        let agent = config_no_turns
-            .configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
+        let agent = config_no_turns.configure_agent(
+            Agent::from_provider(
+                yoagent::provider::AnthropicProvider,
+                yoagent::provider::ModelConfig::mock(),
+            ),
+            200_000,
+        );
         let _ = agent;
 
         // With explicit max_turns, it should use that value
@@ -1920,8 +1927,13 @@ mod tests {
             no_tools: false,
             lite: false,
         };
-        let agent = config_with_turns
-            .configure_agent(Agent::new(yoagent::provider::AnthropicProvider), 200_000);
+        let agent = config_with_turns.configure_agent(
+            Agent::from_provider(
+                yoagent::provider::AnthropicProvider,
+                yoagent::provider::ModelConfig::mock(),
+            ),
+            200_000,
+        );
         let _ = agent;
     }
 

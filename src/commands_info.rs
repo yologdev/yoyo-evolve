@@ -1601,9 +1601,8 @@ mod tests {
     #[test]
     fn test_tokens_display_labels() {
         // Verify no panic with zero usage and empty conversation
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
 
         let usage = Usage {
@@ -1621,9 +1620,8 @@ mod tests {
     #[test]
     fn test_tokens_display_with_large_values() {
         // Verify no panic with very large token counts
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
 
         let usage = Usage {
@@ -1760,9 +1758,8 @@ mod tests {
     #[test]
     fn test_handle_profile_no_panic() {
         use std::time::Instant;
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
 
         let usage = Usage::default();
@@ -1779,9 +1776,8 @@ mod tests {
     #[test]
     fn test_handle_profile_with_usage() {
         use std::time::Instant;
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
 
         let usage = Usage {

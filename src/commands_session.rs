@@ -1042,9 +1042,8 @@ mod tests {
         // handle_compact_preview should not panic on an agent with no messages
         use yoagent::agent::Agent;
         use yoagent::provider::AnthropicProvider;
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
         // Just call it — should print the empty message and return without panic
         handle_compact_preview(&agent);
@@ -1079,9 +1078,8 @@ mod tests {
             .unwrap();
 
         // Create an agent with an empty conversation — should NOT save
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
         auto_save_on_exit_in(&agent, tmp_dir.path());
         assert!(
@@ -1510,9 +1508,8 @@ mod tests {
         use yoagent::agent::Agent;
         use yoagent::provider::AnthropicProvider;
 
-        let agent = Agent::new(AnthropicProvider)
+        let agent = Agent::from_provider(AnthropicProvider, yoagent::provider::ModelConfig::mock())
             .with_system_prompt("test")
-            .with_model("test-model")
             .with_api_key("test-key");
         // Should not panic with no messages
         handle_history_detail(&agent);
