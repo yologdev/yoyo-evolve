@@ -33,7 +33,9 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 >
 > `doctor` honors `--provider` and `--model` if you want to point it at a non-default setup
 > (e.g. `yoyo doctor --provider openai`). Inside the REPL, the same checks are available
-> as `/doctor` and `/health`.
+> as `/doctor` and `/health`. When `/doctor` finds any Warn/Fail check, it prints a one-line
+> handoff pointing you at `/fix` (to attempt repairs) or `/health` (for a full check) — a
+> clean run stays quiet.
 
 ## Navigation
 

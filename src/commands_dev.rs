@@ -342,6 +342,42 @@ pub fn print_doctor_report(checks: &[DoctorCheck]) {
     let total = checks.len();
     let summary_color = if passed == total { &GREEN } else { &YELLOW };
     println!("\n  {summary_color}{passed}/{total} checks passed{RESET}\n");
+
+    // Contextual handoff: if anything needs attention, point the user at the
+    // command that acts on it instead of leaving them to find it.
+    if let Some(hint) = doctor_handoff_hint(checks) {
+        println!("  {DIM}{hint}{RESET}\n");
+    }
+}
+
+/// Build a contextual handoff hint from a slice of doctor checks.
+///
+/// Contextual guidance beats reference guidance: after `/doctor` reports its
+/// checks, if anything is Warn or Fail, point the user at the command that
+/// acts on it instead of leaving them to find `/fix` and `/health` on their
+/// own. Returns `None` on a fully-green run so the clean output stays pristine.
+///
+/// The wording is deliberately product-safe — no cargo/clippy/CI assumptions,
+/// since the checks themselves already adapt per project type.
+pub fn doctor_handoff_hint(checks: &[DoctorCheck]) -> Option<String> {
+    let issues = checks
+        .iter()
+        .filter(|c| c.status != DoctorStatus::Pass)
+        .count();
+    doctor_handoff_hint_from_count(issues)
+}
+
+/// Format the handoff hint from a raw issue count (Warn + Fail).
+///
+/// Split out so it's unit-testable without constructing `DoctorCheck`s.
+fn doctor_handoff_hint_from_count(issues: usize) -> Option<String> {
+    if issues == 0 {
+        return None;
+    }
+    let noun = if issues == 1 { "issue" } else { "issues" };
+    Some(format!(
+        "→ {issues} {noun} found. Try /fix to attempt repairs, or /health for a full check."
+    ))
 }
 
 /// Handle the `/doctor` command.
@@ -1028,5 +1064,68 @@ mod tests {
             checks.is_empty(),
             "Rust doesn't need separate toolchain checks here"
         );
+    }
+
+    fn check(status: DoctorStatus) -> DoctorCheck {
+        DoctorCheck {
+            name: "x".to_string(),
+            status,
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_handoff_hint_all_green_is_none() {
+        assert_eq!(doctor_handoff_hint_from_count(0), None);
+        let checks = vec![check(DoctorStatus::Pass), check(DoctorStatus::Pass)];
+        assert_eq!(doctor_handoff_hint(&checks), None);
+    }
+
+    #[test]
+    fn test_handoff_hint_single_warn_mentions_fix() {
+        let hint = doctor_handoff_hint_from_count(1).expect("1 issue -> Some");
+        assert!(hint.contains("/fix"), "hint should point at /fix: {hint}");
+        assert!(
+            hint.contains("/health"),
+            "hint should point at /health: {hint}"
+        );
+        assert!(hint.contains('1'), "hint should name the count: {hint}");
+        // singular noun
+        assert!(hint.contains("1 issue found"), "singular noun: {hint}");
+    }
+
+    #[test]
+    fn test_handoff_hint_multiple_fails_names_count() {
+        let hint = doctor_handoff_hint_from_count(2).expect("2 issues -> Some");
+        assert!(
+            hint.contains('2'),
+            "hint should mention issue count = 2: {hint}"
+        );
+        assert!(hint.contains("2 issues found"), "plural noun: {hint}");
+    }
+
+    #[test]
+    fn test_handoff_hint_counts_warn_and_fail_only() {
+        let checks = vec![
+            check(DoctorStatus::Pass),
+            check(DoctorStatus::Warn),
+            check(DoctorStatus::Fail),
+            check(DoctorStatus::Pass),
+        ];
+        let hint = doctor_handoff_hint(&checks).expect("2 non-pass -> Some");
+        assert!(hint.contains('2'), "should count only Warn+Fail: {hint}");
+    }
+
+    #[test]
+    fn test_handoff_hint_is_product_safe() {
+        // No language/toolchain assumptions in the hint text.
+        let hint = doctor_handoff_hint_from_count(3).expect("Some");
+        let lower = hint.to_lowercase();
+        for forbidden in ["cargo", "clippy", "rust", "ci", "npm"] {
+            assert!(
+                !lower.contains(forbidden),
+                "hint must be product-safe (no '{forbidden}'): {hint}"
+            );
+        }
     }
 }
