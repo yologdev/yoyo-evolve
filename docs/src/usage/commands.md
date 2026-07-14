@@ -727,7 +727,7 @@ The question appears with a ❓ prompt, and you type your response directly. If 
 | `/context [system\|tokens\|files]` | Show project context files, system prompt sections, token budget, or files referenced in this conversation |
 | `/find <pattern>` | Fuzzy-search project files by name — respects `.gitignore`, ranked by relevance |
 | `/grep <pattern> [path]` | Search file contents directly — no AI, no tokens, instant results |
-| `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture) |
+| `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture). Code-shaped queries like `foo()` or `self.count` are accepted |
 | `/index` | Build a lightweight index of all project source files — shows path, line count, and first-line summary |
 | `/init` | Scan the project and generate a YOYO.md context file with detected build commands, key files, and project structure |
 | `/tree [depth]` | Show project directory tree (default depth: 3, respects `.gitignore`) |

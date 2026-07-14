@@ -694,14 +694,58 @@ fn symbol_kind_label(kind: &SymbolKind) -> &'static str {
     }
 }
 
+/// Normalize a user-typed symbol query into a bare identifier the symbol
+/// index can match. Strips surrounding punctuation people paste from code:
+/// call parens `foo()`, refs `&foo`/`&mut foo` (take the last ident-run),
+/// path/member access `crate::bar::baz`/`self.count` (last segment), trailing
+/// `,;:` etc. If the input contains `<`, only the text before the first `<` is
+/// considered (so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`). Falls back to the
+/// trimmed input if no identifier run is found (e.g. `()` stays `()`).
+///
+/// Language-agnostic and syntax-free: it never parses code, it just picks the
+/// last maximal run of `[A-Za-z0-9_]` characters. Char-safe (no byte indexing).
+fn normalize_symbol_query(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // If there's a `<`, only look before it so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`.
+    let candidate = match trimmed.find('<') {
+        Some(idx) => &trimmed[..idx],
+        None => trimmed,
+    };
+    // Find the last maximal run of identifier chars by pushing into a String
+    // per run — sidesteps byte indexing entirely (café() is safe).
+    let mut last_run = String::new();
+    let mut current = String::new();
+    for c in candidate.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            current.push(c);
+        } else {
+            if !current.is_empty() {
+                last_run = std::mem::take(&mut current);
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        last_run = current;
+    }
+    if last_run.is_empty() {
+        // No identifier characters at all — return the trimmed original so
+        // behavior stays graceful for weird input.
+        trimmed.to_string()
+    } else {
+        last_run
+    }
+}
+
 /// Parse the symbol name out of a `/def ...` command line.
-/// Returns the trimmed symbol name, or an empty string when none was given.
+/// Returns the trimmed, code-shape-normalized symbol name, or an empty string
+/// when none was given.
 pub(crate) fn parse_def_query(input: &str) -> String {
-    input
-        .strip_prefix("/def")
-        .unwrap_or(input)
-        .trim()
-        .to_string()
+    let raw = input.strip_prefix("/def").unwrap_or(input).trim();
+    normalize_symbol_query(raw)
 }
 
 /// Truncate a string to at most `max_bytes`, snapping to a UTF-8 char boundary
@@ -832,13 +876,11 @@ pub fn handle_def(input: &str) {
 }
 
 /// Parse the symbol name out of a `/refs ...` command line.
-/// Returns the trimmed symbol name, or an empty string when none was given.
+/// Returns the trimmed, code-shape-normalized symbol name, or an empty string
+/// when none was given.
 pub(crate) fn parse_refs_query(input: &str) -> String {
-    input
-        .strip_prefix("/refs")
-        .unwrap_or(input)
-        .trim()
-        .to_string()
+    let raw = input.strip_prefix("/refs").unwrap_or(input).trim();
+    normalize_symbol_query(raw)
 }
 
 /// Maximum references to display before truncating.
@@ -1773,6 +1815,46 @@ mod tests {
         assert_eq!(parse_def_query("/def"), "");
         assert_eq!(parse_def_query("/def "), "");
         assert_eq!(parse_def_query("/def    "), "");
+    }
+
+    #[test]
+    fn parse_def_query_normalizes_code_shaped_query() {
+        // A token copied straight out of code should still resolve the symbol.
+        assert_eq!(parse_def_query("/def foo()"), "foo");
+        assert_eq!(parse_def_query("/def &mut foo"), "foo");
+        assert_eq!(parse_def_query("/def self.count"), "count");
+    }
+
+    #[test]
+    fn parse_refs_query_normalizes_code_shaped_query() {
+        assert_eq!(parse_refs_query("/refs foo,"), "foo");
+        assert_eq!(parse_refs_query("/refs &foo"), "foo");
+    }
+
+    #[test]
+    fn normalize_symbol_query_strips_code_punctuation() {
+        // Plain identifiers pass through untouched.
+        assert_eq!(normalize_symbol_query("foo"), "foo");
+        // Call parens, refs, member/path access, trailing punctuation.
+        assert_eq!(normalize_symbol_query("foo()"), "foo");
+        assert_eq!(normalize_symbol_query("&mut foo"), "foo");
+        assert_eq!(normalize_symbol_query("self.count"), "count");
+        assert_eq!(normalize_symbol_query("crate::bar::baz"), "baz");
+        assert_eq!(normalize_symbol_query("foo,"), "foo");
+        // The `<` rule: take the text before the first `<`, then its last run.
+        assert_eq!(normalize_symbol_query("Vec<Foo>"), "Vec");
+        assert_eq!(normalize_symbol_query("foo<T>"), "foo");
+    }
+
+    #[test]
+    fn normalize_symbol_query_graceful_edge_cases() {
+        // Empty stays empty (usage hint still prints downstream).
+        assert_eq!(normalize_symbol_query(""), "");
+        // No identifier characters → trimmed original, no panic.
+        assert_eq!(normalize_symbol_query("()"), "()");
+        // Multi-byte input must not panic. `é` (2 bytes) is not an ident char,
+        // so the last ascii run before `()` is `caf`.
+        assert_eq!(normalize_symbol_query("café()"), "caf");
     }
 
     #[test]
