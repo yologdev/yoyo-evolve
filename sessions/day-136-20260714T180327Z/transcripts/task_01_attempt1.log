@@ -1,0 +1,161 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current structure of handle_doctor and print_doctor_report.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs:1..61 ✓ (1ms)
+  ▶ search 'fn print_doctor_report' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs:322..402 ✓ (1ms)
+  3 tools completed in 10.5s (3 ✓)
+
+Now let me look at the existing tests in this file to match conventions.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search '#\[cfg\(test\)\]|mod tests|fn test_' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs ✓ (2ms)
+
+No tests in this file yet. Let me add the helper and tests. First, the pure helper:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (5 → 35 lines)
+  + /// Build a contextual handoff hint from a slice of doctor checks.
+  + ///
+  + /// Contextual guidance beats reference guidance: after `/doctor` reports its
+  + /// checks, if anything is Warn or Fail, point the user at the command that
+  + /// acts on it instead of leaving them to find `/fix` and `/health` on their
+  + /// own. Returns `None` on a fully-green run so the clean output stays pristine.
+  + ///
+  + /// The wording is deliberately product-safe — no cargo/clippy/CI assumptions,
+  + /// since the checks themselves already adapt per project type.
+  + pub fn doctor_handoff_hint(checks: &[DoctorCheck]) -> Option<String> {
+  +     let issues = checks
+  +         .iter()
+  +         .filter(|c| c.status != DoctorStatus::Pass)
+  +         .count();
+  +     doctor_handoff_hint_from_count(issues)
+  + }
+  + 
+  + /// Format the handoff hint from a raw issue count (Warn + Fail).
+  + ///
+  + /// Split out so it's unit-testable without constructing `DoctorCheck`s.
+  ... (13 more lines)
+ ✓ (16.8s)
+  + /// Build a contextual handoff hint from a slice of doctor checks.
+  + ///
+  + /// Contextual guidance beats reference guidance: after `/doctor` reports its
+  + /// checks, if anything is Warn or Fail, point the user at the command that
+  + /// acts on it instead of leaving them to find `/fix` and `/health` on their
+  + /// own. Returns `None` on a fully-green run so the clean output stays pristine.
+  + ///
+  + /// The wording is deliberately product-safe — no cargo/clippy/CI assumptions,
+  ... (13 more lines)
+
+Expected — now wire it into the printer:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (3 → 9 lines)
+        let summary_color = if passed == total { &GREEN } else { &YELLOW };
+        println!("\n  {summary_color}{passed}/{total} checks passed{RESET}\n");
+  + 
+  +     // Contextual handoff: if anything needs attention, point the user at the
+  +     // command that acts on it instead of leaving them to find it.
+  +     if let Some(hint) = doctor_handoff_hint(checks) {
+  +         println!("  {DIM}{hint}{RESET}\n");
+  +     }
+    }
+ ✓ (1m 35s)
+        let summary_color = if passed == total { &GREEN } else { &YELLOW };
+        println!("\n  {summary_color}{passed}/{total} checks passed{RESET}\n");
+  + 
+  +     // Contextual handoff: if anything needs attention, point the user at the
+  +     // command that acts on it instead of leaving them to find it.
+  +     if let Some(hint) = doctor_handoff_hint(checks) {
+  +         println!("  {DIM}{hint}{RESET}\n");
+  +     }
+    }
+
+Let me verify DIM is available via format::* and add tests.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub const DIM" src/for… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "DIM" src/format/mod.rs… ✓ (5ms)
+  2 tools completed in 4.7s (2 ✓)
+
+Good, DIM is available. Now add tests at the end of the file:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -20 src/commands_dev.rs ✓ (3ms)
+
+There's already a test module. Let me find its end and add my tests there.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|use super" s… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (10 → 67 lines)
+                checks.is_empty(),
+                "Rust doesn't need separate toolchain checks here"
+            );
+  +     }
+  + 
+  +     fn check(status: DoctorStatus) -> DoctorCheck {
+  +         DoctorCheck {
+  +             name: "x".to_string(),
+  +             status,
+  +             detail: String::new(),
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn test_handoff_hint_all_green_is_none() {
+  +         assert_eq!(doctor_handoff_hint_from_count(0), None);
+  +         let checks = vec![check(DoctorStatus::Pass), check(DoctorStatus::Pass)];
+  +         assert_eq!(doctor_handoff_hint(&checks), None);
+  +     }
+  + 
+  ... (42 more lines)
+ ✓ (1m 37s)
+                checks.is_empty(),
+                "Rust doesn't need separate toolchain checks here"
+            );
+  +     }
+  + 
+  +     fn check(status: DoctorStatus) -> DoctorCheck {
+  +         DoctorCheck {
+  +             name: "x".to_string(),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (37.2s)
+  3 tools completed in 2m 36s (3 ✓)
+
+The filter didn't match. Let me use the correct test name:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test handoff_hint 2>&1 | t… ✓ (137ms)
+
+All 5 tests pass, clippy is clean. Now update the docs.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "doctor" docs/src/usage/… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md:30..40 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (3 → 5 lines)
+    > `doctor` honors `--provider` and `--model` if you want to point it at a non-default setup
+    > (e.g. `yoyo doctor --provider openai`). Inside the REPL, the same checks are available
+  - > as `/doctor` and `/health`.
+  + > as `/doctor` and `/health`. When `/doctor` finds any Warn/Fail check, it prints a one-line
+  + > handoff pointing you at `/fix` (to attempt repairs) or `/health` (for a full check) — a
+  + > clean run stays quiet.
+ ✓ (59.1s)
+    > `doctor` honors `--provider` and `--model` if you want to point it at a non-default setup
+    > (e.g. `yoyo doctor --provider openai`). Inside the REPL, the same checks are available
+  - > as `/doctor` and `/health`.
+  + > as `/doctor` and `/health`. When `/doctor` finds any Warn/Fail check, it prints a one-line
+  + > handoff pointing you at `/fix` (to attempt repairs) or `/health` (for a full check) — a
+  + > clean run stays quiet.
+  3 tools completed in 1m 8s (3 ✓)
+
+Now CLAUDE.md:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_dev.rs" CLAUDE… ✓ (3ms)
+
+`commands_dev.rs` isn't described in CLAUDE.md's architecture list. Let me check the format — it may not be listed at all.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "doctor\|/health\|/fix" … ✓ (3ms)
+
+`commands_dev.rs` and its commands aren't mentioned in CLAUDE.md's architecture list, so there's nothing to update there — adding a new line for a file not in the list would be out of scope. The task said "if your change makes any doc statement wrong" — no existing statement is wrong. I'll leave CLAUDE.md as-is rather than invent a new entry.
+
+Let me do a final full verification.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (261ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_dev 2>&1 | g… ✓ (1.7s)
+  2 tools completed in 4.2s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

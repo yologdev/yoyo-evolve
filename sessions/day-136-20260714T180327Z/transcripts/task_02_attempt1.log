@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the current effectiveness verdict implementation and the /status wiring to understand exactly what threshold moves it from "gathering" to a real verdict.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reflex_effectiveness_su…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "reflex_effectiveness\|… ✓ (6ms)
+ ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1700..1820 ✓ (1ms)
+  3 tools completed in 3.5s (3 ✓)
+
+Now let me find `effectiveness_report_from, verdict_word`, and the report struct.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "effectiveness_report_f… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "effectiveness_report_f… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "effectiveness_report_… ✓ (11ms)
+  3 tools completed in 6.5s (3 ✓)
+
+All in commands_risk.rs. Let me find those definitions.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effectiveness_report_fr… ✓ (4ms)
+
+There's already substantial machinery here, including verdict states and tests. Let me read the core logic (1536–1720) and the existing tests (3540–3700).
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1536..1721 ✓ (2ms)
+
+The machinery is already complete and well-designed: it has all four verdict states including the honest negative Decorative ↓, and `verdict_word` maps them. The key concern the task raises: **is the /status verdict reachable with real data, and does it correctly express a negative verdict?** Let me look at the existing tests to see what's covered.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3540..3700 ✓ (1ms)
+
+The effectiveness_report_from machinery is thoroughly tested — all four verdict states, boundaries, odd-count split, missing file. But there's a critical gap the task points at: **the /status wiring path** (reflex_effectiveness_summary → `verdict_word → commands_info.rs`) is not tested end-to-end with real synthetic file data. The verdict-word test only tests the pure mapping; the report tests never assert what reflex_effectiveness_summary-style reading produces from a file at the /status entry point.
+
+Let me look at the /status wiring and the fixture helper.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_info.rs:230..270 ✓ (1ms)
+
+The /status wiring is a one-liner delegating to reflex_effectiveness_summary(), which reads the hardcoded `RISK_VALIDATION_PATH`. That path can't be overridden, so it's not directly testable with synthetic data. 
+
+The real gap: **there is no path-parameterized entry point that mirrors the /status verdict, so the /status verdict itself can only be tested against the real (empty) file.** This is exactly the day-124 risk — the /status verdict is untestable and could silently skip.
+
+Let me verify by checking the fixture helper and whether `verdict_word(effectiveness_report_from(path))` is covered as a unit for the negative case reaching /status.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3515..3545 ✓ (1ms)
+
+Now I understand the full picture. The core report logic is well-tested, but there are two real gaps that the task and my day-124 lesson point at:
+
+1. **The /status verdict path is not testable end-to-end.** reflex_effectiveness_summary() hardcodes the real path; there's no path-parameterized helper the /status wiring shares. So the actual verdict-word-from-file path (the thing /status calls) is never exercised with synthetic data — the day-124 "conditionally-asserting/silently-skipping" risk lives exactly here.
+
+2. **No test asserts that the /status verdict can produce the negative word from real file data** — only the pure `verdict_word` mapping is tested in isolation, and the report tests never go through the word-producing entry point.
+
+The fix is small and surgical: extract a path-parameterized `reflex_effectiveness_summary_from(path) that reflex_effectiveness_summary()` delegates to, then test all three word outcomes (None / learning / decorative) through that shared entry point from synthetic files. This makes the /status verdict reachable and proves it can disappoint.
+
+Let me write the failing test first.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:3622..3642 ✓ (1ms)
+
+Now let me refactor reflex_effectiveness_summary to delegate to a path-parameterized helper (the shared entry point the /status wiring's word comes from), then add end-to-end tests.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (10 → 20 lines)
+  + /// Path-parameterized core of `reflex_effectiveness_summary`, so the exact
+  + /// word /status shows is reachable in tests with a synthetic validation file
+  + /// (the real `RISK_VALIDATION_PATH` was empty until #587/#575 opened the data
+  + /// path, and even now CI has no history — day-124: an untestable verdict is a
+  + /// verdict that can silently skip). Both windows must be present for a real
+  + /// verdict, so the negative "decorative ↓" outcome is provably reachable.
+  + fn reflex_effectiveness_summary_from(path: &std::path::Path) -> Option<&'static str> {
+  +     let report = effectiveness_report_from(path);
+  +     verdict_word(&report.verdict)
+  + }
+  + 
+    /// One-line effectiveness verdict for ambient display in /status.
+    /// Returns `None` when there aren't enough validation events yet
+    /// (fewer than `MIN_EFFECTIVENESS_EVENTS`) so /status stays quiet.
+  ···
+    /// "learning ↑", "flat", or "decorative ↓" (no ANSI color codes;
+    /// the caller formats its own line).
+    pub(crate) fn reflex_effectiveness_summary() -> Option<&'static str> {
+  -     let report = effectiveness_report_from(std::path::Path::new(RISK_VALIDATION_PATH));
+  -     verdict_word(&report.verdict)
+  ... (2 more lines)
+ ✓ (1m 38s)
+  + /// Path-parameterized core of `reflex_effectiveness_summary`, so the exact
+  + /// word /status shows is reachable in tests with a synthetic validation file
+  + /// (the real `RISK_VALIDATION_PATH` was empty until #587/#575 opened the data
+  + /// path, and even now CI has no history — day-124: an untestable verdict is a
+  + /// verdict that can silently skip). Both windows must be present for a real
+  + /// verdict, so the negative "decorative ↓" outcome is provably reachable.
+  + fn reflex_effectiveness_summary_from(path: &std::path::Path) -> Option<&'static str> {
+  +     let report = effectiveness_report_from(path);
+  ... (13 more lines)
+
+Now add the end-to-end tests that go through the /status entry point with synthetic data — proving the verdict wakes, and crucially that it can produce the negative word.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (15 → 77 lines)
+            assert_eq!(verdict_word(&EffectivenessVerdict::Flat), Some("flat"));
+            assert_eq!(
+                verdict_word(&EffectivenessVerdict::Decorative),
+  +             Some("decorative ↓")
+  +         );
+  +     }
+  + 
+  +     // ── End-to-end /status verdict path (day-136 milestone) ──
+  +     // These exercise the exact function /status calls (via the path-parameterized
+  +     // core), proving the ambient verdict is reachable with real file data now that
+  +     // the validation data path is open (#587/#575). Day-124 discipline: assert the
+  +     // /status word from a synthetic JSONL, not the pure mapping in isolation — the
+  +     // report-reading + word-mapping seam must be provably non-skipping.
+  + 
+  +     #[test]
+  +     fn test_status_verdict_gathering_below_threshold() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         // 5 events → still "gathering" → /status stays silent (None).
+  +         let path = write_effectiveness_fixture(dir.path(), &[(1, 1); 5]);
+  +         assert_eq!(reflex_effectiveness_summary_from(&path), None);
+  ... (49 more lines)
+ ✓ (1m 37s)
+            assert_eq!(verdict_word(&EffectivenessVerdict::Flat), Some("flat"));
+            assert_eq!(
+                verdict_word(&EffectivenessVerdict::Decorative),
+  +             Some("decorative ↓")
+  +         );
+  +     }
+  + 
+  +     // ── End-to-end /status verdict path (day-136 milestone) ──
+  ... (13 more lines)
+
+Now run the checks.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib status_verdict … ✓ (106ms)
+  2 tools completed in 5.7s (2 ✓)
+
+It's a binary crate. Let me run the tests via the binary test target.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test status_verdict 2>&1 |… ✓ (142ms)
+
+All 5 new tests pass, including the critical negative case (decorative ↓ reachable from real file data). Let me sanity-check the negative test actually would fail if the logic were broken — quick verification the assertion is meaningful, then run clippy and the full test suite.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -12 ✓ (1m 1s)
+  2 tools completed in 1m 20s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,184 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the existing doctor pipeline structure to see how checks are added and what helpers exist.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "DoctorCheck\|DoctorStat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn estimate_tokens\|fn… ✓ (6ms)
+ ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (240 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '55,75p' src/cli.rs && ec… ✓ (2ms)
+ ✓ (5ms)
+  4 tools completed in 7.4s (4 ✓)
+
+Now let me look at the existing tests in commands_dev.rs to match the test style, and see how skills are discovered on disk (SKILL.md files).
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests\|#\[test\]\|f…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SKILL.md\|skills_dir\|s… ✓ (4ms)
+ ✓ (4ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Now I understand the structure. Skills are SKILL.md files under skills directories. Let me look at how the loaded skills dir is tracked so I can sum SKILL.md sizes. Let me check what info is available at doctor-check time — I'll make the check based on a skills directory path.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '875,895p' src/cli.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "loaded_skill\|skills_pa… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 1.7s (2 ✓)
+
+There's no global tracking of the actual skill directory paths. The simplest product-safe approach: scan the standard skill discovery locations (.yoyo/skills/, ~/.yoyo/skills/) plus any --skills dirs. But at doctor time we don't have the --skills args easily. Let me keep it focused: scan the well-known discovery dirs for SKILL.md files and sum their sizes. This works for any project. Let me write the pure helpers first (tests-first), then wire the check.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs:240..270 ✓ (0ms)
+
+Now let me write the pure helpers and the check. First, the pure functions with tests:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (1 → 77 lines)
+  + /// Conservative threshold (in estimated tokens) above which loaded skills'
+  + /// combined context cost is worth reviewing. Skills are injected into the
+  + /// system prompt every turn, so their bytes are recurring context spend —
+  + /// this is a rough heuristic, not a hard limit.
+  + const SKILL_CONTEXT_COST_WARN_TOKENS: usize = 8000;
+  + 
+  + /// Rough token estimate from a byte count (bytes / 4, rounded up).
+  + /// Kept as a tiny pure fn so the estimation is independently testable.
+  + /// Documented as a heuristic — real tokenization varies by tokenizer.
+  + pub fn skill_bytes_to_tokens(bytes: usize) -> usize {
+  +     bytes.div_ceil(4)
+  + }
+  + 
+  + /// Decide the `/doctor` status + message for the combined context cost of
+  + /// loaded skills, given the total estimated token cost.
+  + ///
+  + /// This reports COST honestly — it does NOT claim to detect *unused* skills
+  + /// (that would need usage telemetry we don't have in a product context).
+  + ///
+  + /// - 0 tokens → Pass ("no skills loaded") — a neutral state, never a failure.
+  ... (57 more lines)
+ ✓ (16.9s)
+  + /// Conservative threshold (in estimated tokens) above which loaded skills'
+  + /// combined context cost is worth reviewing. Skills are injected into the
+  + /// system prompt every turn, so their bytes are recurring context spend —
+  + /// this is a rough heuristic, not a hard limit.
+  + const SKILL_CONTEXT_COST_WARN_TOKENS: usize = 8000;
+  + 
+  + /// Rough token estimate from a byte count (bytes / 4, rounded up).
+  + /// Kept as a tiny pure fn so the estimation is independently testable.
+  ... (13 more lines)
+
+Expected — now wire the check into the pipeline. Add it right after check 12 (toolchain), before checks.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (6 → 18 lines)
+        let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
+        let toolchain = toolchain_checks_for_project(&project_type);
+        checks.extend(toolchain);
+  + 
+  +     // 13. Skill context cost — reports the recurring context spend of loaded
+  +     //     skills (SKILL.md bytes → rough tokens). Honest naming: this reports
+  +     //     COST, not "unused" detection (we have no usage telemetry here).
+  +     let skill_bytes = discovered_skill_bytes();
+  +     let skill_tokens = skill_bytes_to_tokens(skill_bytes);
+  +     let (status, detail) = skill_context_cost_status(skill_tokens);
+  +     checks.push(DoctorCheck {
+  +         name: "Skill context cost".to_string(),
+  +         status,
+  +         detail,
+  +     });
+    
+        checks
+ ✓ (1m 36s)
+        let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
+        let toolchain = toolchain_checks_for_project(&project_type);
+        checks.extend(toolchain);
+  + 
+  +     // 13. Skill context cost — reports the recurring context spend of loaded
+  +     //     skills (SKILL.md bytes → rough tokens). Honest naming: this reports
+  +     //     COST, not "unused" detection (we have no usage telemetry here).
+  +     let skill_bytes = discovered_skill_bytes();
+  ... (9 more lines)
+
+Now add tests. Let me look at the test module opening to insert cleanly.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs:718..738 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_dev.rs (3 → 48 lines)
+    mod tests {
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  + 
+  +     #[test]
+  +     fn test_skill_bytes_to_tokens() {
+  +         assert_eq!(skill_bytes_to_tokens(0), 0);
+  +         // rounds up: 1..=4 bytes → 1 token
+  +         assert_eq!(skill_bytes_to_tokens(1), 1);
+  +         assert_eq!(skill_bytes_to_tokens(4), 1);
+  +         assert_eq!(skill_bytes_to_tokens(5), 2);
+  +         assert_eq!(skill_bytes_to_tokens(8000), 2000);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_skill_context_cost_no_skills_is_neutral_pass() {
+  +         let (status, msg) = skill_context_cost_status(0);
+  +         assert_eq!(status, DoctorStatus::Pass);
+  +         assert!(msg.contains("no skills loaded"), "msg was: {msg}");
+  +     }
+  ... (28 more lines)
+ ✓ (1m 36s)
+    mod tests {
+        use super::*;
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+  + 
+  +     #[test]
+  +     fn test_skill_bytes_to_tokens() {
+  +         assert_eq!(skill_bytes_to_tokens(0), 0);
+  +         // rounds up: 1..=4 bytes → 1 token
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.0s)
+  3 tools completed in 2m 9s (3 ✓)
+
+Clippy passed. It's a binary crate — run tests without --lib:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test skill_ 2>&1 | tail -2… ✓ (21.4s)
+
+All 6 new tests pass. Now the full test suite and docs.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "doctor\|Doctor\|toolcha… ✓ (3ms)
+ ✓ (1m 2s)
+  2 tools completed in 1m 5s (2 ✓)
+
+All tests pass. Now update the docs. Let me see the doctor doc section around line 30-40.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md:30..45 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/commands.md (2 → 8 lines)
+    > handoff pointing you at `/fix` (to attempt repairs) or `/health` (for a full check) — a
+    > clean run stays quiet.
+  + >
+  + > `doctor` also reports a **Skill context cost** check: it sums the `SKILL.md` bytes of the
+  + > skills discovered under `.yoyo/skills/` and `~/.yoyo/skills/`, estimates their recurring
+  + > context spend (roughly bytes ÷ 4 tokens), and warns if the total exceeds ~8k tokens so you
+  + > can review which skills you actually need. It reports *cost*, not *usage* — with no skills
+  + > loaded it's a neutral Pass.
+ ✓ (1m 18s)
+    > handoff pointing you at `/fix` (to attempt repairs) or `/health` (for a full check) — a
+    > clean run stays quiet.
+  + >
+  + > `doctor` also reports a **Skill context cost** check: it sums the `SKILL.md` bytes of the
+  + > skills discovered under `.yoyo/skills/` and `~/.yoyo/skills/`, estimates their recurring
+  + > context spend (roughly bytes ÷ 4 tokens), and warns if the total exceeds ~8k tokens so you
+  + > can review which skills you actually need. It reports *cost*, not *usage* — with no skills
+  + > loaded it's a neutral Pass.
+  2 tools completed in 1m 28s (2 ✓)
+
+Now update CLAUDE.md's commands_dev.rs line.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_dev.rs" CLAUDE… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "doctor\|/health\|comman… ✓ (3ms)
+  2 tools completed in 3.5s (2 ✓)
+
+CLAUDE.md doesn't have a commands_dev.rs line in its architecture list — the task assumed it did. Let me verify and add a brief mention where doctor is described, or add a commands_dev entry. Let me check the architecture list format for a nearby entry.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_search.rs\|com… ✓ (3ms)
+
+There's no commands_dev.rs line in the architecture list currently. Rather than invent a new entry mid-list, I'll add a concise one near the other command modules. Let me insert after commands_project.rs.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 2 lines)
+    - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
+  + - `commands_dev.rs` — `/doctor`, `/health`, `/fix` handlers. `run_doctor_checks` builds the structured `DoctorCheck` list, including a **skill context-cost audit** (`skill_context_cost_status`/`skill_bytes_to_tokens`): sums `SKILL.md` bytes under `.yoyo/skills/` + `~/.yoyo/skills/`, estimates recurring context spend (~bytes/4), warns over ~8k tokens. Reports cost honestly — does not claim to detect *unused* skills (no usage telemetry in a product context)
+ ✓ (1m 22s)
+    - `commands_project.rs` — `/context`, `/init`, `/docs`, project-type detection, `auto_context_for_prompt` (automatic file injection for prompts — scores repo files against query keywords, returns top matches with content), `format_auto_context`
+  + - `commands_dev.rs` — `/doctor`, `/health`, `/fix` handlers. `run_doctor_checks` builds the structured `DoctorCheck` list, including a **skill context-cost audit** (`skill_context_cost_status`/`skill_bytes_to_tokens`): sums `SKILL.md` bytes under `.yoyo/skills/` + `~/.yoyo/skills/`, estimates recurring context spend (~bytes/4), warns over ~8k tokens. Reports cost honestly — does not claim to detect *unused* skills (no usage telemetry in a product context)
+
+  watch: no files changed this turn — skipping
+
