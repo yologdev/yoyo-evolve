@@ -3,12 +3,14 @@
 //! Extracted from `repl.rs` — these are self-contained conversation modes
 //! that don't depend on the REPL loop infrastructure.
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::commands;
 use crate::format::*;
 use crate::prompt::run_prompt_auto_retry;
 use crate::session::SessionChanges;
+use crate::sync_util::lock_or_recover;
 use crate::watch::run_watch_after_prompt;
 use crate::AgentConfig;
 use yoagent::*;
@@ -118,18 +120,75 @@ fn parse_side_question(input: &str) -> Option<String> {
     }
 }
 
+/// A single stored side exchange — the last `/side` question and its answer.
+/// Mirrors the "last bang result" pattern in `repl.rs`: one slot, latest wins,
+/// so `/side pull` can carry the most recent side answer back into the main
+/// conversation without the user retyping it.
+#[derive(Clone, Debug, PartialEq)]
+struct LastSide {
+    question: String,
+    answer: String,
+}
+
+/// Module-level store for the last side exchange. One slot: each new answered
+/// `/side` overwrites the previous. Poison-safe via `lock_or_recover` (Day 58).
+static LAST_SIDE: Mutex<Option<LastSide>> = Mutex::new(None);
+
+/// Save the last side exchange (overwriting any prior one — one slot, latest wins).
+fn store_last_side(question: &str, answer: &str) {
+    let mut guard = lock_or_recover(&LAST_SIDE);
+    *guard = Some(LastSide {
+        question: question.to_string(),
+        answer: answer.to_string(),
+    });
+}
+
+/// Return the last stored side exchange as `(question, answer)`, if any.
+///
+/// This is **non-consuming** (clones): unlike the one-rewind-per-clear pattern in
+/// `commands_stash`, a pulled side answer may be referenced again later, so we
+/// leave the slot intact and let a newer `/side` overwrite it.
+fn last_side() -> Option<(String, String)> {
+    let guard = lock_or_recover(&LAST_SIDE);
+    guard
+        .as_ref()
+        .map(|s| (s.question.clone(), s.answer.clone()))
+}
+
+/// Returns `true` if the `/side` input is exactly the `pull` subcommand
+/// (i.e. `/side pull` with optional surrounding whitespace).
+fn is_side_pull(input: &str) -> bool {
+    input.strip_prefix("/side").unwrap_or("").trim() == "pull"
+}
+
 /// Handle a `/side <question>` command — quick Q&A without touching main context.
-pub(crate) async fn handle_side(input: &str, agent_config: &AgentConfig) {
+///
+/// `/side pull` is special: it does not run a new query. Instead it fetches the
+/// last answered `/side` exchange and injects that answer into the MAIN
+/// conversation (the return path for the otherwise fire-and-forget side chat).
+pub(crate) async fn handle_side(
+    input: &str,
+    agent: &mut yoagent::agent::Agent,
+    agent_config: &AgentConfig,
+) {
+    // `/side pull` — bring the last side answer back into the main conversation.
+    if is_side_pull(input) {
+        handle_side_pull(agent);
+        return;
+    }
+
     let question = match parse_side_question(input) {
         Some(q) => q,
         None => {
             eprintln!(
                 "{YELLOW}  Usage: /side <question>{RESET}\n\
                  {DIM}  Ask a quick question without affecting the main conversation.\n\
-                 {DIM}  No tools — just text Q&A. Fast and cheap.\n\n\
+                 {DIM}  No tools — just text Q&A. Fast and cheap.\n\
+                 {DIM}  /side pull carries the last side answer into the main conversation.\n\n\
                  {DIM}  Examples:\n\
                  {DIM}    /side what's the syntax for a match guard in Rust?\n\
-                 {DIM}    /side explain the difference between clone and copy{RESET}\n"
+                 {DIM}    /side explain the difference between clone and copy\n\
+                 {DIM}    /side pull{RESET}\n"
             );
             return;
         }
@@ -181,6 +240,13 @@ pub(crate) async fn handle_side(input: &str, agent_config: &AgentConfig) {
         println!(); // newline after streamed text
     }
 
+    // Remember this exchange so `/side pull` can carry the answer back into the
+    // main conversation (one slot, latest wins).
+    let trimmed_answer = collected_text.trim();
+    if !trimmed_answer.is_empty() {
+        store_last_side(&question, trimmed_answer);
+    }
+
     // Show side conversation cost
     let messages = side_agent.messages();
     let mut side_usage = Usage::default();
@@ -203,6 +269,30 @@ pub(crate) async fn handle_side(input: &str, agent_config: &AgentConfig) {
     } else {
         eprintln!();
     }
+}
+
+/// Handle `/side pull` — inject the last side answer into the MAIN conversation.
+///
+/// This is the return path for the otherwise fire-and-forget `/side` chat
+/// (Day-127 lesson: any feature that isolates work implies a way back). The
+/// stored answer is appended as a user-visible context message so the main
+/// agent can see and build on it, exactly like `/add` injects file content.
+fn handle_side_pull(agent: &mut yoagent::agent::Agent) {
+    let (question, answer) = match last_side() {
+        Some(pair) => pair,
+        None => {
+            eprintln!("{DIM}  [side] nothing to pull — ask a /side question first{RESET}\n");
+            return;
+        }
+    };
+
+    let block = format!("Context from a side conversation.\n\nQ: {question}\n\nA: {answer}");
+    let msg = yoagent::types::AgentMessage::Llm(yoagent::types::Message::User {
+        content: vec![yoagent::types::Content::Text { text: block }],
+        timestamp: yoagent::types::now_ms(),
+    });
+    agent.append_message(msg);
+    eprintln!("{DIM}  [side] pulled last answer into the conversation{RESET}\n");
 }
 
 // ── Quick mode ──
@@ -805,6 +895,61 @@ mod tests {
     fn test_parse_side_question_multiword() {
         let q = parse_side_question("/side how do I convert Vec<u8> to String in Rust?");
         assert_eq!(q.unwrap(), "how do I convert Vec<u8> to String in Rust?");
+    }
+
+    // ── last-side store tests ──
+    // These serialize on a shared static, so we run them within one test to
+    // avoid cross-test interference on the single `LAST_SIDE` slot.
+    #[test]
+    fn test_last_side_store_set_get_overwrite_empty() {
+        // NOTE: mutates the process-global LAST_SIDE. Keep the whole store
+        // lifecycle in one test so parallel test threads don't collide.
+        let mut guard = lock_or_recover(&LAST_SIDE);
+        *guard = None;
+        drop(guard);
+
+        // Empty store returns None.
+        assert!(last_side().is_none());
+
+        // Set → get returns it.
+        store_last_side(
+            "what is a monad?",
+            "a monoid in the category of endofunctors",
+        );
+        assert_eq!(
+            last_side(),
+            Some((
+                "what is a monad?".to_string(),
+                "a monoid in the category of endofunctors".to_string(),
+            ))
+        );
+
+        // Overwrite replaces the previous (one slot, latest wins).
+        store_last_side("second q", "second a");
+        assert_eq!(
+            last_side(),
+            Some(("second q".to_string(), "second a".to_string()))
+        );
+
+        // Non-consuming: a second read still returns the same value.
+        assert_eq!(
+            last_side(),
+            Some(("second q".to_string(), "second a".to_string()))
+        );
+
+        // Reset so we don't leak state to other tests.
+        let mut guard = lock_or_recover(&LAST_SIDE);
+        *guard = None;
+    }
+
+    #[test]
+    fn test_is_side_pull() {
+        assert!(is_side_pull("/side pull"));
+        assert!(is_side_pull("/side   pull  "));
+        assert!(!is_side_pull("/side pull the answer")); // extra args → real question
+        assert!(!is_side_pull("/side what is pull?"));
+        assert!(!is_side_pull("/side"));
+        assert!(!is_side_pull("/side "));
     }
 
     #[test]

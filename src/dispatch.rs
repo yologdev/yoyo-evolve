@@ -1237,7 +1237,7 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             CommandResult::Continue
         }
         CommandRoute::Side => {
-            crate::conversations::handle_side(ctx.input, ctx.agent_config).await;
+            crate::conversations::handle_side(ctx.input, ctx.agent, ctx.agent_config).await;
             CommandResult::Continue
         }
         CommandRoute::Quick => {
