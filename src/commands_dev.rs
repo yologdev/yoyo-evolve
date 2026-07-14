@@ -237,7 +237,92 @@ pub fn run_doctor_checks(provider: &str, model: &str) -> Vec<DoctorCheck> {
     let toolchain = toolchain_checks_for_project(&project_type);
     checks.extend(toolchain);
 
+    // 13. Skill context cost — reports the recurring context spend of loaded
+    //     skills (SKILL.md bytes → rough tokens). Honest naming: this reports
+    //     COST, not "unused" detection (we have no usage telemetry here).
+    let skill_bytes = discovered_skill_bytes();
+    let skill_tokens = skill_bytes_to_tokens(skill_bytes);
+    let (status, detail) = skill_context_cost_status(skill_tokens);
+    checks.push(DoctorCheck {
+        name: "Skill context cost".to_string(),
+        status,
+        detail,
+    });
+
     checks
+}
+
+/// Conservative threshold (in estimated tokens) above which loaded skills'
+/// combined context cost is worth reviewing. Skills are injected into the
+/// system prompt every turn, so their bytes are recurring context spend —
+/// this is a rough heuristic, not a hard limit.
+const SKILL_CONTEXT_COST_WARN_TOKENS: usize = 8000;
+
+/// Rough token estimate from a byte count (bytes / 4, rounded up).
+/// Kept as a tiny pure fn so the estimation is independently testable.
+/// Documented as a heuristic — real tokenization varies by tokenizer.
+pub fn skill_bytes_to_tokens(bytes: usize) -> usize {
+    bytes.div_ceil(4)
+}
+
+/// Decide the `/doctor` status + message for the combined context cost of
+/// loaded skills, given the total estimated token cost.
+///
+/// This reports COST honestly — it does NOT claim to detect *unused* skills
+/// (that would need usage telemetry we don't have in a product context).
+///
+/// - 0 tokens → Pass ("no skills loaded") — a neutral state, never a failure.
+/// - at or under the threshold → Pass (names the total).
+/// - over the threshold → Warn (names the total, suggests review).
+pub fn skill_context_cost_status(total_estimated_tokens: usize) -> (DoctorStatus, String) {
+    if total_estimated_tokens == 0 {
+        return (DoctorStatus::Pass, "no skills loaded".to_string());
+    }
+    if total_estimated_tokens > SKILL_CONTEXT_COST_WARN_TOKENS {
+        (
+            DoctorStatus::Warn,
+            format!(
+                "~{total_estimated_tokens} tokens of skill context (over ~{SKILL_CONTEXT_COST_WARN_TOKENS}) — review which skills you need"
+            ),
+        )
+    } else {
+        (
+            DoctorStatus::Pass,
+            format!("~{total_estimated_tokens} tokens of skill context"),
+        )
+    }
+}
+
+/// Sum the byte sizes of every `SKILL.md` under the standard skill-discovery
+/// directories (`.yoyo/skills/` project-local and `~/.yoyo/skills/` global).
+///
+/// Product-safe: returns 0 when no skill dirs exist (any project, any setup).
+fn discovered_skill_bytes() -> usize {
+    let mut total = 0usize;
+    let mut dirs: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(".yoyo/skills")];
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(std::path::Path::new(&home).join(".yoyo/skills"));
+    }
+    for dir in dirs {
+        total += skill_bytes_in_dir(&dir);
+    }
+    total
+}
+
+/// Sum byte sizes of `SKILL.md` files directly inside subdirectories of `dir`.
+/// (Skills live at `<dir>/<skill-name>/SKILL.md`.) Missing dir → 0.
+fn skill_bytes_in_dir(dir: &std::path::Path) -> usize {
+    let mut total = 0usize;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let skill_md = entry.path().join("SKILL.md");
+        if let Ok(meta) = std::fs::metadata(&skill_md) {
+            total += meta.len() as usize;
+        }
+    }
+    total
 }
 
 /// Return toolchain version checks for a given project type.
@@ -647,6 +732,51 @@ pub async fn handle_fix(
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+
+    #[test]
+    fn test_skill_bytes_to_tokens() {
+        assert_eq!(skill_bytes_to_tokens(0), 0);
+        // rounds up: 1..=4 bytes → 1 token
+        assert_eq!(skill_bytes_to_tokens(1), 1);
+        assert_eq!(skill_bytes_to_tokens(4), 1);
+        assert_eq!(skill_bytes_to_tokens(5), 2);
+        assert_eq!(skill_bytes_to_tokens(8000), 2000);
+    }
+
+    #[test]
+    fn test_skill_context_cost_no_skills_is_neutral_pass() {
+        let (status, msg) = skill_context_cost_status(0);
+        assert_eq!(status, DoctorStatus::Pass);
+        assert!(msg.contains("no skills loaded"), "msg was: {msg}");
+    }
+
+    #[test]
+    fn test_skill_context_cost_small_is_pass() {
+        let (status, msg) = skill_context_cost_status(2000);
+        assert_eq!(status, DoctorStatus::Pass);
+        assert!(msg.contains("2000"), "msg was: {msg}");
+    }
+
+    #[test]
+    fn test_skill_context_cost_large_is_warn_with_count() {
+        let (status, msg) = skill_context_cost_status(12000);
+        assert_eq!(status, DoctorStatus::Warn);
+        assert!(msg.contains("12000"), "msg should name the count: {msg}");
+    }
+
+    #[test]
+    fn test_skill_context_cost_boundary_at_threshold_is_pass() {
+        // Exactly at the threshold must NOT warn (paired near-miss, day-122/123).
+        let (status, _) = skill_context_cost_status(SKILL_CONTEXT_COST_WARN_TOKENS);
+        assert_eq!(status, DoctorStatus::Pass);
+    }
+
+    #[test]
+    fn test_skill_context_cost_boundary_over_threshold_is_warn() {
+        // One token over the threshold flips to Warn — the minimal near-miss.
+        let (status, _) = skill_context_cost_status(SKILL_CONTEXT_COST_WARN_TOKENS + 1);
+        assert_eq!(status, DoctorStatus::Warn);
+    }
 
     #[test]
     fn health_checks_rust_has_build() {
