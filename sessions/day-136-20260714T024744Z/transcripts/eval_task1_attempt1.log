@@ -1,0 +1,48 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me verify the diff against the task. Let me check the key logic and the empty-input behavior concern.
+
+The normalize_symbol_query returns String::new() on empty trimmed input, and parse_def_query/parse_refs_query pass the trimmed remainder through it — so empty in → empty out is preserved. Let me verify one subtle point: the café() test claims result is `"caf"`. Let me trace it.
+
+For "café()": candidate = whole string (no <). Chars: c,a,f pushed to current; é is not ascii_alphanumeric → last_run = "caf", current cleared; ( → current empty, nothing; ) → same. Final current empty. last_run = "caf". Correct.
+
+Let me quickly build the binary to try the feature live.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo 2>/dev/null…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '694,750p' src/commands_s… ✓ (4ms)
+ ✓ (3ms)
+  2 tools completed in 2.8s (2 ✓)
+
+The `trimmed.find('<') returns a byte index and &trimmed[..idx]` slices at that byte boundary — but since < is ASCII (1 byte), idx is always a char boundary. Safe. The implementation matches the task exactly. Let me try the live feature.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_def_query\|fn … ✓ (424ms)
+
+`/def` is a REPL-only command not exposed as a subcommand, and requires interactive input. The unit tests (which pass, per harness) directly cover parse_def_query("/def foo()") == "foo" and all the normalize cases — that's strong evidence the parse boundary works. The task explicitly said not to touch the matching logic, so the parse-normalization tests are the meaningful verification. The diff is complete: helper added, wired into both parsers, tests for hit+near-miss on every shape, docs updated for /def.
+
+One minor note: docs only updated the /def entry, not /refs — but the task said "if the entries don't exist there, skip." Let me confirm /refs isn't in the docs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/refs" docs/src/usage/c… ✓ (3ms)
+
+`/refs has no entry in the docs, so skipping it was correct per the task instructions. Only /def` was documented and it got the one-line note. Everything checks out.
+
+The diff:
+• Adds `normalize_symbol_query — char-based (no byte indexing), <`-rule handled, graceful fallback for (), empty stays empty.
+• Wires it into both parse_def_query and parse_refs_query without changing signatures or empty-input behavior.
+• Tests-first: covers all required shapes plus hit/near-miss and multi-byte café().
+• Docs: one-line note added to the /def entry; /refs correctly skipped (no entry).
+• Product-kind task, no config/CLI/startup default changes — no #448 red flag.
+
+The stray .yoyo/risk_snapshots.jsonl line is auto-generated snapshot noise, not a concern.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (46.5s)
+
+Verdict: PASS
+
+The implementation matches the task precisely:
+• normalize_symbol_query uses char-based iteration (no byte indexing), handles the < rule (Vec<Foo>→Vec, `foo<T>→foo), returns trimmed original for no-ident input (()→()`), and empty→empty.
+• Wired into both parse_def_query and parse_refs_query without signature or empty-input changes.
+• Tests-first: all required shapes covered from both sides, including multi-byte café()→caf and the parse_def_query("/def foo()")=="foo" boundary test.
+• Docs: /def entry got the one-sentence note; /refs correctly skipped (no entry exists).
+• Product-kind task with no config/CLI/startup-default changes — no #448 red flag.
+
+  watch: no files changed this turn — skipping
+

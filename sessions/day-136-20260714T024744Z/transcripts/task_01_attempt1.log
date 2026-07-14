@@ -1,0 +1,179 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current implementation of parse_def_query and parse_refs_query in the search commands file.
+  ▶ search 'fn parse_def_query|fn parse_refs_query|fn collect_def_matche…' (*.rs) ✓ (22ms)
+  ▶ search 'parse_def_query|parse_refs_query' in src/commands_search.rs ✓ (2ms)
+  ▶ search 'parse_def_query|parse_refs_query|handle_def|handle_refs' ✓ (7.0s)
+  3 tools completed in 13.5s (3 ✓)
+
+The functions don't exist yet. Let me check what actually exists in the file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'fn handle_def|fn handle_refs|fn parse_def|fn parse_refs|def_…' in src/commands_search.rs ✓ (2ms)
+  ▶ search 'fn parse_.*query|fn handle_def|fn handle_refs|def_matches|re…' in src/commands_search.rs ✓ (2ms)
+  2 tools completed in 4.2s (2 ✓)
+
+The repository structure header showed parse_def_query, handle_def, parse_refs_query, `handle_refs`. Let me search more broadly.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "parse_def\|parse_refs\|handle_def\|handle_refs\|def_matches\|ref_matche… ✓ (5ms)
+
+Found them. Let me read the exact implementations.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:697..747 ✓ (1ms)
+  ▶ read src/commands_search.rs:834..849 ✓ (0ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Now I understand the structure. Let me write the tests first, then the helper and wire it in. First, the tests:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_search.rs:1763..1803 ✓ (1ms)
+
+Now let me determine the fallback behavior for edge cases. For "()": no ident-run → trimmed original "()". For `"café()": café — caf is ascii run, then é`, then no more ascii → last non-empty run is caf. Let me add the tests:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (6 → 46 lines)
+            assert_eq!(parse_def_query("/def"), "");
+            assert_eq!(parse_def_query("/def "), "");
+            assert_eq!(parse_def_query("/def    "), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_def_query_normalizes_code_shaped_query() {
+  +         // A token copied straight out of code should still resolve the symbol.
+  +         assert_eq!(parse_def_query("/def foo()"), "foo");
+  +         assert_eq!(parse_def_query("/def &mut foo"), "foo");
+  +         assert_eq!(parse_def_query("/def self.count"), "count");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_refs_query_normalizes_code_shaped_query() {
+  +         assert_eq!(parse_refs_query("/refs foo,"), "foo");
+  +         assert_eq!(parse_refs_query("/refs &foo"), "foo");
+  +     }
+  + 
+  +     #[test]
+  ... (24 more lines)
+ ✓ (9.0s)
+            assert_eq!(parse_def_query("/def"), "");
+            assert_eq!(parse_def_query("/def "), "");
+            assert_eq!(parse_def_query("/def    "), "");
+  +     }
+  + 
+  +     #[test]
+  +     fn parse_def_query_normalizes_code_shaped_query() {
+  +         // A token copied straight out of code should still resolve the symbol.
+  ... (13 more lines)
+
+Tests are failing as expected (function doesn't exist yet). Now let me add the helper and wire it in:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (9 → 53 lines)
+  + /// Normalize a user-typed symbol query into a bare identifier the symbol
+  + /// index can match. Strips surrounding punctuation people paste from code:
+  + /// call parens `foo()`, refs `&foo`/`&mut foo` (take the last ident-run),
+  + /// path/member access `crate::bar::baz`/`self.count` (last segment), trailing
+  + /// `,;:` etc. If the input contains `<`, only the text before the first `<` is
+  + /// considered (so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`). Falls back to the
+  + /// trimmed input if no identifier run is found (e.g. `()` stays `()`).
+  + ///
+  + /// Language-agnostic and syntax-free: it never parses code, it just picks the
+  + /// last maximal run of `[A-Za-z0-9_]` characters. Char-safe (no byte indexing).
+  + fn normalize_symbol_query(raw: &str) -> String {
+  +     let trimmed = raw.trim();
+  +     if trimmed.is_empty() {
+  +         return String::new();
+  +     }
+  +     // If there's a `<`, only look before it so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`.
+  +     let candidate = match trimmed.find('<') {
+  +         Some(idx) => &trimmed[..idx],
+  +         None => trimmed,
+  +     };
+  ... (39 more lines)
+ ✓ (1m 14s)
+  + /// Normalize a user-typed symbol query into a bare identifier the symbol
+  + /// index can match. Strips surrounding punctuation people paste from code:
+  + /// call parens `foo()`, refs `&foo`/`&mut foo` (take the last ident-run),
+  + /// path/member access `crate::bar::baz`/`self.count` (last segment), trailing
+  + /// `,;:` etc. If the input contains `<`, only the text before the first `<` is
+  + /// considered (so `Vec<Foo>` → `Vec`, `foo<T>` → `foo`). Falls back to the
+  + /// trimmed input if no identifier run is found (e.g. `()` stays `()`).
+  + ///
+  ... (13 more lines)
+
+Note: candidate = &trimmed[..idx] uses byte indexing on idx from find('<') — find returns a byte offset that IS a char boundary (start of <), so this is safe. Now wire in parse_refs_query:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_search.rs (9 → 7 lines)
+    /// Parse the symbol name out of a `/refs ...` command line.
+  - /// Returns the trimmed symbol name, or an empty string when none was given.
+  + /// Returns the trimmed, code-shape-normalized symbol name, or an empty string
+  + /// when none was given.
+    pub(crate) fn parse_refs_query(input: &str) -> String {
+  -     input
+  -         .strip_prefix("/refs")
+  -         .unwrap_or(input)
+  -         .trim()
+  -         .to_string()
+  +     let raw = input.strip_prefix("/refs").unwrap_or(input).trim();
+  +     normalize_symbol_query(raw)
+    }
+ ✓ (1m 16s)
+    /// Parse the symbol name out of a `/refs ...` command line.
+  - /// Returns the trimmed symbol name, or an empty string when none was given.
+  + /// Returns the trimmed, code-shape-normalized symbol name, or an empty string
+  + /// when none was given.
+    pub(crate) fn parse_refs_query(input: &str) -> String {
+  -     input
+  -         .strip_prefix("/refs")
+  -         .unwrap_or(input)
+  ... (5 more lines)
+
+Now let me run the full verification:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.5s)
+
+All passing. Let me run the full test suite and build to be complete:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (46.8s)
+
+All green. Now let me check the docs for /def and /refs entries:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "/def\|/refs" docs/src/u… ✓ (3ms)
+
+`/def is a table row (no example usage), and /refs` isn't documented there. Per the task, I add a one-line note to the /def entry. The task says "if they show example usage" — it's a table cell. I'll add a concise note that code-shaped queries are accepted:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/usage/commands.md (1 → 1 lines)
+  - | `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture) |
+  + | `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture). Code-shaped queries like `foo()` or `self.count` are accepted |
+ ✓ (59.9s)
+  - | `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture) |
+  + | `/def <symbol>` | Find where a symbol is defined across the project — prints `path:line` and the source line (a small go-to-definition gesture). Code-shaped queries like `foo()` or `self.count` are accepted |
+
+Now let me verify the Vec<Foo> byte-index safety concern — trimmed.find('<') returns the byte offset of <, which is always a char boundary. Confirmed safe. Let me do a final full verification and commit:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (14.4s)
+
+All checks pass. Committing:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Done. Committed cleanly.
+
+## What I did
+
+/def and /refs now forgive code-shaped queries — you can paste a token straight out of your editor and it still resolves the symbol.
+
+The problem: `parse_def_query/parse_refs_query only trimmed whitespace, so /def foo()` searched for the literal symbol foo() (no match), /refs &mut buf searched for &mut buf, /def self.count searched for `self.count`. You'd get a misleading "no definition found for 'foo()'" when the definition was right there. Every language hits this.
+
+**The fix** — one small pure helper, normalize_symbol_query(raw: &str) -> String, wired into both parse functions at the query-parse boundary (I did NOT touch the matching logic, so the fuzzy/substring paths keep working and now just receive a clean identifier):
+• Takes the last maximal run of [A-Za-z0-9_]: foo() → foo, &mut foo → foo, self.count → count, `crate::bar::baz → baz, foo, → foo`.
+• The < rule: if there's a <, only look at the text before it, so `Vec<Foo> → Vec and foo<T> → foo (instead of picking up the T`).
+• No ident chars → returns the trimmed original (() stays ()), so weird input is graceful.
+• **Char-safe** — pushes chars into a String per run, no byte indexing (café() → caf, no panic).
+
+Discipline: tests first, both sides of each boundary (Day 122) — plain identifier unchanged, plus each code-shape hit, plus empty-stays-empty, no-ident fallback, and the multi-byte non-panic case. Also added `parse_def_query("/def foo()") == "foo" and the /refs` equivalent end-to-end.
+
+Docs: added a one-line note to the /def entry in docs/src/usage/commands.md.
+
+Verified: cargo fmt --check, `cargo clippy --all-targets -- -D warnings, cargo build, cargo test` all green.
+
+A small forgiveness that makes the gesture feel like a real editor's "go to definition" instead of a brittle exact-name lookup.
+
+  watch: no files changed this turn — skipping
+
