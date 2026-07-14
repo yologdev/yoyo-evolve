@@ -1,0 +1,190 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state and verifying the yoagent API shapes before making changes.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml && …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && echo "---" && git … ✓ (7ms)
+ ✓ (7ms)
+  2 tools completed in 1.1s (2 ✓)
+
+0.13 isn't in the registry cache yet. Let me bump the dependency and fetch it, then verify the API shapes.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/Cargo.toml (1 → 1 lines)
+  - yoagent = { version = "0.9", features = ["openapi"] }
+  + yoagent = { version = "0.13", features = ["openapi"] }
+ ✓ (20.8s)
+  - yoagent = { version = "0.9", features = ["openapi"] }
+  + yoagent = { version = "0.13", features = ["openapi"] }
+
+Dependency updated. Now let me verify the exact API shapes in 0.13 source.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.13.0/src/ && grep -rn "pub fn from_config\|… ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.13.0/src/ && sed -n '150,330p' agent.rs ✓ (4ms)
+  2 tools completed in 9.1s (2 ✓)
+
+Now let me look at all the deprecated usage sites in agent_builder.rs. Let me see the full picture of how Agent is constructed currently.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "Agent::new\|\.with_mode… ✓ (3ms)
+
+Let me examine each region. First the main build_agent around 500-540 and 640-780.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:490..560 ✓ (1ms)
+
+`configure_agent receives an already-constructed Agent and calls .with_model(&self.model)`. The model id now comes from ModelConfig. Let me look at how the agent is constructed (the callers pass `Agent::new(...).with_model_config(...)` in). Let me see lines 640-780 and understand the flow.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:640..780 ✓ (1ms)
+
+Now I understand the pattern. Each provider branch does Agent::new(Provider).with_model_config(model_config), and later .with_model(&self.model) is called. Since model_config already carries the model id (via configured_for), the migration is:
+
+• Agent::new(Provider).with_model_config(cfg) → `Agent::from_provider(Provider, cfg)`
+• Remove .with_model(...) calls since the model id now comes from the config.
+
+Let me verify `model_config.id is set properly by checking create_model_config`.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn create_model_config"… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs:334..454 ✓ (1ms)
+  2 tools completed in 13.8s (2 ✓)
+
+The config's id is set to model. So `from_provider(Provider, config) will set the model id via configured_for. The .with_model(&self.model)` calls become redundant and can be removed. Now let me make the edits.
+
+For build_agent (lines 646-673):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (28 → 28 lines)
+            if self.provider == "anthropic" {
+                // Anthropic path — native protocol; a custom --base-url (proxy or
+  -             // gateway) is honored by yoagent 0.9 and normalized in
+  +             // gateway) is honored by yoagent 0.13 and normalized in
+                // create_model_config, so it no longer falls through to the
+                // OpenAI-compat unknown-provider path.
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+                let context_window = model_config.context_window;
+  -             let agent = Agent::new(AnthropicProvider).with_model_config(model_config);
+  +             let agent = Agent::from_provider(AnthropicProvider, model_config);
+                self.configure_agent(agent, context_window)
+            } else if self.provider == "google" {
+                // Google uses its own provider
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+                let context_window = model_config.context_window;
+  -             let agent = Agent::new(GoogleProvider).with_model_config(model_config);
+  +             let agent = Agent::from_provider(GoogleProvider, model_config);
+                self.configure_agent(agent, context_window)
+            } else if self.provider == "bedrock" {
+                // Bedrock uses AWS SigV4 signing with ConverseStream protocol
+  ... (13 more lines)
+ ✓ (16.7s)
+            if self.provider == "anthropic" {
+                // Anthropic path — native protocol; a custom --base-url (proxy or
+  -             // gateway) is honored by yoagent 0.9 and normalized in
+  +             // gateway) is honored by yoagent 0.13 and normalized in
+                // create_model_config, so it no longer falls through to the
+                // OpenAI-compat unknown-provider path.
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+                let context_window = model_config.context_window;
+  ... (13 more lines)
+
+Progress. Now the configure_agent .with_model at line 524. Since configure_agent receives an agent that already has the model config set, I remove that line.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (6 → 5 lines)
+            agent = agent
+                .with_system_prompt(&self.system_prompt)
+  -             .with_model(&self.model)
+                .with_api_key(&self.api_key)
+                .with_thinking(self.thinking)
+                .with_skills(self.skills.clone());
+ ✓ (16.8s)
+            agent = agent
+                .with_system_prompt(&self.system_prompt)
+  -             .with_model(&self.model)
+                .with_api_key(&self.api_key)
+                .with_thinking(self.thinking)
+                .with_skills(self.skills.clone());
+
+Now `build_side_agent` (lines ~717-733):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (18 → 17 lines)
+            let agent = if self.provider == "anthropic" {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+  -             Agent::new(AnthropicProvider).with_model_config(model_config)
+  +             Agent::from_provider(AnthropicProvider, model_config)
+            } else if self.provider == "google" {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+  -             Agent::new(GoogleProvider).with_model_config(model_config)
+  +             Agent::from_provider(GoogleProvider, model_config)
+            } else if self.provider == "bedrock" {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+  -             Agent::new(BedrockProvider).with_model_config(model_config)
+  +             Agent::from_provider(BedrockProvider, model_config)
+            } else {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+  -             Agent::new(OpenAiCompatProvider).with_model_config(model_config)
+  +             Agent::from_provider(OpenAiCompatProvider, model_config)
+            };
+    
+            let mut agent = agent
+                .with_system_prompt(side_prompt)
+  ... (2 more lines)
+ ✓ (16.8s)
+            let agent = if self.provider == "anthropic" {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+  -             Agent::new(AnthropicProvider).with_model_config(model_config)
+  +             Agent::from_provider(AnthropicProvider, model_config)
+            } else if self.provider == "google" {
+                let model_config = create_model_config(&self.provider, &self.model, base_url);
+  -             Agent::new(GoogleProvider).with_model_config(model_config)
+  +             Agent::from_provider(GoogleProvider, model_config)
+  ... (13 more lines)
+
+Now `build_architect_agent (lines ~755-773). Note it uses architect_model for both the config and .with_model`:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (18 → 17 lines)
+            let agent = if self.provider == "anthropic" {
+                let model_config = create_model_config(&self.provider, architect_model, base_url);
+  -             Agent::new(AnthropicProvider).with_model_config(model_config)
+  +             Agent::from_provider(AnthropicProvider, model_config)
+            } else if self.provider == "google" {
+                let model_config = create_model_config(&self.provider, architect_model, base_url);
+  -             Agent::new(GoogleProvider).with_model_config(model_config)
+  +             Agent::from_provider(GoogleProvider, model_config)
+            } else if self.provider == "bedrock" {
+                let model_config = create_model_config(&self.provider, architect_model, base_url);
+  -             Agent::new(BedrockProvider).with_model_config(model_config)
+  +             Agent::from_provider(BedrockProvider, model_config)
+            } else {
+                let model_config = create_model_config(&self.provider, architect_model, base_url);
+  -             Agent::new(OpenAiCompatProvider).with_model_config(model_config)
+  +             Agent::from_provider(OpenAiCompatProvider, model_config)
+            };
+    
+            let mut agent = agent
+                .with_system_prompt(&self.system_prompt)
+  ... (2 more lines)
+ ✓ (17.2s)
+            let agent = if self.provider == "anthropic" {
+                let model_config = create_model_config(&self.provider, architect_model, base_url);
+  -             Agent::new(AnthropicProvider).with_model_config(model_config)
+  +             Agent::from_provider(AnthropicProvider, model_config)
+            } else if self.provider == "google" {
+                let model_config = create_model_config(&self.provider, architect_model, base_url);
+  -             Agent::new(GoogleProvider).with_model_config(model_config)
+  +             Agent::from_provider(GoogleProvider, model_config)
+  ... (13 more lines)
+
+agent_builder.rs main sites done. Now build_editor_agent — let me check if it also has these. And then tools.rs SubAgentTool, then the test files. Let me check the SubAgentTool signatures first.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.13.0/src/ && sed -n '115,200p' sub_agent.rs ✓ (3ms)
+
+Note `from_provider takes Arc<dyn StreamProvider>, while from_config` takes just the config. Let me look at the tools.rs usage.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1125..1165 ✓ (1ms)
+
+I need the provider Arc plus a ModelConfig. from_provider(name, provider, config) fits perfectly since the provider is already an `Arc<dyn StreamProvider>. Let me build a model config here. Let me check how config.model` relates — I'll use create_model_config.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "create_model_config\|us… ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1190..1215 ✓ (1ms)
+  2 tools completed in 7.7s (2 ✓)
+
+Let me check the config type in this sub-agent function and whether it has base_url.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs:1090..1130 ✓ (1ms)
+
+  watch: no files changed this turn — skipping
+

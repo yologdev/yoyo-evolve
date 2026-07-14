@@ -1,0 +1,132 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at how the migration was already done in the main source files to follow the same pattern for the remaining deprecated call sites.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "from_config\|from_prov…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets 2>&1 … ✓ (6ms)
+ ✓ (17.1s)
+  2 tools completed in 22.8s (2 ✓)
+
+The migration only covered agent_builder.rs production paths. There are many more call sites across test modules. Let me see the full list of files and understand the exact patterns used. First, let me look at the canonical migrated pattern and a typical deprecated call site.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets 2>&1 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '700,715p' src/commands_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls ~/.cargo/registry/src/*/yoage… ✓ (4ms)
+ ✓ (7ms)
+ ✓ (158ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '155,230p' ~/.cargo/regis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ModelConfig::mock\|pub …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,190p' ~/.cargo/regis… ✓ (5ms)
+ ✓ (4ms)
+ ✓ (5ms)
+  6 tools completed in 13.5s (6 ✓)
+
+Now let me look at ModelConfig::mock() signature and how the already-migrated production code in agent_builder built the config. Let me check what pattern was used there and how .configured_for sets things.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn mock\|pub fn new…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '710,730p' src/agent_buil… ✓ (3ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '370,400p' ~/.cargo/regis…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1845,1930p' src/agent_bu… ✓ (3ms)
+ ✓ (4ms)
+  4 tools completed in 7.9s (4 ✓)
+
+Now I understand all the patterns. The migration is mechanical. The deprecated pattern is:
+```rust
+Agent::new(PROVIDER).with_system_prompt(...).with_model("...").with_api_key("...")
+```
+becomes:
+```rust
+Agent::from_provider(PROVIDER, ModelConfig::mock()).with_system_prompt(...).with_api_key("...")
+```
+
+The .with_model("...") is dropped since the model comes from the config. Let me check how ModelConfig is imported and verify with_api_key still exists.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_api_key\|deprecate…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src/commands_stash.rs s… ✓ (7ms)
+ ✓ (14ms)
+  2 tools completed in 1.2s (2 ✓)
+
+These are all mechanical. The pattern is: Agent::new(PROVIDER) → `Agent::from_provider(PROVIDER, ModelConfig::mock()), and delete the .with_model("...")` line. Since these are all AnthropicProvider (and MockProvider in prompt.rs), `ModelConfig::mock()` uses AnthropicMessages protocol which fits. Let me write a script to do this transformation reliably.
+
+Let me first check the exact multi-line patterns to craft a robust sed/perl. Let me look at prompt.rs and tools.rs which differ.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1458,1475p' src/prompt.r… ✓ (5ms)
+
+Now let me look at the tools.rs context — it uses config.provider, config.model, config.api_key. For SubAgentTool, `from_provider takes Arc<dyn StreamProvider>. I should build a ModelConfig` from the config's provider/model. Let me check create_model_config in agent_builder.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn create_model_con… ✓ (6ms)
+
+For tools.rs, I'll use create_model_config to build a proper config from the provider/model/base_url, then use `SubAgentTool::from_provider(name, provider_arc, config). Let me check the SubAgentTool .with_model at line 1153 and whether tools.rs imports create_model_config`.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::agent_builde… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1101,1130p' src/tools.rs… ✓ (5ms)
+  2 tools completed in 6.8s (2 ✓)
+
+`AgentConfig has a base_url field. Now let me fix tools.rs. I'll use create_model_config` to build a proper config and use from_provider.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (2 → 7 lines)
+  -     SubAgentTool::new("sub_agent", provider)
+  +     let model_config = crate::agent_builder::create_model_config(
+  +         &config.provider,
+  +         &config.model,
+  +         config.base_url.as_deref(),
+  +     );
+  +     SubAgentTool::from_provider("sub_agent", provider, model_config)
+            .with_description(
+ ✓ (17.6s)
+  -     SubAgentTool::new("sub_agent", provider)
+  +     let model_config = crate::agent_builder::create_model_config(
+  +         &config.provider,
+  +         &config.model,
+  +         config.base_url.as_deref(),
+  +     );
+  +     SubAgentTool::from_provider("sub_agent", provider, model_config)
+            .with_description(
+
+Now remove the .with_model(&config.model) line in tools.rs (the model is now in the config).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (3 → 2 lines)
+  -         .with_model(&config.model)
+            .with_api_key(&config.api_key)
+            .with_tools(child_tools)
+ ✓ (17.3s)
+  -         .with_model(&config.model)
+            .with_api_key(&config.api_key)
+            .with_tools(child_tools)
+
+tools.rs is fixed. Now the remaining are all mechanical test-code patterns. Let me handle the different forms with sed/perl scripts. First the simple Agent::new(X) without .with_model chained (agent_builder.rs uses Agent::new(...) inline as an argument), and the `.with_model("test-model")/.with_model("mock-model")` chains.
+
+Let me do agent_builder.rs first — these are inline configure_agent(Agent::new(...)) calls.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e 's/Agent::new\(yoag… ✓ (6ms)
+
+Now the chained forms. The pattern across the other files is:
+```rust
+Agent::new(PROVIDER)
+    ...
+    .with_model("...")
+    ...
+```
+where PROVIDER is AnthropicProvider, provider (MockProvider var), or yoagent::provider::AnthropicProvider. I'll transform Agent::new(X) → `Agent::from_provider(X, ModelConfig::mock()) and delete .with_model(...) lines. Since ModelConfig` isn't always imported in these test modules, I'll use the fully-qualified yoagent::provider::ModelConfig::mock().
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (7 lines) ✓ (37ms)
+
+All deprecated Agent::new and .with_model("...") literal calls are gone. Let me verify no stray .with_model remains and that the yoagent version was bumped, then run the full checks.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.with_model(\|Agent::… ✓ (9ms)
+
+All migrated and dep bumped. Now let me run the full verification suite.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (9.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.0s)
+  2 tools completed in 29.8s (2 ✓)
+
+Clippy is clean. Now let me run tests.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -30 ✓ (1m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (49.1s)
+  2 tools completed in 2m 9s (2 ✓)
+
+All tests pass (4320 + 88, 1 ignored). Let me do the final piped-mode smoke check the task requires.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "hi" | ./target/debug/yoyo … ✓ (6.7s)
+
+Piped mode works, exit 0. Let me verify I didn't accidentally touch the forbidden gasp files and check git status.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && echo "=== … ✓ (7ms)
+
+  watch: no files changed this turn — skipping
+

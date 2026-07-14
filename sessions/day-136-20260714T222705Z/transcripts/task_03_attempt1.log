@@ -1,0 +1,254 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current /side implementation and the patterns I need to mirror.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_side\|build_add_… ✓ (8ms)
+ ✓ (9ms)
+  2 tools completed in 1.9s (2 ✓)
+
+Let me read the key sections: handle_side, parse_side_question, and the dispatch handling of /side and /add.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_side\|parse_side…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "lock_or_recover\|pub fn… ✓ (3ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:108..333 ✓ (2ms)
+  3 tools completed in 9.8s (3 ✓)
+
+Now let me look at how /side is dispatched and how /add injects content into the main agent.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:1225..1265 ✓ (1ms)
+
+Let me see how `/add injects content into the main agent, and look at CommandResult` variants and how content reaches the agent.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs:830..890 ✓ (1ms)
+
+Now I understand the pattern. /add uses ctx.agent.append_message(...) to inject content into the main agent. The Side route only passes ctx.input and ctx.agent_config — for /side pull I need access to ctx.agent too. Let me check the DispatchContext struct and the Side route call.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct DispatchContext\… ✓ (4ms)
+
+Good — DispatchContext has both agent and agent_config. Now let me write the code. First, the test-first store logic in conversations.rs. Let me check the imports at top and the test module structure.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:770..785 ✓ (0ms)
+
+Now let me implement. First, add the store and helpers after the parse_side_question function, and modify handle_side to detect pull and save the answer.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (9 → 11 lines)
+  + use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    
+    use crate::commands;
+    use crate::format::*;
+    use crate::prompt::run_prompt_auto_retry;
+    use crate::session::SessionChanges;
+  + use crate::sync_util::lock_or_recover;
+    use crate::watch::run_watch_after_prompt;
+    use crate::AgentConfig;
+    use yoagent::*;
+ ✓ (17.0s)
+  + use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    
+    use crate::commands;
+    use crate::format::*;
+    use crate::prompt::run_prompt_auto_retry;
+    use crate::session::SessionChanges;
+  + use crate::sync_util::lock_or_recover;
+  ... (3 more lines)
+
+Expected — imports used once I add the store. Now add the store, helpers, and pull handling. Let me insert the store right after `parse_side_question`:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (9 → 48 lines)
+        } else {
+            Some(question)
+        }
+  + }
+  + 
+  + /// A single stored side exchange — the last `/side` question and its answer.
+  + /// Mirrors the "last bang result" pattern in `repl.rs`: one slot, latest wins,
+  + /// so `/side pull` can carry the most recent side answer back into the main
+  + /// conversation without the user retyping it.
+  + #[derive(Clone, Debug, PartialEq)]
+  + struct LastSide {
+  +     question: String,
+  +     answer: String,
+  + }
+  + 
+  + /// Module-level store for the last side exchange. One slot: each new answered
+  + /// `/side` overwrites the previous. Poison-safe via `lock_or_recover` (Day 58).
+  + static LAST_SIDE: Mutex<Option<LastSide>> = Mutex::new(None);
+  + 
+  + /// Save the last side exchange (overwriting any prior one — one slot, latest wins).
+  ... (23 more lines)
+ ✓ (16.6s)
+        } else {
+            Some(question)
+        }
+  + }
+  + 
+  + /// A single stored side exchange — the last `/side` question and its answer.
+  + /// Mirrors the "last bang result" pattern in `repl.rs`: one slot, latest wins,
+  + /// so `/side pull` can carry the most recent side answer back into the main
+  ... (13 more lines)
+
+Expected — I'll wire them up now. First, modify handle_side to handle pull and save the answer. handle_side needs the agent to inject content. Let me update its signature and body.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (16 → 32 lines)
+    /// Handle a `/side <question>` command — quick Q&A without touching main context.
+  - pub(crate) async fn handle_side(input: &str, agent_config: &AgentConfig) {
+  + ///
+  + /// `/side pull` is special: it does not run a new query. Instead it fetches the
+  + /// last answered `/side` exchange and injects that answer into the MAIN
+  + /// conversation (the return path for the otherwise fire-and-forget side chat).
+  + pub(crate) async fn handle_side(
+  +     input: &str,
+  +     agent: &mut yoagent::agent::Agent,
+  +     agent_config: &AgentConfig,
+  + ) {
+  +     // `/side pull` — bring the last side answer back into the main conversation.
+  +     if is_side_pull(input) {
+  +         handle_side_pull(agent);
+  +         return;
+  +     }
+  + 
+        let question = match parse_side_question(input) {
+            Some(q) => q,
+            None => {
+  ... (14 more lines)
+ ✓ (10.3s)
+    /// Handle a `/side <question>` command — quick Q&A without touching main context.
+  - pub(crate) async fn handle_side(input: &str, agent_config: &AgentConfig) {
+  + ///
+  + /// `/side pull` is special: it does not run a new query. Instead it fetches the
+  + /// last answered `/side` exchange and injects that answer into the MAIN
+  + /// conversation (the return path for the otherwise fire-and-forget side chat).
+  + pub(crate) async fn handle_side(
+  +     input: &str,
+  ... (13 more lines)
+
+Now add the store call at the end of handle_side, the handle_side_pull function, and update the dispatch call. First, save the answer after streaming completes:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (31 → 14 lines)
+            println!(); // newline after streamed text
+        }
+    
+  -     // Show side conversation cost
+  -     let messages = side_agent.messages();
+  -     let mut side_usage = Usage::default();
+  -     for msg in messages {
+  -         if let AgentMessage::Llm(yoagent::types::Message::Assistant { usage, .. }) = msg {
+  -             side_usage.input += usage.input;
+  -             side_usage.output += usage.output;
+  -             side_usage.cache_read += usage.cache_read;
+  -             side_usage.cache_write += usage.cache_write;
+  -         }
+  -     }
+  -     let total_tokens = side_usage.input + side_usage.output;
+  -     if total_tokens > 0 {
+  -         let cost = estimate_cost(&side_usage, &agent_config.model);
+  -         if let Some(c) = cost {
+  -             eprintln!("{DIM}  [side] {} tokens, ${:.4}{RESET}\n", total_tokens, c);
+  -         } else {
+  ... (11 more lines)
+ ✓ (259ms)
+            println!(); // newline after streamed text
+        }
+    
+  -     // Show side conversation cost
+  -     let messages = side_agent.messages();
+  -     let mut side_usage = Usage::default();
+  -     for msg in messages {
+  -         if let AgentMessage::Llm(yoagent::types::Message::Assistant { usage, .. }) = msg {
+  ... (13 more lines)
+
+I accidentally removed the cost block that had the closing brace. Let me re-add the cost display and the closing brace, plus the new handle_side_pull:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (6 → 56 lines)
+        let trimmed_answer = collected_text.trim();
+        if !trimmed_answer.is_empty() {
+            store_last_side(&question, trimmed_answer);
+  +     }
+  + 
+  +     // Show side conversation cost
+  +     let messages = side_agent.messages();
+  +     let mut side_usage = Usage::default();
+  +     for msg in messages {
+  +         if let AgentMessage::Llm(yoagent::types::Message::Assistant { usage, .. }) = msg {
+  +             side_usage.input += usage.input;
+  +             side_usage.output += usage.output;
+  +             side_usage.cache_read += usage.cache_read;
+  +             side_usage.cache_write += usage.cache_write;
+  +         }
+  +     }
+  +     let total_tokens = side_usage.input + side_usage.output;
+  +     if total_tokens > 0 {
+  +         let cost = estimate_cost(&side_usage, &agent_config.model);
+  +         if let Some(c) = cost {
+  ... (34 more lines)
+ ✓ (10.1s)
+        let trimmed_answer = collected_text.trim();
+        if !trimmed_answer.is_empty() {
+            store_last_side(&question, trimmed_answer);
+  +     }
+  + 
+  +     // Show side conversation cost
+  +     let messages = side_agent.messages();
+  +     let mut side_usage = Usage::default();
+  ... (13 more lines)
+
+Now fix the dispatch call:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch.rs (1 → 1 lines)
+  -             crate::conversations::handle_side(ctx.input, ctx.agent_config).await;
+  +             crate::conversations::handle_side(ctx.input, ctx.agent, ctx.agent_config).await;
+ ✓ (1m 24s)
+  -             crate::conversations::handle_side(ctx.input, ctx.agent_config).await;
+  +             crate::conversations::handle_side(ctx.input, ctx.agent, ctx.agent_config).await;
+
+Now add the unit tests for the pure store logic. Let me add them to the test module near the /side parsing tests:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs (5 → 57 lines)
+        fn test_parse_side_question_multiword() {
+            let q = parse_side_question("/side how do I convert Vec<u8> to String in Rust?");
+            assert_eq!(q.unwrap(), "how do I convert Vec<u8> to String in Rust?");
+  +     }
+  + 
+  +     // ── last-side store tests ──
+  +     // These serialize on a shared static, so we run them within one test to
+  +     // avoid cross-test interference on the single `LAST_SIDE` slot.
+  +     #[test]
+  +     fn test_last_side_store_set_get_overwrite_empty() {
+  +         // NOTE: mutates the process-global LAST_SIDE. Keep the whole store
+  +         // lifecycle in one test so parallel test threads don't collide.
+  +         let mut guard = lock_or_recover(&LAST_SIDE);
+  +         *guard = None;
+  +         drop(guard);
+  + 
+  +         // Empty store returns None.
+  +         assert!(last_side().is_none());
+  + 
+  +         // Set → get returns it.
+  ... (36 more lines)
+ ✓ (1m 25s)
+        fn test_parse_side_question_multiword() {
+            let q = parse_side_question("/side how do I convert Vec<u8> to String in Rust?");
+            assert_eq!(q.unwrap(), "how do I convert Vec<u8> to String in Rust?");
+  +     }
+  + 
+  +     // ── last-side store tests ──
+  +     // These serialize on a shared static, so we run them within one test to
+  +     // avoid cross-test interference on the single `LAST_SIDE` slot.
+  ... (13 more lines)
+
+Now run the full check suite:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.5s)
+
+Clippy clean. Now build and test:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3 && ca… ✓ (25.6s)
+
+All conversation tests pass. Let me run the full test suite to be safe:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (49.7s)
+
+  watch: no files changed this turn — skipping
+

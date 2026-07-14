@@ -1,0 +1,96 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll plan Day 136. Let me start by clearing the session plan directory and reviewing the key evidence.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (6ms)
+
+The assessment is clear. Let me analyze the priorities:
+
+CI failures: None — trajectory CI noise is transient pages/deploy artifacts, not evolve failures. Build/test green.
+
+Priority 1 — biggest capability gap: The assessment names two strong candidates:
+• #597 (creator-filed, `agent-input`) — yoagent 0.9→0.13 upgrade, fully specced, de-risked, unlocks headless harness. Standout task but large (74 deprecation warnings + StreamEvent swap).
+• `/doctor` should offer to apply a fix — Claude Code's /doctor now diagnoses AND fixes. yoyo's is report-only. Well-scoped, product-facing.
+
+Let me think about sizing. #597 is high-value but touches many files (15 Agent::new sites in agent_builder.rs + tests + StreamEvent). That's too big for one 3-file task. I'll decompose it: Task 1 = the constructor migration (the mechanical deprecation cleanup in agent_builder.rs), which is the terminating, well-scoped core.
+
+Self-driven slot / dream: The dream milestone is "measure whether the reflex works" — but the assessment says this is a measurement bottleneck now fed by the human (issues #587/#575 wired the meter). No code task there today. So self-driven goes to the capability gap.
+
+Let me allocate:
+• Task 1 (evolve, self-driven, #597): Begin yoagent 0.13 migration — the Agent::new constructor deprecation cleanup in `agent_builder.rs`. Smallest terminating slice.
+• Task 2 (product): /doctor offers to apply a fix — close the CC gap.
+• Task 3 (product): Verify/fix /side durability & return path (Cursor 3.11 gap).
+
+Let me verify a couple of facts before writing tasks.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "yoagent" Cargo.toml | h…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 597 --repo yologde… ✓ (4ms)
+ ✓ (285ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Now I have the full #597 spec. It explicitly gives a suggested implementation order that decomposes cleanly:
+1. Bump dep + constructor migration (agent_builder.rs, tests)
+2. set_model cleanup (commands_config.rs)
+3. stream-json v2 swap (prompt.rs, help.rs)
+
+Step 1 is the foundational, terminating slice — it must land first (CI green) before the others can. That's my Task 1. Step 3 (stream-json) is the actual capability payoff but depends on Task 1 being done. Since implementation agents run separately and Task 1 changes the dep version, I should keep #597 tasks sequential within scope. But the sizing rule caps at 3 files and 20 min. Step 1 alone (bump + 36+24+12 deprecations mostly in agent_builder.rs + tests) is already a full task.
+
+Let me structure:
+• Task 1 (evolve, #597 step 1): Bump to 0.13 + constructor migration to make clippy clean. Foundational.
+• Task 2 (product, capability gap): /doctor offers to apply a fix. Independent of #597.
+• Task 3 (product, capability gap): Verify `/side` return path (Cursor gap).
+
+Task 2 and 3 don't touch the dep, so they're safe regardless of Task 1's outcome. Let me verify the /side and /doctor facts quickly.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_side\|fn hand…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "doctor_handoff_hint\|fn… ✓ (4ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/conversations.rs:122..182 ✓ (1ms)
+  3 tools completed in 10.5s (3 ✓)
+
+Confirmed: `/side` is fire-and-forget — it builds a fresh side agent, streams one Q&A, discards it. No durability, no return path. That's the Cursor 3.11 gap. But making it durable+returnable is a bigger design (persistent side threads + at-mention pull-back). Per my lesson "the version that ships is the shrunk retry — start at retreat size," I'll scope Task 3 to the *smallest concrete gesture*: persist the last /side exchange so its answer can be pulled into the main conversation via a follow-up command (e.g. /side pull or feeding it back). Let me check what conversation-carry primitives already exist.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "build_add_content_bloc…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '181,224p' src/conversati… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 1.3s (2 ✓)
+
+I have enough to plan the /side return-path task: capture the last side Q&A into a module-level store (like BangResult), then let /side pull inject that answer back into the main conversation. This is the small concrete gesture — the "return path" that my Day-127 lesson demands ("ship the return path in the same session as the exit").
+
+Now let me write the three task files.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (84 lines) ✓ (1m 16s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (75 lines) ✓ (1m 19s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_03.md (83 lines) ✓ (1m 16s)
+  3 tools completed in 4m 53s (3 ✓)
+
+Now the issue responses file.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (62 lines) ✓ (1m 18s)
+
+Let me verify the plan files and commit.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la session_plan/ && echo "--… ✓ (4ms)
+
+All three tasks + issue responses are in place. Let me commit.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (4ms)
+
+`session_plan/` is gitignored (as documented in CLAUDE.md — it's ephemeral). The files exist on disk for the implementation agents, which is what matters. The commit-or-true is a no-op here by design. The plan is complete.
+
+## Plan summary — Day 136
+
+Build/test/CI are green (trajectory noise is transient pages/deploy artifacts), so no CI-fix override. Three tasks, self-driven slot filled by the assessment's #1 capability work:
+
+**Task 1 (evolve, #597) — yoagent 0.9→0.13 step 1: bump + constructor migration.**
+The standout creator-filed task, de-risked by an empirical compatibility report (0 compile errors, 0 test regressions). I scoped it to only step 1 of the creator's suggested order — bump the dep and clean the 74 deprecation warnings so clippy -D warnings stays green. The real payoff (swapping the lossy `StreamEvent for the frozen AgentEvent` stream) is deliberately a separate later task that depends on this landing first. Honors the gasp-emit and harness-invocation boundaries.
+
+**Task 2 (product) — /doctor offers to apply a fix.**
+Closes the assessment's #1 capability gap: Claude Code's /doctor now diagnoses and fixes; yoyo's is report-only. Smallest gesture — an interactive, TTY-only, safe-command-only "apply this fix now? [y/N]" offer built on the existing doctor_handoff_hint machinery. Piped/harness mode stays unchanged.
+
+Task 3 (product) — /side return path via `/side pull`.
+Cursor 3.11 parity: yoyo's /side is verified fire-and-forget with no way to bring an answer back. Applies my own Day-127 lesson directly ("ship the return path in the same session as the exit") — remember the last side answer, add /side pull to inject it into the main conversation.
+
+Each task caps at ≤3 files, is independently verifiable with cargo build && cargo test, writes tests first, and starts at "retreat size" per my scoping lessons. Issue responses acknowledge the three human-resolved help-wanted issues (#591/#589/#587 — the last one feeds my dream's reflex meter) and park/defer the rest.
+
+Stopping here — planning only.
+
+  watch: no files changed this turn — skipping
+
