@@ -1,0 +1,125 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick one small, concrete improvement and finish it. Let me look for a quick win in a well-scoped area.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_token_count" … ✓ (2ms)
+ ✓ (9ms)
+  2 tools completed in 8.7s (2 ✓)
+
+Let me look at a small self-contained function to improve. Let me check format_duration and format_token_count for edge-case handling.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:230..310 ✓ (1ms)
+
+These rollover cases are exactly the "same shape" my learnings warn me against picking again. Let me look elsewhere for a genuinely different improvement. Let me check format_duration's d h branch — it drops the top rollover discipline, but more importantly let me look at something functionally different, like the parse_diff_stat or a helper with a real gap.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_session_age\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn pluralize" src/forma… ✓ (3ms)
+ ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs:204..264 ✓ (1ms)
+  3 tools completed in 7.5s (3 ✓)
+
+`format_session_age` has a real gap: it uses singular units ("1m ago", "1h ago", "1d ago" would read fine, but "1m ago" for exactly 60s is fine). Let me check its tests and whether it handles the singular/plural distinction. Actually the bigger correctness gap: it says "1d ago" for anything ≥1 day, but there's no upper bound within it — that's fine since caller clamps. 
+
+Let me check what tests exist for it.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_session_age" src… ✓ (3ms)
+
+This function is well-tested. Let me pick something functionally different — a real behavioral gap, not a rollover. Let me look at parse_git_status_counts which parses git porcelain output.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs:104..154 ✓ (0ms)
+
+I've now looked at several candidates. Per my timebox rule and my repeated learnings warning me away from rollover-shaped tasks, I'll pick a genuinely different shape: parse_git_status_counts has a real behavioral gap. Git porcelain uses !! for ignored files (with `--ignored), but more importantly, renamed-in-index entries (R`) have a -> and take a "path -> path" form which is handled fine here since we only read cols 0-1. 
+
+The actual gap: a line with exactly one byte (`bytes.len() < 2 guards against that). That's fine. Let me verify current behavior handles the !!` ignored case correctly — currently ! in index column would be counted as staged (wrong). That's a real correctness bug worth fixing.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_git_status_counts… ✓ (5ms)
+
+Found a real, differently-shaped bug. git status --porcelain --ignored emits !! lines for ignored files. Currently parse_git_status_counts would count ! in the index column as staged (line 122: `index != b' ' && index != b'?' is true for !), and !` in worktree as modified. That's wrong — ignored files should be counted as neither. This is a correctness gap, not a rollover.
+
+Let me write the test first, then fix.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs (5 → 15 lines)
+            // Lines shorter than 2 bytes are skipped
+            assert_eq!(parse_git_status_counts("X"), (0, 0, 0));
+            assert_eq!(parse_git_status_counts(""), (0, 0, 0));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_status_counts_ignored() {
+  +         // `git status --porcelain --ignored` emits `!!` for ignored files;
+  +         // they must count as neither staged nor modified (nor untracked).
+  +         assert_eq!(parse_git_status_counts("!! target/"), (0, 0, 0));
+  +         // Ignored entries mixed with real changes: only the real ones count.
+  +         let porcelain = "!! target/\n M src/main.rs\n?? new.txt\n";
+  +         assert_eq!(parse_git_status_counts(porcelain), (0, 1, 1));
+        }
+ ✓ (1m 30s)
+            // Lines shorter than 2 bytes are skipped
+            assert_eq!(parse_git_status_counts("X"), (0, 0, 0));
+            assert_eq!(parse_git_status_counts(""), (0, 0, 0));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_git_status_counts_ignored() {
+  +         // `git status --porcelain --ignored` emits `!!` for ignored files;
+  ... (6 more lines)
+
+The test I added should fail (correctly) since the fix isn't in yet. Let me run just this test to confirm it fails, then apply the fix.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib test_parse_git_… ✓ (107ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test test_parse_git_status… ✓ (135ms)
+  2 tools completed in 9.5s (2 ✓)
+
+Confirmed: an ignored !! target/ line is miscounted as (1,1,0) — one staged + one modified. Now the surgical fix.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/banner.rs (12 → 16 lines)
+            if index == b'?' && worktree == b'?' {
+                untracked += 1;
+  +         } else if index == b'!' && worktree == b'!' {
+  +             // `!!` = ignored (only present with `git status --ignored`).
+  +             // Ignored files are neither staged, modified, nor untracked.
+  +             continue;
+            } else {
+  -             // Staged changes (index column has a letter, not space or ?)
+  -             if index != b' ' && index != b'?' {
+  +             // Staged changes (index column has a letter, not space/?/!)
+  +             if index != b' ' && index != b'?' && index != b'!' {
+                    staged += 1;
+                }
+  -             // Worktree changes (worktree column has a letter, not space or ?)
+  -             if worktree != b' ' && worktree != b'?' {
+  +             // Worktree changes (worktree column has a letter, not space/?/!)
+  +             if worktree != b' ' && worktree != b'?' && worktree != b'!' {
+                    modified += 1;
+                }
+            }
+ ✓ (1m 40s)
+            if index == b'?' && worktree == b'?' {
+                untracked += 1;
+  +         } else if index == b'!' && worktree == b'!' {
+  +             // `!!` = ignored (only present with `git status --ignored`).
+  +             // Ignored files are neither staged, modified, nor untracked.
+  +             continue;
+            } else {
+  -             // Staged changes (index column has a letter, not space or ?)
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (17.6s)
+  2 tools completed in 2m 5s (2 ✓)
+
+All git-status tests pass. Let me run the full test suite to be sure nothing else broke.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (1m 0s)
+
+All green. This is a genuine correctness fix (not a rollover-shaped task): ignored files (!! lines from git status --porcelain --ignored) were being miscounted as staged/modified in the banner's git summary. Committing.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (14 lines) ✓ (12ms)
+
+Committed. Done.
+
+What I did: Fixed a real correctness bug in parse_git_status_counts (src/banner.rs). Git's --porcelain --ignored output emits !! lines for ignored files, and those ! column bytes passed the old "not space, not ?" test — so every ignored entry silently inflated the banner's "N staged, N modified" summary. Now !! is handled like ??: counted as none of the three.
+
+**How:** Test-first — added test_parse_git_status_counts_ignored, confirmed it failed with the buggy `(1,1,0), then made the surgical fix so it returns (0,0,0)`. All 4305 tests pass; fmt, clippy (-D warnings), and build are clean.
+
+Why this shape: My own recent learnings flagged three consecutive nights of picking display-rollover tasks. I deliberately walked past the `format_duration/format_token_count` rollover candidates and chose a parser-correctness bug instead — a genuinely different shape, verifying off-shape selection rather than just narrating the rut.
+
+  watch: no files changed this turn — skipping
+

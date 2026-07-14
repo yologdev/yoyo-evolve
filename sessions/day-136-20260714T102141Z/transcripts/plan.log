@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll analyze the evidence and produce a session plan. The key insight from the assessment: the human just resolved #587, wiring yoyo risk validate into evolve.sh. Let me verify the current state before planning.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la .yoyo/risk_validations.js…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (8ms)
+ ✓ (6ms)
+  2 tools completed in 3.3s (2 ✓)
+
+The human already wired both risk validate and risk snapshot into evolve.sh (#587). The validation feed gap is now closed at the harness level — the meter should start accumulating. Let me verify the validate command actually works and check what handle_risk validate does.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2155,2215p' scripts/evol…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk_context_for_files\… ✓ (4ms)
+ ✓ (15ms)
+  2 tools completed in 4.8s (2 ✓)
+
+Both meter halves are now fed by the harness. The dream-milestone bottleneck (#587) is resolved at the wiring level. Now let me understand what reflex_effectiveness_summary needs to move from `gathering` to a real verdict — this is the actual dream center. Let me check its logic.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "reflex_effectiveness_su…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3620,3760p' src/commands… ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1700,1760p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "effectiveness_report_fr… ✓ (4ms)
+ ✓ (4ms)
+  4 tools completed in 12.6s (4 ✓)
+
+The dream-milestone infrastructure is now complete and the feed is wired. The meter needs ≥6 validation events to unlock a verdict — that's pure accumulation now (blocked on time, not on code). Per my own Day 125/129 learnings: **don't build more feeders for an accumulation-blocked goal.** The center of the dream is now genuinely waiting on data, not on me.
+
+Let me now assess the off-dream candidates. The assessment flagged the selection-bias rut. Let me look at the honest options: community issues and the /spawn --parallel replay (#341).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat ISSUES_TODAY.md 2>/dev/null … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_spawn_manifest\|w… ✓ (4ms)
+  2 tools completed in 8.4s (2 ✓)
+
+The manifest is written and there's a read-back (SpawnManifest). Let me check whether there's an actual replay command that consumes the manifest — the "codified/replayable" gap (#341).
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1160,1260p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "replay\|read_spawn_mani… ✓ (3ms)
+ ✓ (3ms)
+  2 tools completed in 2.3s (2 ✓)
+
+Now I see the shape clearly. The manifest is written and parseable/listable but there is no user-facing command to view or replay it. The "gather half" (parse/read/list) exists as dead code (`#[cfg_attr(not(test), allow(dead_code))]`) — the door is built but has no handle. This is exactly my Day 127/131 "door/handle split" lesson: --parallel writes a manifest nobody can consume.
+
+Let me check how /spawn subcommands dispatch, to see where a list/replay subcommand would wire in.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '340,470p' src/commands_s… ✓ (4ms)
+
+Now I understand the structure. The collect subcommand path (words[0] == "collect") shows the pattern for a manifest-viewing subcommand. Let me check handle_spawn and the `collect` handling to know the entry point.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_spawn\|words\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '660,720p' src/commands_s… ✓ (3ms)
+ ✓ (4ms)
+  2 tools completed in 5.7s (2 ✓)
+
+There's already a /spawn manifest <id> handler. Let me check what it does and whether /spawn runs (list) exists.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "handle_spawn_manifest_s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_spawn_manifes… ✓ (2ms)
+ ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1343,1430p' src/commands… ✓ (3ms)
+  3 tools completed in 5.3s (3 ✓)
+
+Now the picture is complete. There's /spawn manifest <id> to show a single manifest — but **no /spawn runs command to LIST the manifests** even though list_spawn_manifests() exists as dead code. The user can only view a manifest if they already know the run_id (which they'd have to find manually by ls'ing `.yoyo/spawn_runs/`). This is the exact "door with no handle" gap: the list capability is built but not wired to any command.
+
+This is:
+• **off-rut** (not a boundary/rollover guard fix — it's user-facing orchestration)
+• **on the #341 roadmap** (codified/replayable orchestration, the assessment's named second-best candidate)
+• small (wire an existing tested pure function to a subcommand)
+• product-safe (read-only listing)
+
+This is the highest-value schedulable task. The dream-milestone is now accumulation-blocked (feed wired, needs ≥6 events over time — building more would violate my Day 129 "don't build feeders during let-it-run" lesson).
+
+Let me verify list_spawn_manifests is truly unwired and check help/docs surfaces.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "list_spawn_manifests\|…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1260,1290p' src/commands… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '654,665p' src/commands_s… ✓ (3ms)
+  3 tools completed in 5.3s (3 ✓)
+
+There is already a handle_spawn_manifest_list() for /spawn manifests. So the list handle exists. Let me verify it uses list_spawn_manifests.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_spawn_manifes… ✓ (7ms)
+
+The list AND show handles both exist and are wired. So the manifest inspector is complete. What's genuinely missing for #341 "codified/replayable" is the **replay** verb — re-running the tasks from a stored manifest. That's the one word in #341 that has no handle: you can list and inspect manifests, but you cannot rerun one.
+
+But replay is a heavier task (launches agents, needs the tracker + config). Let me scope it carefully. The smallest valuable slice: a /spawn replay <run_id> that reads the manifest's task list and re-dispatches them via the existing handle_spawn_parallel path. Let me confirm `parse_spawn_manifest` gives me the task strings.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1088,1135p' src/commands… ✓ (8ms)
+
+Note: manifest task strings are truncated (MANIFEST_TASK_CAP) for display. So a full replay would rerun truncated tasks — a subtle correctness issue. That makes true replay a design problem (need to store full task text, or accept truncation). That's exactly the kind of scope-discovery I should NOT blunder into blindly.
+
+The clean, small, honest slice: a **`/spawn replay <run_id>` that re-dispatches only the FAILED tasks** from a manifest is the natural retry gesture — but it hits the same truncation issue. 
+
+Let me reconsider. The truncation cap value matters — if it's large enough that real tasks aren't truncated, replay is safe.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MANIFEST_TASK_CAP" src/… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+
