@@ -469,6 +469,105 @@ fn doctor_handoff_hint_from_count(issues: usize) -> Option<String> {
 pub fn handle_doctor(provider: &str, model: &str) {
     let checks = run_doctor_checks(provider, model);
     print_doctor_report(&checks);
+    // Contextual guidance beats reference guidance: after naming the fix
+    // command in the handoff hint, take the last step Claude Code takes — offer
+    // to apply the one safe, well-defined fix when one exists. Interactive-only
+    // (TTY-gated) so piped/harness mode stays report-only and never blocks.
+    maybe_offer_fix(&checks);
+}
+
+/// A concrete, safe fix action `/doctor` can offer to run for the user.
+///
+/// `label` is a human-readable description of what will happen; `command` is
+/// the shell command to run. Both are surfaced before we prompt, so the user
+/// sees exactly what they're confirming.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DoctorFix {
+    pub label: String,
+    pub command: String,
+}
+
+/// Decide the single safe fix (if any) `/doctor` should offer to apply.
+///
+/// Pure decision logic (no I/O) so it's unit-testable in isolation. Deliberately
+/// conservative (retreat size): we only return a fix for checks whose repair is
+/// well-defined, additive, non-destructive, and project-agnostic. Today that's
+/// exactly one — a missing `.yoyo/` memory dir, fixed by creating it. Every
+/// other Warn/Fail is left to the handoff hint (`/fix`, `/init`, …) because it
+/// either needs the agent or isn't a single safe shell command.
+///
+/// Returns `None` on a green run and for any check we can't safely auto-fix, so
+/// the offer is silent unless we're certain the command is harmless.
+pub fn doctor_fix_action(checks: &[DoctorCheck]) -> Option<DoctorFix> {
+    for check in checks {
+        if check.name == "Memory dir" && check.status == DoctorStatus::Warn {
+            // `mkdir -p` is idempotent and purely additive — never destructive,
+            // never a Rust/CI assumption. Safe for any user's project.
+            return Some(DoctorFix {
+                label: "Create the missing .yoyo/ memory directory".to_string(),
+                command: "mkdir -p .yoyo".to_string(),
+            });
+        }
+    }
+    None
+}
+
+/// Interactive tail of `/doctor`: if there's a safe fix and we're on a TTY,
+/// prompt to apply it. No-op in piped/non-interactive mode (preserves the
+/// report-only, plain-text harness contract) and when no safe fix exists.
+fn maybe_offer_fix(checks: &[DoctorCheck]) {
+    let Some(fix) = doctor_fix_action(checks) else {
+        return;
+    };
+
+    // Only prompt when stdin is an interactive terminal. In piped/harness mode
+    // we skip entirely — never hang waiting for input, never change behavior.
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        return;
+    }
+
+    print!(
+        "  {BOLD}{}{RESET}\n  {DIM}$ {}{RESET}\n  {BOLD}Apply this fix now? [y/N]: {RESET}",
+        fix.label, fix.command
+    );
+    use std::io::Write;
+    std::io::stdout().flush().ok();
+
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        println!("\n  {DIM}Skipped.{RESET}\n");
+        return;
+    }
+    let answer = answer.trim().to_lowercase();
+    if answer != "y" && answer != "yes" {
+        // Default N: clean no-op, leave state untouched.
+        println!("  {DIM}No changes made.{RESET}\n");
+        return;
+    }
+
+    // Run the safe command and report the HONEST outcome — never pre-announce
+    // success before checking the exit code.
+    println!("  {DIM}Running: {}{RESET}", fix.command);
+    match std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&fix.command)
+        .status()
+    {
+        Ok(status) if status.success() => {
+            println!("  {GREEN}✓ Fix applied.{RESET}\n");
+        }
+        Ok(status) => {
+            let code = status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
+            println!("  {RED}✗ Fix command exited with status {code}.{RESET}\n");
+        }
+        Err(e) => {
+            println!("  {RED}✗ Could not run fix command: {e}{RESET}\n");
+        }
+    }
 }
 
 /// Return health check commands for a given project type.
@@ -1209,6 +1308,75 @@ mod tests {
         assert_eq!(doctor_handoff_hint_from_count(0), None);
         let checks = vec![check(DoctorStatus::Pass), check(DoctorStatus::Pass)];
         assert_eq!(doctor_handoff_hint(&checks), None);
+    }
+
+    /// Build a named check with a given status (the bare `check()` helper
+    /// names everything "x", which `doctor_fix_action` deliberately ignores).
+    fn named_check(name: &str, status: DoctorStatus) -> DoctorCheck {
+        DoctorCheck {
+            name: name.to_string(),
+            status,
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_fix_action_no_issues_is_none() {
+        // A fully-green run offers nothing — nothing to fix.
+        let checks = vec![
+            named_check("Version", DoctorStatus::Pass),
+            named_check("Memory dir", DoctorStatus::Pass),
+        ];
+        assert!(doctor_fix_action(&checks).is_none());
+        assert!(doctor_fix_action(&[]).is_none());
+    }
+
+    #[test]
+    fn test_fix_action_missing_memory_dir_offers_safe_command() {
+        // The "Memory dir" Warn is the one check with a well-defined, safe,
+        // project-agnostic fix: create the missing directory.
+        let checks = vec![
+            named_check("Version", DoctorStatus::Pass),
+            named_check("Memory dir", DoctorStatus::Warn),
+        ];
+        let fix = doctor_fix_action(&checks).expect("missing memory dir -> Some");
+        assert!(
+            fix.command.contains(".yoyo"),
+            "fix should target .yoyo/: {}",
+            fix.command
+        );
+        assert!(!fix.label.is_empty(), "fix must carry a human label");
+    }
+
+    #[test]
+    fn test_fix_action_is_never_destructive() {
+        // Per safety lessons: the offered command must never start with a
+        // destructive verb. Assert the negative for the fix we DO offer.
+        let checks = vec![named_check("Memory dir", DoctorStatus::Warn)];
+        let fix = doctor_fix_action(&checks).expect("Some");
+        let cmd = fix.command.trim_start().to_lowercase();
+        for forbidden in ["rm ", "rm\t", "git reset", "git checkout", "git clean"] {
+            assert!(
+                !cmd.starts_with(forbidden) && !cmd.contains(&format!("&& {forbidden}")),
+                "fix command must be non-destructive, got: {}",
+                fix.command
+            );
+        }
+    }
+
+    #[test]
+    fn test_fix_action_ignores_unfixable_warns() {
+        // Warns without a known safe fix (e.g. Config file, curl) must NOT
+        // trigger an offer — we only act on fixes the check logic knows.
+        let checks = vec![
+            named_check("Config file", DoctorStatus::Warn),
+            named_check("Curl", DoctorStatus::Warn),
+            named_check("Git", DoctorStatus::Fail),
+        ];
+        assert!(
+            doctor_fix_action(&checks).is_none(),
+            "no known-safe fix for these -> None"
+        );
     }
 
     #[test]
