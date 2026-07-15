@@ -1,0 +1,98 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick one small concrete improvement and finish it. Let me look at a focused area quickly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && echo "--… ✓ (8ms)
+
+Let me look at the banner's format_session_age — a small formatting helper that often has edge cases worth verifying.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn format_session_age" … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '200,260p' src/banner.rs ✓ (4ms)
+  2 tools completed in 6.4s (2 ✓)
+
+The doc comment says format_session_age returns "Xd ago" (<7d), but there's no upper bound in the function itself — it handles any number of days. The doc comment is slightly misleading (the <7d clamping happens in the caller). More concretely: the function is fine but produces "1m ago" / "1h ago" / "1d ago" — singular vs plural isn't the issue. Let me check existing tests for edge coverage.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "format_session_age" src… ✓ (3ms)
+
+Good boundary coverage already. Let me look for a genuine small improvement instead. Let me check `parse_git_status_counts` in banner — parsing helpers often have edge cases.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_git_status_cou… ✓ (5ms)
+
+This function is solid. Let me time-box and pick something concrete. Let me check tail_for_capture in repl.rs — the CLAUDE.md mentions it's char-boundary-safe, a good candidate to verify or a formatting helper. Actually, let me look at format_followup_hint mentioned as char-boundary-safe truncation.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn format_followup_hin… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn truncate_with_ellip… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '325,375p' src/format/mod… ✓ (3ms)
+  3 tools completed in 6.3s (3 ✓)
+
+`truncate_with_ellipsis counts *characters* (via char_indices().nth(max)`), which is char-boundary-safe. But it counts by char index, meaning max is a character count — so a string of exactly max chars returns as-is (correct). Let me check its test coverage.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "truncate_with_ellipsis… ✓ (6ms)
+
+`truncate_with_ellipsis` has no test coverage despite handling multibyte truncation (a documented crash class in CLAUDE.md). That's a real, concrete gap. Let me add a regression test that pins its behavior, including the multibyte case.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/format/m… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '900,930p' src/format/mod… ✓ (3ms)
+  ▶ edit src/format/mod.rs (6 → 49 lines)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     // === truncate_with_ellipsis tests ===
+  + 
+  +     #[test]
+  +     fn truncate_with_ellipsis_shorter_than_max_is_unchanged() {
+  +         assert_eq!(truncate_with_ellipsis("hello", 10), "hello");
+  +     }
+  + 
+  +     #[test]
+  +     fn truncate_with_ellipsis_exactly_max_chars_is_unchanged() {
+  +         // Exactly `max` chars: char_indices().nth(max) is None → no ellipsis.
+  +         assert_eq!(truncate_with_ellipsis("hello", 5), "hello");
+  +     }
+  + 
+  +     #[test]
+  +     fn truncate_with_ellipsis_longer_than_max_appends_ellipsis() {
+  +         assert_eq!(truncate_with_ellipsis("hello world", 5), "hello…");
+  ... (28 more lines)
+ ✓ (1m 40s)
+    mod tests {
+        use super::*;
+        use serial_test::serial;
+  + 
+  +     // === truncate_with_ellipsis tests ===
+  + 
+  +     #[test]
+  +     fn truncate_with_ellipsis_shorter_than_max_is_unchanged() {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --lib tr… ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test truncate_with_ellipsi… ✓ (145ms)
+  5 tools completed in 2m 4s (5 ✓)
+
+All 7 new tests pass, including the multibyte and zero-max edge cases. Now the full check suite.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (18.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -8 ✓ (1m 2s)
+  2 tools completed in 1m 26s (2 ✓)
+
+All green: fmt, clippy (-D warnings), build, and full test suite. Committing.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (12 lines) ✓ (14ms)
+
+Committed. One small, done improvement.
+
+What I did: Added 7 regression tests for truncate_with_ellipsis in `src/format/mod.rs`, which previously had zero test coverage despite being a multibyte-slicing helper — precisely the UTF-8 panic class CLAUDE.md flags as a repeat production crash cause (#250). It's used by format_followup_hint and other UI truncation paths.
+
+Coverage added:
+• shorter-than-max (unchanged)
+• exactly-max chars (no ellipsis — pins the char_indices().nth(max) == None boundary)
+• longer-than-max (appends …)
+• char-vs-byte counting (`"héllo"` — é is 2 bytes)
+• multibyte char AT the cut point ("ab✓cd" — the panic guard)
+• empty string
+• zero-max
+
+All checks pass: cargo fmt --check, `cargo clippy --all-targets -- -D warnings, cargo build, cargo test` (88 passed). No behavior change — just a net around a fragile helper so future edits can't silently reintroduce a byte-indexing panic. Stopping here as instructed: one committed improvement is the whole task.
+
+  watch: no files changed this turn — skipping
+
