@@ -1,0 +1,122 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll pick one small, concrete improvement and commit it. Let me start by looking at a focused area where I can find a quick win.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "normalize_symbol_query"… ✓ (3ms)
+ ✓ (9ms)
+  2 tools completed in 5.4s (2 ✓)
+
+Yesterday's lesson was about the messy shapes queries arrive in. Let me look at that normalize function to see if there are shapes it still misses.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs:707..757  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs:1835..1875 ✓ (1ms)
+ ✓ (2ms)
+  2 tools completed in 1.3s (2 ✓)
+
+There's a subtle bug worth fixing. The < rule takes text before the first <, then the last run. But consider a common shape: developers copy foo::<T> (turbofish) — that works. However, consider Option<Vec<Foo>> — this returns Option, which is correct. 
+
+But there's a real gap: a **generic method call** like parse::<u32>() or bar.foo() where the query arrives as a whole call expression result.parse(). That returns parse (correct).
+
+Let me find a genuinely missed shape. Consider a macro invocation `println! — the ! is not an ident char, so normalize_symbol_query("println!") returns println`. That's arguably correct behavior for finding the definition. Let me check a real miss: a pointer deref *foo works, but what about a query wrapped in generics where the symbol is inside the angle brackets, like just <Foo>? That returns `Foo since text before <` is empty... wait, no.
+
+Let me test the actual current behavior of a few edge shapes:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (28 lines) ✓ (79ms)
+
+Found two real misses:
+
+1. "let foo = bar" → "bar" — a developer copies a whole declaration line to find foo's definition, but it grabs the RHS `bar. The intent is foo`.
+2. "arr[0]" → "0" — an index expression grabs the numeric literal index. Nobody wants to search for 0.
+
+The arr[0] case is the cleaner, more concrete bug: **it returns a numeric literal 0, which is never a symbol name.** The "last identifier run" heuristic wrongly picks the array index. Fixing this: skip runs that are purely numeric when a better (alphabetic-containing) run exists, and prefer them. Actually the simplest correct fix: a symbol name can't be a bare integer literal, so a run that is all digits should not win over a prior run containing letters.
+
+Let me implement the smallest correct version — skip all-numeric runs in favor of the last run that contains a letter or underscore:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (17 → 25 lines)
+        // Find the last maximal run of identifier chars by pushing into a String
+        // per run — sidesteps byte indexing entirely (café() is safe).
+  +     // A run that is all digits (e.g. the `0` in `arr[0]`) is never a symbol
+  +     // name, so it only wins if we've seen no letter-bearing run — this keeps
+  +     // `arr[0]` → `arr` instead of the useless index literal `0`.
+        let mut last_run = String::new();
+        let mut current = String::new();
+  +     let is_name_run = |s: &str| s.chars().any(|c| c.is_ascii_alphabetic() || c == '_');
+  +     let mut commit_run = |run: &mut String, last_run: &mut String| {
+  +         if run.is_empty() {
+  +             return;
+  +         }
+  +         if is_name_run(run) || !is_name_run(last_run) {
+  +             *last_run = std::mem::take(run);
+  +         }
+  +         run.clear();
+  +     };
+        for c in candidate.chars() {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                current.push(c);
+  ... (12 more lines)
+ ✓ (17.2s)
+        // Find the last maximal run of identifier chars by pushing into a String
+        // per run — sidesteps byte indexing entirely (café() is safe).
+  +     // A run that is all digits (e.g. the `0` in `arr[0]`) is never a symbol
+  +     // name, so it only wins if we've seen no letter-bearing run — this keeps
+  +     // `arr[0]` → `arr` instead of the useless index literal `0`.
+        let mut last_run = String::new();
+        let mut current = String::new();
+  +     let is_name_run = |s: &str| s.chars().any(|c| c.is_ascii_alphabetic() || c == '_');
+  ... (13 more lines)
+
+The closure doesn't capture mutable state, so it doesn't need mut.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (1 → 1 lines)
+  -     let mut commit_run = |run: &mut String, last_run: &mut String| {
+  +     let commit_run = |run: &mut String, last_run: &mut String| {
+ ✓ (1m 38s)
+  -     let mut commit_run = |run: &mut String, last_run: &mut String| {
+  +     let commit_run = |run: &mut String, last_run: &mut String| {
+
+Now let me add regression tests for the fixed shapes:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs (3 → 11 lines)
+            // The `<` rule: take the text before the first `<`, then its last run.
+            assert_eq!(normalize_symbol_query("Vec<Foo>"), "Vec");
+            assert_eq!(normalize_symbol_query("foo<T>"), "foo");
+  +         // Index expressions: the numeric index is never a symbol name, so the
+  +         // last letter-bearing run wins (`arr[0]` → `arr`, not the literal `0`).
+  +         assert_eq!(normalize_symbol_query("arr[0]"), "arr");
+  +         assert_eq!(normalize_symbol_query("items[42]"), "items");
+  +         // A trailing numeric run still loses to an earlier name run.
+  +         assert_eq!(normalize_symbol_query("foo 0"), "foo");
+  +         // But a genuinely numeric-only query degrades gracefully (last run wins).
+  +         assert_eq!(normalize_symbol_query("[0]"), "0");
+ ✓ (1m 41s)
+            // The `<` rule: take the text before the first `<`, then its last run.
+            assert_eq!(normalize_symbol_query("Vec<Foo>"), "Vec");
+            assert_eq!(normalize_symbol_query("foo<T>"), "foo");
+  +         // Index expressions: the numeric index is never a symbol name, so the
+  +         // last letter-bearing run wins (`arr[0]` → `arr`, not the literal `0`).
+  +         assert_eq!(normalize_symbol_query("arr[0]"), "arr");
+  +         assert_eq!(normalize_symbol_query("items[42]"), "items");
+  +         // A trailing numeric run still loses to an earlier name run.
+  ... (3 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (19.5s)
+  2 tools completed in 2m 8s (2 ✓)
+
+Tests pass. Now the full suite and build:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (1m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (49.5s)
+  2 tools completed in 1m 59s (2 ✓)
+
+All 4308 + 88 tests pass, clippy clean, build green. Committing.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (9 lines) ✓ (15ms)
+
+Committed. Done.
+
+What I did: Fixed a real edge in normalize_symbol_query (the helper behind /def and /refs). When a developer copies an index expression like arr[0] straight out of code, the old "last identifier run" heuristic grabbed the trailing numeric literal 0 — never a valid symbol name — so the search found nothing. Now an all-digits run only wins when no letter-bearing run has been seen: arr[0] → arr, items[42] → items, while a genuinely numeric query like [0] still degrades gracefully.
+
+Why: This is the same lesson as yesterday's /def//refs work (Day 136) — the real spec of a text-taking command is the messy shape people copy out of code, not the tidy identifier from the docstring. Index expressions are a common copy shape I hadn't covered.
+
+Verification: Added three positive regression cases plus a graceful-degradation case. cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and all 4308+88 tests pass. Committed as 8e6320bc.
+
+  watch: no files changed this turn — skipping
+

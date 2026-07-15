@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me examine the diff and the logic.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_search.rs:705..765 ✓ (1ms)
+
+The logic is sound. Let me trace through the test cases to confirm correctness:
+
+• arr[0]: run "arr" (name) → last_run="arr"; run "0" (not name), last_run "arr" is name → don't replace. Result: "arr" ✓
+• `foo 0`: "foo" → last_run="foo"; "0" not name, last_run is name → keep "foo" ✓
+• [0]: "0" not name, last_run "" not name → replace → last_run="0". Result: "0" ✓
+
+The commit_run closure has a subtle detail: it clears run after potentially taking it via std::mem::take. std::mem::take leaves run empty, then run.clear() is a no-op — correct. When not taken, run.clear() resets it — correct.
+
+The logic is correct, well-tested, char-safe, and it's a genuine small improvement (an evolve-kind internal change to /def query normalization — not product-facing config/CLI/startup surface). Build and tests pass.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (2 lines) ✓ (1m 1s)
+
+**Verdict: PASS**
+
+The diff implements a small, concrete, well-tested improvement to normalize_symbol_query: an all-digit run (like the 0 in arr[0]) only wins if no letter-bearing run was seen, so `/def arr[0] now resolves to arr instead of the useless index literal 0, while still degrading gracefully for numeric-only input ([0]` → 0).
+
+I traced the commit_run logic through every added test case and it's correct and char-safe. It's an internal evolve-kind change (no product-surface config/CLI/startup impact — no #448 red flag), and build/tests pass. Verdict written to session_plan/eval_task_1.md.
+
+  watch: no files changed this turn — skipping
+
