@@ -669,19 +669,19 @@ fn apply_config_to_runtime(
     match key {
         "model" => {
             agent_config.model = value.to_string();
-            let saved = match agent.save_messages() {
-                Ok(json) => Some(json),
-                Err(e) => {
-                    eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
-                    None
-                }
-            };
-            *agent = agent_config.build_agent();
-            if let Some(json) = saved {
-                if let Err(e) = agent.restore_messages(&json) {
-                    eprintln!("{DIM}  ⚠ could not restore conversation: {e}{RESET}");
-                }
-            }
+            // yoagent 0.13: Agent::set_model swaps the model id (and re-resolves
+            // the provider from the config's protocol when it wasn't set
+            // explicitly) WITHOUT touching self.messages — conversation history
+            // is preserved by construction. This retires the old
+            // save_messages → build_agent → restore_messages dance for a plain
+            // model switch (#597 step 2). Build the ModelConfig the same way
+            // build_agent does: provider + new model + base_url.
+            let cfg = crate::agent_builder::create_model_config(
+                &agent_config.provider,
+                &agent_config.model,
+                agent_config.base_url.as_deref(),
+            );
+            agent.set_model(cfg);
         }
         "provider" => {
             crate::commands::handle_provider_switch(value, agent_config, agent);
