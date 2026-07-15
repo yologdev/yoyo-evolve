@@ -716,21 +716,29 @@ fn normalize_symbol_query(raw: &str) -> String {
     };
     // Find the last maximal run of identifier chars by pushing into a String
     // per run — sidesteps byte indexing entirely (café() is safe).
+    // A run that is all digits (e.g. the `0` in `arr[0]`) is never a symbol
+    // name, so it only wins if we've seen no letter-bearing run — this keeps
+    // `arr[0]` → `arr` instead of the useless index literal `0`.
     let mut last_run = String::new();
     let mut current = String::new();
+    let is_name_run = |s: &str| s.chars().any(|c| c.is_ascii_alphabetic() || c == '_');
+    let commit_run = |run: &mut String, last_run: &mut String| {
+        if run.is_empty() {
+            return;
+        }
+        if is_name_run(run) || !is_name_run(last_run) {
+            *last_run = std::mem::take(run);
+        }
+        run.clear();
+    };
     for c in candidate.chars() {
         if c.is_ascii_alphanumeric() || c == '_' {
             current.push(c);
         } else {
-            if !current.is_empty() {
-                last_run = std::mem::take(&mut current);
-            }
-            current.clear();
+            commit_run(&mut current, &mut last_run);
         }
     }
-    if !current.is_empty() {
-        last_run = current;
-    }
+    commit_run(&mut current, &mut last_run);
     if last_run.is_empty() {
         // No identifier characters at all — return the trimmed original so
         // behavior stays graceful for weird input.
@@ -1844,6 +1852,14 @@ mod tests {
         // The `<` rule: take the text before the first `<`, then its last run.
         assert_eq!(normalize_symbol_query("Vec<Foo>"), "Vec");
         assert_eq!(normalize_symbol_query("foo<T>"), "foo");
+        // Index expressions: the numeric index is never a symbol name, so the
+        // last letter-bearing run wins (`arr[0]` → `arr`, not the literal `0`).
+        assert_eq!(normalize_symbol_query("arr[0]"), "arr");
+        assert_eq!(normalize_symbol_query("items[42]"), "items");
+        // A trailing numeric run still loses to an earlier name run.
+        assert_eq!(normalize_symbol_query("foo 0"), "foo");
+        // But a genuinely numeric-only query degrades gracefully (last run wins).
+        assert_eq!(normalize_symbol_query("[0]"), "0");
     }
 
     #[test]
