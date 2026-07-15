@@ -41,6 +41,41 @@ yoyo detects piped mode automatically by checking if stdin is a terminal. If it 
 
 If piped input is empty, yoyo exits with an error: `No input on stdin.`
 
+## Structured output (`--output-format`)
+
+Piped and single-prompt modes accept `--output-format <fmt>`:
+
+- `text` (default) — just the response text.
+- `json` — a single JSON object with the final result.
+- `stream-json` — newline-delimited JSON (NDJSON): one yoagent `AgentEvent`
+  per line, emitted in real time as the agent works.
+
+The `stream-json` stream is the raw yoagent `AgentEvent` serialization —
+internally tagged on a `"type"` field, `camelCase` keys, full fidelity (no
+lossy translation). The first line is always `{"type":"agentStart"}` and the
+last is `{"type":"agentEnd", ...}`. Tool activity appears as
+`toolExecutionStart` / `toolExecutionEnd`, and assistant text arrives as
+`messageStart` / `messageUpdate` / `messageEnd`. Turn boundaries are
+`turnStart` / `turnEnd`.
+
+```bash
+echo "list the files" | yoyo --output-format stream-json
+```
+
+```jsonl
+{"type":"agentStart"}
+{"type":"turnStart", ...}
+{"type":"messageStart", ...}
+{"type":"toolExecutionStart","toolCallId":"...","toolName":"bash","args":{...}}
+{"type":"toolExecutionEnd","toolCallId":"...", ...}
+{"type":"messageEnd", ...}
+{"type":"agentEnd", ...}
+```
+
+The exact set of fields on each event is defined by yoagent — see its
+[messages & events reference](https://github.com/yologdev/yoagent/blob/main/docs/concepts/messages-events.md)
+for the authoritative contract.
+
 ## Quiet mode
 
 When both stdin and stdout are piped (fully scripted usage), yoyo automatically enables quiet mode, suppressing informational `config:` and `context:` loading messages on stderr. You can also enable this explicitly with `--quiet` or `-q`:

@@ -137,7 +137,7 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "  --output-format <fmt>  Output format: text, json, stream-json (NDJSON events)"
+        "  --output-format <fmt>  Output format: text, json, stream-json (one yoagent AgentEvent per line)"
     );
     let _ = writeln!(
         s,
