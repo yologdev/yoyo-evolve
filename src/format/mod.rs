@@ -905,6 +905,49 @@ mod tests {
     use super::*;
     use serial_test::serial;
 
+    // === truncate_with_ellipsis tests ===
+
+    #[test]
+    fn truncate_with_ellipsis_shorter_than_max_is_unchanged() {
+        assert_eq!(truncate_with_ellipsis("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_exactly_max_chars_is_unchanged() {
+        // Exactly `max` chars: char_indices().nth(max) is None → no ellipsis.
+        assert_eq!(truncate_with_ellipsis("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_longer_than_max_appends_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("hello world", 5), "hello…");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_counts_chars_not_bytes() {
+        // "héllo" is 6 bytes but 5 chars — 4 chars kept, then ellipsis.
+        // Slicing must land on a char boundary (é is 2 bytes) or this panics.
+        assert_eq!(truncate_with_ellipsis("héllo", 4), "héll…");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_multibyte_at_cut_point_does_not_panic() {
+        // The char at the cut boundary is multi-byte (✓ = 3 bytes).
+        // Regression guard against byte-indexing panics (CLAUDE.md UTF-8 rule).
+        assert_eq!(truncate_with_ellipsis("ab✓cd", 3), "ab✓…");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_empty_string() {
+        assert_eq!(truncate_with_ellipsis("", 5), "");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_zero_max() {
+        // max=0 means keep nothing → just the ellipsis.
+        assert_eq!(truncate_with_ellipsis("hello", 0), "…");
+    }
+
     // === notify_command decision + spawn tests ===
 
     #[test]
