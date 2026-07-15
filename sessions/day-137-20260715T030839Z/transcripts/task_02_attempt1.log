@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current state of the help text and docs to understand what needs updating.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "content_delta\|message…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stream-json\|stream_jso… ✓ (3ms)
+ ✓ (17ms)
+  2 tools completed in 1.4s (2 ✓)
+
+None of the grep matches in src/ describe the stream-json output format — they're all unrelated (tool result previews, message counts, etc.). Let me look at the help line and the docs.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs:130..150  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat docs/src/usage/piped-mode.md ✓ (1ms)
+ ✓ (4ms)
+  2 tools completed in 1.5s (2 ✓)
+
+The docs don't currently document the stream-json event shape at all, and the help line just says "NDJSON events" without listing old event names. Let me check how stream-json is actually emitted in the code to describe it accurately.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stream_json\|stream-jso…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "run_prompt_stream_json… ✓ (4ms)
+ ✓ (5ms)
+  2 tools completed in 1.1s (2 ✓)
+
+Task_01 has already landed (the wire contract tests reference agentStart/agentEnd/`toolExecutionStart`). Let me confirm the exact event types emitted.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1164..1234 ✓ (1ms)
+
+The code confirms the new format. Now let me update the help line and add a docs subsection. First the help line:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help.rs (1 → 1 lines)
+  -         "  --output-format <fmt>  Output format: text, json, stream-json (NDJSON events)"
+  +         "  --output-format <fmt>  Output format: text, json, stream-json (one yoagent AgentEvent per line)"
+ ✓ (1m 36s)
+  -         "  --output-format <fmt>  Output format: text, json, stream-json (NDJSON events)"
+  +         "  --output-format <fmt>  Output format: text, json, stream-json (one yoagent AgentEvent per line)"
+
+Now add a stream-json subsection to piped-mode.md:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/usage/piped-mode.md (6 → 41 lines)
+    yoyo detects piped mode automatically by checking if stdin is a terminal. If it is not, piped mode activates. If stdin is a terminal, interactive REPL mode starts instead.
+    
+    If piped input is empty, yoyo exits with an error: `No input on stdin.`
+  + 
+  + ## Structured output (`--output-format`)
+  + 
+  + Piped and single-prompt modes accept `--output-format <fmt>`:
+  + 
+  + - `text` (default) — just the response text.
+  + - `json` — a single JSON object with the final result.
+  + - `stream-json` — newline-delimited JSON (NDJSON): one yoagent `AgentEvent`
+  +   per line, emitted in real time as the agent works.
+  + 
+  + The `stream-json` stream is the raw yoagent `AgentEvent` serialization —
+  + internally tagged on a `"type"` field, `camelCase` keys, full fidelity (no
+  + lossy translation). The first line is always `{"type":"agentStart"}` and the
+  + last is `{"type":"agentEnd", ...}`. Tool activity appears as
+  + `toolExecutionStart` / `toolExecutionEnd`, and assistant text arrives as
+  + `messageStart` / `messageUpdate` / `messageEnd`. Turn boundaries are
+  + `turnStart` / `turnEnd`.
+  ... (19 more lines)
+ ✓ (1m 13s)
+    yoyo detects piped mode automatically by checking if stdin is a terminal. If it is not, piped mode activates. If stdin is a terminal, interactive REPL mode starts instead.
+    
+    If piped input is empty, yoyo exits with an error: `No input on stdin.`
+  + 
+  + ## Structured output (`--output-format`)
+  + 
+  + Piped and single-prompt modes accept `--output-format <fmt>`:
+  + 
+  ... (13 more lines)
+
+Let me run the checks to confirm nothing broke (the truncated auto-check may just be normal test output).
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -5 && ca… ✓ (47.9s)
+  2 tools completed in 53.9s (2 ✓)
+
+Build and tests pass. Now clippy and verify the grep cleanliness:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "content_delta\|message… ✓ (13ms)
+ ✓ (16.8s)
+  2 tools completed in 18.3s (2 ✓)
+
+Clippy clean, and the grep for old snake_case event names returns nothing in src/ and docs/. All checks pass. Let me commit.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (16ms)
+
+Committed. Done.
+
+What I did (DoD item 6 of #597):
+
+1. **`src/help.rs** — the --output-format help line said stream-json (NDJSON events)`, vague and no longer accurate now that task_01 emits the raw yoagent `AgentEvent. Changed it to stream-json (one yoagent AgentEvent per line)`. It never listed the old event names, so nothing to strip there.
+
+2. `docs/src/usage/piped-mode.md` — the doc had no mention of the stream-json event shape at all. Added a "Structured output (`--output-format`)" section documenting the three formats, and for stream-json described the real contract at the shape level: internally-tagged on "type", camelCase, first line {"type":"agentStart"}, last {"type":"agentEnd", ...}, tool activity as `toolExecutionStart/toolExecutionEnd, text as messageStart/messageUpdate/messageEnd`. Included a JSONL example and linked yoagent's docs/concepts/messages-events.md as the authoritative source (not this repo).
+
+3. **Swept** src/ and docs/ for the old snake_case event names (content_delta, message_start, message_end) — none describe the stream format. The remaining tool_result/tool_use matches are all unrelated (tool-result previews, message-count structs) and out of scope; gasp-emit untouched.
+
+Verified: cargo fmt, cargo build, cargo test (88 passed), and cargo clippy --all-targets -- -D warnings all clean. The grep for old event names in src//docs/ returns nothing describing the stream format.
+
+I described the format at the contract level, so this held independent of task_01's exact field names — which turned out to have already landed anyway (the wire-contract tests in prompt.rs reference agentStart/agentEnd/toolExecutionStart).
+
+  watch: no files changed this turn — skipping
+

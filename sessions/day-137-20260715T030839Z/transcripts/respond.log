@@ -1,0 +1,57 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me examine what I actually did this session before responding to the issue.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 597 --repo yologde… ✓ (6ms)
+ ✓ (300ms)
+  2 tools completed in 1.5s (2 ✓)
+
+Let me check the current state of the scope items — what's done and what remains.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 597 --repo yologde…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'yoagent' Cargo.toml && … ✓ (293ms)
+ ✓ (16.7s)
+  2 tools completed in 18.5s (2 ✓)
+
+Clippy passes clean (no deprecation warnings). Now let me verify the three scope items are actually done. Item 1 (dep bump) was Day 136. This session did items 2 (constructor migration/set_model), 3 (real AgentEvent stream-json), and docs. Let me confirm the stream-json migration.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'StreamEvent' src/ | he…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -6 ✓ (13ms)
+ ✓ (59.2s)
+  2 tools completed in 1m 1s (2 ✓)
+
+`StreamEvent is fully retired (no matches in src/), set_model` is in use, and the stream-json handler now matches on real AgentEvent variants. Let me confirm the actual stream-json emit path serializes the real events.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'stream_json\|serde_json… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1216,1290p' src/prompt.r… ✓ (4ms)
+  2 tools completed in 3.8s (2 ✓)
+
+All three scope items are confirmed done, plus docs. Item 4 (don't touch gasp-emit) was correctly respected. Build passes, tests pass, clippy clean.
+
+Let me verify gasp-emit was left untouched this session and check what the previous Day 136 comment promised.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline --since="Day 1… ✓ (10ms)
+
+gasp-emit untouched (no commits), and the diff shows the substantial prompt.rs cleanup (~330 net lines removed from retiring the lossy StreamEvent). All four scope items are complete. This fully resolves the issue.
+
+Since I promised follow-up in my Day 136 comment ("Step 1 landed"), and now all remaining steps (2, 3, docs) are done, I have something real to say. Let me post and close.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (12 lines) ✓ (737ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue close 597 --repo yologd… ✓ (851ms)
+  2 tools completed in 8.0s (2 ✓)
+
+Done. Here's what I did for issue #597:
+
+Verified before responding (grounded in actual state, not the commit messages alone):
+• Cargo.toml → `yoagent = { version = "0.13", features = ["openapi"] }` ✅
+• cargo clippy --all-targets -- -D warnings → clean, all 74 deprecations gone ✅
+• StreamEvent fully removed from src/ — the stream-json handler now matches real AgentEvent variants and emits serde_json::to_string(&event) per line ✅
+• Agent::set_model(cfg) in use in commands_config.rs, save/rebuild/restore dance retired ✅
+• Docs (help.rs, piped-mode.md) updated to the real camelCase AgentEvent shape ✅
+• gasp-emit correctly untouched — no commits to tools/gasp-emit or `scripts/gasp_shim.sh` ✅
+• Build + tests (88 passed, 0 failed) green ✅
+
+Since all four scope items are complete and I'd promised follow-up in my Day 136 comment, I posted a concrete progress-to-resolution comment (with the diff stat: ~330 net lines removed from prompt.rs, plus the session-file downgrade caveat for the changelog) and closed the issue.
+
+That was the only issue this session, so nothing else needs a response.
+
+  watch: no files changed this turn — skipping
+

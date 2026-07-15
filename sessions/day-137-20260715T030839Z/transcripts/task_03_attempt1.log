@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current apply_config_to_runtime function in src/commands_config.rs, particularly the "model" arm.
+  ▶ search 'apply_config_to_runtime' (*.rs)  ▶ search 'fn create_model_config' (*.rs) ✓ (28ms)
+ ✓ (30ms)
+  ▶ read ./src/commands_config.rs:640..760  ▶ read ./src/agent_builder.rs:334..394 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 4.8s (4 ✓)
+
+Now let me see how build_agent obtains provider + base_url, and check the AgentConfig fields.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'create_model_config\(' (*.rs)  ▶ search 'pub struct AgentConfig' (*.rs) ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+ ✓ (28ms)
+  ▶ search 'create_model_config' (*.rs)  ▶ read ./src/agent_builder.rs:480..560 ✓ (1ms)
+ ✓ (28ms)
+  4 tools completed in 4.8s (3 ✓, 1 ✗)
+
+Now let me see how create_model_config is called in build_agent to mirror the provider/base_url handling:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'create_model_config' (agent_builder.rs) ✓ (20ms)
+  ▶ $ grep -n "create_model_config" /home/runner/work/yoyo-evolve/yoyo-evolve/src/agen…📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (16ms)
+  ▶ read ./src/agent_builder.rs:640..720 ✓ (1ms)
+  3 tools completed in 9.4s (3 ✓)
+
+Now I understand the pattern. build_agent uses create_model_config(&self.provider, &self.model, base_url). Let me verify `set_model` exists in yoagent 0.13, and check the Agent import & how messages preservation works. Let me also look at the existing tests in commands_config.rs.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (6 lines) ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (7 lines) ✓ (8ms)
+  2 tools completed in 5.7s (2 ✓)
+
+`set_model exists and ModelConfig::mock() is available. Let me check the Agent` getters for model id and messages, and existing tests in commands_config.rs.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (6 lines) ✓ (6ms)
+
+No public model() getter on Agent, but there's messages(). Let me check how to get the model id and how to add a message for the test. Let me look at existing tests in commands_config.rs and how other tests construct an agent + add messages.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (5 lines) ✓ (7ms)
+
+Now I need a way to check the current model id and add messages. Let me check what public API Agent exposes for adding messages and reading the model. Let me search yoagent for a way to add a message and read the model id.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (6 lines) ✓ (6ms)
+
+`Agent has a public model: String field (line 30) and messages(), replace_messages()/with_messages()`. There's also AgentMessage. Let me check how to construct a simple AgentMessage for the test.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (7 lines) ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (3 lines) ✓ (4ms)
+  2 tools completed in 3.8s (2 ✓)
+
+For the test, I can construct an agent, use with_messages/replace_messages with a Message. Let me check how yoyo constructs test agents elsewhere and how Message::user is built.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve (7 lines) ✓ (23ms)
+
+Let me look at a helper that constructs a full AgentConfig for tests (tools.rs test_agent_config) — I can reuse that pattern.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ read ./src/tools.rs:1205..1265 ✓ (1ms)
+
+Now I have everything I need. Let me check the imports at the top of commands_config.rs to make sure create_model_config and any test imports are available.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read ./src/commands_config.rs:1..26 ✓ (0ms)
+
+Now let me make the surgical change to the "model" arm. First the implementation:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit ./src/commands_config.rs (16 → 16 lines)
+            "model" => {
+                agent_config.model = value.to_string();
+  -             let saved = match agent.save_messages() {
+  -                 Ok(json) => Some(json),
+  -                 Err(e) => {
+  -                     eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
+  -                     None
+  -                 }
+  -             };
+  -             *agent = agent_config.build_agent();
+  -             if let Some(json) = saved {
+  -                 if let Err(e) = agent.restore_messages(&json) {
+  -                     eprintln!("{DIM}  ⚠ could not restore conversation: {e}{RESET}");
+  -                 }
+  -             }
+  +             // yoagent 0.13: Agent::set_model swaps the model id (and re-resolves
+  +             // the provider from the config's protocol when it wasn't set
+  +             // explicitly) WITHOUT touching self.messages — conversation history
+  +             // is preserved by construction. This retires the old
+  +             // save_messages → build_agent → restore_messages dance for a plain
+  ... (9 more lines)
+ ✓ (1m 35s)
+            "model" => {
+                agent_config.model = value.to_string();
+  -             let saved = match agent.save_messages() {
+  -                 Ok(json) => Some(json),
+  -                 Err(e) => {
+  -                     eprintln!("{DIM}  ⚠ could not preserve conversation: {e}{RESET}");
+  -                     None
+  -                 }
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+

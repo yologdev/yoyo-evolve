@@ -1,0 +1,127 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The errors show leftover StreamEvent-based tests that weren't deleted. Let me look at those test locations.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StreamEvent\|StreamUsag… ✓ (6ms)
+
+There are more StreamEvent references than the errors show (the compiler stopped early). Let me look at the full test region to understand the structure.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1655..1905 ✓ (2ms)
+
+Let me see the rest and find where these StreamEvent tests end, plus the second batch around line 2049.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:2000..2130 ✓ (2ms)
+
+Now I understand the full picture. There are leftover tests that reference StreamEvent and `StreamUsage` (which were deleted). I need to delete these specific stale tests. Let me confirm there are no non-test references and check whether new AgentEvent tests already exist.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentEvent\|emit_agent_… ✓ (4ms)
+
+Good — the new implementation and new AgentEvent tests already exist (lines 1167+, 1619+). The stale StreamEvent-based tests just weren't deleted. Let me find the exact boundaries. The stale tests run from line 1730 (test_stream_usage_construction) to 1875 (test_stream_event_debug_format), and again at 2047-2071. Let me delete each stale test block precisely.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (149 → 2 lines)
+  -     #[test]
+  -     fn test_stream_usage_construction() {
+  -         let usage = StreamUsage {
+  -             input_tokens: 0,
+  -             output_tokens: 0,
+  -         };
+  -         assert_eq!(usage.input_tokens, 0);
+  -         assert_eq!(usage.output_tokens, 0);
+  -     }
+  - 
+  -     #[test]
+  -     fn test_stream_usage_large_values() {
+  -         let usage = StreamUsage {
+  -             input_tokens: u64::MAX,
+  -             output_tokens: u64::MAX,
+  -         };
+  -         assert_eq!(usage.input_tokens, u64::MAX);
+  -         assert_eq!(usage.output_tokens, u64::MAX);
+  -     }
+  - 
+  ... (129 more lines)
+ ✓ (10.7s)
+  -     #[test]
+  -     fn test_stream_usage_construction() {
+  -         let usage = StreamUsage {
+  -             input_tokens: 0,
+  -             output_tokens: 0,
+  -         };
+  -         assert_eq!(usage.input_tokens, 0);
+  -         assert_eq!(usage.output_tokens, 0);
+  ... (13 more lines)
+
+Two more stale tests remain (the ones formerly at 2047-2071). Let me delete those.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (28 → 2 lines)
+  -     #[test]
+  -     fn test_stream_event_message_start_empty_model() {
+  -         let event = StreamEvent::MessageStart {
+  -             model: String::new(),
+  -         };
+  -         let json = serde_json::to_string(&event).unwrap();
+  -         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+  -         assert_eq!(parsed["type"], "message_start");
+  -         assert_eq!(parsed["model"], "");
+  -     }
+  - 
+  -     #[test]
+  -     fn test_stream_event_tool_result_multiline_output() {
+  -         let event = StreamEvent::ToolResult {
+  -             name: "bash".to_string(),
+  -             output: "line1\nline2\nline3\n".to_string(),
+  -             is_error: false,
+  -         };
+  -         let json = serde_json::to_string(&event).unwrap();
+  -         // JSON escapes newlines, so the JSON line itself should not contain raw newlines
+  ... (8 more lines)
+ ✓ (1m 37s)
+  -     #[test]
+  -     fn test_stream_event_message_start_empty_model() {
+  -         let event = StreamEvent::MessageStart {
+  -             model: String::new(),
+  -         };
+  -         let json = serde_json::to_string(&event).unwrap();
+  -         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+  -         assert_eq!(parsed["type"], "message_start");
+  ... (13 more lines)
+
+Now let me also fix the stale doc comment on the test module header that still mentions StreamEvent/StreamUsage, then run the full verification.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (1 → 1 lines)
+  -     // --- Day 74: New tests for PromptOutcome, StreamEvent, StreamUsage, PromptEventState ---
+  +     // --- Day 74: New tests for PromptOutcome, PromptEventState ---
+ ✓ (1m 33s)
+  -     // --- Day 74: New tests for PromptOutcome, StreamEvent, StreamUsage, PromptEventState ---
+  +     // --- Day 74: New tests for PromptOutcome, PromptEventState ---
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StreamEvent\|StreamUsag… ✓ (4ms)
+  2 tools completed in 1m 38s (2 ✓)
+
+No remaining references. Now run the full verification.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (47.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (16.6s)
+  3 tools completed in 1m 12s (3 ✓)
+
+All green.
+
+## Summary
+
+The build broke because the previous implementation added the new `AgentEvent-based emission and tests but left behind the old StreamEvent/StreamUsage`-based tests, which referenced now-deleted types.
+
+Fix: Deleted the stale tests in src/prompt.rs that constructed the removed StreamEvent enum and StreamUsage struct:
+• test_stream_usage_* (4 tests)
+• test_stream_event_* (8 tests, in two batches)
+• Updated the test-module comment that still referenced the deleted types.
+
+The new AgentEvent serialization tests (agentStart, agentEnd, toolExecutionStart camelCase wire-contract checks) and the emit_agent_event implementation were already in place and untouched.
+
+Verification — all clean:
+• `cargo fmt` ✓
+• cargo build ✓
+• cargo test — 88 passed, 0 failed ✓
+• cargo clippy --all-targets -- -D warnings ✓
+
+  watch: no files changed this turn — skipping
+

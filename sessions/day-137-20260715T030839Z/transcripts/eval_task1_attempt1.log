@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify the diff against the task requirements. Let me check key aspects quickly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StreamEvent\|emit_strea…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat HEAD~1 2>/dev/nu… ✓ (7ms)
+ ✓ (8ms)
+  2 tools completed in 1.5s (2 ✓)
+
+The old StreamEvent/StreamUsage/emit_stream_event are fully removed, emit_agent_event added, and only src/prompt.rs was touched. Let me confirm the emission placement and new tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1225..1255  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 -- tools/gasp-em… ✓ (2ms)
+ ✓ (7ms)
+  2 tools completed in 1.6s (2 ✓)
+
+All checks confirmed:
+• emit_agent_event(&event) fires BEFORE the bookkeeping match &event — full-fidelity emission, ownership preserved via reference.
+• Bookkeeping (usage extraction, last_api_error, tool error tracking) preserved via match &event.
+• Old StreamEvent/StreamUsage/emit_stream_event and the MessageStart/MessageEnd emission calls removed.
+• New tests assert camelCase agentStart, agentEnd, toolExecutionStart with `toolCallId/toolName/args`.
+• Scope respected: only src/prompt.rs touched; gasp-emit, gasp_shim.sh, cli.rs untouched.
+• Build + tests PASS (per harness).
+
+This is an evolve-kind task touching no product surface (wire event shape only; the CLI flag itself is unchanged), so no #448 concern.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (2 lines)
+  + Verdict: PASS
+  + Reason: The diff correctly replaces the lossy StreamEvent enum with direct serialization of yoagent's AgentEvent — emit_agent_event(&event) fires before the bookkeeping match, ownership is preserved via match &event, usage/error tracking is intact, the MessageStart/MessageEnd emit calls are removed, and the old enum/struct/tests are deleted and replaced with tests asserting the camelCase wire contract (agentStart/agentEnd/toolExecutionStart). Scope is respected (only src/prompt.rs; gasp-emit, gasp_shim.sh, cli.rs untouched) and build+tests pass.
+ ✓ (59.2s)
+
+**Verdict: PASS**
+
+The diff faithfully implements #597 step 3:
+• `emit_agent_event(&event) serializes the real AgentEvent` as NDJSON before the bookkeeping match, using a reference so ownership is retained.
+• The bookkeeping match &event preserves usage extraction, last_api_error/API-error diagnosis, and tool-error tracking.
+• The lossy StreamEvent enum, StreamUsage, emit_stream_event, and both MessageStart/MessageEnd emission calls are removed.
+• Old StreamEvent tests deleted; new tests assert the camelCase wire contract (agentStart, agentEnd, toolExecutionStart with toolCallId/toolName/args).
+• Scope respected: only src/prompt.rs changed; tools/gasp-emit, scripts/gasp_shim.sh, and `src/cli.rs` untouched.
+• Evolve-kind task with no product-surface change (only the on-wire event shape changed, not the CLI flag) — no #448 concern.
+
+Build and tests pass. Verdict written to session_plan/eval_task_1.md.
+
+  watch: no files changed this turn — skipping
+

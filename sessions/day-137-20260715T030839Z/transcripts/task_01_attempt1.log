@@ -1,0 +1,188 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the current state of the stream-json code in src/prompt.rs.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n … ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1160..1400 ✓ (2ms)
+  2 tools completed in 4.1s (2 ✓)
+
+Now let me look at the tests section to understand what needs to be replaced.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1680..1810 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1809..2229 ✓ (4ms)
+  2 tools completed in 4.4s (2 ✓)
+
+Let me see the remaining truncated tests (lines 1907-2178) and the tail after 2228 to find all StreamEvent/StreamUsage test references.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "StreamEvent\|StreamUsag… ✓ (4ms)
+
+Now I understand the full scope. Let me check the imports at the top of prompt.rs to know what `AgentEvent, StreamDelta`, etc. are already imported.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,40p' src/prompt.rs | g… ✓ (4ms)
+
+`yoagent::* is imported so AgentEvent and its variants are available. Let me verify the AgentEvent` serde attributes and check the exact tests I need to replace. Let me now make the edits.
+
+First, remove the `StreamEvent enum, StreamUsage struct, and emit_stream_event`:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (44 → 10 lines)
+  - /// A single NDJSON event emitted during streaming JSON output.
+  - #[derive(Debug, Clone, serde::Serialize)]
+  - #[serde(tag = "type")]
+  - pub enum StreamEvent {
+  -     /// Emitted at prompt start.
+  -     #[serde(rename = "message_start")]
+  -     MessageStart { model: String },
+  -     /// Emitted for each text chunk from the model.
+  -     #[serde(rename = "content_delta")]
+  -     ContentDelta { text: String },
+  -     /// Emitted when the model invokes a tool.
+  -     #[serde(rename = "tool_use")]
+  -     ToolUse {
+  -         name: String,
+  -         input: serde_json::Value,
+  -     },
+  -     /// Emitted when a tool returns its result.
+  -     #[serde(rename = "tool_result")]
+  -     ToolResult {
+  -         name: String,
+  ... (29 more lines)
+ ✓ (11.6s)
+  - /// A single NDJSON event emitted during streaming JSON output.
+  - #[derive(Debug, Clone, serde::Serialize)]
+  - #[serde(tag = "type")]
+  - pub enum StreamEvent {
+  -     /// Emitted at prompt start.
+  -     #[serde(rename = "message_start")]
+  -     MessageStart { model: String },
+  -     /// Emitted for each text chunk from the model.
+  ... (13 more lines)
+
+Expected — now the two run functions. Let me update run_prompt_stream_json:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (26 → 13 lines)
+        session_total: &mut Usage,
+        model: &str,
+    ) -> PromptOutcome {
+  -     emit_stream_event(&StreamEvent::MessageStart {
+  -         model: model.to_string(),
+  -     });
+  - 
+        let rx = agent.prompt(input).await;
+        let outcome = handle_stream_json_events(agent, rx, model).await;
+    
+        accumulate_usage(session_total, &outcome.1);
+  - 
+  -     let cost_usd = estimate_cost(&outcome.1, model);
+  -     emit_stream_event(&StreamEvent::MessageEnd {
+  -         usage: StreamUsage {
+  -             input_tokens: outcome.1.input,
+  -             output_tokens: outcome.1.output,
+  -         },
+  -         cost_usd,
+  -     });
+  ... (3 more lines)
+ ✓ (11.5s)
+        session_total: &mut Usage,
+        model: &str,
+    ) -> PromptOutcome {
+  -     emit_stream_event(&StreamEvent::MessageStart {
+  -         model: model.to_string(),
+  -     });
+  - 
+        let rx = agent.prompt(input).await;
+  ... (13 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (30 → 17 lines)
+        session_total: &mut Usage,
+        model: &str,
+    ) -> PromptOutcome {
+  -     emit_stream_event(&StreamEvent::MessageStart {
+  -         model: model.to_string(),
+  -     });
+  - 
+        let messages = vec![AgentMessage::Llm(Message::User {
+            content,
+            timestamp: now_ms(),
+  ···
+        let outcome = handle_stream_json_events(agent, rx, model).await;
+    
+        accumulate_usage(session_total, &outcome.1);
+  - 
+  -     let cost_usd = estimate_cost(&outcome.1, model);
+  -     emit_stream_event(&StreamEvent::MessageEnd {
+  -         usage: StreamUsage {
+  -             input_tokens: outcome.1.input,
+  -             output_tokens: outcome.1.output,
+  ... (6 more lines)
+ ✓ (11.6s)
+        session_total: &mut Usage,
+        model: &str,
+    ) -> PromptOutcome {
+  -     emit_stream_event(&StreamEvent::MessageStart {
+  -         model: model.to_string(),
+  -     });
+  - 
+        let messages = vec![AgentMessage::Llm(Message::User {
+  ... (13 more lines)
+  2 tools completed in 31.2s (2 ✓)
+
+Now handle_stream_json_events. I need to emit the serialized event first, then keep the bookkeeping match. Let me update it to emit emit_agent_event(&event) at the top of the loop, then match on &event for bookkeeping. Let me view the current state:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1216..1316 ✓ (1ms)
+
+Now I'll rewrite the event loop body: emit the raw serialized event first, then match on &event for bookkeeping (no ownership moves needed since I only need references for the bookkeeping logic).
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs (75 → 65 lines)
+                event = rx.recv() => {
+                    let Some(event) = event else { break };
+  -                 match event {
+  -                     AgentEvent::ToolExecutionStart {
+  -                         tool_name, args, ..
+  -                     } => {
+  -                         emit_stream_event(&StreamEvent::ToolUse {
+  -                             name: tool_name,
+  -                             input: args,
+  -                         });
+  -                     }
+  +                 // Emit the raw yoagent AgentEvent as NDJSON, full-fidelity — this is
+  +                 // the wire contract. Serialize a reference so we keep ownership for the
+  +                 // bookkeeping match below (AgentEvent's serde shape is the source of truth).
+  +                 emit_agent_event(&event);
+  +                 match &event {
+                        AgentEvent::ToolExecutionEnd {
+                            tool_name, is_error, result, ..
+                        } => {
+  -                         // Extract text from tool result
+  ... (49 more lines)
+ ✓ (11.5s)
+                event = rx.recv() => {
+                    let Some(event) = event else { break };
+  -                 match event {
+  -                     AgentEvent::ToolExecutionStart {
+  -                         tool_name, args, ..
+  -                     } => {
+  -                         emit_stream_event(&StreamEvent::ToolUse {
+  -                             name: tool_name,
+  ... (13 more lines)
+
+Core code compiles now — only test errors remain. Now I'll delete all the StreamEvent/StreamUsage tests and add new AgentEvent serialization tests. Let me find the exact test boundaries.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn test_stream_event\|f… ✓ (4ms)
+
+There are two blocks of StreamEvent tests. First block is 1617-1751 (the `#[test]` attr is one line before each fn). Let me check the boundaries precisely. Let me view around line 1616 and 1751.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1612..1622 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/prompt.rs:1745..1757 ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+First block: lines 1617–1751 (all StreamEvent tests). I'll delete this whole block and replace with new AgentEvent tests. Let me extract lines 1617-1751 exactly and remove them.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1617,1751p' src/prompt.r… ✓ (4ms)
+
+I'll use a Python script to remove the exact line ranges and inject new tests. But since there are two separate blocks, let me be careful. Let me instead do targeted edit_file replacements. First block (1617-1751): I'll replace it entirely with new AgentEvent tests.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1617,1751p' src/prompt.r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (60 lines) ✓ (22ms)
+  2 tools completed in 12.6s (2 ✓)
+
+  watch: no files changed this turn — skipping
+
