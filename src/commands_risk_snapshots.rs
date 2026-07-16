@@ -602,6 +602,92 @@ mod tests {
         assert_eq!(top[0]["path"], "src/file_0.rs");
     }
 
+    #[test]
+    fn test_risk_snapshot_records_emerging() {
+        // The anticipatory signal must be persisted alongside top_10 so Task 2
+        // can validate it. A snapshot with synthetic emerging entries round-trips.
+        let risks = vec![FileRisk {
+            path: "src/foo.rs".to_string(),
+            score: 0.82,
+            signals: vec!["▲churn"],
+            test_density: 0.0,
+        }];
+        let emerging = vec![
+            EmergingRisk {
+                path: "src/rising.rs".to_string(),
+                momentum: 2.146,
+                current_rank: 12,
+                signals: vec!["7d change-rate ×2.1 vs 30d".to_string()],
+            },
+            EmergingRisk {
+                path: "src/climbing.rs".to_string(),
+                momentum: 1.5,
+                current_rank: 8,
+                signals: vec!["accelerating".to_string()],
+            },
+        ];
+
+        let json = build_risk_snapshot_json(&risks, &emerging, 130, "feed123");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let emerging_arr = parsed["emerging"].as_array().expect("emerging is array");
+        assert_eq!(emerging_arr.len(), 2);
+        assert_eq!(emerging_arr[0]["path"], "src/rising.rs");
+        // momentum rounded to 2 decimals the same way score is
+        assert!((emerging_arr[0]["momentum"].as_f64().unwrap() - 2.15).abs() < 0.001);
+        assert_eq!(emerging_arr[0]["current_rank"], 12);
+        let sigs = emerging_arr[0]["signals"]
+            .as_array()
+            .expect("emerging signals is array");
+        assert_eq!(sigs.len(), 1);
+        assert_eq!(sigs[0], "7d change-rate ×2.1 vs 30d");
+        assert_eq!(emerging_arr[1]["path"], "src/climbing.rs");
+        assert_eq!(emerging_arr[1]["current_rank"], 8);
+    }
+
+    #[test]
+    fn test_risk_snapshot_empty_emerging_yields_empty_array() {
+        // An empty emerging list must serialize as "emerging": [] (present, not
+        // missing) so downstream readers can rely on the key existing.
+        let risks = vec![FileRisk {
+            path: "src/main.rs".to_string(),
+            score: 0.55,
+            signals: vec!["▲size"],
+            test_density: 0.0,
+        }];
+
+        let json = build_risk_snapshot_json(&risks, &[], 42, "deadbee");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let emerging_arr = parsed["emerging"]
+            .as_array()
+            .expect("emerging key present as array even when empty");
+        assert!(emerging_arr.is_empty());
+    }
+
+    #[test]
+    fn test_risk_snapshot_emerging_top_10_limit() {
+        // More than 10 emerging entries → only the top 10 are persisted.
+        let risks = vec![FileRisk {
+            path: "src/main.rs".to_string(),
+            score: 0.55,
+            signals: vec!["▲size"],
+            test_density: 0.0,
+        }];
+        let emerging: Vec<EmergingRisk> = (0..15)
+            .map(|i| EmergingRisk {
+                path: format!("src/rising_{i}.rs"),
+                momentum: 3.0 - (i as f64 * 0.1),
+                current_rank: 20 + i,
+                signals: vec!["accelerating".to_string()],
+            })
+            .collect();
+
+        let json = build_risk_snapshot_json(&risks, &emerging, 1, "1234567");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let emerging_arr = parsed["emerging"].as_array().expect("emerging array");
+        assert_eq!(emerging_arr.len(), 10);
+        assert_eq!(emerging_arr[0]["path"], "src/rising_0.rs");
+    }
+
     // CONTRACT: this is the evolve.sh-hook feed contract. The autonomous loop
     // is meant to call `yoyo risk snapshot` once per session (a human patch to
     // the protected scripts/evolve.sh — tracked in the "wire risk snapshot into
