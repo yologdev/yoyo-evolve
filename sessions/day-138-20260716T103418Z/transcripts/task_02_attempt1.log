@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by finding normalize_symbol_query in the source.
+  ▶ search 'fn normalize_symbol_query' (*.rs) ✓ (26ms)
+  ▶ read ./src/commands_search.rs:707..787 ✓ (1ms)
+  2 tools completed in 3.2s (2 ✓)
+
+Now let me look at the existing tests to understand the format and place my new test.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read ./src/commands_search.rs:1843..1893 ✓ (1ms)
+
+Now let me trace the tricky cases before writing the test. Key concern: "*foo", `"foo;", "foo:", "std::vec::Vec", "  foo  "`. Let me verify the current behavior for these by writing the test and running it — the logic is: split on non-ident chars, keep the last letter-bearing run.
+
+• "*foo" → * splits, run foo → foo ✓
+• `"foo;" → foo` ✓
+• "foo:" → foo ✓
+• "std::vec::Vec" → last run Vec ✓
+• `"  foo  " → trimmed then foo` ✓
+• "foo(a, b)" → runs: foo, a, b. Last name run wins... b! Not foo. Let me check: commit_run sets last_run = run if is_name_run(run). So it keeps replacing with the last name run. foo, then a, then b → result b. This is a KNOWN GAP.
+
+Let me add the test with the actual behavior and mark gaps. Let me run a quick check first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (37 lines) ✓ (174ms)
+
+Confirmed. All match the intuitive expectation except `"foo(a, b)" → "b"` (KNOWN GAP: takes the last arg identifier instead of the callee). Now I'll add the fixture-table test.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit ./src/commands_search.rs (2 → 54 lines)
+  +     #[test]
+  +     fn normalize_symbol_query_fixture_table() {
+  +         // The full class of messy inputs a developer might paste into /def or
+  +         // /refs, straight out of code. This table IS the normalizer's real
+  +         // spec: it pins current behavior across the whole input class so a
+  +         // future regression (or an unhandled shape) surfaces as one failing
+  +         // table, not one late-night surprise at a time (Day 137 lesson —
+  +         // enumerate the malformed shapes up front instead of one per session).
+  +         //
+  +         // Each `expected` is the ACTUAL current output, traced against the
+  +         // code. Where that differs from the intuitive ideal, a `// KNOWN GAP:`
+  +         // comment records the ideal for a future session — this test is
+  +         // enumeration, not a fix (do NOT change the normalizer to satisfy an
+  +         // intuitive expectation here).
+  +         let cases: &[(&str, &str)] = &[
+  +             // Clean identifiers pass through untouched.
+  +             ("foo", "foo"),
+  +             ("MyStruct", "MyStruct"),
+  +             // Call / borrow / deref shapes.
+  +             ("foo()", "foo"),
+  ... (34 more lines)
+ ✓ (1m 25s)
+  +     #[test]
+  +     fn normalize_symbol_query_fixture_table() {
+  +         // The full class of messy inputs a developer might paste into /def or
+  +         // /refs, straight out of code. This table IS the normalizer's real
+  +         // spec: it pins current behavior across the whole input class so a
+  +         // future regression (or an unhandled shape) surfaces as one failing
+  +         // table, not one late-night surprise at a time (Day 137 lesson —
+  +         // enumerate the malformed shapes up front instead of one per session).
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test normaliz… ✓ (1.1s)
+  2 tools completed in 1m 30s (2 ✓)
+
+All three tests pass. Now clippy and build.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (342ms)
+
+All green. Let me commit.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -m "Day… ✓ (14ms)
+
+Committed. Task done.
+
+What I did: Added normalize_symbol_query_fixture_table — one test that drives a 19-row (input, expected) table through normalize_symbol_query, covering the whole class of messy inputs people paste into /def and /refs: clean idents, call/borrow/deref (foo(), &mut foo, *foo), path/member access (`self.count, crate::bar::baz), generics (Vec<Foo>), trailing punctuation (foo,` foo; foo:), index literals (arr[0]), and whitespace. Each assertion names its input for legible failures.
+
+What the enumeration surfaced: exactly one KNOWN GAP — "foo(a, b)" normalizes to "b", not the callee "foo". The logic keeps the last letter-bearing run, so a trailing argument identifier wins. I pinned the actual behavior ("b") to keep the test green and marked the ideal in a // KNOWN GAP: comment. Per the scope guard, I did not touch the normalizer — that's a candidate for a future session, not this one. This was the corrective move for my Day 137 lesson: enumerate the input class up front as fixtures instead of fixing one shape per night.
+
+Verified: cargo fmt, cargo test normalize_symbol_query (3 pass), cargo clippy --all-targets -- -D warnings, cargo build — all green. Test-only, one file, committed.
+
+  watch: no files changed this turn — skipping
+

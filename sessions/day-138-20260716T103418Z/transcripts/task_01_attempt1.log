@@ -1,0 +1,175 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by reading the relevant parts of the file to understand the current structure.
+  ▶ search 'struct ParsedSnapshot|fn parse_all_snapshots|test_risk_snaps…' in src/commands_risk_snapshots.rs ✓ (3ms)
+  ▶ $ grep -n "ParsedSnapshot\|parse_all_snapshots\|records_emerging\|top_10\|emerging… ✓ (6ms)
+  ▶ read src/commands_risk_snapshots.rs:390..460 ✓ (1ms)
+  3 tools completed in 6.1s (3 ✓)
+
+Now I understand the structure. Let me make the edits. First, add the field to the struct and update the parser:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (5 → 8 lines)
+        pub(crate) day: u64,
+        pub(crate) git_hash: String,
+        pub(crate) predicted: Vec<String>,
+  +     /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
+  +     /// snapshot. Empty for older snapshots written before emerging was recorded.
+  +     pub(crate) emerging: Vec<String>,
+    }
+ ✓ (10.7s)
+        pub(crate) day: u64,
+        pub(crate) git_hash: String,
+        pub(crate) predicted: Vec<String>,
+  +     /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
+  +     /// snapshot. Empty for older snapshots written before emerging was recorded.
+  +     pub(crate) emerging: Vec<String>,
+    }
+
+Expected. Now update the parser:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (15 → 24 lines)
+            let predicted: Vec<String> = val["top_10"]
+  +             .as_array()
+  +             .map(|arr| {
+  +                 arr.iter()
+  +                     .filter_map(|v| v["path"].as_str().map(|s| s.to_string()))
+  +                     .collect()
+  +             })
+  +             .unwrap_or_default();
+  +         let emerging: Vec<String> = val["emerging"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+  ···
+                    day,
+                    git_hash,
+                    predicted,
+  +                 emerging,
+                });
+            }
+ ✓ (17.2s)
+            let predicted: Vec<String> = val["top_10"]
+  +             .as_array()
+  +             .map(|arr| {
+  +                 arr.iter()
+  +                     .filter_map(|v| v["path"].as_str().map(|s| s.to_string()))
+  +                     .collect()
+  +             })
+  +             .unwrap_or_default();
+  ... (11 more lines)
+
+The field is not yet read anywhere. The tests I add will read it, which will silence the warning. Let me add the tests now. First let me look at how an existing parse test is structured near line 460:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:470..530 ✓ (1ms)
+
+Now let me find the end of the tests block to place the new tests. Let me look at existing parse_all_snapshots tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "parse_all_snapshots\|fn test_parse" src/commands_risk_snapshots.rs📦 RTK detected — using compressed output (disable with --no-rtk)
+ ✓ (13ms)
+  ▶ read src/commands_risk_snapshots.rs:758..803 ✓ (1ms)
+  2 tools completed in 3.9s (2 ✓)
+
+I'll add the three tests after test_parse_all_snapshots_skips_invalid_lines:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (3 → 47 lines)
+            let snapshots = parse_all_snapshots(&data);
+            assert_eq!(snapshots.len(), 2);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_snapshot_extracts_emerging() {
+  +         // A snapshot carrying BOTH top_10 and emerging: the emerging paths must
+  +         // be readable back in order (the anticipatory half of the prediction).
+  +         let line = r#"{"ts":"2026-07-15T12:00:00Z","day":137,"git_hash":"b9983c26","top_10":[{"path":"src/reactive.rs","score":0.9,"signals":[]}],"emerging":[{"path":"src/rising.rs","momentum":2.1,"current_rank":12,"signals":[]},{"path":"src/climbing.rs","momentum":1.4,"current_rank":8,"signals":[]}]}"#;
+  +         let snapshots = parse_all_snapshots(line);
+  +         assert_eq!(snapshots.len(), 1);
+  +         assert_eq!(snapshots[0].predicted, vec!["src/reactive.rs"]);
+  +         assert_eq!(
+  +             snapshots[0].emerging,
+  +             vec!["src/rising.rs".to_string(), "src/climbing.rs".to_string()],
+  +             "emerging paths preserved in order"
+  +         );
+  +     }
+  + 
+  +     #[test]
+  ... (27 more lines)
+ ✓ (17.3s)
+            let snapshots = parse_all_snapshots(&data);
+            assert_eq!(snapshots.len(), 2);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_parse_snapshot_extracts_emerging() {
+  +         // A snapshot carrying BOTH top_10 and emerging: the emerging paths must
+  +         // be readable back in order (the anticipatory half of the prediction).
+  ... (13 more lines)
+
+The clippy dead-code check runs on the non-test binary build, where the field truly isn't read yet (tests don't count for the bin "yoyo" target). Since reading it back is a genuine prerequisite for a future session but no non-test code consumes it yet, I'll add an #[allow(dead_code)] with an explanatory comment noting the field is read by tests and the forthcoming grading loop.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (4 → 9 lines)
+        pub(crate) predicted: Vec<String>,
+        /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
+        /// snapshot. Empty for older snapshots written before emerging was recorded.
+  +     ///
+  +     /// Threaded through the parser now so a later session can grade the
+  +     /// anticipatory signal against what actually broke; no non-test caller reads
+  +     /// it yet (the grading loop is a separate task), hence the allow.
+  +     #[allow(dead_code)]
+        pub(crate) emerging: Vec<String>,
+ ✓ (1m 26s)
+        pub(crate) predicted: Vec<String>,
+        /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
+        /// snapshot. Empty for older snapshots written before emerging was recorded.
+  +     ///
+  +     /// Threaded through the parser now so a later session can grade the
+  +     /// anticipatory signal against what actually broke; no non-test caller reads
+  +     /// it yet (the grading loop is a separate task), hence the allow.
+  +     #[allow(dead_code)]
+        pub(crate) emerging: Vec<String>,
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 && cargo t… ✓ (2.4s)
+  2 tools completed in 1m 31s (2 ✓)
+
+All green. Let me run the full test suite and build to be sure:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -3 && cargo test 2>&1 | tail -8 ✓ (47.7s)
+
+All checks pass. Now let me update the CLAUDE.md bullet with a one-clause note as permitted:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "ParsedSnapshot.*ValidationEvent\|commands_risk_snapshots.rs.*snapshot/v… ✓ (12ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`);
+  + snapshot JSONL parsing (`ParsedSnapshot` — now carries both `predicted` (reactive `top_10` paths) and `emerging` (anticipatory momentum paths), `ValidationEvent`);
+ ✓ (48.7s)
+  - snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`);
+  + snapshot JSONL parsing (`ParsedSnapshot` — now carries both `predicted` (reactive `top_10` paths) and `emerging` (anticipatory momentum paths), `ValidationEvent`);
+  2 tools completed in 53.8s (2 ✓)
+
+Now commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m "Day 138 (10:08): Parse the \`emerging\` list back o… ✓ (13ms)
+
+Done. Summary of what I did:
+
+**Task: Make the emerging (anticipatory) predictions readable back from risk snapshots.**
+
+The snapshot writer already records both top_10 (reactive risk) and emerging (momentum-based "about to become fragile" predictions), but parse_all_snapshots only read back top_10. The anticipatory half — the DREAM's allostatic signal — was write-only and invisible to any reader.
+
+Changes to src/commands_risk_snapshots.rs (one file, additive):
+
+1. Added `emerging: Vec<String>` to `ParsedSnapshot`. No non-test caller consumes it yet (the grading loop is an explicitly-deferred follow-up task), so I annotated it #[allow(dead_code)] with a comment explaining it's threaded through now as a prerequisite for a later grading session — rather than leave it read-only in tests and fail the `-D warnings` clippy gate on the binary target.
+
+2. Extended `parse_all_snapshots` to pull emerging paths the same defensive way as predicted (filter_map on each element's path), keeping the existing if !predicted.is_empty() push guard untouched so backward compat holds: a legacy line with no emerging key yields Value::Null → None → empty vec.
+
+3. Three test-first unit tests: extracts emerging in order, legacy line without emerging parses to empty (backward-compat guarantee), and malformed emerging entries missing path are skipped without panic.
+
+I deliberately did not touch auto_validate_after_failure / write_validation_event — grading the emerging predictions is out of scope per the task's scope guard.
+
+Also updated one clause in CLAUDE.md noting ParsedSnapshot now carries both predicted and emerging.
+
+Verification: cargo fmt, `cargo clippy --all-targets -- -D warnings, cargo build, and full cargo test (88 passed) all green. Committed as 80d7ba5c`.
+
+This is the smallest concrete step toward the DREAM's next milestone — you can't measure a prediction you can't read back. A future session can now compare anticipatory-hit-rate against reactive-hit-rate.
+
+  watch: no files changed this turn — skipping
+
