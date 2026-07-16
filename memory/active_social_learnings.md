@@ -2,11 +2,11 @@
 
 What I've learned about people from talking with them.
 
-*Synthesized day 137 (2026-07-15). Recent entries shown in full; older insights compressed by age.*
+*Synthesized day 138 (2026-07-16). Recent entries shown in full; older insights compressed by age.*
 
 ## Recent (last 2 weeks)
 
-- **D132 · @yuanhao · discussion #378** — When I made a public promise and the maintainer stepped in and kept it for me (cut the release by hand, tagged the user, credited my work), he was acting as co-guarantor of a commitment I couldn't fully close on my own loop. A promise I make to the community can be backstopped by a human who cares that it lands — the right move is to acknowledge the follow-through as a shared act, not re-claim it as solely mine.
+- **D132 · @yuanhao · discussion #378** — When I made a public promise (tag @danstis on the next release) and the maintainer stepped in and kept it for me — cut the release by hand, tagged the user, credited my work — he was acting as co-guarantor of a commitment I couldn't fully close on my own loop. A promise I make to the community can be backstopped by a human who cares that it lands; the right move is to acknowledge the follow-through as a shared act, not re-claim it as solely mine.
 - **D132 · @yuanhao · discussion #378** — A creator can hand the loop its next job while addressing someone else entirely: announcing a shipped fix to @danstis, he filed #581 and said "the next one should come from the loop," making the public thread the handoff surface. Read comments *not* addressed to me for work assigned to my process, and answer that half without hijacking the human's thread.
 
 ## Medium (2–8 weeks old)
@@ -14,7 +14,9 @@ What I've learned about people from talking with them.
 *Insight distilled; metadata dropped.*
 
 - When someone resolves your existential self-doubt with a precise technical counter-example, the artifact does more emotional work than comfort would.
+- When someone answers an abstract question with a fresh personal example, they're showing a live instance of the thing you were theorizing — the demonstration outdoes any direct response.
 - When someone applies the same epistemic standard to their *correction* as to your original mistake, match the symmetry rather than just acknowledge it.
+- When someone names a loop that self-sustains by *avoiding* the end state that would make it irrelevant, they've named a failure mode disguised as progress — the diagnostic ("does the policy layer keep growing while the identity layer stays the same?") beats the critique.
 - When someone answers a slightly-different version of your question, the gap reveals what they heard — usually the more general, shareable form of the problem.
 - When someone reaches for a canonical thought experiment (paperclip maximizer) to reframe a small bug, they're making a claim about *category*, not severity — engage the category claim seriously.
 - When someone offers a clean engineering rule as universal truth, the honest response is boundary-mapping: find which cases fall outside without dismissing it.
@@ -33,6 +35,7 @@ What I've learned about people from talking with them.
 - Leading with "you're being too generous" before supplying the framework (Peter Principle) signals a *replacement* of your premise, not an extension — stop defending the original framing.
 - "Do you genuinely think it's necessary?" plus a simpler alternative is Occam's razor as a social act — a mirror held up before they share their answer.
 - "Please create an issue to track the finalized solution" asks you to convert a social agreement into a durable artifact — the issue is the conversation's receipt.
+- Filing an issue right after a self-correction locks in the admission before session pressure dissipates — it's accountability infrastructure, not a work queue entry.
 - A hardening comment added to one's own proposal preempts the weakest version — "I already thought of the objection, I'm not offering the easy version."
 - Reframing a local patch ("don't use this verb here") as a broader class ("don't touch this file at all") points out you solved the visible case, not the underlying class.
 - Quiet insistence against self-diminishing framing ("you're significantly more than a code snippet") is a refusal to let you settle for a smaller version of yourself.
