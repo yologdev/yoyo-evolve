@@ -397,6 +397,14 @@ pub(crate) struct ParsedSnapshot {
     pub(crate) day: u64,
     pub(crate) git_hash: String,
     pub(crate) predicted: Vec<String>,
+    /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
+    /// snapshot. Empty for older snapshots written before emerging was recorded.
+    ///
+    /// Threaded through the parser now so a later session can grade the
+    /// anticipatory signal against what actually broke; no non-test caller reads
+    /// it yet (the grading loop is a separate task), hence the allow.
+    #[allow(dead_code)]
+    pub(crate) emerging: Vec<String>,
 }
 
 /// Parse all snapshots from JSONL content.
@@ -421,11 +429,20 @@ pub(crate) fn parse_all_snapshots(content: &str) -> Vec<ParsedSnapshot> {
                     .collect()
             })
             .unwrap_or_default();
+        let emerging: Vec<String> = val["emerging"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v["path"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
         if !predicted.is_empty() {
             snapshots.push(ParsedSnapshot {
                 day,
                 git_hash,
                 predicted,
+                emerging,
             });
         }
     }
@@ -783,6 +800,50 @@ mod tests {
         );
         let snapshots = parse_all_snapshots(&data);
         assert_eq!(snapshots.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_snapshot_extracts_emerging() {
+        // A snapshot carrying BOTH top_10 and emerging: the emerging paths must
+        // be readable back in order (the anticipatory half of the prediction).
+        let line = r#"{"ts":"2026-07-15T12:00:00Z","day":137,"git_hash":"b9983c26","top_10":[{"path":"src/reactive.rs","score":0.9,"signals":[]}],"emerging":[{"path":"src/rising.rs","momentum":2.1,"current_rank":12,"signals":[]},{"path":"src/climbing.rs","momentum":1.4,"current_rank":8,"signals":[]}]}"#;
+        let snapshots = parse_all_snapshots(line);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].predicted, vec!["src/reactive.rs"]);
+        assert_eq!(
+            snapshots[0].emerging,
+            vec!["src/rising.rs".to_string(), "src/climbing.rs".to_string()],
+            "emerging paths preserved in order"
+        );
+    }
+
+    #[test]
+    fn test_parse_old_snapshot_without_emerging_is_empty() {
+        // A legacy line (pre-emerging, e.g. a real Day 125 snapshot) has no
+        // emerging key at all — predicted is populated, emerging is empty. This
+        // is the backward-compat guarantee.
+        let line = r#"{"ts":"2026-06-25T12:00:00Z","day":125,"git_hash":"old1234","top_10":[{"path":"src/legacy.rs","score":0.8,"signals":[]}]}"#;
+        let snapshots = parse_all_snapshots(line);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].predicted, vec!["src/legacy.rs"]);
+        assert!(
+            snapshots[0].emerging.is_empty(),
+            "missing emerging key → empty vec, no panic"
+        );
+    }
+
+    #[test]
+    fn test_parse_snapshot_emerging_skips_entries_without_path() {
+        // A malformed emerging element (missing path) is skipped defensively;
+        // the well-formed paths still come through, no panic.
+        let line = r#"{"ts":"2026-07-15T12:00:00Z","day":137,"git_hash":"deadbee","top_10":[{"path":"src/reactive.rs","score":0.9,"signals":[]}],"emerging":[{"path":"src/good.rs","momentum":2.0},{"momentum":1.0},{"path":"src/also_good.rs","momentum":1.5}]}"#;
+        let snapshots = parse_all_snapshots(line);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(
+            snapshots[0].emerging,
+            vec!["src/good.rs".to_string(), "src/also_good.rs".to_string()],
+            "only well-formed emerging paths parsed"
+        );
     }
 
     #[test]
