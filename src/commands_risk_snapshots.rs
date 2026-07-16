@@ -459,10 +459,9 @@ pub(crate) struct ParsedSnapshot {
     /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
     /// snapshot. Empty for older snapshots written before emerging was recorded.
     ///
-    /// Threaded through the parser now so a later session can grade the
-    /// anticipatory signal against what actually broke; no non-test caller reads
-    /// it yet (the grading loop is a separate task), hence the allow.
-    #[allow(dead_code)]
+    /// Read by `auto_validate_after_failure_to`, which grades this anticipatory
+    /// set against what actually broke (alongside the reactive `predicted` set),
+    /// so the allostatic-vs-homeostatic comparison is measured, not decorative.
     pub(crate) emerging: Vec<String>,
 }
 
@@ -1180,5 +1179,97 @@ mod tests {
         assert_eq!(events.len(), 2, "appending twice yields two lines");
         assert_eq!(events[0].day, 1);
         assert_eq!(events[1].day, 2);
+    }
+
+    #[test]
+    fn test_accuracy_of_grades_reactive_and_emerging() {
+        // A single outcome graded against two distinct prediction sets: the
+        // reactive (top_10) set and the anticipatory (emerging) set. Both must
+        // be scored by the same pure helper so the allostatic-vs-homeostatic
+        // comparison is apples-to-apples.
+        let changed = ["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs"];
+
+        // Reactive set predicts 2 of the 4 changed files.
+        let reactive: std::collections::HashSet<&str> =
+            ["src/a.rs", "src/b.rs", "src/z.rs"].into_iter().collect();
+        let (r_hits, r_pct) = accuracy_of(&changed, &reactive);
+        assert_eq!(r_hits, 2, "reactive hits = a,b");
+        assert!((r_pct - 50.0).abs() < 0.001, "2/4 = 50.0%");
+
+        // Emerging set predicts 3 of the 4 — the anticipatory signal beats the
+        // reactive baseline on this outcome.
+        let emerging: std::collections::HashSet<&str> =
+            ["src/a.rs", "src/b.rs", "src/c.rs"].into_iter().collect();
+        let (e_hits, e_pct) = accuracy_of(&changed, &emerging);
+        assert_eq!(e_hits, 3, "emerging hits = a,b,c");
+        assert!((e_pct - 75.0).abs() < 0.001, "3/4 = 75.0%");
+
+        // Rounding to 1 decimal: 1/3 = 33.333... → 33.3.
+        let three = ["src/x.rs", "src/y.rs", "src/w.rs"];
+        let one_hit: std::collections::HashSet<&str> = ["src/x.rs"].into_iter().collect();
+        let (h, p) = accuracy_of(&three, &one_hit);
+        assert_eq!(h, 1);
+        assert!((p - 33.3).abs() < 0.001, "1/3 rounds to 33.3");
+
+        // Empty changed list yields (0, 0.0), never a divide-by-zero.
+        let empty: [&str; 0] = [];
+        let (zh, zp) = accuracy_of(&empty, &reactive);
+        assert_eq!(zh, 0);
+        assert!((zp - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_validation_event_emerging_accuracy_pct_optional() {
+        // Backward compat: a line WITHOUT emerging_accuracy_pct parses to None.
+        let without = r#"{"day":10,"trigger":"cli","predicted_count":10,"hit_count":1,"total_changed":2,"accuracy_pct":50.0}"#;
+        let events = parse_validation_events(without);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].emerging_accuracy_pct, None,
+            "absent emerging_accuracy_pct → None (24 historical lines stay valid)"
+        );
+
+        // A line WITH emerging_accuracy_pct parses to Some(value).
+        let with = r#"{"day":11,"trigger":"watch_failure","predicted_count":10,"hit_count":2,"total_changed":4,"accuracy_pct":50.0,"emerging_accuracy_pct":75.0}"#;
+        let events = parse_validation_events(with);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].emerging_accuracy_pct,
+            Some(75.0),
+            "present emerging_accuracy_pct → Some(value)"
+        );
+    }
+
+    #[test]
+    fn test_write_validation_event_emerging_accuracy_roundtrips() {
+        // When emerging data is present, write_validation_event must emit the
+        // emerging_accuracy_pct field and the reader must recover it.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("validations.jsonl");
+
+        let hits = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+        let surprises = vec!["src/c.rs".to_string(), "src/d.rs".to_string()];
+        write_validation_event(
+            &path,
+            138,
+            "watch_failure",
+            &hits,
+            &surprises,
+            50.0,
+            Some(75.0),
+        )
+        .expect("write validation event with emerging");
+
+        let contents = std::fs::read_to_string(&path).expect("read validation file");
+        let raw: serde_json::Value =
+            serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+        assert!(
+            (raw["emerging_accuracy_pct"].as_f64().unwrap() - 75.0).abs() < 0.001,
+            "emerging_accuracy_pct written when Some"
+        );
+
+        let events = parse_validation_events(&contents);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].emerging_accuracy_pct, Some(75.0));
     }
 }
