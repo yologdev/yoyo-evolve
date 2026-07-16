@@ -1863,6 +1863,58 @@ mod tests {
     }
 
     #[test]
+    fn normalize_symbol_query_fixture_table() {
+        // The full class of messy inputs a developer might paste into /def or
+        // /refs, straight out of code. This table IS the normalizer's real
+        // spec: it pins current behavior across the whole input class so a
+        // future regression (or an unhandled shape) surfaces as one failing
+        // table, not one late-night surprise at a time (Day 137 lesson —
+        // enumerate the malformed shapes up front instead of one per session).
+        //
+        // Each `expected` is the ACTUAL current output, traced against the
+        // code. Where that differs from the intuitive ideal, a `// KNOWN GAP:`
+        // comment records the ideal for a future session — this test is
+        // enumeration, not a fix (do NOT change the normalizer to satisfy an
+        // intuitive expectation here).
+        let cases: &[(&str, &str)] = &[
+            // Clean identifiers pass through untouched.
+            ("foo", "foo"),
+            ("MyStruct", "MyStruct"),
+            // Call / borrow / deref shapes.
+            ("foo()", "foo"),
+            // KNOWN GAP: ideal is "foo" (the callee), but the last name run
+            // wins so a trailing argument identifier is returned instead.
+            ("foo(a, b)", "b"),
+            ("&foo", "foo"),
+            ("&mut foo", "foo"),
+            ("*foo", "foo"),
+            // Path / member access — the last segment is the symbol.
+            ("self.count", "count"),
+            ("crate::bar::baz", "baz"),
+            ("std::vec::Vec", "Vec"),
+            // Generics — take the text before the first `<`.
+            ("Vec<Foo>", "Vec"),
+            ("foo<T>", "foo"),
+            // Trailing punctuation from copy-paste.
+            ("foo,", "foo"),
+            ("foo;", "foo"),
+            ("foo:", "foo"),
+            // Index literals — the numeric index is never a symbol name.
+            ("arr[0]", "arr"),
+            ("items[42]", "items"),
+            // Whitespace is trimmed.
+            ("  foo  ", "foo"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                normalize_symbol_query(input),
+                *expected,
+                "normalize_symbol_query({input:?}) should be {expected:?}"
+            );
+        }
+    }
+
+    #[test]
     fn normalize_symbol_query_graceful_edge_cases() {
         // Empty stays empty (usage hint still prints downstream).
         assert_eq!(normalize_symbol_query(""), "");
