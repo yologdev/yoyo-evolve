@@ -6,7 +6,10 @@
 //! Scoring, prediction, and reporting stay in `commands_risk.rs`, which
 //! re-exports everything here so call sites are unchanged.
 
-use crate::commands_risk::{compute_file_risk_scores, learn_weights_from_history, FileRisk};
+use crate::commands_risk::{
+    compute_file_risk_scores, detect_emerging_risks, learn_weights_from_history, FileRisk,
+};
+use crate::commands_risk_emerging::EmergingRisk;
 use crate::format::{DIM, RESET};
 
 /// Default path for risk snapshot JSONL file.
@@ -29,7 +32,12 @@ pub(crate) fn risk_autosnapshot_enabled() -> bool {
 ///
 /// Takes already-sorted risk scores, day number, and git hash.
 /// Returns a single JSON line (no trailing newline).
-pub(crate) fn build_risk_snapshot_json(risks: &[FileRisk], day: u32, git_hash: &str) -> String {
+pub(crate) fn build_risk_snapshot_json(
+    risks: &[FileRisk],
+    emerging: &[EmergingRisk],
+    day: u32,
+    git_hash: &str,
+) -> String {
     let ts = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
@@ -56,11 +64,25 @@ pub(crate) fn build_risk_snapshot_json(risks: &[FileRisk], day: u32, git_hash: &
         })
         .collect();
 
+    let emerging_arr: Vec<serde_json::Value> = emerging
+        .iter()
+        .take(10)
+        .map(|e| {
+            serde_json::json!({
+                "path": e.path,
+                "momentum": (e.momentum * 100.0).round() / 100.0,
+                "current_rank": e.current_rank,
+                "signals": e.signals,
+            })
+        })
+        .collect();
+
     let snapshot = serde_json::json!({
         "ts": ts,
         "day": day,
         "git_hash": git_hash,
         "top_10": top_10,
+        "emerging": emerging_arr,
     });
 
     serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_string())
@@ -120,13 +142,14 @@ pub(crate) fn auto_risk_snapshot() {
     }
 
     let risks = compute_file_risk_scores();
+    let emerging = detect_emerging_risks(&risks);
 
     let day: u32 = std::fs::read_to_string("DAY_COUNT")
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
-    let json_line = build_risk_snapshot_json(&risks, day, &git_hash);
+    let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
     if let Err(e) = write_risk_snapshot_to(std::path::Path::new(RISK_SNAPSHOT_PATH), &json_line) {
         eprintln!("  {DIM}(risk snapshot skipped: {e}){RESET}");
     }
@@ -136,6 +159,7 @@ pub(crate) fn auto_risk_snapshot() {
 #[cfg(test)]
 fn auto_risk_snapshot_to(path: &std::path::Path) {
     let risks = compute_file_risk_scores();
+    let emerging = detect_emerging_risks(&risks);
 
     let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
         .unwrap_or_else(|_| "unknown".to_string())
@@ -147,7 +171,7 @@ fn auto_risk_snapshot_to(path: &std::path::Path) {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
-    let json_line = build_risk_snapshot_json(&risks, day, &git_hash);
+    let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
     write_risk_snapshot_to(path, &json_line).expect("test snapshot write should succeed");
 }
 
@@ -511,7 +535,7 @@ mod tests {
             },
         ];
 
-        let json = build_risk_snapshot_json(&risks, 112, "abc123f");
+        let json = build_risk_snapshot_json(&risks, &[], 112, "abc123f");
         // Must be valid JSON
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(parsed["day"], 112);
@@ -541,11 +565,11 @@ mod tests {
             test_density: 0.0,
         }];
 
-        let json = build_risk_snapshot_json(&risks, 42, "deadbee");
+        let json = build_risk_snapshot_json(&risks, &[], 42, "deadbee");
         write_risk_snapshot_to(&path, &json).expect("write ok");
 
         // Write a second snapshot
-        let json2 = build_risk_snapshot_json(&risks, 43, "cafebab");
+        let json2 = build_risk_snapshot_json(&risks, &[], 43, "cafebab");
         write_risk_snapshot_to(&path, &json2).expect("write ok");
 
         // Read back and verify both lines are valid JSON
@@ -570,7 +594,7 @@ mod tests {
             })
             .collect();
 
-        let json = build_risk_snapshot_json(&risks, 1, "1234567");
+        let json = build_risk_snapshot_json(&risks, &[], 1, "1234567");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let top = parsed["top_10"].as_array().expect("top_10 array");
         assert_eq!(top.len(), 10);
@@ -608,7 +632,7 @@ mod tests {
         ];
 
         // The exact two-step the non-interactive CLI feed performs.
-        let json_line = build_risk_snapshot_json(&risks, 130, "feed123");
+        let json_line = build_risk_snapshot_json(&risks, &[], 130, "feed123");
         write_risk_snapshot_to(&path, &json_line).expect("feed write must succeed");
 
         // Read back exactly as the downstream accuracy math does.

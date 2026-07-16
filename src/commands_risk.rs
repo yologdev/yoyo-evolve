@@ -1254,6 +1254,7 @@ fn handle_risk_predict() {
 /// Handle `/risk snapshot` — save current risk predictions to JSONL.
 fn handle_risk_snapshot() {
     let risks = compute_file_risk_scores();
+    let emerging = detect_emerging_risks(&risks);
 
     // Get current git hash
     let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
@@ -1267,7 +1268,7 @@ fn handle_risk_snapshot() {
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
-    let json = build_risk_snapshot_json(&risks, day, &git_hash);
+    let json = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
     let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
 
     match write_risk_snapshot_to(path, &json) {
