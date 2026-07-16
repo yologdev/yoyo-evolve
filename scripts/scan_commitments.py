@@ -40,7 +40,11 @@ import urllib.request
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
-MODEL = "claude-opus-4-6"
+# Follow the fleet-wide MODEL contract (the same secret every loop reads)
+# instead of hardcoding a model the key may not be scoped for — the
+# hardcoded claude-opus-4-6 401'd every session for two days (Jul 15-16)
+# while the fleet model worked fine in the same runs.
+MODEL = os.environ.get("MODEL", "claude-opus-4-6")
 MAX_TOKENS = 4096
 TIMEOUT_SECS = 60
 MAX_RETRIES = 3
