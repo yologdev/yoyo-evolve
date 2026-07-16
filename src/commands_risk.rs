@@ -2276,6 +2276,7 @@ fn handle_risk_validate() {
             &hits,
             &surprises,
             accuracy_pct_rounded,
+            None,
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }

@@ -184,9 +184,9 @@ pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 /// half of the prediction meter in the same shape.
 ///
 /// The JSON line carries `ts`, `day`, `trigger`, `hits`, `surprises`,
-/// `predicted_count` (always 10), and `accuracy_pct` — exactly the fields the
-/// accuracy readers (`parse_validation_events`, `parse_rich_validation_events`)
-/// consume.
+/// `predicted_count` (always 10), `accuracy_pct`, and — when emerging data is
+/// present — `emerging_accuracy_pct`. These are exactly the fields the accuracy
+/// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
 pub(crate) fn write_validation_event(
     validation_path: &std::path::Path,
     day: u32,
@@ -194,6 +194,7 @@ pub(crate) fn write_validation_event(
     hits: &[String],
     surprises: &[String],
     accuracy_pct: f64,
+    emerging_accuracy_pct: Option<f64>,
 ) -> std::io::Result<()> {
     let ts = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -210,7 +211,7 @@ pub(crate) fn write_validation_event(
         })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let event = serde_json::json!({
+    let mut event = serde_json::json!({
         "ts": ts,
         "day": day,
         "trigger": trigger,
@@ -219,6 +220,15 @@ pub(crate) fn write_validation_event(
         "predicted_count": 10,
         "accuracy_pct": accuracy_pct,
     });
+
+    // Only record the anticipatory accuracy when we actually have emerging
+    // data to grade against — absent means "no emerging list in the snapshot"
+    // (older snapshots), NOT "0% accurate".
+    if let Some(ea) = emerging_accuracy_pct {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("emerging_accuracy_pct".to_string(), serde_json::json!(ea));
+        }
+    }
 
     if let Some(parent) = validation_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -232,6 +242,24 @@ pub(crate) fn write_validation_event(
         .append(true)
         .open(validation_path)?;
     writeln!(file, "{json_str}")
+}
+
+/// Pure grading helper: given the list of files that actually changed and a
+/// set of predicted paths, return `(hits, accuracy_pct_rounded)`.
+///
+/// `hits` is the count of changed files that appeared in `predicted`;
+/// accuracy is `hits / changed * 100`, rounded to 1 decimal. An empty
+/// `changed` list yields `(0, 0.0)`. Used to grade BOTH the reactive
+/// (`top_10`) and anticipatory (`emerging`) prediction sets against the same
+/// outcome, so the allostatic-vs-homeostatic comparison is measurable.
+fn accuracy_of(changed: &[&str], predicted: &std::collections::HashSet<&str>) -> (usize, f64) {
+    if changed.is_empty() {
+        return (0, 0.0);
+    }
+    let hits = changed.iter().filter(|f| predicted.contains(**f)).count();
+    let pct = (hits as f64 / changed.len() as f64) * 100.0;
+    let pct_rounded = (pct * 10.0).round() / 10.0;
+    (hits, pct_rounded)
 }
 
 /// Automatically validate risk predictions against files that were changed
@@ -303,6 +331,20 @@ fn auto_validate_after_failure_to(
     };
     let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
 
+    // Also grade the *anticipatory* (emerging) prediction set against the same
+    // outcome — the allostatic signal. Only when the snapshot actually carried
+    // an emerging list (older snapshots have none → None, so the reader can tell
+    // "no emerging data" from "0% accurate").
+    let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+    let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+        (0, None)
+    } else {
+        let emerging_set: std::collections::HashSet<&str> =
+            last.emerging.iter().map(|s| s.as_str()).collect();
+        let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+        (e_hits, Some(e_pct))
+    };
+
     let day: u32 = std::fs::read_to_string("DAY_COUNT")
         .ok()
         .and_then(|s| s.trim().parse().ok())
@@ -317,6 +359,7 @@ fn auto_validate_after_failure_to(
         &hits,
         &surprises,
         accuracy_pct_rounded,
+        emerging_accuracy_pct,
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -328,6 +371,13 @@ fn auto_validate_after_failure_to(
         total_changed,
         accuracy_pct_rounded,
     );
+    if let Some(e_pct) = emerging_accuracy_pct {
+        // Allostatic-vs-homeostatic comparison, visible the moment it's measured.
+        eprintln!(
+            "{DIM}     📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
+            emerging_hits, total_changed, e_pct, accuracy_pct_rounded,
+        );
+    }
     if !hits.is_empty() {
         let hit_list: Vec<&str> = hits.iter().map(|s| s.as_str()).collect();
         eprintln!(
@@ -353,6 +403,11 @@ pub(crate) struct ValidationEvent {
     pub(crate) hit_count: usize,
     pub(crate) total_changed: usize,
     pub(crate) accuracy_pct: f64,
+    /// Anticipatory (emerging / momentum) prediction accuracy for this event.
+    /// `None` when the underlying snapshot carried no emerging list (older
+    /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
+    #[allow(dead_code)]
+    pub(crate) emerging_accuracy_pct: Option<f64>,
 }
 
 /// Load validation history from a JSONL file.
@@ -381,12 +436,16 @@ pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
         let surprises = val["surprises"].as_array().map(|a| a.len()).unwrap_or(0);
         let total_changed = hits + surprises;
         let accuracy_pct = val["accuracy_pct"].as_f64().unwrap_or(0.0);
+        // Optional anticipatory accuracy — absent on all historical lines and
+        // on CLI-triggered events, so parse defensively (absent → None).
+        let emerging_accuracy_pct = val.get("emerging_accuracy_pct").and_then(|v| v.as_f64());
 
         events.push(ValidationEvent {
             day,
             hit_count: hits,
             total_changed,
             accuracy_pct,
+            emerging_accuracy_pct,
         });
     }
     events
@@ -1065,7 +1124,7 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let surprises = vec!["src/prompt.rs".to_string()];
-        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7)
+        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7, None)
             .expect("write validation event");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
@@ -1091,7 +1150,7 @@ mod tests {
 
         let hits = vec!["src/tools.rs".to_string()];
         let surprises: Vec<String> = vec![];
-        write_validation_event(&path, 100, "watch_failure", &hits, &surprises, 100.0)
+        write_validation_event(&path, 100, "watch_failure", &hits, &surprises, 100.0, None)
             .expect("write validation event");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
@@ -1112,8 +1171,10 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string()];
         let surprises: Vec<String> = vec![];
-        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0).expect("first write");
-        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0).expect("second write");
+        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0, None)
+            .expect("first write");
+        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0, None)
+            .expect("second write");
 
         let events = load_validation_history_from(&path);
         assert_eq!(events.len(), 2, "appending twice yields two lines");

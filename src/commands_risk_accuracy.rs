@@ -188,6 +188,7 @@ mod tests {
             hit_count: 3,
             total_changed: 5,
             accuracy_pct: 60.0,
+            emerging_accuracy_pct: None,
         }];
         let stats = compute_accuracy_stats(&events);
         assert_eq!(stats.total_validations, 1);
@@ -207,36 +208,42 @@ mod tests {
                 hit_count: 1,
                 total_changed: 5,
                 accuracy_pct: 20.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 101,
                 hit_count: 1,
                 total_changed: 5,
                 accuracy_pct: 25.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 102,
                 hit_count: 2,
                 total_changed: 5,
                 accuracy_pct: 40.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 103,
                 hit_count: 3,
                 total_changed: 5,
                 accuracy_pct: 60.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 104,
                 hit_count: 4,
                 total_changed: 5,
                 accuracy_pct: 80.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 105,
                 hit_count: 4,
                 total_changed: 5,
                 accuracy_pct: 80.0,
+                emerging_accuracy_pct: None,
             },
         ];
         let trend = compute_accuracy_trend(&events);
@@ -251,36 +258,42 @@ mod tests {
                 hit_count: 4,
                 total_changed: 5,
                 accuracy_pct: 80.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 101,
                 hit_count: 4,
                 total_changed: 5,
                 accuracy_pct: 75.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 102,
                 hit_count: 3,
                 total_changed: 5,
                 accuracy_pct: 60.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 103,
                 hit_count: 2,
                 total_changed: 5,
                 accuracy_pct: 40.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 104,
                 hit_count: 1,
                 total_changed: 5,
                 accuracy_pct: 20.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 105,
                 hit_count: 1,
                 total_changed: 5,
                 accuracy_pct: 15.0,
+                emerging_accuracy_pct: None,
             },
         ];
         let trend = compute_accuracy_trend(&events);
@@ -295,24 +308,28 @@ mod tests {
                 hit_count: 3,
                 total_changed: 5,
                 accuracy_pct: 60.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 101,
                 hit_count: 3,
                 total_changed: 5,
                 accuracy_pct: 58.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 102,
                 hit_count: 3,
                 total_changed: 5,
                 accuracy_pct: 62.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 103,
                 hit_count: 3,
                 total_changed: 5,
                 accuracy_pct: 59.0,
+                emerging_accuracy_pct: None,
             },
         ];
         let trend = compute_accuracy_trend(&events);
@@ -326,6 +343,7 @@ mod tests {
             hit_count: 3,
             total_changed: 5,
             accuracy_pct: 60.0,
+            emerging_accuracy_pct: None,
         }];
         let trend = compute_accuracy_trend(&events);
         assert_eq!(trend, AccuracyTrend::Insufficient);
@@ -339,18 +357,21 @@ mod tests {
                 hit_count: 1,
                 total_changed: 5,
                 accuracy_pct: 20.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 110,
                 hit_count: 2,
                 total_changed: 5,
                 accuracy_pct: 40.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 115,
                 hit_count: 4,
                 total_changed: 5,
                 accuracy_pct: 80.0,
+                emerging_accuracy_pct: None,
             },
         ];
         let stats = compute_accuracy_stats(&events);
@@ -366,12 +387,14 @@ mod tests {
                 hit_count: 1,
                 total_changed: 5,
                 accuracy_pct: 20.0,
+                emerging_accuracy_pct: None,
             },
             ValidationEvent {
                 day: 110,
                 hit_count: 4,
                 total_changed: 5,
                 accuracy_pct: 80.0,
+                emerging_accuracy_pct: None,
             },
         ];
         let stats = compute_accuracy_stats(&events);
