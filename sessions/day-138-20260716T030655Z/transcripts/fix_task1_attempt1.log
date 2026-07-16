@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the current state of the code to understand what's there and what's missing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_risk_snapshot_jso… ✓ (3ms)
+ ✓ (11ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The core code change is done. I need to add the tests and update CLAUDE.md. Let me look at the relevant sections.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:35..135  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct EmergingRisk… ✓ (2ms)
+ ✓ (4ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Now let me look at the existing tests to understand the test patterns and how FileRisk is constructed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:505..605 ✓ (1ms)
+
+Now let me check the `EmergingRisk` struct to confirm how to construct it in tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_emerging.rs:1..31 ✓ (1ms)
+
+Now I have everything I need. Let me add the tests after the existing test_risk_snapshot_top_10_limit test and check the import of `EmergingRisk` in the test module.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '440,470p' src/commands_r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^    use \|use super::\… ✓ (3ms)
+  2 tools completed in 4.1s (2 ✓)
+
+`EmergingRisk is available via super::*. Now let me add the tests after test_risk_snapshot_top_10_limit`.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (7 → 93 lines)
+            assert_eq!(top.len(), 10);
+            // First entry should be highest score
+            assert_eq!(top[0]["path"], "src/file_0.rs");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_snapshot_records_emerging() {
+  +         // The anticipatory signal must be persisted alongside top_10 so Task 2
+  +         // can validate it. A snapshot with synthetic emerging entries round-trips.
+  +         let risks = vec![FileRisk {
+  +             path: "src/foo.rs".to_string(),
+  +             score: 0.82,
+  +             signals: vec!["▲churn"],
+  +             test_density: 0.0,
+  +         }];
+  +         let emerging = vec![
+  +             EmergingRisk {
+  +                 path: "src/rising.rs".to_string(),
+  +                 momentum: 2.146,
+  +                 current_rank: 12,
+  ... (70 more lines)
+ ✓ (1m 37s)
+            assert_eq!(top.len(), 10);
+            // First entry should be highest score
+            assert_eq!(top[0]["path"], "src/file_0.rs");
+  +     }
+  + 
+  +     #[test]
+  +     fn test_risk_snapshot_records_emerging() {
+  +         // The anticipatory signal must be persisted alongside top_10 so Task 2
+  ... (13 more lines)
+
+Now update CLAUDE.md's commands_risk_snapshots.rs bullet.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_snapshots… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CLAUDE.md (1 → 1 lines)
+  - - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot` (dedups by git hash — one snapshot per distinct HEAD, keeps accumulation clean; skips re-recording the same commit-state via `last_snapshot_git_hash`), `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`).
+  + - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot` (dedups by git hash — one snapshot per distinct HEAD, keeps accumulation clean; skips re-recording the same commit-state via `last_snapshot_git_hash`), `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); each snapshot records both `top_10` (reactive/homeostatic risk) AND `emerging` (anticipatory/allostatic momentum predictions — the DREAM's allostatic signal); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`).
+ ✓ (1m 17s)
+  - - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot` (dedups by git hash — one snapshot per distinct HEAD, keeps accumulation clean; skips re-recording the same commit-state via `last_snapshot_git_hash`), `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`).
+  + - `commands_risk_snapshots.rs` — snapshot/validation persistence for /risk: `auto_risk_snapshot` (dedups by git hash — one snapshot per distinct HEAD, keeps accumulation clean; skips re-recording the same commit-state via `last_snapshot_git_hash`), `auto_validate_after_failure`, snapshot JSONL parsing (`ParsedSnapshot`, `ValidationEvent`); each snapshot records both `top_10` (reactive/homeostatic risk) AND `emerging` (anticipatory/allostatic momentum predictions — the DREAM's allostatic signal); re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`).
+  2 tools completed in 1m 24s (2 ✓)
+
+Now let me run the full verification suite.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (18.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib commands_risk_s… ✓ (135ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test snapshot 2>&1 | tail … ✓ (1.3s)
+  3 tools completed in 26.3s (3 ✓)
+
+My new tests pass. Let me confirm the three new tests specifically ran and run the full test suite for good measure.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test emerging 2>&1 | grep …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep "test res… ✓ (2.4s)
+ ✓ (1m 0s)
+  2 tools completed in 1m 2s (2 ✓)
+
+All checks pass. Both mandatory deliverables the evaluator flagged are now complete:
+
+**1. New unit tests for the emerging field** (in src/commands_risk_snapshots.rs):
+• `test_risk_snapshot_records_emerging — builds a snapshot with synthetic risks + emerging, parses the JSON back, asserts the emerging array is present with expected path, momentum (rounded to 2 decimals: 2.146 → 2.15), current_rank, and signals`.
+• `test_risk_snapshot_empty_emerging_yields_empty_array — asserts an empty list yields "emerging": []` (key present, not missing) — the contract Task 2 relies on.
+• test_risk_snapshot_emerging_top_10_limit — verifies the top-10 cap on emerging entries.
+
+**2. CLAUDE.md update** — the commands_risk_snapshots.rs bullet now notes the snapshot records both top_10 (reactive/homeostatic) AND emerging (anticipatory/allostatic — the DREAM's allostatic signal), as one added clause without rewriting the bullet.
+
+Verification: cargo fmt, cargo clippy --all-targets -- -D warnings, cargo build, and cargo test (4318 + 88 passing) all green. The existing build_risk_snapshot_json tests already pass &[] for the new parameter, so no call sites broke.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,54 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this task quickly. Let me check the key claims: the required tests were added, and CLAUDE.md was updated.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging" src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff HEAD~1 --stat 2>/dev/nu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n … ✓ (6ms)
+ ✓ (5ms)
+ ✓ (7ms)
+  3 tools completed in 1.1s (3 ✓)
+
+The diff shown by the harness didn't include CLAUDE.md or the new tests. Let me check the actual committed state.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD --stat  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/commands_ri… ✓ (5ms)
+ ✓ (7ms)
+  2 tools completed in 1.2s (2 ✓)
+
+Two required items are missing from the commit:
+1. No new tests — the task explicitly said "write first" tests: one asserting emerging array present with expected fields, one asserting empty list produces "emerging": []. Only call-site updates (&[]) were made; no new emerging-specific tests.
+2. No CLAUDE.md update — the commit only touches 2 source files.
+
+Let me confirm no emerging test exists and CLAUDE.md wasn't updated.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -cn "emerging" CLAUDE.md; e… ✓ (6ms)
+
+The grep -cn "emerging" CLAUDE.md returned 2 — but that count includes the pre-existing bullet text. Let me confirm whether CLAUDE.md was changed in this commit and whether those "emerging" references are new.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD --name-only | grep… ✓ (5ms)
+
+Confirmed. CLAUDE.md is NOT in the commit (exit 1 = no match in name-only), and the two "emerging" references are pre-existing bullets for other modules — the commands_risk_snapshots.rs bullet was not updated as the task explicitly required.
+
+The core implementation is correct and complete (additive emerging field, pure function seam preserved, momentum rounding, top-10 cap, backward-compatible). However, **two explicit task requirements were skipped**:
+1. No new unit tests for the emerging field (task said "write first" — assert array present with expected path/momentum/current_rank; assert empty → "emerging": []).
+2. No CLAUDE.md doc update (task explicitly required updating the commands_risk_snapshots.rs bullet).
+
+Both were mandatory deliverables, not optional polish. The test omission is significant because the empty-list contract ("emerging": [] not missing) is the exact thing downstream validation (Task 2) will depend on, and it's unverified.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (2 lines)
+  + Verdict: FAIL
+  + Reason: The core code change is correct (additive `emerging` field, pure-function seam preserved, momentum rounded, top-10 capped, backward-compatible), but two explicit mandatory deliverables were skipped: no new unit tests for the `emerging` field (task required "write first" tests asserting the array is present with expected path/momentum/current_rank and that an empty list yields `"emerging": []` — the very contract Task 2 will rely on), and the CLAUDE.md `commands_risk_snapshots.rs` bullet was never updated (commit touches only 2 source files, no CLAUDE.md).
+ ✓ (57.8s)
+
+**Verdict: FAIL**
+
+The implementation's core code is correct — the emerging array is additive, build_risk_snapshot_json stays pure (emerging passed as a parameter), momentum is rounded the same way as score, capped at top 10, and existing readers are unaffected. Build and tests pass.
+
+But the task specified two mandatory deliverables that are absent from the commit:
+
+1. No new tests. The task said "write first" — a test asserting the `emerging array is present with expected path/momentum/current_rank`, and a test asserting an empty list produces "emerging": [] (not missing). Only the existing call sites were updated to pass &[]. The empty-list contract is exactly what Task 2's validation will depend on, and it's unverified.
+
+2. No CLAUDE.md update. The commit touches only 2 source files; the commands_risk_snapshots.rs bullet was explicitly required to note the snapshot now records both top_10 (reactive) and `emerging` (anticipatory).
+
+Both were explicit, required parts of the task — not style or polish — so this fails on incompleteness.
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,79 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by surveying my codebase and running self-tests in parallel.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -20  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -10  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/*.rs src/format/*.rs 2… ✓ (4ms)
+ ✓ (7ms)
+ ✓ (161ms)
+  3 tools completed in 1.5s (3 ✓)
+
+Build passes. Now let me run tests, read recent journal entries, and check evolution history in parallel.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' journals/JOURNAL…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh run list --repo yologdev/yoyo… ✓ (8ms)
+ ✓ (373ms)
+ ✓ (31.8s)
+  3 tools completed in 33.1s (3 ✓)
+
+Tests are failing — 83 failed. This is significant. Build passes but tests fail. Let me investigate what's broken.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^(tes… ✓ (15.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -A2 "pani… ✓ (48.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 > /tmp/testout.t… ✓ (47.9s)
+  3 tools completed in 1m 57s (3 ✓)
+
+The failures seem environment/ordering-dependent. Let me run single-threaded to get clean output and see the actual failures.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep "test result: FAILED" /tmp/… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "test result: ok" /tmp/t… ✓ (6ms)
+  2 tools completed in 3.5s (2 ✓)
+
+Interesting — on the second run, all 4315 tests pass. The first run showed 83 failures. This is a **test flakiness / parallelism issue** — tests that share global state (statics) and interfere when run concurrently. This is a real finding. Let me confirm the pattern.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for i in 1 2 3; do cargo test 2>… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (56.8s)
+  2 tools completed in 3m 1s (1 ✓, 1 ✗)
+
+Passing now. The earlier failure was likely a first-run interaction (the failing tests were watch/repl tests that touch cwd/global state). Given CI runs green consistently (last 5 evolve runs all "success"), this is flakiness, not a hard break. Let me note it but not over-index. Let me check the failed test names from the first run more carefully, then move on to memory, self-test, and research.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -oE "(watch|repl)::tests::[… ✓ (8ms)
+
+Confirmed root cause: `watch.rs` tests call `std::env::set_current_dir` which mutates process-global cwd, and other tests (repl completion, watch detection) read cwd concurrently — a classic test-isolation flake. This is a real, actionable bug. Now let me read memory files, self-test the binary, and check the backlog.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== binary self-test ===" …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "set_current_dir" src/*…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (9ms)
+ ✓ (13ms)
+ ✓ (270ms)
+  3 tools completed in 1.5s (3 ✓)
+
+Binary works. No open agent-self issues. There are 51 `set_current_dir` calls across 14 files — this is a widespread test-isolation hazard. Let me check whether there's an existing serialization mechanism (a mutex guard) already in use.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "serial\|CWD_LOCK\|cwd_… ✓ (14ms)
+
+There is a serial_test crate in use with #[serial] attribute. So the fix for the flaky cwd-mutating tests is to add #[serial] to them. Let me check which cwd-mutating tests are missing #[serial].
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for f in src… (10 lines) ✓ (16ms)
+
+This confirms the root cause and the fix clearly: **many cwd-mutating tests lack #[serial]**, so cargo test (parallel) intermittently fails. The mechanism (serial_test) already exists in the codebase — the fix is just to apply it consistently. This is a high-value, well-scoped task. Let me verify my awk isn't giving false positives by spot-checking one.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '2325,2340p' src/watch.rs ✓ (3ms)
+
+Confirmed — this test mutates cwd without #[serial], and other tests reading cwd concurrently can fail. This is the clearest, highest-value bug: **the test suite is flaky, which threatens the entire evolve loop** (a spurious test failure could trigger a revert of good work). Now let me read memory files and do quick competitor research.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "=== recurring themes check… ✓ (7ms)
+
+There's precedent (Day 91: "fixing 21 flaky tests" was valued as maturity work). This confirms flaky-test fixing is a legitimate, valuable task. Let me quickly do competitor research (yopedia recall + web) then check the failing-test list precisely to scope the fix.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && echo "YOPEDIA keys set? token=${…  ▶ web search 'Claude Code Cursor Aider 2026 new features coding agent suba…' ✓ (1.2s)
+ ✓ (1.2s)
+  2 tools completed in 2.5s (2 ✓)
+
+Good research findings. Key competitor themes: **background subagents (run while main continues), auto-commit+push+PR on completion, subagents-spawning-subagents (5-level nesting), /multitask parallel dispatch**. yoyo already has /spawn with worktree isolation, --pr, and RLM sub-agent recursion — so it's tracking these. The biggest gap is background/async execution (yoyo's spawn is more synchronous). Let me save one worthwhile research note to yopedia, then finalize the assessment.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/skills/yopedia/SKILL.md (60 lines) ✓ (1ms)
+
+Let me recall from yopedia first, then ingest the research finding.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && BASE=https://yopedia.yolog.dev; … ✓ (7.8s)
+
+  watch: no files changed this turn — skipping
+

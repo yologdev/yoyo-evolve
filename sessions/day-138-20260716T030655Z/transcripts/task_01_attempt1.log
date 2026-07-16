@@ -1,0 +1,196 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by examining the relevant code to understand the current structure.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_risk_snapshot_jso…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub struct EmergingRisk… ✓ (6ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (160 lines)  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_emerging.rs:1..31 ✓ (2ms)
+ ✓ (2ms)
+  4 tools completed in 4.5s (4 ✓)
+
+Now let me check the `detect_emerging_risks signature and the ParsedSnapshot` parse code.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn detect_emerging_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "detect_emerging_risks\|…  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:360..400 ✓ (1ms)
+ ✓ (4ms)
+ ✓ (3ms)
+  3 tools completed in 1.7s (3 ✓)
+
+`detect_emerging_risks is pub(crate) and re-exported. EmergingRisk is pub(crate)`. Now let me check the import at the top and look at existing tests. Let me check the EmergingRisk import path and the existing build tests.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:500..620 ✓ (1ms)
+
+Now I have full context. Let me check the top-of-file imports and see the test module use statements.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^mod tests\|^#\[cfg(tes… ✓ (4ms)
+
+Now let me make the changes. First, update the import to include `EmergingRisk and detect_emerging_risks, then modify build_risk_snapshot_json`.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (2 → 5 lines)
+  - use crate::commands_risk::{compute_file_risk_scores, learn_weights_from_history, FileRisk};
+  + use crate::commands_risk::{
+  +     compute_file_risk_scores, detect_emerging_risks, learn_weights_from_history, EmergingRisk,
+  +     FileRisk,
+  + };
+    use crate::format::{DIM, RESET};
+ ✓ (10.4s)
+  - use crate::commands_risk::{compute_file_risk_scores, learn_weights_from_history, FileRisk};
+  + use crate::commands_risk::{
+  +     compute_file_risk_scores, detect_emerging_risks, learn_weights_from_history, EmergingRisk,
+  +     FileRisk,
+  + };
+    use crate::format::{DIM, RESET};
+
+`EmergingRisk isn't re-exported from commands_risk. Let me import it from commands_risk_emerging. And detect_emerging_risks` will be used in the callers (non-test), so it's fine once used.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 5 lines)
+    use crate::commands_risk::{
+  -     compute_file_risk_scores, detect_emerging_risks, learn_weights_from_history, EmergingRisk,
+  -     FileRisk,
+  +     compute_file_risk_scores, detect_emerging_risks, learn_weights_from_history, FileRisk,
+    };
+  + use crate::commands_risk_emerging::EmergingRisk;
+    use crate::format::{DIM, RESET};
+ ✓ (17.0s)
+    use crate::commands_risk::{
+  -     compute_file_risk_scores, detect_emerging_risks, learn_weights_from_history, EmergingRisk,
+  -     FileRisk,
+  +     compute_file_risk_scores, detect_emerging_risks, learn_weights_from_history, FileRisk,
+    };
+  + use crate::commands_risk_emerging::EmergingRisk;
+    use crate::format::{DIM, RESET};
+
+Expected — now let me actually use them. Update build_risk_snapshot_json to take emerging and serialize it.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 6 lines)
+  - pub(crate) fn build_risk_snapshot_json(risks: &[FileRisk], day: u32, git_hash: &str) -> String {
+  + pub(crate) fn build_risk_snapshot_json(
+  +     risks: &[FileRisk],
+  +     emerging: &[EmergingRisk],
+  +     day: u32,
+  +     git_hash: &str,
+  + ) -> String {
+ ✓ (10.4s)
+  - pub(crate) fn build_risk_snapshot_json(risks: &[FileRisk], day: u32, git_hash: &str) -> String {
+  + pub(crate) fn build_risk_snapshot_json(
+  +     risks: &[FileRisk],
+  +     emerging: &[EmergingRisk],
+  +     day: u32,
+  +     git_hash: &str,
+  + ) -> String {
+
+There's a third caller in commands_risk.rs:1270. Let me add the serialization body, then fix all three callers.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (6 → 20 lines)
+  +     let emerging_arr: Vec<serde_json::Value> = emerging
+  +         .iter()
+  +         .take(10)
+  +         .map(|e| {
+  +             serde_json::json!({
+  +                 "path": e.path,
+  +                 "momentum": (e.momentum * 100.0).round() / 100.0,
+  +                 "current_rank": e.current_rank,
+  +                 "signals": e.signals,
+  +             })
+  +         })
+  +         .collect();
+  + 
+        let snapshot = serde_json::json!({
+            "ts": ts,
+            "day": day,
+            "git_hash": git_hash,
+            "top_10": top_10,
+  +         "emerging": emerging_arr,
+        });
+ ✓ (10.4s)
+  +     let emerging_arr: Vec<serde_json::Value> = emerging
+  +         .iter()
+  +         .take(10)
+  +         .map(|e| {
+  +             serde_json::json!({
+  +                 "path": e.path,
+  +                 "momentum": (e.momentum * 100.0).round() / 100.0,
+  +                 "current_rank": e.current_rank,
+  ... (12 more lines)
+
+Now update the two callers in commands_risk_snapshots.rs (auto_risk_snapshot, auto_risk_snapshot_to) and the one in commands_risk.rs:1270. Let me look at the commands_risk.rs caller context.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1258..1278 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:1240..1270 ✓ (1ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (2 → 3 lines)
+    fn handle_risk_snapshot() {
+        let risks = compute_file_risk_scores();
+  +     let emerging = detect_emerging_risks(&risks);
+ ✓ (10.6s)
+    fn handle_risk_snapshot() {
+        let risks = compute_file_risk_scores();
+  +     let emerging = detect_emerging_risks(&risks);
+  3 tools completed in 17.7s (3 ✓)
+
+Note: detect_emerging_risks in commands_risk.rs is already in scope (it re-exports it). Let me check whether it needs qualifying — line 992 already uses detect_emerging_risks(&risks) bare, so it's imported. Good. Now update the caller line 1271.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs (1 → 1 lines)
+  -     let json = build_risk_snapshot_json(&risks, day, &git_hash);
+  +     let json = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
+ ✓ (10.3s)
+  -     let json = build_risk_snapshot_json(&risks, day, &git_hash);
+  +     let json = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
+
+Now the two callers in commands_risk_snapshots.rs. The auto_risk_snapshot (line ~143) and auto_risk_snapshot_to (line 151).
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (9 → 10 lines)
+        let risks = compute_file_risk_scores();
+  +     let emerging = detect_emerging_risks(&risks);
+    
+        let day: u32 = std::fs::read_to_string("DAY_COUNT")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+    
+  -     let json_line = build_risk_snapshot_json(&risks, day, &git_hash);
+  +     let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
+        if let Err(e) = write_risk_snapshot_to(std::path::Path::new(RISK_SNAPSHOT_PATH), &json_line) {
+ ✓ (10.4s)
+        let risks = compute_file_risk_scores();
+  +     let emerging = detect_emerging_risks(&risks);
+    
+        let day: u32 = std::fs::read_to_string("DAY_COUNT")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+    
+  ... (3 more lines)
+
+Import errors gone. Now the auto_risk_snapshot_to (test helper, line 173) and the test call sites. Let me update the test helper.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:158..176 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (14 → 15 lines)
+    fn auto_risk_snapshot_to(path: &std::path::Path) {
+        let risks = compute_file_risk_scores();
+  +     let emerging = detect_emerging_risks(&risks);
+    
+        let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+            .unwrap_or_else(|_| "unknown".to_string())
+  ···
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+    
+  -     let json_line = build_risk_snapshot_json(&risks, day, &git_hash);
+  +     let json_line = build_risk_snapshot_json(&risks, &emerging, day, &git_hash);
+ ✓ (10.4s)
+    fn auto_risk_snapshot_to(path: &std::path::Path) {
+        let risks = compute_file_risk_scores();
+  +     let emerging = detect_emerging_risks(&risks);
+    
+        let git_hash = crate::git::run_git(&["rev-parse", "--short", "HEAD"])
+            .unwrap_or_else(|_| "unknown".to_string())
+  ···
+            .and_then(|s| s.trim().parse().ok())
+  ... (4 more lines)
+  2 tools completed in 18.0s (2 ✓)
+
+Now only the test call sites remain. Let me update them with &[] and add the new tests.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_risk_snapshot_jso… ✓ (3ms)
+
+  watch: no files changed this turn — skipping
+

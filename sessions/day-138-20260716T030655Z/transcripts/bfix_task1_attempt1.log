@@ -1,0 +1,83 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The errors are in existing test call sites that need &[] for the new emerging parameter. Let me look at those lines.
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:590..645 ✓ (1ms)
+
+Two call sites to fix. Let me update them to pass &[] for emerging.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 1 lines)
+  -         let json = build_risk_snapshot_json(&risks, 1, "1234567");
+  +         let json = build_risk_snapshot_json(&risks, &[], 1, "1234567");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 1 lines)
+  -         let json_line = build_risk_snapshot_json(&risks, 130, "feed123");
+  +         let json_line = build_risk_snapshot_json(&risks, &[], 130, "feed123");
+ ✓ (10.4s)
+  -         let json = build_risk_snapshot_json(&risks, 1, "1234567");
+  +         let json = build_risk_snapshot_json(&risks, &[], 1, "1234567");
+ ✓ (20.7s)
+  -         let json_line = build_risk_snapshot_json(&risks, 130, "feed123");
+  +         let json_line = build_risk_snapshot_json(&risks, &[], 130, "feed123");
+  2 tools completed in 24.3s (2 ✓)
+
+More call sites. Let me find all of them.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ search 'build_risk_snapshot_json\(&risks, \d' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs ✗ (2ms)
+    │ Search error: grep: Unmatched ( or \(
+  ▶ search 'build_risk_snapshot_json' in /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs ✓ (3ms)
+  2 tools completed in 3.4s (1 ✓, 1 ✗)
+
+Three remaining at 538, 568, 572.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:572..574 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 1 lines)
+  -         let json = build_risk_snapshot_json(&risks, 112, "abc123f");
+  +         let json = build_risk_snapshot_json(&risks, &[], 112, "abc123f");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 1 lines)
+  -         let json = build_risk_snapshot_json(&risks, 42, "deadbee");
+  +         let json = build_risk_snapshot_json(&risks, &[], 42, "deadbee");
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (1 → 1 lines)
+  -         let json2 = build_risk_snapshot_json(&risks, 43, "cafebab");
+  +         let json2 = build_risk_snapshot_json(&risks, &[], 43, "cafebab");
+ ✓ (10.4s)
+  -         let json = build_risk_snapshot_json(&risks, 112, "abc123f");
+  +         let json = build_risk_snapshot_json(&risks, &[], 112, "abc123f");
+ ✓ (20.6s)
+  -         let json = build_risk_snapshot_json(&risks, 42, "deadbee");
+  +         let json = build_risk_snapshot_json(&risks, &[], 42, "deadbee");
+ ✓ (30.9s)
+  -         let json2 = build_risk_snapshot_json(&risks, 43, "cafebab");
+  +         let json2 = build_risk_snapshot_json(&risks, &[], 43, "cafebab");
+  4 tools completed in 37.9s (4 ✓)
+
+The auto-check output is stale (cached). Let me verify current file state and run a fresh build.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'build_risk_snapshot_jso… ✓ (5ms)
+
+Interesting — 597 reverted and 538/568 didn't apply. It seems there are duplicate identical lines and the edits are matching different occurrences. Let me look — 538 and 597 both would be &risks, 1 variants. Wait, 597 shows &risks, 1 again but I edited it. The edits must have been applied to already-matching text elsewhere or reverted. Let me check line 597 and 538/568 directly.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '538p;568p;597p' src/comm… ✓ (3ms)
+
+My edits to 538, 568, 597 didn't stick (the auto-check runs git? No). Likely each edit_file matched but then something reverted, or the earlier batch matched wrong lines. Regardless, let me just use sed to fix all three remaining three-arg call sites precisely.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i \ (6 lines) ✓ (6ms)
+
+All 5 test call sites now pass &[]. Let me verify the full build/test/clippy suite.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (9.1s)
+
+Build passes. Now tests and clippy.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (1m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.1s)
+  2 tools completed in 1m 37s (2 ✓)
+
+All green. 
+
+Fixed: the build_risk_snapshot_json signature gained a new `emerging: &[EmergingRisk] parameter, but five existing test call sites still passed only three arguments. I updated each to pass &[]` for the new parameter:
+• lines 538, 568, 572, 597, 635
+
+cargo fmt, cargo build, cargo test (88 passed), and cargo clippy --all-targets -- -D warnings all pass.
+
+  watch: no files changed this turn — skipping
+

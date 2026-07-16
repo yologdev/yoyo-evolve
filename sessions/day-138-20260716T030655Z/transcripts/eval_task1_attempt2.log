@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this diff against the task quickly.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct EmergingRisk" -A…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '360,395p' src/commands_r… ✓ (5ms)
+ ✓ (3ms)
+  2 tools completed in 1.2s (2 ✓)
+
+The `EmergingRisk fields match exactly (path: String, momentum: f64, current_rank: usize, signals: Vec<String>). Let me confirm ParsedSnapshot` only reads the expected fields (backward compat).
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "top_10\|git_hash\|emerg… ✓ (4ms)
+
+`parse_all_snapshots (line 403) reads only git_hash and top_10 — adding emerging` is additive and backward-compatible. All the task requirements are met:
+
+• ✅ New emerging: &[EmergingRisk] param added, keeping the pure/testable seam
+• ✅ Both real callers compute via detect_emerging_risks(&risks) and pass it
+• ✅ Serialization matches spec: path/momentum(rounded (m*100).round()/100)/current_rank/signals
+• ✅ Capped at top 10
+• ✅ Additive JSON field; parser unaffected
+• ✅ Three new tests (records emerging, empty→[], top-10 cap); existing call sites updated to &[]
+• ✅ CLAUDE.md bullet updated with a single clause noting both top_10 and emerging
+• ✅ Scope respected (1 source file + CLAUDE.md; commands_risk.rs call-site update is the required signature propagation, not scope creep). No validation wiring (correctly deferred to Task 2). Not product surface.
+
+This is not a user-facing feature that needs binary exercise — it's an internal serialization change, well covered by the round-trip tests.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (2 lines) ✓ (1m 3s)
+
+**Verdict: PASS**
+
+The diff correctly extends build_risk_snapshot_json to persist the anticipatory emerging signal:
+• New emerging: &[EmergingRisk] param preserves the pure/testable seam; both real callers (`auto_risk_snapshot, auto_risk_snapshot_to, plus the CLI handle_risk_snapshot path) compute it via detect_emerging_risks(&risks)`.
+• Serialization matches spec exactly — path, momentum rounded `(m*100).round()/100`, current_rank, signals, capped at top 10.
+• The emerging JSON field is additive; parse_all_snapshots/ParsedSnapshot only read top_10/git_hash/day, so it's backward-compatible.
+• Three new tests (records, empty→[], top-10 cap) plus updated existing call sites to &[].
+• CLAUDE.md bullet updated with a single clause; scope respected (no validation wiring, correctly deferred to Task 2). Not product surface.
+
+  watch: no files changed this turn — skipping
+
