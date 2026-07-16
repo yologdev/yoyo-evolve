@@ -1,0 +1,267 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll start by understanding the current state of the relevant functions in the target file.
+  ▶ search 'fn auto_validate_after_failure_to|fn write_validation_event|…' in src/commands_risk_snapshots.rs ✓ (3ms)
+  ▶ search 'auto_validate_after_failure|write_validation_event|Validatio…' in src/commands_risk_snapshots.rs ✓ (3ms)
+  ▶ $ wc -l src/commands_risk_snapshots.rs; grep -n "write_validation_event\|auto_vali… ✓ (8ms)
+  3 tools completed in 6.3s (3 ✓)
+
+The grep tool had issues but bash works. Let me read the key sections.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:185..445 ✓ (2ms)
+
+Now let me find the other call site of write_validation_event (the CLI /risk validate path).
+📦 RTK detected — using compressed output (disable with --no-rtk)
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "write_validation_event(" src/ ✓ (17ms)
+  ▶ $ grep -n "write_validation_event(" src/commands_risk_snapshots.rs; echo "---"; se… ✓ (5ms)
+  2 tools completed in 3.4s (2 ✓)
+
+Now I have the full picture. Let me look at existing tests in the file to understand test conventions and find a good place for a pure helper.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn test_\|#\[test\]\|mod tests" src/commands_risk_snapshots.rs | tail -… ✓ (4ms)
+
+Now I'll implement. First, let me write a pure grading helper and update the code. Let me start with the helper function, placed just before auto_validate_after_failure.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (3 → 21 lines)
+  + /// Pure grading helper: given the list of files that actually changed and a
+  + /// set of predicted paths, return `(hits, accuracy_pct_rounded)`.
+  + ///
+  + /// `hits` is the count of changed files that appeared in `predicted`;
+  + /// accuracy is `hits / changed * 100`, rounded to 1 decimal. An empty
+  + /// `changed` list yields `(0, 0.0)`. Used to grade BOTH the reactive
+  + /// (`top_10`) and anticipatory (`emerging`) prediction sets against the same
+  + /// outcome, so the allostatic-vs-homeostatic comparison is measurable.
+  + fn accuracy_of(changed: &[&str], predicted: &std::collections::HashSet<&str>) -> (usize, f64) {
+  +     if changed.is_empty() {
+  +         return (0, 0.0);
+  +     }
+  +     let hits = changed.iter().filter(|f| predicted.contains(**f)).count();
+  +     let pct = (hits as f64 / changed.len() as f64) * 100.0;
+  +     let pct_rounded = (pct * 10.0).round() / 10.0;
+  +     (hits, pct_rounded)
+  + }
+  + 
+    /// Automatically validate risk predictions against files that were changed
+    /// in the current session. Called after watch failures (or successes) to
+  ... (1 more lines)
+ ✓ (18.7s)
+  + /// Pure grading helper: given the list of files that actually changed and a
+  + /// set of predicted paths, return `(hits, accuracy_pct_rounded)`.
+  + ///
+  + /// `hits` is the count of changed files that appeared in `predicted`;
+  + /// accuracy is `hits / changed * 100`, rounded to 1 decimal. An empty
+  + /// `changed` list yields `(0, 0.0)`. Used to grade BOTH the reactive
+  + /// (`top_10`) and anticipatory (`emerging`) prediction sets against the same
+  + /// outcome, so the allostatic-vs-homeostatic comparison is measurable.
+  ... (13 more lines)
+
+Expected — I'll wire it up now. Let me update `write_validation_event to add the new param, and update auto_validate_after_failure_to` to compute emerging accuracy and use the helper.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (32 → 45 lines)
+        hits: &[String],
+        surprises: &[String],
+        accuracy_pct: f64,
+  +     emerging_accuracy_pct: Option<f64>,
+    ) -> std::io::Result<()> {
+        let ts = std::process::Command::new("date")
+            .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  ···
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+    
+  -     let event = serde_json::json!({
+  +     let mut event = serde_json::json!({
+            "ts": ts,
+            "day": day,
+            "trigger": trigger,
+  ···
+            "predicted_count": 10,
+            "accuracy_pct": accuracy_pct,
+        });
+  ... (12 more lines)
+ ✓ (12.0s)
+        hits: &[String],
+        surprises: &[String],
+        accuracy_pct: f64,
+  +     emerging_accuracy_pct: Option<f64>,
+    ) -> std::io::Result<()> {
+        let ts = std::process::Command::new("date")
+            .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+  ···
+  ... (13 more lines)
+
+Now let me update the doc comment for write_validation_event, the auto path call site, and the CLI call site.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (5 → 5 lines)
+    /// The JSON line carries `ts`, `day`, `trigger`, `hits`, `surprises`,
+  - /// `predicted_count` (always 10), and `accuracy_pct` — exactly the fields the
+  - /// accuracy readers (`parse_validation_events`, `parse_rich_validation_events`)
+  - /// consume.
+  + /// `predicted_count` (always 10), `accuracy_pct`, and — when emerging data is
+  + /// present — `emerging_accuracy_pct`. These are exactly the fields the accuracy
+  + /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
+    pub(crate) fn write_validation_event(
+ ✓ (11.9s)
+    /// The JSON line carries `ts`, `day`, `trigger`, `hits`, `surprises`,
+  - /// `predicted_count` (always 10), and `accuracy_pct` — exactly the fields the
+  - /// accuracy readers (`parse_validation_events`, `parse_rich_validation_events`)
+  - /// consume.
+  + /// `predicted_count` (always 10), `accuracy_pct`, and — when emerging data is
+  + /// present — `emerging_accuracy_pct`. These are exactly the fields the accuracy
+  + /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
+    pub(crate) fn write_validation_event(
+
+Now update the auto path (auto_validate_after_failure_to) to compute emerging accuracy using the helper and pass it in.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (52 → 81 lines)
+            0.0
+        };
+        let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+  + 
+  +     // Also grade the *anticipatory* (emerging) prediction set against the same
+  +     // outcome — the allostatic signal. Only when the snapshot actually carried
+  +     // an emerging list (older snapshots have none → None, so the reader can tell
+  +     // "no emerging data" from "0% accurate").
+  +     let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+  +     let emerging_accuracy_pct: Option<f64> = if last.emerging.is_empty() {
+  +         None
+  +     } else {
+  +         let emerging_set: std::collections::HashSet<&str> =
+  +             last.emerging.iter().map(|s| s.as_str()).collect();
+  +         let (_e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  +         Some(e_pct)
+  +     };
+  +     let emerging_hits: usize = emerging_accuracy_pct
+  +         .map(|_| {
+  +             let emerging_set: std::collections::HashSet<&str> =
+  ... (26 more lines)
+ ✓ (11.8s)
+            0.0
+        };
+        let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+  + 
+  +     // Also grade the *anticipatory* (emerging) prediction set against the same
+  +     // outcome — the allostatic signal. Only when the snapshot actually carried
+  +     // an emerging list (older snapshots have none → None, so the reader can tell
+  +     // "no emerging data" from "0% accurate").
+  ... (13 more lines)
+
+Good, the auto path compiles now. Let me refactor the emerging block slightly to avoid recomputing the set twice, then fix the CLI call site.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (20 → 13 lines)
+        // an emerging list (older snapshots have none → None, so the reader can tell
+        // "no emerging data" from "0% accurate").
+        let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+  -     let emerging_accuracy_pct: Option<f64> = if last.emerging.is_empty() {
+  -         None
+  +     let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+  +         (0, None)
+        } else {
+            let emerging_set: std::collections::HashSet<&str> =
+                last.emerging.iter().map(|s| s.as_str()).collect();
+  -         let (_e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  -         Some(e_pct)
+  +         let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  +         (e_hits, Some(e_pct))
+        };
+  -     let emerging_hits: usize = emerging_accuracy_pct
+  -         .map(|_| {
+  -             let emerging_set: std::collections::HashSet<&str> =
+  -                 last.emerging.iter().map(|s| s.as_str()).collect();
+  -             accuracy_of(&changed_refs, &emerging_set).0
+  ... (2 more lines)
+ ✓ (12.1s)
+        // an emerging list (older snapshots have none → None, so the reader can tell
+        // "no emerging data" from "0% accurate").
+        let changed_refs: Vec<&str> = src_files.iter().map(|s| s.as_str()).collect();
+  -     let emerging_accuracy_pct: Option<f64> = if last.emerging.is_empty() {
+  -         None
+  +     let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+  +         (0, None)
+        } else {
+  ... (13 more lines)
+
+Now the CLI call site — pass None (a follow-up can wire it).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (8 → 9 lines)
+                &hits,
+                &surprises,
+                accuracy_pct_rounded,
+  +             None,
+            ) {
+ ✓ (11.8s)
+                &hits,
+                &surprises,
+                accuracy_pct_rounded,
+  +             None,
+            ) {
+
+Now the remaining errors are in the existing tests. Now update the ValidationEvent struct, parse_validation_events, and remove the `#[allow(dead_code)] on emerging`.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (6 → 11 lines)
+        pub(crate) hit_count: usize,
+        pub(crate) total_changed: usize,
+        pub(crate) accuracy_pct: f64,
+  +     /// Anticipatory (emerging / momentum) prediction accuracy for this event.
+  +     /// `None` when the underlying snapshot carried no emerging list (older
+  +     /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
+  +     #[allow(dead_code)]
+  +     pub(crate) emerging_accuracy_pct: Option<f64>,
+    }
+ ✓ (12.1s)
+        pub(crate) hit_count: usize,
+        pub(crate) total_changed: usize,
+        pub(crate) accuracy_pct: f64,
+  +     /// Anticipatory (emerging / momentum) prediction accuracy for this event.
+  +     /// `None` when the underlying snapshot carried no emerging list (older
+  +     /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
+  +     #[allow(dead_code)]
+  +     pub(crate) emerging_accuracy_pct: Option<f64>,
+    }
+
+Now update `parse_validation_events` to populate the field.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (8 → 14 lines)
+            let accuracy_pct = val["accuracy_pct"].as_f64().unwrap_or(0.0);
+  +         // Optional anticipatory accuracy — absent on all historical lines and
+  +         // on CLI-triggered events, so parse defensively (absent → None).
+  +         let emerging_accuracy_pct = val
+  +             .get("emerging_accuracy_pct")
+  +             .and_then(|v| v.as_f64());
+    
+            events.push(ValidationEvent {
+                day,
+                hit_count: hits,
+                total_changed,
+                accuracy_pct,
+  +             emerging_accuracy_pct,
+            });
+ ✓ (12.0s)
+            let accuracy_pct = val["accuracy_pct"].as_f64().unwrap_or(0.0);
+  +         // Optional anticipatory accuracy — absent on all historical lines and
+  +         // on CLI-triggered events, so parse defensively (absent → None).
+  +         let emerging_accuracy_pct = val
+  +             .get("emerging_accuracy_pct")
+  +             .and_then(|v| v.as_f64());
+    
+            events.push(ValidationEvent {
+  ... (6 more lines)
+
+The remaining errors are in commands_risk_accuracy.rs test constructors of ValidationEvent. The task says one source file, but these are test constructors in another file that break compilation. Let me check them.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "ValidationEvent {" src/commands_risk_accuracy.rs ✓ (10ms)
+
+These are test-only struct literals. Adding a field forces updating all of them. To keep the struct-literal churn minimal and avoid touching a second non-test file's logic, I could add #[non_exhaustive]... but that doesn't help within-crate. Simplest robust approach: provide a Default-like constructor. But these are existing tests; least-invasive is a sed to add the field. Let me check one to see the pattern.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n '184,240p' src/commands_risk_accuracy.rs ✓ (4ms)
+
+These all follow the pattern accuracy_pct: <n>,\n            }. I'll use a sed to append the new field after each accuracy_pct: line inside these struct literals. But accuracy_pct also appears elsewhere. Safer: replace the closing pattern. All these literals end with accuracy_pct: X, immediately followed by a }. Let me use a targeted perl that inserts the field after any accuracy_pct: ..., line that is followed by a } line.
+
+Actually simplest and safe: perl multiline replacing accuracy_pct: (...),\n(\s*)} → add field. Let me check that accuracy_pct: only appears in these ValidationEvent literals in that file.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "accuracy_pct:" src/commands_risk_accuracy.rs | wc -l; grep -n "accuracy… ✓ (5ms)
+
+  watch: no files changed this turn — skipping
+

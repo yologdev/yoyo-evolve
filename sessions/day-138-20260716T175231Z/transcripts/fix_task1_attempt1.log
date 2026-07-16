@@ -1,0 +1,185 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll fix the three missing deliverables. Let me first examine the current state of the file.
+  ▶ search 'accuracy_of|emerging_accuracy_pct|allow\(dead_code\)|struct …' in src/commands_risk_snapshots.rs ✓ (3ms)
+
+The changes may have been reverted. Let me check the current state.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && echo "--… ✓ (10ms)
+
+The commit is there. Let me look at the actual content.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy_of\|emerging_a… ✓ (4ms)
+
+The core logic IS present. The three missing items are:
+1. Tests for accuracy_of grading math + parse test with/without emerging_accuracy_pct
+2. Remove #[allow(dead_code)] on `ParsedSnapshot.emerging` (line 465-466) and fix comment
+3. Update CLAUDE.md
+
+Let me look at the relevant sections closely.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:250..270 ✓ (1ms)
+  ▶ read src/commands_risk_snapshots.rs:455..470 ✓ (0ms)
+  2 tools completed in 4.0s (2 ✓)
+
+Now let me fix step 4 — remove the #[allow(dead_code)] and fix the stale comment:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (8 → 7 lines)
+        /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
+        /// snapshot. Empty for older snapshots written before emerging was recorded.
+        ///
+  -     /// Threaded through the parser now so a later session can grade the
+  -     /// anticipatory signal against what actually broke; no non-test caller reads
+  -     /// it yet (the grading loop is a separate task), hence the allow.
+  -     #[allow(dead_code)]
+  +     /// Read by `auto_validate_after_failure_to`, which grades this anticipatory
+  +     /// set against what actually broke (alongside the reactive `predicted` set),
+  +     /// so the allostatic-vs-homeostatic comparison is measured, not decorative.
+        pub(crate) emerging: Vec<String>,
+ ✓ (1m 44s)
+        /// File paths flagged as *emerging* (anticipatory / momentum) risks in this
+        /// snapshot. Empty for older snapshots written before emerging was recorded.
+        ///
+  -     /// Threaded through the parser now so a later session can grade the
+  -     /// anticipatory signal against what actually broke; no non-test caller reads
+  -     /// it yet (the grading loop is a separate task), hence the allow.
+  -     #[allow(dead_code)]
+  +     /// Read by `auto_validate_after_failure_to`, which grades this anticipatory
+  ... (3 more lines)
+
+Also the emerging_accuracy_pct field on ValidationEvent has #[allow(dead_code)] — let me check if it's actually read anywhere. Let me check the ValidationEvent field context:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:400..415 ✓ (0ms)
+
+The emerging_accuracy_pct field on ValidationEvent is genuinely only read in tests (no consumer reads it yet — a follow-up will surface it). The task didn't ask to remove this `#[allow(dead_code)] — only the one on ParsedSnapshot.emerging` (step 4). I'll leave this one since removing it would break the build (field is only read in tests). Let me verify it's not read outside tests:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.emerging_accuracy_pc… ✓ (7ms)
+
+Correct — ValidationEvent.emerging_accuracy_pct is only read in tests, so its #[allow(dead_code)] stays. Now let me look at the existing tests to add the new required tests. Let me see the test module structure and the parse test area:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:1115..1175 ✓ (1ms)
+  ▶ read src/commands_risk_snapshots.rs:1174..1189 ✓ (0ms)
+  2 tools completed in 3.8s (2 ✓)
+
+Now I'll add the three required tests before the final closing brace. Let me insert them:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (6 → 65 lines)
+            assert_eq!(events.len(), 2, "appending twice yields two lines");
+            assert_eq!(events[0].day, 1);
+            assert_eq!(events[1].day, 2);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_accuracy_of_grades_reactive_and_emerging() {
+  +         // A single outcome graded against two distinct prediction sets: the
+  +         // reactive (top_10) set and the anticipatory (emerging) set. Both must
+  +         // be scored by the same pure helper so the allostatic-vs-homeostatic
+  +         // comparison is apples-to-apples.
+  +         let changed = ["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs"];
+  + 
+  +         // Reactive set predicts 2 of the 4 changed files.
+  +         let reactive: std::collections::HashSet<&str> =
+  +             ["src/a.rs", "src/b.rs", "src/z.rs"].into_iter().collect();
+  +         let (r_hits, r_pct) = accuracy_of(&changed, &reactive);
+  +         assert_eq!(r_hits, 2, "reactive hits = a,b");
+  +         assert!((r_pct - 50.0).abs() < 0.001, "2/4 = 50.0%");
+  + 
+  ... (44 more lines)
+ ✓ (1m 40s)
+            assert_eq!(events.len(), 2, "appending twice yields two lines");
+            assert_eq!(events[0].day, 1);
+            assert_eq!(events[1].day, 2);
+  +     }
+  + 
+  +     #[test]
+  +     fn test_accuracy_of_grades_reactive_and_emerging() {
+  +         // A single outcome graded against two distinct prediction sets: the
+  ... (13 more lines)
+
+Now let me check that write_validation_event also writes emerging_accuracy_pct in the roundtrip so a test could verify write→read. Let me add a write test that includes emerging data to be thorough — actually the parse test covers read, and existing write tests cover write with None. Let me add one write-with-Some test to cover the write path fully:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (7 → 25 lines)
+  -         assert_eq!(
+  -             events[0].emerging_accuracy_pct,
+  -             Some(75.0),
+  -             "present emerging_accuracy_pct → Some(value)"
+  +     #[test]
+  +     fn test_write_validation_event_emerging_accuracy_roundtrips() {
+  +         // When emerging data is present, write_validation_event must emit the
+  +         // emerging_accuracy_pct field and the reader must recover it.
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let path = dir.path().join("validations.jsonl");
+  + 
+  +         let hits = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+  +         let surprises = vec!["src/c.rs".to_string(), "src/d.rs".to_string()];
+  +         write_validation_event(&path, 138, "watch_failure", &hits, &surprises, 50.0, Some(75.0))
+  +             .expect("write validation event with emerging");
+  + 
+  +         let contents = std::fs::read_to_string(&path).expect("read validation file");
+  +         let raw: serde_json::Value =
+  +             serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
+  +         assert!(
+  ... (9 more lines)
+ ✓ (748ms)
+  -         assert_eq!(
+  -             events[0].emerging_accuracy_pct,
+  -             Some(75.0),
+  -             "present emerging_accuracy_pct → Some(value)"
+  +     #[test]
+  +     fn test_write_validation_event_emerging_accuracy_roundtrips() {
+  +         // When emerging data is present, write_validation_event must emit the
+  +         // emerging_accuracy_pct field and the reader must recover it.
+  ... (13 more lines)
+
+I created a duplicate closing brace. The previous edit replaced the closing } of the test module and the new test's closing }, but my second edit added another module-closing }. Let me look at the end of file:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:1235..1265 ✓ (0ms)
+
+The old_text matched partway — it removed the closing } of the parse test and its assert incorrectly. Line 1235 shows assert_eq!(events.len(), 1); followed immediately by #[test] — the parse test's tail got mangled. Let me view a bit above:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:1218..1238 ✓ (1ms)
+
+The parse test lost its final assert and closing brace. Let me fix lines 1235-1236:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (4 → 11 lines)
+            let events = parse_validation_events(with);
+            assert_eq!(events.len(), 1);
+  +         assert_eq!(
+  +             events[0].emerging_accuracy_pct,
+  +             Some(75.0),
+  +             "present emerging_accuracy_pct → Some(value)"
+  +         );
+  +     }
+  + 
+        #[test]
+        fn test_write_validation_event_emerging_accuracy_roundtrips() {
+ ✓ (1m 41s)
+            let events = parse_validation_events(with);
+            assert_eq!(events.len(), 1);
+  +         assert_eq!(
+  +             events[0].emerging_accuracy_pct,
+  +             Some(75.0),
+  +             "present emerging_accuracy_pct → Some(value)"
+  +         );
+  +     }
+  ... (3 more lines)
+
+Now update CLAUDE.md. Let me find the current bullet:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_snapshots… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - `ValidationEvent`); each snapshot records both `top_10` (reactive/homeostatic risk) AND `emerging` (anticipatory/allostatic momentum predictions — the DREAM's allostatic signal); re-exported via `commands_risk`
+  + `ValidationEvent`); each snapshot records both `top_10` (reactive/homeostatic risk) AND `emerging` (anticipatory/allostatic momentum predictions — the DREAM's allostatic signal); `ValidationEvent` now also carries an optional `emerging_accuracy_pct` (absent → `None` on read, backward-compatible with the 24 historical lines), and `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (pure local `accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half; re-exported via `commands_risk`
+ ✓ (1m 19s)
+  - `ValidationEvent`); each snapshot records both `top_10` (reactive/homeostatic risk) AND `emerging` (anticipatory/allostatic momentum predictions — the DREAM's allostatic signal); re-exported via `commands_risk`
+  + `ValidationEvent`); each snapshot records both `top_10` (reactive/homeostatic risk) AND `emerging` (anticipatory/allostatic momentum predictions — the DREAM's allostatic signal); `ValidationEvent` now also carries an optional `emerging_accuracy_pct` (absent → `None` on read, backward-compatible with the 24 historical lines), and `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (pure local `accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half; re-exported via `commands_risk`
+  2 tools completed in 1m 27s (2 ✓)
+
+Now run the full verification:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (39.1s)
+
+All passing. Let me confirm my three new tests specifically ran and run the full test suite to be safe:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test_…

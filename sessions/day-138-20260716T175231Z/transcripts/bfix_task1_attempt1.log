@@ -1,0 +1,60 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+The errors are test call sites missing the new 7th argument. Let me look at the failing lines.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event(… ✓ (5ms)
+
+The error output mentions 27 errors — likely more call sites in tests. Let me check all these call sites (lines 1132, 1158, 1179, 1180) and see the full error count.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (11.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (11.8s)
+  2 tools completed in 26.5s (2 ✓)
+
+Two sets of errors: ValidationEvent struct initializers in commands_risk_accuracy.rs (missing new field), and 4 write_validation_event call sites in tests. Let me look at how these are constructed.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ValidationEvent {" src/… ✓ (5ms)
+
+These are test-only struct literals in commands_risk_accuracy.rs. Since `emerging_accuracy_pct is a new field, all these literals need it. The cleanest fix is to add emerging_accuracy_pct: None` to each. Let me count them and use a script to add the field. First let me see the struct definition and one of the literals' full shape to confirm the field is always the last.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ValidationEvent"… ✓ (5ms)
+
+The field is last and always accuracy_pct: <val>, precedes the closing }. Let me use a sed/perl to insert emerging_accuracy_pct: None, after each accuracy_pct: line in the test file.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy_pct:" src/comm… ✓ (5ms)
+
+23 accuracy_pct: lines, none with emerging yet. But I must be careful — accuracy_pct could appear in non-struct-literal contexts (e.g. field access). Let me check.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "accuracy_pct:" src/comm… ✓ (4ms)
+
+All 23 are accuracy_pct: <number>, in struct literals. Safe to insert after each. They have consistent indentation (they're inside literals). Let me use perl matching the pattern with its literal value line.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -i -pe 's/^(\s*)(accuracy_p… ✓ (6ms)
+
+All 23 got the field. Now fix the 4 write_validation_event call sites in the test module of commands_risk_snapshots.rs by appending , None.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1130,1182p' src/commands… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -i -pe 's/(write_validation… ✓ (6ms)
+  2 tools completed in 4.7s (2 ✓)
+
+All 4 fixed. Now build and test.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build --tests… ✓ (23.0s)
+
+Builds clean. Now run tests and clippy.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -25 ✓ (1m 3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 8s)
+  2 tools completed in 2m 15s (2 ✓)
+
+All green. 
+
+Fixed the compilation errors, which were all downstream of the new `emerging_accuracy_pct: Option<f64>` field/parameter:
+
+1. `src/commands_risk_accuracy.rs` — 23 `ValidationEvent { ... } test literals were missing the new field. Added emerging_accuracy_pct: None, after each accuracy_pct:` line (backward-compatible default, matching the "no emerging data" convention).
+
+2. `src/commands_risk_snapshots.rs` — 4 `write_validation_event(...) call sites in the test module supplied only 6 args. Appended None` as the 7th argument where emerging data isn't available.
+
+Verification: cargo fmt, cargo build --tests, cargo test (88 passed, 0 failed), and cargo clippy --all-targets -- -D warnings all pass.
+
+  watch: no files changed this turn — skipping
+

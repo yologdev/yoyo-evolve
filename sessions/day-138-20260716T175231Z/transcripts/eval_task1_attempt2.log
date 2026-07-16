@@ -1,0 +1,47 @@
+  yoyo (piped mode) — model: claude-opus-4-8
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+I'll verify this evolve-kind task against its description. Let me check the key requirements quickly.
+
+The diff is a backend/internal change (validation event grading), not a user-facing CLI/config change — no product-surface risk per #448. Let me verify the core implementation matches the task.
+
+Checking against task requirements:
+
+1. ✅ accuracy_of pure helper added (local to file), grades reactive + emerging identically
+2. ✅ write_validation_event gained emerging_accuracy_pct: Option<f64> param, appended last, written only when Some
+3. ✅ Both call sites updated: auto_validate_after_failure_to passes computed value, CLI /risk validate passes None
+4. ✅ ValidationEvent struct gained `emerging_accuracy_pct: Option<f64>, parsed defensively via .and_then(|v| v.as_f64())`
+5. ✅ #[allow(dead_code)] removed from `ParsedSnapshot.emerging`
+6. ✅ stderr summary adds one dim comparison line
+7. ✅ Tests written: grading math, parse backward-compat (absent→None, present→Some), roundtrip
+8. ✅ CLAUDE.md bullet updated
+9. ✅ Single source file (plus test-struct-init updates in commands_risk_accuracy.rs/commands_risk.rs — necessary because `ValidationEvent` gained a field; these are mechanical and unavoidable)
+
+Let me confirm the emerging-empty case correctly yields None (not Some(0.0)) — this is the one subtle correctness point.
+
+The diff shows:
+```rust
+let (emerging_hits, emerging_accuracy_pct): (usize, Option<f64>) = if last.emerging.is_empty() {
+    (0, None)
+} else { ... Some(e_pct) };
+```
+
+Correct — empty emerging → None, distinguishing "no data" from "0% accurate", exactly as specified. The #[allow(dead_code)] remaining on the struct field emerging_accuracy_pct is fine (it's read in tests but not yet in non-test accuracy readers — a reasonable, honest allow).
+
+Build and tests already PASS. The implementation matches the task precisely, is backward-compatible (defensive parse, absent→None), single-file scoped, no byte-indexing, and docs updated in the same commit.
+  ▶ write session_plan/eval_task_1.md (2 lines) ✓ (1m 1s)
+
+**Verdict: PASS**
+
+The diff correctly implements all task requirements:
+• Pure accuracy_of helper grades reactive and emerging sets identically
+• write_validation_event gained appended Option<f64> param, written only when Some, both call sites updated
+• ValidationEvent field parsed defensively (absent→None, backward-compatible)
+• `#[allow(dead_code)] removed from ParsedSnapshot.emerging`
+• Empty-emerging correctly yields None (the one subtle correctness point)
+• One-line stderr comparison added; comprehensive tests; CLAUDE.md updated
+
+It's an internal change with no product-surface risk (#448 doesn't apply). Build and tests pass. Verdict written to session_plan/eval_task_1.md.
+
+  watch: no files changed this turn — skipping
+
