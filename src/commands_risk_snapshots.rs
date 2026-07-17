@@ -252,7 +252,12 @@ pub(crate) fn write_validation_event(
 /// `changed` list yields `(0, 0.0)`. Used to grade BOTH the reactive
 /// (`top_10`) and anticipatory (`emerging`) prediction sets against the same
 /// outcome, so the allostatic-vs-homeostatic comparison is measurable.
-fn accuracy_of(changed: &[&str], predicted: &std::collections::HashSet<&str>) -> (usize, f64) {
+/// Shared with the CLI `/risk validate` path (`commands_risk.rs`) so both
+/// validation cranks grade with identical logic.
+pub(crate) fn accuracy_of(
+    changed: &[&str],
+    predicted: &std::collections::HashSet<&str>,
+) -> (usize, f64) {
     if changed.is_empty() {
         return (0, 0.0);
     }

@@ -10,7 +10,7 @@ use crate::format::*;
 // Re-exported here so all call sites (watch.rs, commands_git.rs, and this
 // module's own scoring/reporting code) remain unchanged.
 pub(crate) use crate::commands_risk_snapshots::{
-    auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+    accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
     load_validation_history_from, parse_all_snapshots, parse_validation_events,
     risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
     RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
@@ -2169,6 +2169,20 @@ fn handle_risk_history() {
 }
 
 /// Handle `/risk validate` — compare past predictions against actual breakage.
+/// Extract the anticipatory (emerging) prediction paths from a snapshot JSON
+/// value. Older snapshots (pre-Day-138) have no `emerging` key — that yields
+/// an empty list, not an error. Entries without a `"path"` string are skipped.
+fn emerging_paths_from_snapshot(snapshot: &serde_json::Value) -> Vec<String> {
+    snapshot["emerging"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v["path"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn handle_risk_validate() {
     // 1. Load the most recent snapshot
     let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
@@ -2269,6 +2283,32 @@ fn handle_risk_validate() {
             0.0
         };
         let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+
+        // Also grade the *anticipatory* (emerging) prediction set against the
+        // same changed set — the allostatic column of the prediction meter.
+        // Legacy snapshots without an `emerging` list stay `None` (ungraded),
+        // so they don't drag the average in `compute_accuracy_stats`.
+        let emerging = emerging_paths_from_snapshot(&snapshot);
+        let changed_refs: Vec<&str> = hits
+            .iter()
+            .chain(surprises.iter())
+            .map(|s| s.as_str())
+            .collect();
+        let emerging_accuracy_pct = if emerging.is_empty() {
+            None
+        } else {
+            let emerging_set: std::collections::HashSet<&str> =
+                emerging.iter().map(|s| s.as_str()).collect();
+            let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+            // Reactive-vs-emerging comparison, visible the moment it's measured
+            // (mirrors the watch-failure path in commands_risk_snapshots.rs).
+            eprintln!(
+                "  {DIM}📊 Emerging (anticipatory) accuracy: {}/{} ({:.1}%) — reactive was {:.1}%{RESET}",
+                e_hits, total_changed, e_pct, accuracy_pct_rounded,
+            );
+            Some(e_pct)
+        };
+
         if let Err(e) = crate::commands_risk::write_validation_event(
             std::path::Path::new(RISK_VALIDATION_PATH),
             day as u32,
@@ -2276,7 +2316,7 @@ fn handle_risk_validate() {
             &hits,
             &surprises,
             accuracy_pct_rounded,
-            None,
+            emerging_accuracy_pct,
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
@@ -2288,6 +2328,43 @@ mod tests {
     use super::*;
 
     // ── Risk scoring tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_emerging_paths_from_snapshot_present() {
+        // Fixture table of input shapes (Day 137 lesson): one row per shape.
+        let snapshot = serde_json::json!({
+            "top_10": [{"path": "src/a.rs"}],
+            "emerging": [{"path": "src/b.rs"}, {"path": "src/c.rs"}]
+        });
+        assert_eq!(
+            emerging_paths_from_snapshot(&snapshot),
+            vec!["src/b.rs".to_string(), "src/c.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_emerging_paths_from_snapshot_legacy_missing_key() {
+        // Older snapshots (pre-Day-138) have no `emerging` key — must yield
+        // an empty list, NOT an error.
+        let snapshot = serde_json::json!({"top_10": [{"path": "src/a.rs"}]});
+        assert!(emerging_paths_from_snapshot(&snapshot).is_empty());
+    }
+
+    #[test]
+    fn test_emerging_paths_from_snapshot_malformed_entries() {
+        // Entries without a "path" string are skipped; a non-array `emerging`
+        // value yields empty.
+        let snapshot = serde_json::json!({
+            "emerging": [{"path": "src/ok.rs"}, {"nopath": true}, {"path": 42}]
+        });
+        assert_eq!(
+            emerging_paths_from_snapshot(&snapshot),
+            vec!["src/ok.rs".to_string()]
+        );
+
+        let not_array = serde_json::json!({"emerging": "oops"});
+        assert!(emerging_paths_from_snapshot(&not_array).is_empty());
+    }
 
     #[test]
     fn test_normalize_scores_basic() {
