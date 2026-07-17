@@ -1301,7 +1301,10 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /risk --all      Show all scored files\n\
              \x20 /risk snapshot   Save current predictions for later validation\n\
              \x20 /risk validate   Compare past predictions against actual breakage\n\
-             \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\n\
+             \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\
+             \x20 /risk history    Show accuracy trend across all past snapshots\n\
+             \x20 /risk predict    Structured narrative prediction (top risks + why)\n\
+             \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\n\
              The snapshot → validate loop measures prediction accuracy:\n\
              run /risk snapshot, keep coding, then /risk validate to see\n\
              which predictions were right (Precision@10) and what surprised you.\n\n\
@@ -1444,6 +1447,24 @@ mod tests {
     use std::collections::HashSet;
 
     // ── Completeness tests ──
+
+    #[test]
+    fn test_risk_help_mentions_every_subcommand() {
+        // Discoverability guard: every word-like /risk subcommand must appear in
+        // the /risk help text (Day 139 — predict/history/effectiveness were
+        // implemented but undocumented, invisible to `/help risk`).
+        let help = command_help("risk").expect("/risk has a help entry");
+        for sub in crate::commands_risk::RISK_SUBCOMMANDS {
+            if sub.starts_with('-') {
+                continue; // flags like --all are covered separately
+            }
+            assert!(
+                help.contains(sub),
+                "/risk help is missing subcommand `{sub}`"
+            );
+        }
+        assert!(help.contains("--all"), "/risk help is missing --all");
+    }
 
     #[test]
     fn test_every_known_command_has_help() {
