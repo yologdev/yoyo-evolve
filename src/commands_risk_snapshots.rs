@@ -436,6 +436,11 @@ pub(crate) struct ValidationEvent {
     /// `None` when the underlying snapshot carried no emerging list (older
     /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
     pub(crate) emerging_accuracy_pct: Option<f64>,
+    /// What kind of outcome this event graded against — `"watch_failure"`
+    /// (red watch cycle) or `"revert"` (full revert). `None` on historical
+    /// severity-less lines and CLI manual grading (parse is defensive, so
+    /// legacy JSONL stays valid).
+    pub(crate) severity: Option<String>,
 }
 
 /// Load validation history from a JSONL file.
@@ -467,6 +472,12 @@ pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
         // Optional anticipatory accuracy — absent on all historical lines and
         // on CLI-triggered events, so parse defensively (absent → None).
         let emerging_accuracy_pct = val.get("emerging_accuracy_pct").and_then(|v| v.as_f64());
+        // Optional severity tag — absent on legacy lines (parse defensively,
+        // absent → None; same pattern as emerging_accuracy_pct above).
+        let severity = val
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         events.push(ValidationEvent {
             day,
@@ -474,6 +485,7 @@ pub(crate) fn parse_validation_events(content: &str) -> Vec<ValidationEvent> {
             total_changed,
             accuracy_pct,
             emerging_accuracy_pct,
+            severity,
         });
     }
     events

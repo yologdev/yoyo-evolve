@@ -32,6 +32,9 @@ pub(crate) struct AccuracyStats {
     /// Average anticipatory accuracy across graded events. `None` when no
     /// event carries an emerging grade yet (older validation history).
     pub(crate) emerging_avg_pct: Option<f64>,
+    /// Event counts per severity tag (e.g. `"revert"`, `"watch_failure"`).
+    /// Legacy severity-less events are counted under `"untagged"`.
+    pub(crate) severity_counts: std::collections::BTreeMap<String, usize>,
 }
 
 /// Compute trend by comparing the average accuracy of the last N events
@@ -73,6 +76,7 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
             worst_day: None,
             emerging_samples: 0,
             emerging_avg_pct: None,
+            severity_counts: std::collections::BTreeMap::new(),
         };
     }
 
@@ -128,6 +132,15 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         Some(graded.iter().sum::<f64>() / graded.len() as f64)
     };
 
+    // Per-severity event counts — legacy severity-less events land in
+    // "untagged" so the historical lines stay visible without a fake tag.
+    let mut severity_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for e in events {
+        let key = e.severity.as_deref().unwrap_or("untagged").to_string();
+        *severity_counts.entry(key).or_insert(0) += 1;
+    }
+
     AccuracyStats {
         total_validations,
         total_hits,
@@ -138,6 +151,7 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         worst_day,
         emerging_samples,
         emerging_avg_pct,
+        severity_counts,
     }
 }
 
@@ -179,7 +193,7 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         None => "— (not graded yet)".to_string(),
     };
 
-    format!(
+    let mut report = format!(
         "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
          {BOLD}  │{RESET} Validations:  {:<13}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Hit rate:     {:<13}{BOLD}│{RESET}\n\
@@ -197,7 +211,28 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         best_str,
         worst_str,
         emerging_str,
-    )
+    );
+
+    // Per-severity breakdown — only shown once at least one event carries a
+    // severity tag (legacy histories are all "untagged"; stay quiet for them).
+    let tagged: Vec<String> = stats
+        .severity_counts
+        .iter()
+        .filter(|(k, _)| k.as_str() != "untagged")
+        .map(|(k, c)| format!("{c} {k}"))
+        .collect();
+    if !tagged.is_empty() {
+        let untagged = stats.severity_counts.get("untagged").copied().unwrap_or(0);
+        let mut parts = tagged;
+        if untagged > 0 {
+            parts.push(format!("{untagged} untagged"));
+        }
+        report.push_str(&format!(
+            "{DIM}  events by severity: {}{RESET}\n",
+            parts.join(", ")
+        ));
+    }
+    report
 }
 
 #[cfg(test)]
@@ -223,6 +258,7 @@ mod tests {
             total_changed: 5,
             accuracy_pct: 60.0,
             emerging_accuracy_pct: None,
+            severity: None,
         }];
         let stats = compute_accuracy_stats(&events);
         assert_eq!(stats.total_validations, 1);
@@ -245,6 +281,7 @@ mod tests {
                 total_changed: 4,
                 accuracy_pct: 50.0,
                 emerging_accuracy_pct: Some(100.0),
+                severity: None,
             },
             ValidationEvent {
                 day: 138,
@@ -252,6 +289,7 @@ mod tests {
                 total_changed: 4,
                 accuracy_pct: 25.0,
                 emerging_accuracy_pct: None, // ungraded — must not drag the average
+                severity: None,
             },
             ValidationEvent {
                 day: 139,
@@ -259,6 +297,7 @@ mod tests {
                 total_changed: 4,
                 accuracy_pct: 75.0,
                 emerging_accuracy_pct: Some(50.0),
+                severity: None,
             },
         ];
         let stats = compute_accuracy_stats(&events);
@@ -279,6 +318,7 @@ mod tests {
             total_changed: 5,
             accuracy_pct: 60.0,
             emerging_accuracy_pct: None,
+            severity: None,
         }];
         let stats = compute_accuracy_stats(&events);
         assert_eq!(stats.emerging_samples, 0);
@@ -293,6 +333,7 @@ mod tests {
             total_changed: 4,
             accuracy_pct: 50.0,
             emerging_accuracy_pct: Some(75.0),
+            severity: None,
         }];
         let stats = compute_accuracy_stats(&events);
         let report = format_accuracy_report(&stats);
@@ -314,6 +355,7 @@ mod tests {
             total_changed: 5,
             accuracy_pct: 60.0,
             emerging_accuracy_pct: None,
+            severity: None,
         }];
         let stats = compute_accuracy_stats(&events);
         let report = format_accuracy_report(&stats);
@@ -333,6 +375,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 20.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 101,
@@ -340,6 +383,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 25.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 102,
@@ -347,6 +391,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 40.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 103,
@@ -354,6 +399,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 60.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 104,
@@ -361,6 +407,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 80.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 105,
@@ -368,6 +415,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 80.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
         ];
         let trend = compute_accuracy_trend(&events);
@@ -383,6 +431,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 80.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 101,
@@ -390,6 +439,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 75.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 102,
@@ -397,6 +447,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 60.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 103,
@@ -404,6 +455,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 40.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 104,
@@ -411,6 +463,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 20.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 105,
@@ -418,6 +471,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 15.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
         ];
         let trend = compute_accuracy_trend(&events);
@@ -433,6 +487,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 60.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 101,
@@ -440,6 +495,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 58.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 102,
@@ -447,6 +503,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 62.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 103,
@@ -454,6 +511,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 59.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
         ];
         let trend = compute_accuracy_trend(&events);
@@ -468,6 +526,7 @@ mod tests {
             total_changed: 5,
             accuracy_pct: 60.0,
             emerging_accuracy_pct: None,
+            severity: None,
         }];
         let trend = compute_accuracy_trend(&events);
         assert_eq!(trend, AccuracyTrend::Insufficient);
@@ -482,6 +541,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 20.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 110,
@@ -489,6 +549,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 40.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 115,
@@ -496,6 +557,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 80.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
         ];
         let stats = compute_accuracy_stats(&events);
@@ -512,6 +574,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 20.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
             ValidationEvent {
                 day: 110,
@@ -519,6 +582,7 @@ mod tests {
                 total_changed: 5,
                 accuracy_pct: 80.0,
                 emerging_accuracy_pct: None,
+                severity: None,
             },
         ];
         let stats = compute_accuracy_stats(&events);
@@ -547,6 +611,7 @@ mod tests {
             worst_day: Some((108, 20.0)),
             emerging_samples: 0,
             emerging_avg_pct: None,
+            severity_counts: std::collections::BTreeMap::new(),
         };
         let report = format_accuracy_report(&stats);
         assert!(report.contains("Risk Prediction Accuracy"));
