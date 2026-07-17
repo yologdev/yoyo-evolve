@@ -187,6 +187,13 @@ pub(crate) const RISK_VALIDATION_PATH: &str = ".yoyo/risk_validations.jsonl";
 /// `predicted_count` (always 10), `accuracy_pct`, and — when emerging data is
 /// present — `emerging_accuracy_pct`. These are exactly the fields the accuracy
 /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
+///
+/// `severity` tags what *kind* of outcome this event graded against —
+/// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
+/// stayed green), `"revert"` (full revert — reserved for higher-severity
+/// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
+/// so the file stays backward-compatible with historical severity-less entries.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_validation_event(
     validation_path: &std::path::Path,
     day: u32,
@@ -195,6 +202,7 @@ pub(crate) fn write_validation_event(
     surprises: &[String],
     accuracy_pct: f64,
     emerging_accuracy_pct: Option<f64>,
+    severity: Option<&str>,
 ) -> std::io::Result<()> {
     let ts = std::process::Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
@@ -227,6 +235,14 @@ pub(crate) fn write_validation_event(
     if let Some(ea) = emerging_accuracy_pct {
         if let Some(obj) = event.as_object_mut() {
             obj.insert("emerging_accuracy_pct".to_string(), serde_json::json!(ea));
+        }
+    }
+
+    // Severity is optional so legacy readers and historical lines stay valid —
+    // absent means "untagged" (pre-severity event or CLI manual grading).
+    if let Some(sev) = severity {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("severity".to_string(), serde_json::json!(sev));
         }
     }
 
@@ -275,9 +291,15 @@ pub(crate) fn accuracy_of(
 /// - No-op if no `changed_files` match `src/` paths.
 /// - Appends a validation event to `.yoyo/risk_validations.jsonl`.
 /// - Prints a brief 2-3 line stderr summary when there are results.
-pub(crate) fn auto_validate_after_failure(changed_files: &[String]) {
+///
+/// `severity` tags what kind of outcome the predictions are graded against:
+/// `"watch_failure"` for a red watch cycle (the lower-severity feed that lets
+/// the meter accumulate without a catastrophe), `"watch_success"` for a clean
+/// green cycle, `"revert"` reserved for full reverts.
+pub(crate) fn auto_validate_after_failure(changed_files: &[String], severity: &str) {
     auto_validate_after_failure_to(
         changed_files,
+        severity,
         std::path::Path::new(RISK_SNAPSHOT_PATH),
         std::path::Path::new(RISK_VALIDATION_PATH),
     );
@@ -286,6 +308,7 @@ pub(crate) fn auto_validate_after_failure(changed_files: &[String]) {
 /// Inner implementation with configurable paths (for testing).
 fn auto_validate_after_failure_to(
     changed_files: &[String],
+    severity: &str,
     snapshot_path: &std::path::Path,
     validation_path: &std::path::Path,
 ) {
@@ -365,6 +388,7 @@ fn auto_validate_after_failure_to(
         &surprises,
         accuracy_pct_rounded,
         emerging_accuracy_pct,
+        Some(severity),
     ) {
         eprintln!("  {DIM}(warning: could not write risk validation entry: {e}){RESET}");
     }
@@ -985,7 +1009,7 @@ mod tests {
             "src/watch.rs".to_string(),  // hit
         ];
 
-        auto_validate_after_failure_to(&changed, &snap_path, &val_path);
+        auto_validate_after_failure_to(&changed, "watch_failure", &snap_path, &val_path);
 
         // Verify JSONL output
         let contents = std::fs::read_to_string(&val_path).expect("read validation file");
@@ -1025,7 +1049,7 @@ mod tests {
         let val_path = dir.path().join("validations.jsonl");
 
         let changed = vec!["src/main.rs".to_string()];
-        auto_validate_after_failure_to(&changed, &snap_path, &val_path);
+        auto_validate_after_failure_to(&changed, "watch_failure", &snap_path, &val_path);
 
         // Validation file should not be created
         assert!(
@@ -1058,7 +1082,7 @@ mod tests {
             "docs/guide.md".to_string(),
             "Cargo.toml".to_string(),
         ];
-        auto_validate_after_failure_to(&changed, &snap_path, &val_path);
+        auto_validate_after_failure_to(&changed, "watch_failure", &snap_path, &val_path);
 
         // Validation file should not be created
         assert!(
@@ -1127,7 +1151,7 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string(), "src/cli.rs".to_string()];
         let surprises = vec!["src/prompt.rs".to_string()];
-        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7, None)
+        write_validation_event(&path, 129, "cli", &hits, &surprises, 66.7, None, None)
             .expect("write validation event");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
@@ -1153,13 +1177,26 @@ mod tests {
 
         let hits = vec!["src/tools.rs".to_string()];
         let surprises: Vec<String> = vec![];
-        write_validation_event(&path, 100, "watch_failure", &hits, &surprises, 100.0, None)
-            .expect("write validation event");
+        write_validation_event(
+            &path,
+            100,
+            "watch_failure",
+            &hits,
+            &surprises,
+            100.0,
+            None,
+            Some("watch_failure"),
+        )
+        .expect("write validation event");
 
         let contents = std::fs::read_to_string(&path).expect("read validation file");
         let raw: serde_json::Value =
             serde_json::from_str(contents.lines().next().unwrap()).expect("valid JSON");
         assert_eq!(raw["trigger"], "watch_failure");
+        assert_eq!(
+            raw["severity"], "watch_failure",
+            "severity tag written when Some"
+        );
 
         let events = parse_validation_events(&contents);
         assert_eq!(events.len(), 1);
@@ -1174,9 +1211,9 @@ mod tests {
 
         let hits = vec!["src/main.rs".to_string()];
         let surprises: Vec<String> = vec![];
-        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0, None)
+        write_validation_event(&path, 1, "cli", &hits, &surprises, 100.0, None, None)
             .expect("first write");
-        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0, None)
+        write_validation_event(&path, 2, "cli", &hits, &surprises, 100.0, None, None)
             .expect("second write");
 
         let events = load_validation_history_from(&path);
@@ -1261,6 +1298,7 @@ mod tests {
             &surprises,
             50.0,
             Some(75.0),
+            Some("watch_failure"),
         )
         .expect("write validation event with emerging");
 

@@ -2317,6 +2317,7 @@ fn handle_risk_validate() {
             &surprises,
             accuracy_pct_rounded,
             emerging_accuracy_pct,
+            None, // CLI manual grading — untagged severity
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
         }
