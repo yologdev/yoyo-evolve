@@ -1,0 +1,86 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "TODO\|FIXME" src/ --in… ✓ (10ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SPAWN_SUBCOMMANDS" -A5 …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RISK_SUBCOMMANDS" -A6 s… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1100,1115p src/commands_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1285,1315p src/help_data.… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs:1288..1313 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_risk_history\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 870,882p src/commands_ris… ✓ (7ms)
+  9 tools completed in 32.7s (9 ✓)
+
+Now I'll write a test first that pins the invariant (every `/risk` subcommand appears in its help text), then fix the help. Let me check the test module in help_data.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mod tests" src/help_dat… ✓ (7ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (2 → 20 lines)
+  +     #[test]
+  +     fn test_risk_help_mentions_every_subcommand() {
+  +         // Discoverability guard: every word-like /risk subcommand must appear in
+  +         // the /risk help text (Day 139 — predict/history/effectiveness were
+  +         // implemented but undocumented, invisible to `/help risk`).
+  +         let help = command_help("risk").expect("/risk has a help entry");
+  +         for sub in crate::commands_risk::RISK_SUBCOMMANDS {
+  +             if sub.starts_with('-') {
+  +                 continue; // flags like --all are covered separately
+  +             }
+  +             assert!(
+  +                 help.contains(sub),
+  +                 "/risk help is missing subcommand `{sub}`"
+  +             );
+  +         }
+  +         assert!(help.contains("--all"), "/risk help is missing --all");
+  +     }
+  + 
+        #[test]
+        fn test_every_known_command_has_help() {
+ ✓ (1m 35s)
+  +     #[test]
+  +     fn test_risk_help_mentions_every_subcommand() {
+  +         // Discoverability guard: every word-like /risk subcommand must appear in
+  +         // the /risk help text (Day 139 — predict/history/effectiveness were
+  +         // implemented but undocumented, invisible to `/help risk`).
+  +         let help = command_help("risk").expect("/risk has a help entry");
+  +         for sub in crate::commands_risk::RISK_SUBCOMMANDS {
+  +             if sub.starts_with('-') {
+  ... (12 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib help_data 2>&1 … ✓ (135ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_data 2>&1 | tail… ✓ (143ms)
+  4 tools completed in 1m 56s (4 ✓)
+
+Failing as expected. Now fix the help text — add the three missing usage lines:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/help_data.rs (2 → 5 lines)
+                 \x20 /risk validate   Compare past predictions against actual breakage\n\
+  -              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\n\
+  +              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\
+  +              \x20 /risk history    Show accuracy trend across all past snapshots\n\
+  +              \x20 /risk predict    Structured narrative prediction (top risks + why)\n\
+  +              \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\n\
+ ✓ (1m 34s)
+                 \x20 /risk validate   Compare past predictions against actual breakage\n\
+  -              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\n\
+  +              \x20 /risk accuracy   Show prediction accuracy and per-signal breakdown\n\
+  +              \x20 /risk history    Show accuracy trend across all past snapshots\n\
+  +              \x20 /risk predict    Structured narrative prediction (top risks + why)\n\
+  +              \x20 /risk effectiveness  Grade whether the risk reflex reduces failures\n\n\
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test help_data 2>&1 | tail… ✓ (172ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo help_data … ✓ (141ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "risk" docs/src/usage/co… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (8 lines) ✓ (17ms)
+  6 tools completed in 3m 23s (6 ✓)
+
+Done. One small improvement, committed.
+
+What I found: /help risk documented only 5 of the 8 /risk subcommands. history, predict, and effectiveness all exist in `RISK_SUBCOMMANDS (tab-completable, routed, and even documented in docs/src/usage/commands.md`) — but invisible to anyone reading the in-REPL help. Classic unactivated-capability gap: the feature shipped, the discoverability layer half-shipped.
+
+**What I did (test-first):**
+1. Wrote test_risk_help_mentions_every_subcommand in `src/help_data.rs — asserts every non-flag entry in RISK_SUBCOMMANDS appears in the /risk help text (plus --all). It failed on effectiveness`, confirming the gap.
+2. Added the three missing usage lines to the /risk help entry.
+
+Verified: `cargo fmt, clippy -D warnings, build`, and the full test suite all pass (14/14 help_data tests, suite green). The test is a class-level guard, not a point fix — the next /risk subcommand can't ship without its help line, because the completeness check fails loudly. Committed as `8a9ca03f`.
+
+  watch: no files changed this turn — skipping
+
