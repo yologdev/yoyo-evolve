@@ -85,14 +85,34 @@ def truncate_lines(s: str, n: int) -> str:
 # ── Section 1: Recent session outcomes ───────────────────────────────────
 
 
+SESSION_DIR_RE = re.compile(r"^day-(\d+)-(.*)$")
+
+
+def session_sort_key(name: str) -> tuple[int, int, str]:
+    """Sort key for a session directory name like `day-N-<timestamp>`.
+
+    Returns (matched, day_number, timestamp) so that sorting descending puts
+    the newest session first by *name*, never by mtime — a fresh CI checkout
+    gives every file the same checkout-time mtime, so mtime ordering silently
+    degrades to git's lexicographic path order where day-99 beats day-139.
+    Unparseable names get (0, 0, "") and rank below all parsed ones.
+    """
+    m = SESSION_DIR_RE.match(name)
+    if not m:
+        return (0, 0, "")
+    return (1, int(m.group(1)), m.group(2))
+
+
 def load_outcomes(audit_dir: Path) -> list[dict]:
-    """Read last N outcome.json files, sorted newest-first by mtime.
+    """Read last N outcome.json files, sorted newest-first by session dir name
+    (`day-N-<timestamp>`), falling back to mtime only for dirs that don't match
+    the pattern (those rank below all parsed ones).
     Returns dicts unchanged from outcome.json — sort metadata is kept on a
     side tuple, never mutated into the parsed object (defends against keys
     like `_mtime` colliding with future schema additions)."""
     if not audit_dir.exists() or not audit_dir.is_dir():
         return []
-    triples: list[tuple[float, str, dict]] = []
+    entries: list[tuple[tuple[int, int, str], float, dict]] = []
     for child in audit_dir.iterdir():
         if not child.is_dir():
             continue
@@ -109,10 +129,10 @@ def load_outcomes(audit_dir: Path) -> list[dict]:
         except OSError as e:
             warn(f"could not stat {outcome}: {e}")
             mtime = 0.0
-        triples.append((mtime, child.name, data))
-    triples.sort(key=lambda t: t[0], reverse=True)
+        entries.append((session_sort_key(child.name), mtime, data))
+    entries.sort(key=lambda t: (t[0], t[1]), reverse=True)
     # Return only the data dicts, but keep the original keys intact.
-    return [t[2] for t in triples[:WINDOW_SESSIONS]]
+    return [t[2] for t in entries[:WINDOW_SESSIONS]]
 
 
 def render_outcomes(outcomes: list[dict]) -> str:
@@ -623,6 +643,43 @@ def run_self_tests() -> int:
     assert_filtered(
         "passing test with ANSI codes filtered",
         "\x1b[32mtest\x1b[0m some::test_with_error ... \x1b[32mok\x1b[0m",
+    )
+
+    # --- session_sort_key self-tests ---
+    print("\n=== session_sort_key self-tests ===\n")
+
+    def assert_true(label: str, cond: bool) -> None:
+        nonlocal failures
+        if not cond:
+            print(f"  FAIL: {label}")
+            failures += 1
+        else:
+            print(f"  ok: {label}")
+
+    # 15. Numeric ordering beats the lexicographic trap (day-99 vs day-100)
+    assert_true(
+        "day-100 outranks day-99 (lexicographic trap)",
+        session_sort_key("day-100-x") > session_sort_key("day-99-z"),
+    )
+
+    # 16. The exact observed bug: day-139 must outrank day-97/98/99
+    assert_true(
+        "day-139 outranks day-99",
+        session_sort_key("day-139-20260717T000300Z") > session_sort_key("day-99-20260607T120000Z"),
+    )
+
+    # 17. Same day: later timestamp string wins
+    assert_true(
+        "same day, later timestamp wins",
+        session_sort_key("day-42-20260601T180000Z") > session_sort_key("day-42-20260601T060000Z"),
+    )
+
+    # 18. Unparseable dir name doesn't crash and ranks below all parsed ones
+    weird = session_sort_key("not-a-session-dir")
+    assert_true("unparseable name yields fallback key", weird == (0, 0, ""))
+    assert_true(
+        "unparseable name ranks below parsed sessions",
+        weird < session_sort_key("day-1-a"),
     )
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
