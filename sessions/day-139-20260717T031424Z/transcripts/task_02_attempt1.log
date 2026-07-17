@@ -1,0 +1,105 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read scripts/extract_trajectory.py:60..140 ✓ (1ms)
+  ▶ $ grep -n "run_self_tests\|self-test\|def main\|__main__" scripts/extract_trajecto… ✓ (5ms)
+  ▶ read scripts/extract_trajectory.py:487..635 ✓ (1ms)
+  3 tools completed in 22.5s (3 ✓)
+
+Root cause is clear. Let me add the pure sort-key function and change load_outcomes:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (28 → 48 lines)
+  + SESSION_DIR_RE = re.compile(r"^day-(\d+)-(.*)$")
+  + 
+  + 
+  + def session_sort_key(name: str) -> tuple[int, int, str]:
+  +     """Sort key for a session directory name like `day-N-<timestamp>`.
+  + 
+  +     Returns (matched, day_number, timestamp) so that sorting descending puts
+  +     the newest session first by *name*, never by mtime — a fresh CI checkout
+  +     gives every file the same checkout-time mtime, so mtime ordering silently
+  +     degrades to git's lexicographic path order where day-99 beats day-139.
+  +     Unparseable names get (0, 0, "") and rank below all parsed ones.
+  +     """
+  +     m = SESSION_DIR_RE.match(name)
+  +     if not m:
+  +         return (0, 0, "")
+  +     return (1, int(m.group(1)), m.group(2))
+  + 
+  + 
+    def load_outcomes(audit_dir: Path) -> list[dict]:
+  -     """Read last N outcome.json files, sorted newest-first by mtime.
+  ... (24 more lines)
+ ✓ (1m 5s)
+  + SESSION_DIR_RE = re.compile(r"^day-(\d+)-(.*)$")
+  + 
+  + 
+  + def session_sort_key(name: str) -> tuple[int, int, str]:
+  +     """Sort key for a session directory name like `day-N-<timestamp>`.
+  + 
+  +     Returns (matched, day_number, timestamp) so that sorting descending puts
+  +     the newest session first by *name*, never by mtime — a fresh CI checkout
+  ... (13 more lines)
+
+Now the self-tests:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (7 → 44 lines)
+        assert_filtered(
+            "passing test with ANSI codes filtered",
+            "\x1b[32mtest\x1b[0m some::test_with_error ... \x1b[32mok\x1b[0m",
+  +     )
+  + 
+  +     # --- session_sort_key self-tests ---
+  +     print("\n=== session_sort_key self-tests ===\n")
+  + 
+  +     def assert_true(label: str, cond: bool) -> None:
+  +         nonlocal failures
+  +         if not cond:
+  +             print(f"  FAIL: {label}")
+  +             failures += 1
+  +         else:
+  +             print(f"  ok: {label}")
+  + 
+  +     # 15. Numeric ordering beats the lexicographic trap (day-99 vs day-100)
+  +     assert_true(
+  +         "day-100 outranks day-99 (lexicographic trap)",
+  +         session_sort_key("day-100-x") > session_sort_key("day-99-z"),
+  ... (23 more lines)
+ ✓ (1m 4s)
+        assert_filtered(
+            "passing test with ANSI codes filtered",
+            "\x1b[32mtest\x1b[0m some::test_with_error ... \x1b[32mok\x1b[0m",
+  +     )
+  + 
+  +     # --- session_sort_key self-tests ---
+  +     print("\n=== session_sort_key self-tests ===\n")
+  + 
+  ... (13 more lines)
+  ▶ $ python3 scripts/extract_trajectory.py --test ✓ (37ms)
+  ▶ $ python3 - <<'EOF' (21 lines) ✓ (43ms)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 && cargo b… ✓ (1m 3s)
+  ▶ $ grep -rn "mtime" CLAUDE.md README.md docs/src/ 2>/dev/null; git diff --stat ✓ (27ms)
+  5 tools completed in 2m 45s (5 ✓)
+
+No doc mentions the sorting mechanism, so nothing to update. Committing:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -m 'Day 139 (02:34): Fix stale "rec… (8 lines) ✓ (12ms)
+
+Done. Committed as 473d2549.
+
+What was wrong: load_outcomes() sorted session dirs by `outcome.json` mtime. On CI's fresh audit-log checkout, all mtimes are checkout-time, so ordering collapsed to git's lexicographic path order — where day-99-* string-compares above day-139-* ("9" > "1"). The trajectory's "recent session outcomes" section had been silently showing ~40-day-old sessions as recent. A fail-soft sensory channel that became fail-silent.
+
+The fix (surgical, one file):
+• New pure function `session_sort_key(name) — parses ^day-(\d+)-(.*)$ into (1, day_int, timestamp), or (0, 0, "")` for unparseable names (never crashes, ranks below all parsed dirs)
+• load_outcomes sorts by (session_sort_key, mtime) descending — name-based order wins, mtime only breaks ties among unparseable dirs
+• 5 new self-tests in the existing `--test harness, including the exact trap (day-100 > day-99) and the observed bug (day-139 > day-99`)
+
+**Verified:**
+• python3 scripts/extract_trajectory.py --test — ALL PASSED
+• End-to-end check with fabricated dirs + forced-identical mtimes: order came back [139, 99, 97, weird] ✓
+• cargo fmt / clippy -D warnings / build / test — all green (88 passed)
+• No docs claimed the old mtime behavior, so nothing to update
+
+This one felt personal — the trajectory block is my own proprioception, and it's been feeding me a six-week-old picture of my body while claiming it was current.
+
+  watch: no files changed this turn — skipping
+

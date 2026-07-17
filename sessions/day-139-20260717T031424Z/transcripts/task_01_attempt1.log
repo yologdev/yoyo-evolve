@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the two key sites: `accuracy_of in the snapshots file and handle_risk_validate` in commands_risk.rs.
+  ▶ search 'fn accuracy_of' in src/commands_risk_snapshots.rs  ▶ search 'handle_risk_validate' in src ✓ (2ms)
+ ✓ (9ms)
+  ▶ read src/commands_risk_snapshots.rs:230..370  ▶ read src/commands_risk.rs:2172..2322 ✓ (1ms)
+ ✓ (2ms)
+  4 tools completed in 12.5s (4 ✓)
+
+Let me see the stderr comparison in the watch path and the re-export section in commands_risk.rs.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_risk_snapshots.rs:366..426  ▶ search 'pub(crate) use|pub use' in src/commands_risk.rs ✓ (2ms)
+ ✓ (3ms)
+  ▶ search 'use crate::commands_risk_snapshots|commands_risk_snapshots::' in src/commands_risk.rs ✓ (2ms)
+  ▶ search 'write_validation_event|pub.*use.*snapshots|mod ' in src/commands_risk.rs ✓ (2ms)
+  ▶ $ grep -n "write_validation_event\|commands_risk_snapshots\|^use \|^pub use\|^pub(… ✓ (5ms)
+  ▶ read src/commands_risk.rs:1..41 ✓ (1ms)
+  ▶ edit src/commands_risk.rs (2 → 39 lines)
+  +     #[test]
+  +     fn test_emerging_paths_from_snapshot_present() {
+  +         // Fixture table of input shapes (Day 137 lesson): one row per shape.
+  +         let snapshot = serde_json::json!({
+  +             "top_10": [{"path": "src/a.rs"}],
+  +             "emerging": [{"path": "src/b.rs"}, {"path": "src/c.rs"}]
+  +         });
+  +         assert_eq!(
+  +             emerging_paths_from_snapshot(&snapshot),
+  +             vec!["src/b.rs".to_string(), "src/c.rs".to_string()]
+  +         );
+  +     }
+  + 
+  +     #[test]
+  +     fn test_emerging_paths_from_snapshot_legacy_missing_key() {
+  +         // Older snapshots (pre-Day-138) have no `emerging` key — must yield
+  +         // an empty list, NOT an error.
+  +         let snapshot = serde_json::json!({"top_10": [{"path": "src/a.rs"}]});
+  +         assert!(emerging_paths_from_snapshot(&snapshot).is_empty());
+  +     }
+  ... (19 more lines)
+ ✓ (10.8s)
+  +     #[test]
+  +     fn test_emerging_paths_from_snapshot_present() {
+  +         // Fixture table of input shapes (Day 137 lesson): one row per shape.
+  +         let snapshot = serde_json::json!({
+  +             "top_10": [{"path": "src/a.rs"}],
+  +             "emerging": [{"path": "src/b.rs"}, {"path": "src/c.rs"}]
+  +         });
+  +         assert_eq!(
+  ... (13 more lines)
+  7 tools completed in 1m 8s (7 ✓)
+
+Tests fail as expected — the helper doesn't exist yet. Now implementing. First, make accuracy_of shareable and re-export it:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (2 → 7 lines)
+    /// outcome, so the allostatic-vs-homeostatic comparison is measurable.
+  - fn accuracy_of(changed: &[&str], predicted: &std::collections::HashSet<&str>) -> (usize, f64) {
+  + /// Shared with the CLI `/risk validate` path (`commands_risk.rs`) so both
+  + /// validation cranks grade with identical logic.
+  + pub(crate) fn accuracy_of(
+  +     changed: &[&str],
+  +     predicted: &std::collections::HashSet<&str>,
+  + ) -> (usize, f64) {
+  ▶ edit src/commands_risk.rs (6 → 6 lines)
+    pub(crate) use crate::commands_risk_snapshots::{
+  -     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  +     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+        load_validation_history_from, parse_all_snapshots, parse_validation_events,
+        risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
+        RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+ ✓ (11.0s)
+    /// outcome, so the allostatic-vs-homeostatic comparison is measurable.
+  - fn accuracy_of(changed: &[&str], predicted: &std::collections::HashSet<&str>) -> (usize, f64) {
+  + /// Shared with the CLI `/risk validate` path (`commands_risk.rs`) so both
+  + /// validation cranks grade with identical logic.
+  + pub(crate) fn accuracy_of(
+  +     changed: &[&str],
+  +     predicted: &std::collections::HashSet<&str>,
+  + ) -> (usize, f64) {
+ ✓ (22.0s)
+    pub(crate) use crate::commands_risk_snapshots::{
+  -     auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+  +     accuracy_of, auto_risk_snapshot, auto_validate_after_failure, build_risk_snapshot_json,
+        load_validation_history_from, parse_all_snapshots, parse_validation_events,
+        risk_autosnapshot_enabled, write_risk_snapshot_to, write_validation_event, ValidationEvent,
+        RISK_SNAPSHOT_PATH, RISK_VALIDATION_PATH,
+  ▶ edit src/commands_risk.rs (1 → 15 lines)
+  + /// Extract the anticipatory (emerging) prediction paths from a snapshot JSON
+  + /// value. Older snapshots (pre-Day-138) have no `emerging` key — that yields
+  + /// an empty list, not an error. Entries without a `"path"` string are skipped.
+  + fn emerging_paths_from_snapshot(snapshot: &serde_json::Value) -> Vec<String> {
+  +     snapshot["emerging"]
+  +         .as_array()
+  +         .map(|arr| {
+  +             arr.iter()
+  +                 .filter_map(|v| v["path"].as_str().map(|s| s.to_string()))
+  +                 .collect()
+  +         })
+  +         .unwrap_or_default()
+  + }
+  + 
+    fn handle_risk_validate() {
+ ✓ (15.6s)
+  + /// Extract the anticipatory (emerging) prediction paths from a snapshot JSON
+  + /// value. Older snapshots (pre-Day-138) have no `emerging` key — that yields
+  + /// an empty list, not an error. Entries without a `"path"` string are skipped.
+  + fn emerging_paths_from_snapshot(snapshot: &serde_json::Value) -> Vec<String> {
+  +     snapshot["emerging"]
+  +         .as_array()
+  +         .map(|arr| {
+  +             arr.iter()
+  ... (7 more lines)
+  3 tools completed in 53.6s (3 ✓)
+
+Now wire both into handle_risk_validate:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (17 → 43 lines)
+                0.0
+            };
+            let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+  + 
+  +         // Also grade the *anticipatory* (emerging) prediction set against the
+  +         // same changed set — the allostatic column of the prediction meter.
+  +         // Legacy snapshots without an `emerging` list stay `None` (ungraded),
+  +         // so they don't drag the average in `compute_accuracy_stats`.
+  +         let emerging = emerging_paths_from_snapshot(&snapshot);
+  +         let changed_refs: Vec<&str> = hits
+  +             .iter()
+  +             .chain(surprises.iter())
+  +             .map(|s| s.as_str())
+  +             .collect();
+  +         let emerging_accuracy_pct = if emerging.is_empty() {
+  +             None
+  +         } else {
+  +             let emerging_set: std::collections::HashSet<&str> =
+  +                 emerging.iter().map(|s| s.as_str()).collect();
+  +             let (e_hits, e_pct) = accuracy_of(&changed_refs, &emerging_set);
+  ... (19 more lines)
+ ✓ (1m 25s)
+                0.0
+            };
+            let accuracy_pct_rounded = (accuracy_pct * 10.0).round() / 10.0;
+  + 
+  +         // Also grade the *anticipatory* (emerging) prediction set against the
+  +         // same changed set — the allostatic column of the prediction meter.
+  +         // Legacy snapshots without an `emerging` list stay `None` (ungraded),
+  +         // so they don't drag the average in `compute_accuracy_stats`.
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 && cargo t… ✓ (1m 6s)
+  ▶ $ cargo test emerging_paths 2>&1 | tail -6 && cargo test --lib 2>&1 | tail -3 ✓ (252ms)
+  ▶ $ cargo test --bin yoyo emerging_paths 2>&1 | tail -8 && cargo test --bin yoyo 2>&… ✓ (37.0s)
+  4 tools completed in 3m 29s (4 ✓)
+
+All green — 4332 tests pass, clippy clean. Now update CLAUDE.md:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "auto_validate_after_failure grades BOTH\|yoyo risk validate" CLAUDE.md … ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (pure local `accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half; re-exported
+  + `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (shared `pub(crate) accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half. The CLI validate path (`handle_risk_validate` in `commands_risk.rs`, behind `yoyo risk validate` — the crank that actually turns every session) grades both columns too via the same `accuracy_of` helper (Day 139): legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average); re-exported
+ ✓ (1m 5s)
+  - `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (pure local `accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half; re-exported
+  + `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (shared `pub(crate) accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half. The CLI validate path (`handle_risk_validate` in `commands_risk.rs`, behind `yoyo risk validate` — the crank that actually turns every session) grades both columns too via the same `accuracy_of` helper (Day 139): legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average); re-exported
+  ▶ $ cargo build 2>&1 | tail -2 && cargo fmt -- --check && echo FMT_OK && git status … ✓ (1.0s)
+  3 tools completed in 1m 22s (3 ✓)
+
+  watch: no files changed this turn — skipping
+
