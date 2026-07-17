@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat…  ▶ search 'severity' in src/commands_risk_snapshots.rs ✓ (2ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct ValidationEvent"… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ValidationEvent {" src… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ValidationEvent {" src/… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '215,265p' src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,210p' src/commands_ris… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "AccuracyStats {" src/ … ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '530,575p' src/commands_r… ✓ (3ms)
+  9 tools completed in 44.7s (9 ✓)
+
+Now making the edits. First, the ValidationEvent struct and parser:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (5 → 10 lines)
+        /// `None` when the underlying snapshot carried no emerging list (older
+        /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
+        pub(crate) emerging_accuracy_pct: Option<f64>,
+  +     /// What kind of outcome this event graded against — `"watch_failure"`
+  +     /// (red watch cycle) or `"revert"` (full revert). `None` on historical
+  +     /// severity-less lines and CLI manual grading (parse is defensive, so
+  +     /// legacy JSONL stays valid).
+  +     pub(crate) severity: Option<String>,
+    }
+  ▶ edit src/commands_risk_snapshots.rs (11 → 18 lines)
+            // Optional anticipatory accuracy — absent on all historical lines and
+            // on CLI-triggered events, so parse defensively (absent → None).
+            let emerging_accuracy_pct = val.get("emerging_accuracy_pct").and_then(|v| v.as_f64());
+  +         // Optional severity tag — absent on legacy lines (parse defensively,
+  +         // absent → None; same pattern as emerging_accuracy_pct above).
+  +         let severity = val
+  +             .get("severity")
+  +             .and_then(|v| v.as_str())
+  +             .map(String::from);
+    
+            events.push(ValidationEvent {
+                day,
+  ···
+                total_changed,
+                accuracy_pct,
+                emerging_accuracy_pct,
+  +             severity,
+            });
+ ✓ (11.1s)
+        /// `None` when the underlying snapshot carried no emerging list (older
+        /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
+        pub(crate) emerging_accuracy_pct: Option<f64>,
+  +     /// What kind of outcome this event graded against — `"watch_failure"`
+  +     /// (red watch cycle) or `"revert"` (full revert). `None` on historical
+  +     /// severity-less lines and CLI manual grading (parse is defensive, so
+  +     /// legacy JSONL stays valid).
+  +     pub(crate) severity: Option<String>,
+    }
+ ✓ (21.5s)
+            // Optional anticipatory accuracy — absent on all historical lines and
+            // on CLI-triggered events, so parse defensively (absent → None).
+            let emerging_accuracy_pct = val.get("emerging_accuracy_pct").and_then(|v| v.as_f64());
+  +         // Optional severity tag — absent on legacy lines (parse defensively,
+  +         // absent → None; same pattern as emerging_accuracy_pct above).
+  +         let severity = val
+  +             .get("severity")
+  +             .and_then(|v| v.as_str())
+  ... (10 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '425,495p' src/commands_r… ✓ (4ms)
+  3 tools completed in 29.2s (3 ✓)
+
+The struct edit got lost (parallel edit conflict). Re-applying:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (4 → 9 lines)
+        pub(crate) emerging_accuracy_pct: Option<f64>,
+  +     /// What kind of outcome this event graded against — `"watch_failure"`
+  +     /// (red watch cycle) or `"revert"` (full revert). `None` on historical
+  +     /// severity-less lines and CLI manual grading (parse is defensive, so
+  +     /// legacy JSONL stays valid).
+  +     pub(crate) severity: Option<String>,
+    }
+    
+    /// Load validation history from a JSONL file.
+ ✓ (10.7s)
+        pub(crate) emerging_accuracy_pct: Option<f64>,
+  +     /// What kind of outcome this event graded against — `"watch_failure"`
+  +     /// (red watch cycle) or `"revert"` (full revert). `None` on historical
+  +     /// severity-less lines and CLI manual grading (parse is defensive, so
+  +     /// legacy JSONL stays valid).
+  +     pub(crate) severity: Option<String>,
+    }
+    
+    /// Load validation history from a JSONL file.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '/^            emerging_a… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging_accuracy_pct" … ✓ (49ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '110,135p' src/commands_r… ✓ (3ms)
+  4 tools completed in 32.3s (4 ✓)
+
+Line 122 is inside compute_accuracy_stats itself — fine. Now add severity visibility to the accuracy report (optional item 4, and makes the field read):
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_accuracy.rs (4 → 7 lines)
+        /// Average anticipatory accuracy across graded events. `None` when no
+        /// event carries an emerging grade yet (older validation history).
+        pub(crate) emerging_avg_pct: Option<f64>,
+  +     /// Event counts per severity tag (e.g. `"revert"`, `"watch_failure"`).
+  +     /// Legacy severity-less events are counted under `"untagged"`.
+  +     pub(crate) severity_counts: std::collections::BTreeMap<String, usize>,
+    }
+ ✓ (10.5s)
+        /// Average anticipatory accuracy across graded events. `None` when no
+        /// event carries an emerging grade yet (older validation history).
+        pub(crate) emerging_avg_pct: Option<f64>,
+  +     /// Event counts per severity tag (e.g. `"revert"`, `"watch_failure"`).
+  +     /// Legacy severity-less events are counted under `"untagged"`.
+  +     pub(crate) severity_counts: std::collections::BTreeMap<String, usize>,
+    }
+  ▶ edit src/commands_risk_accuracy.rs (4 → 5 lines)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             severity_counts: std::collections::BTreeMap::new(),
+            };
+        }
+ ✓ (10.6s)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             severity_counts: std::collections::BTreeMap::new(),
+            };
+        }
+  ▶ edit src/commands_risk_accuracy.rs (19 → 29 lines)
+        } else {
+            Some(graded.iter().sum::<f64>() / graded.len() as f64)
+        };
+  + 
+  +     // Per-severity event counts — legacy severity-less events land in
+  +     // "untagged" so the historical lines stay visible without a fake tag.
+  +     let mut severity_counts: std::collections::BTreeMap<String, usize> =
+  +         std::collections::BTreeMap::new();
+  +     for e in events {
+  +         let key = e.severity.as_deref().unwrap_or("untagged").to_string();
+  +         *severity_counts.entry(key).or_insert(0) += 1;
+  +     }
+    
+        AccuracyStats {
+            total_validations,
+  ···
+            worst_day,
+            emerging_samples,
+            emerging_avg_pct,
+  +         severity_counts,
+  ... (2 more lines)
+ ✓ (10.5s)
+        } else {
+            Some(graded.iter().sum::<f64>() / graded.len() as f64)
+        };
+  + 
+  +     // Per-severity event counts — legacy severity-less events land in
+  +     // "untagged" so the historical lines stay visible without a fake tag.
+  +     let mut severity_counts: std::collections::BTreeMap<String, usize> =
+  +         std::collections::BTreeMap::new();
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,235p' src/commands_r… ✓ (3ms)
+  ▶ read src/commands_risk_accuracy.rs:196..221 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '203,205p' src/commands_r… ✓ (4ms)
+  ▶ edit src/commands_risk_accuracy.rs (2 → 2 lines)
+  -     format!(
+  +     let mut report = format!(
+            "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
+ ✓ (10.4s)
+  -     format!(
+  +     let mut report = format!(
+            "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
+  ▶ edit src/commands_risk_accuracy.rs (6 → 27 lines)
+            best_str,
+            worst_str,
+            emerging_str,
+  -     )
+  +     );
+  + 
+  +     // Per-severity breakdown — only shown once at least one event carries a
+  +     // severity tag (legacy histories are all "untagged"; stay quiet for them).
+  +     let tagged: Vec<String> = stats
+  +         .severity_counts
+  +         .iter()
+  +         .filter(|(k, _)| k.as_str() != "untagged")
+  +         .map(|(k, c)| format!("{c} {k}"))
+  +         .collect();
+  +     if !tagged.is_empty() {
+  +         let untagged = stats.severity_counts.get("untagged").copied().unwrap_or(0);
+  +         let mut parts = tagged;
+  +         if untagged > 0 {
+  +             parts.push(format!("{untagged} untagged"));
+  +         }
+  ... (7 more lines)
+ ✓ (10.4s)
+            best_str,
+            worst_str,
+            emerging_str,
+  -     )
+  +     );
+  + 
+  +     // Per-severity breakdown — only shown once at least one event carries a
+  +     // severity tag (legacy histories are all "untagged"; stay quiet for them).
+  ... (13 more lines)
+  ▶ edit src/commands_risk_accuracy.rs (4 → 5 lines)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             severity_counts: std::collections::BTreeMap::new(),
+            };
+            let report = format_accuracy_report(&stats);
+ ✓ (1m 42s)
+                emerging_samples: 0,
+                emerging_avg_pct: None,
+  +             severity_counts: std::collections::BTreeMap::new(),
+            };
+            let report = format_accuracy_report(&stats);
+  9 tools completed in 3m 15s (9 ✓)
+
+  watch: no files changed this turn — skipping
+

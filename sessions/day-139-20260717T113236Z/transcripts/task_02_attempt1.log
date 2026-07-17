@@ -1,0 +1,159 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+Let me look at the current state of the spawn manifest code — the repo outline already shows `parse_spawn_manifest and read_spawn_manifest` exist, so I need to see what's there vs. what's missing.
+  ▶ search 'manifest|replay|spawn_runs' in src/commands_spawn.rs  ▶ search 'spawn' in src/commands.rs ✓ (3ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|struct \|const " s… ✓ (4ms)
+ ✓ (16ms)
+  ▶ read src/commands_spawn.rs:634..754  ▶ read src/commands_spawn.rs:975..1365 ✓ (1ms)
+ ✓ (4ms)
+  ▶ read src/commands_spawn.rs:1075..1265 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "manifest" src/commands_…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn" docs/src/usage/c… ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn command_arg_completi…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 890,915p src/help_data.rs… ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,30p' src/commands_spaw… ✓ (6ms)
+  ▶ edit src/commands_spawn.rs (1 → 71 lines)
+  + /// Resolve which manifest a `/spawn replay` invocation refers to.
+  + ///
+  + /// `None` or `Some("latest")` picks the newest manifest in `dir` (run ids are
+  + /// timestamp-prefixed, so `list_spawn_manifests`' newest-first order is
+  + /// chronological). A specific id resolves to `<dir>/<id>.json`. Each failure
+  + /// mode gets one honest message — never a silent no-op.
+  + fn select_replay_manifest(dir: &Path, id_arg: Option<&str>) -> Result<PathBuf, String> {
+  +     match id_arg {
+  +         None | Some("latest") => list_spawn_manifests(dir)
+  +             .into_iter()
+  +             .next()
+  +             .map(|(_, path)| path)
+  +             .ok_or_else(|| {
+  +                 format!(
+  +                     "no spawn manifests found in {} — run /spawn --parallel first",
+  +                     dir.display()
+  +                 )
+  +             }),
+  +         Some(id) => {
+  +             let path = dir.join(format!("{id}.json"));
+  ... (51 more lines)
+ ✓ (17.1s)
+  + /// Resolve which manifest a `/spawn replay` invocation refers to.
+  + ///
+  + /// `None` or `Some("latest")` picks the newest manifest in `dir` (run ids are
+  + /// timestamp-prefixed, so `list_spawn_manifests`' newest-first order is
+  + /// chronological). A specific id resolves to `<dir>/<id>.json`. Each failure
+  + /// mode gets one honest message — never a silent no-op.
+  + fn select_replay_manifest(dir: &Path, id_arg: Option<&str>) -> Result<PathBuf, String> {
+  +     match id_arg {
+  ... (13 more lines)
+  13 tools completed in 2m 20s (13 ✓)
+
+Expected — dead until wired. Now wire the replay/runs subcommands into handle_spawn:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (4 → 48 lines)
+        // Clean up stale worktrees from crashed sessions (max age: 1 hour)
+        let cwd = std::env::current_dir().unwrap_or_default();
+        cleanup_stale_worktrees(&cwd, std::time::Duration::from_secs(3600));
+  + 
+  +     // Handle /spawn replay [--list|latest|<run_id>] and /spawn runs — the
+  +     // read-back half of the --parallel manifest door (#341): re-launch a
+  +     // recorded fan-out from its manifest.
+  +     if rest == "runs" || rest == "replay --list" {
+  +         handle_spawn_manifest_list();
+  +         return None;
+  +     }
+  +     if rest == "replay" || rest.starts_with("replay ") {
+  +         let arg = rest.strip_prefix("replay").unwrap_or("").trim();
+  +         let id_arg = if arg.is_empty() { None } else { Some(arg) };
+  +         match load_replay_tasks(Path::new(SPAWN_RUNS_DIR), id_arg) {
+  +             Ok((manifest, tasks)) => {
+  +                 println!(
+  +                     "{CYAN}  🐙 replaying run {} ({} task(s), recorded {}){RESET}",
+  +                     manifest.run_id,
+  +                     tasks.len(),
+  ... (28 more lines)
+ ✓ (1m 39s)
+        // Clean up stale worktrees from crashed sessions (max age: 1 hour)
+        let cwd = std::env::current_dir().unwrap_or_default();
+        cleanup_stale_worktrees(&cwd, std::time::Duration::from_secs(3600));
+  + 
+  +     // Handle /spawn replay [--list|latest|<run_id>] and /spawn runs — the
+  +     // read-back half of the --parallel manifest door (#341): re-launch a
+  +     // recorded fan-out from its manifest.
+  +     if rest == "runs" || rest == "replay --list" {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1m 18s)
+  2 tools completed in 3m 9s (2 ✓)
+
+Green. Now remove the stale dead_code attrs on the functions that are used at runtime, and add the replay tests:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_spawn.rs (4 → 3 lines)
+    /// the manifest inspector. Returns `None` only if the top-level JSON does not
+    /// parse or is not an object.
+  - #[cfg_attr(not(test), allow(dead_code))]
+    pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
+  ▶ edit src/commands_spawn.rs (4 → 3 lines)
+    /// Read and parse a manifest file from disk. Returns `None` if the file is
+    /// missing/unreadable or the JSON is malformed. Read-only, never panics.
+  - #[cfg_attr(not(test), allow(dead_code))]
+    pub fn read_spawn_manifest(path: &std::path::Path) -> Option<ParsedManifest> {
+ ✓ (1m 39s)
+    /// the manifest inspector. Returns `None` only if the top-level JSON does not
+    /// parse or is not an object.
+  - #[cfg_attr(not(test), allow(dead_code))]
+    pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
+ ✓ (3m 18s)
+    /// Read and parse a manifest file from disk. Returns `None` if the file is
+    /// missing/unreadable or the JSON is malformed. Read-only, never panics.
+  - #[cfg_attr(not(test), allow(dead_code))]
+    pub fn read_spawn_manifest(path: &std::path::Path) -> Option<ParsedManifest> {
+  ▶ edit src/commands_spawn.rs (2 → 19 lines)
+    /// Directory where `/spawn --parallel` fan-out manifests are written.
+    const SPAWN_RUNS_DIR: &str = ".yoyo/spawn_runs";
+  + 
+  + /// Subcommands/flags for `/spawn` tab-completion in the REPL.
+  + pub const SPAWN_SUBCOMMANDS: &[&str] = &[
+  +     "status",
+  +     "worktrees",
+  +     "collect",
+  +     "manifest",
+  +     "manifests",
+  +     "replay",
+  +     "runs",
+  +     "--bg",
+  +     "--parallel",
+  +     "--model",
+  +     "--system",
+  +     "--pr",
+  +     "-o",
+  + ];
+ ✓ (17.3s)
+    /// Directory where `/spawn --parallel` fan-out manifests are written.
+    const SPAWN_RUNS_DIR: &str = ".yoyo/spawn_runs";
+  + 
+  + /// Subcommands/flags for `/spawn` tab-completion in the REPL.
+  + pub const SPAWN_SUBCOMMANDS: &[&str] = &[
+  +     "status",
+  +     "worktrees",
+  +     "collect",
+  ... (11 more lines)
+  3 tools completed in 3m 44s (3 ✓)
+
+Wire it into completions in commands.rs plus update the arg hint:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands.rs (1 → 2 lines)
+            "/web" => filter_candidates(crate::commands_web::WEB_SUBCOMMANDS, &partial_lower),
+  +         "/spawn" => filter_candidates(crate::commands_spawn::SPAWN_SUBCOMMANDS, &partial_lower),
+  ▶ edit src/commands.rs (1 → 1 lines)
+  -         "spawn" => Some("[--bg] <prompt>"),
+  +         "spawn" => Some("<task> | replay [run|latest] | runs | status"),
+ ✓ (17.2s)
+            "/web" => filter_candidates(crate::commands_web::WEB_SUBCOMMANDS, &partial_lower),
+  +         "/spawn" => filter_candidates(crate::commands_spawn::SPAWN_SUBCOMMANDS, &partial_lower),
+ ✓ (34.5s)
+  -         "spawn" => Some("[--bg] <prompt>"),
+  +         "spawn" => Some("<task> | replay [run|latest] | runs | status"),
+  2 tools completed in 34.5s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

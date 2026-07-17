@@ -1,0 +1,50 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ ls -la src/commands_risk_weights.rs 2>&1; grep -n "commands_risk" src/main.rs ✓ (6ms)
+
+The new file exists but was never declared in src/main.rs. Adding the module declaration:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/main.rs (1 → 2 lines)
+    mod commands_risk_snapshots;
+  + mod commands_risk_weights;
+ ✓ (1m 50s)
+    mod commands_risk_snapshots;
+  + mod commands_risk_weights;
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -20 ✓ (9.2s)
+  ▶ $ cargo test 2>&1 | grep -E "test result|running|error" | tail -20 ✓ (1m 36s)
+  ▶ $ cargo test 2>&1 | grep "test result:"  ✓ (1m 1s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 ✓ (17.0s)
+  5 tools completed in 5m 6s (5 ✓)
+
+All checks green. Let me verify the rest of the task was completed (re-exports, CLAUDE.md):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ git status --short; grep -n "commands_risk_weights" CLAUDE.md src/commands_risk.… ✓ (8ms)
+  ▶ $ grep -n "commands_risk_accuracy.rs\|commands_risk_snapshots.rs —" CLAUDE.md | he… ✓ (7ms)
+  ▶ $ sed -n '94,96p' CLAUDE.md ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 2 lines)
+    - `commands_risk_accuracy.rs` — prediction-accuracy stats for /risk: `AccuracyTrend`, `AccuracyStats`, `compute_accuracy_stats`, `format_accuracy_report`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_weights.rs` — weight-learning + revert-history for /risk: `learn_weights_from_history`, `revert_history`, `load_learned_weights`, `parse_detailed_events`, `RISK_WEIGHTS`, `SIGNAL_NAMES`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+ ✓ (1m 16s)
+    - `commands_risk_accuracy.rs` — prediction-accuracy stats for /risk: `AccuracyTrend`, `AccuracyStats`, `compute_accuracy_stats`, `format_accuracy_report`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  + - `commands_risk_weights.rs` — weight-learning + revert-history for /risk: `learn_weights_from_history`, `revert_history`, `load_learned_weights`, `parse_detailed_events`, `RISK_WEIGHTS`, `SIGNAL_NAMES`; re-exported via `commands_risk` so call sites are unchanged (extracted from `commands_risk.rs`)
+  ▶ $ cargo fmt -- --check && cargo build 2>&1 | tail -2 && cargo test 2>&1 | grep "te… ✓ (1m 19s)
+  5 tools completed in 2m 59s (5 ✓)
+
+Fixed. The build error was a single missing piece: src/commands_risk_weights.rs existed with all the moved code, but the module was never declared in src/main.rs.
+
+Changes made:
+1. Added mod commands_risk_weights; to src/main.rs (alphabetically after commands_risk_snapshots)
+2. Completed task step 5: added the commands_risk_weights.rs bullet to CLAUDE.md's architecture list, matching the wording of the other risk extractions
+
+Verified everything is intact:
+• Re-export in commands_risk.rs resolves: learn_weights_from_history, revert_history, load_learned_weights, `parse_detailed_events, LEARNED_WEIGHTS_PATH, MIN_VALIDATION_EVENTS, RISK_WEIGHTS, SIGNAL_NAMES`
+• Tests relocated, not deleted (5 test fns in the new module)
+
+**All checks green:**
+• cargo fmt -- --check ✓
+• cargo build ✓
+• cargo test — 4340 + 88 passed, 0 failed ✓
+• cargo clippy --all-targets -- -D warnings ✓
+
+  watch: no files changed this turn — skipping
+

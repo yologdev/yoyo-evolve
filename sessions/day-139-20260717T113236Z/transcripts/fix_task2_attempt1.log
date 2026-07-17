@@ -1,0 +1,109 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ search 'replay' in src ✓ (9ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "replay\|runs" src/comma… ✓ (4ms)
+  ▶ read src/commands_spawn.rs:1090..1470 ✓ (3ms)
+  ▶ read src/commands_spawn.rs:1188..1428 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '3180,3375p' src/commands…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "spawn" src/help_data.rs… ✓ (5ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '885,935p' src/help_data.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '892,935p' src/help_data.… ✓ (4ms)
+  ▶ read src/help_data.rs:892..932 ✓ (1ms)
+  ▶ edit src/help_data.rs (2 → 4 lines)
+                 \x20 /spawn collect <id>             Collect a finished background spawn\n\
+  -              \x20 /spawn status                   Show all tracked spawns\n\n\
+  +              \x20 /spawn status                   Show all tracked spawns\n\
+  +              \x20 /spawn runs                     List recorded --parallel run manifests\n\
+  +              \x20 /spawn replay [<run_id>|latest] Re-launch a recorded fan-out\n\n\
+ ✓ (1m 54s)
+                 \x20 /spawn collect <id>             Collect a finished background spawn\n\
+  -              \x20 /spawn status                   Show all tracked spawns\n\n\
+  +              \x20 /spawn status                   Show all tracked spawns\n\
+  +              \x20 /spawn runs                     List recorded --parallel run manifests\n\
+  +              \x20 /spawn replay [<run_id>|latest] Re-launch a recorded fan-out\n\n\
+  ▶ edit src/help_data.rs (13 → 20 lines)
+                 Parallel spawns launch all tasks as background agents simultaneously.\n\
+                 Use /spawn status to monitor and /spawn collect <id> to retrieve\n\
+                 results. Maximum 10 parallel tasks.\n\n\
+  +              Each --parallel fan-out writes a rerunnable manifest to\n\
+  +              .yoyo/spawn_runs/<run_id>.json. Use /spawn runs (or\n\
+  +              /spawn replay --list) to see recorded runs, and\n\
+  +              /spawn replay <run_id> (or `latest`, or bare /spawn replay)\n\
+  +              to re-launch the same fan-out from its manifest.\n\n\
+                 Examples:\n\
+                 \x20 /spawn write unit tests for the parser module\n\
+                 \x20 /spawn --model claude-haiku-4-5 summarize this file\n\
+  ···
+                 \x20 /spawn --parallel fix auth tests --- write parser docs --- add error handling\n\
+                 \x20 /spawn --parallel -m claude-sonnet-4-20250514 task A --- task B\n\
+                 \x20 /spawn collect 1\n\
+  +              \x20 /spawn runs\n\
+  +              \x20 /spawn replay latest\n\
+                 \x20 /spawn status",
+ ✓ (1m 50s)
+                 Parallel spawns launch all tasks as background agents simultaneously.\n\
+                 Use /spawn status to monitor and /spawn collect <id> to retrieve\n\
+                 results. Maximum 10 parallel tasks.\n\n\
+  +              Each --parallel fan-out writes a rerunnable manifest to\n\
+  +              .yoyo/spawn_runs/<run_id>.json. Use /spawn runs (or\n\
+  +              /spawn replay --list) to see recorded runs, and\n\
+  +              /spawn replay <run_id> (or `latest`, or bare /spawn replay)\n\
+  +              to re-launch the same fan-out from its manifest.\n\n\
+  ... (10 more lines)
+  ▶ edit src/commands_spawn.rs (6 → 122 lines)
+        fn read_spawn_manifest_missing_file_returns_none() {
+            let path = std::path::Path::new("/nonexistent/does/not/exist-xyz.json");
+            assert!(read_spawn_manifest(path).is_none());
+  +     }
+  + 
+  +     // --- /spawn replay (#341: the reader half of the manifest door) ---
+  + 
+  +     /// Write a manifest for `run_id` with the given tasks into `dir`.
+  +     fn write_test_manifest(dir: &Path, run_id: &str, tasks: &[&str]) -> PathBuf {
+  +         let tasks: Vec<String> = tasks.iter().map(|t| t.to_string()).collect();
+  +         let results: Vec<(String, SpawnStatus)> = tasks
+  +             .iter()
+  +             .map(|t| (t.clone(), SpawnStatus::Completed))
+  +             .collect();
+  +         let manifest = build_spawn_manifest(run_id, &tasks, &results);
+  +         write_spawn_manifest(dir, &manifest).expect("write manifest")
+  +     }
+  + 
+  +     #[test]
+  +     fn select_replay_manifest_latest_picks_newest_of_multiple() {
+  ... (101 more lines)
+ ✓ (1m 50s)
+        fn read_spawn_manifest_missing_file_returns_none() {
+            let path = std::path::Path::new("/nonexistent/does/not/exist-xyz.json");
+            assert!(read_spawn_manifest(path).is_none());
+  +     }
+  + 
+  +     // --- /spawn replay (#341: the reader half of the manifest door) ---
+  + 
+  +     /// Write a manifest for `run_id` with the given tasks into `dir`.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --quiet commands_spaw… ✓ (261ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - `--parallel` now writes a rerunnable JSON manifest of the fan-out to `.yoyo/spawn_runs/<run_id>.json` (pure `build_spawn_manifest` + `write_spawn_manifest`), the first step toward codified/replayable orchestration (#341).
+  + `--parallel` now writes a rerunnable JSON manifest of the fan-out to `.yoyo/spawn_runs/<run_id>.json` (pure `build_spawn_manifest` + `write_spawn_manifest`), and `/spawn replay [<run_id>|latest]` reads it back and re-launches the same fan-out (`parse_spawn_manifest`/`load_replay_tasks` — honest errors for missing/corrupt/empty manifests, never a silent no-op); `/spawn runs` (alias `/spawn replay --list`) lists recorded runs. The reader half of codified/replayable orchestration (#341).
+ ✓ (1m 30s)
+  - `--parallel` now writes a rerunnable JSON manifest of the fan-out to `.yoyo/spawn_runs/<run_id>.json` (pure `build_spawn_manifest` + `write_spawn_manifest`), the first step toward codified/replayable orchestration (#341).
+  + `--parallel` now writes a rerunnable JSON manifest of the fan-out to `.yoyo/spawn_runs/<run_id>.json` (pure `build_spawn_manifest` + `write_spawn_manifest`), and `/spawn replay [<run_id>|latest]` reads it back and re-launches the same fan-out (`parse_spawn_manifest`/`load_replay_tasks` — honest errors for missing/corrupt/empty manifests, never a silent no-op); `/spawn runs` (alias `/spawn replay --list`) lists recorded runs. The reader half of codified/replayable orchestration (#341).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '345,400p' docs/src/usage… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parallel" docs/src/usag… ✓ (3ms)
+  ▶ edit docs/src/usage/commands.md (3 → 14 lines)
+    - worker made no changes (or no handoff commit) → the PR step is skipped quietly
+  + 
+  + **Replaying parallel fan-outs**: every `/spawn --parallel task1 --- task2 [--- task3...]` run records a rerunnable manifest at `.yoyo/spawn_runs/<run_id>.json` capturing the tasks and their outcomes. You can discover and re-launch recorded runs:
+  + 
+  + ```
+  + /spawn runs                    # list recorded run manifests (aliases: /spawn replay --list)
+  + /spawn replay                  # re-launch the most recent fan-out
+  + /spawn replay latest           # same as bare replay
+  + /spawn replay 20260709T100000Z # re-launch a specific run by id
+  + ```
+  + 
+  + Replay re-launches the same task list as a fresh parallel fan-out (which records its own new manifest). Failure modes are reported honestly: no manifests yet, an unknown run id, corrupt JSON, or an empty task list each produce one clear message — never a silent no-op. Nothing replays automatically; this is explicit-invocation only.
+    
+    > **Automatic sub-agent delegation**:

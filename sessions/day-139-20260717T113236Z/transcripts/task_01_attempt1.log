@@ -1,0 +1,194 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "severity\|struct Valida…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "auto_validate\|should_r… ✓ (7ms)
+ ✓ (4ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs:170..470  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/watch.rs:1280..1440 ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "auto_validate_after_fa…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event\… ✓ (5ms)
+ ✓ (10ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk.rs:2280..2340  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1,120p' src/commands_ris… ✓ (2ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '120,240p' src/commands_r…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '469,560p' src/commands_r… ✓ (5ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ValidationEvent {" src… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging_accuracy_pct:"… ✓ (5ms)
+  12 tools completed in 2m 6s (12 ✓)
+
+Now implementing. First, the severity field in commands_risk_snapshots.rs:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (13 → 22 lines)
+    /// `predicted_count` (always 10), `accuracy_pct`, and — when emerging data is
+    /// present — `emerging_accuracy_pct`. These are exactly the fields the accuracy
+    /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
+  + ///
+  + /// `severity` tags what *kind* of outcome this event graded against —
+  + /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
+  + /// stayed green), `"revert"` (full revert — reserved for higher-severity
+  + /// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
+  + /// so the file stays backward-compatible with the historical severity-less
+  + /// entries.
+  + #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_validation_event(
+        validation_path: &std::path::Path,
+        day: u32,
+  ···
+        surprises: &[String],
+        accuracy_pct: f64,
+        emerging_accuracy_pct: Option<f64>,
+  +     severity: Option<&str>,
+    ) -> std::io::Result<()> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 13 lines)
+        if let Some(ea) = emerging_accuracy_pct {
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("emerging_accuracy_pct".to_string(), serde_json::json!(ea));
+  +         }
+  +     }
+  + 
+  +     // Severity is optional so legacy readers and historical lines stay valid —
+  +     // absent means "untagged" (pre-severity event or CLI manual grading).
+  +     if let Some(sev) = severity {
+  +         if let Some(obj) = event.as_object_mut() {
+  +             obj.insert("severity".to_string(), serde_json::json!(sev));
+            }
+        }
+ ✓ (10.2s)
+    /// `predicted_count` (always 10), `accuracy_pct`, and — when emerging data is
+    /// present — `emerging_accuracy_pct`. These are exactly the fields the accuracy
+    /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
+  + ///
+  + /// `severity` tags what *kind* of outcome this event graded against —
+  + /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
+  + /// stayed green), `"revert"` (full revert — reserved for higher-severity
+  + /// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
+  ... (12 more lines)
+ ✓ (20.3s)
+        if let Some(ea) = emerging_accuracy_pct {
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("emerging_accuracy_pct".to_string(), serde_json::json!(ea));
+  +         }
+  +     }
+  + 
+  +     // Severity is optional so legacy readers and historical lines stay valid —
+  +     // absent means "untagged" (pre-severity event or CLI manual grading).
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (22 → 31 lines)
+    /// Automatically validate risk predictions against files that were changed
+  - /// in the current session. Called after watch failures (or successes) to
+  - /// close the prediction-validation loop.
+  + /// in the current session. Called from the post-prompt watch cycle to close
+  + /// the prediction-validation loop.
+    ///
+  - /// - No-op if no snapshots exist.
+  + /// `severity` tags what kind of outcome the predictions are graded against:
+  + /// `"watch_failure"` for a red watch cycle (lower-severity failure — the
+  + /// feed that lets the meter accumulate without a catastrophe),
+  + /// `"watch_success"` for a clean green cycle, `"revert"` reserved for full
+  + /// reverts.
+  + ///
+  + /// - No-op if no snapshots exist (product-safe: a user's repo without
+  + ///   snapshots never grows a validations file).
+    /// - No-op if no `changed_files` match `src/` paths.
+    /// - Appends a validation event to `.yoyo/risk_validations.jsonl`.
+    /// - Prints a brief 2-3 line stderr summary when there are results.
+  - pub(crate) fn auto_validate_after_failure(changed_files: &[String]) {
+  + pub(crate) fn auto_validate_after_failure(changed_files: &[String], severity: &str) {
+  ... (14 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (9 → 10 lines)
+            &surprises,
+            accuracy_pct_rounded,
+            emerging_accuracy_pct,
+  +         Some(severity),
+        ) {
+ ✓ (10.2s)
+    /// Automatically validate risk predictions against files that were changed
+  - /// in the current session. Called after watch failures (or successes) to
+  - /// close the prediction-validation loop.
+  + /// in the current session. Called from the post-prompt watch cycle to close
+  + /// the prediction-validation loop.
+    ///
+  - /// - No-op if no snapshots exist.
+  + /// `severity` tags what kind of outcome the predictions are graded against:
+  ... (13 more lines)
+ ✓ (20.8s)
+            &surprises,
+            accuracy_pct_rounded,
+            emerging_accuracy_pct,
+  +         Some(severity),
+        ) {
+  4 tools completed in 1m 1s (4 ✓)
+
+The auto-checks look stale/concurrent. Let me verify actual file state:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '185,250p' src/commands_r… ✓ (3.6s)
+
+The signature edit got lost in the concurrent edits. Re-applying:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (10 → 18 lines)
+    /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
+  + ///
+  + /// `severity` tags what *kind* of outcome this event graded against —
+  + /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
+  + /// stayed green), `"revert"` (full revert — reserved for higher-severity
+  + /// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
+  + /// so the file stays backward-compatible with historical severity-less entries.
+  + #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_validation_event(
+        validation_path: &std::path::Path,
+        day: u32,
+  ···
+        surprises: &[String],
+        accuracy_pct: f64,
+        emerging_accuracy_pct: Option<f64>,
+  +     severity: Option<&str>,
+    ) -> std::io::Result<()> {
+ ✓ (10.3s)
+    /// readers (`parse_validation_events`, `parse_rich_validation_events`) consume.
+  + ///
+  + /// `severity` tags what *kind* of outcome this event graded against —
+  + /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
+  + /// stayed green), `"revert"` (full revert — reserved for higher-severity
+  + /// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
+  + /// so the file stays backward-compatible with historical severity-less entries.
+  + #[allow(clippy::too_many_arguments)]
+  ... (9 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '335,395p' src/commands_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '278,320p' src/commands_r… ✓ (4ms)
+  3 tools completed in 21.4s (3 ✓)
+
+That earlier signature edit was also lost. Re-applying (one at a time now):
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (15 → 22 lines)
+    /// - Prints a brief 2-3 line stderr summary when there are results.
+  - pub(crate) fn auto_validate_after_failure(changed_files: &[String]) {
+  + ///
+  + /// `severity` tags what kind of outcome the predictions are graded against:
+  + /// `"watch_failure"` for a red watch cycle (the lower-severity feed that lets
+  + /// the meter accumulate without a catastrophe), `"watch_success"` for a clean
+  + /// green cycle, `"revert"` reserved for full reverts.
+  + pub(crate) fn auto_validate_after_failure(changed_files: &[String], severity: &str) {
+        auto_validate_after_failure_to(
+            changed_files,
+  +         severity,
+            std::path::Path::new(RISK_SNAPSHOT_PATH),
+            std::path::Path::new(RISK_VALIDATION_PATH),
+        );
+  ···
+    /// Inner implementation with configurable paths (for testing).
+    fn auto_validate_after_failure_to(
+        changed_files: &[String],
+  +     severity: &str,
+        snapshot_path: &std::path::Path,
+  ... (2 more lines)
+ ✓ (10.1s)
+    /// - Prints a brief 2-3 line stderr summary when there are results.
+  - pub(crate) fn auto_validate_after_failure(changed_files: &[String]) {
+  + ///
+  + /// `severity` tags what kind of outcome the predictions are graded against:
+  + /// `"watch_failure"` for a red watch cycle (the lower-severity feed that lets
+  + /// the meter accumulate without a catastrophe), `"watch_success"` for a clean
+  + /// green cycle, `"revert"` reserved for full reverts.
+  + pub(crate) fn auto_validate_after_failure(changed_files: &[String], severity: &str) {
+  ... (13 more lines)
+
+  watch: no files changed this turn — skipping
+
