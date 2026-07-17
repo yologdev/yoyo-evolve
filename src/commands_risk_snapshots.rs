@@ -406,7 +406,6 @@ pub(crate) struct ValidationEvent {
     /// Anticipatory (emerging / momentum) prediction accuracy for this event.
     /// `None` when the underlying snapshot carried no emerging list (older
     /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
-    #[allow(dead_code)]
     pub(crate) emerging_accuracy_pct: Option<f64>,
 }
 

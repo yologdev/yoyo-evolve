@@ -27,6 +27,11 @@ pub(crate) struct AccuracyStats {
     pub(crate) trend: AccuracyTrend,
     pub(crate) best_day: Option<(u32, f64)>, // (day, accuracy_pct)
     pub(crate) worst_day: Option<(u32, f64)>, // (day, accuracy_pct)
+    /// Number of events whose anticipatory (emerging) prediction was graded.
+    pub(crate) emerging_samples: usize,
+    /// Average anticipatory accuracy across graded events. `None` when no
+    /// event carries an emerging grade yet (older validation history).
+    pub(crate) emerging_avg_pct: Option<f64>,
 }
 
 /// Compute trend by comparing the average accuracy of the last N events
@@ -66,6 +71,8 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
             trend: AccuracyTrend::Insufficient,
             best_day: None,
             worst_day: None,
+            emerging_samples: 0,
+            emerging_avg_pct: None,
         };
     }
 
@@ -107,6 +114,20 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
 
     let trend = compute_accuracy_trend(events);
 
+    // Anticipatory (emerging) accuracy: average only the graded events.
+    // `None` grades come from snapshots that carried no emerging list —
+    // skipping them keeps the 24 historical lines from dragging the average.
+    let graded: Vec<f64> = events
+        .iter()
+        .filter_map(|e| e.emerging_accuracy_pct)
+        .collect();
+    let emerging_samples = graded.len();
+    let emerging_avg_pct = if graded.is_empty() {
+        None
+    } else {
+        Some(graded.iter().sum::<f64>() / graded.len() as f64)
+    };
+
     AccuracyStats {
         total_validations,
         total_hits,
@@ -115,6 +136,8 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
         trend,
         best_day,
         worst_day,
+        emerging_samples,
+        emerging_avg_pct,
     }
 }
 
@@ -146,6 +169,15 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         Some((day, pct)) => format!("Day {day} ({pct:.0}%)"),
         None => "—".to_string(),
     };
+    // Anticipatory accuracy line — shown even when ungraded so the gap
+    // between the two prediction meters stays visible.
+    let emerging_str = match stats.emerging_avg_pct {
+        Some(pct) => {
+            let rounded = (pct * 10.0).round() / 10.0;
+            format!("{rounded:.0}% avg ({} graded)", stats.emerging_samples)
+        }
+        None => "— (not graded yet)".to_string(),
+    };
 
     format!(
         "\n{BOLD}  ╭─ Risk Prediction Accuracy ─╮{RESET}\n\
@@ -154,6 +186,7 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
          {BOLD}  │{RESET} Trend:        {:<25}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Best day:     {:<13}{BOLD}│{RESET}\n\
          {BOLD}  │{RESET} Worst day:    {:<13}{BOLD}│{RESET}\n\
+         {BOLD}  │{RESET} Emerging:     {:<25}{BOLD}│{RESET}\n\
          {BOLD}  ╰────────────────────────────╯{RESET}\n",
         stats.total_validations,
         format!(
@@ -163,6 +196,7 @@ pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
         trend_str,
         best_str,
         worst_str,
+        emerging_str,
     )
 }
 
@@ -198,6 +232,96 @@ mod tests {
         assert_eq!(stats.trend, AccuracyTrend::Insufficient);
         assert_eq!(stats.best_day, Some((110, 60.0)));
         assert_eq!(stats.worst_day, Some((110, 60.0)));
+    }
+
+    #[test]
+    fn test_compute_accuracy_stats_emerging_average() {
+        // Emerging (anticipatory) accuracy: average only the graded events,
+        // count how many were graded. None-events (older snapshots) are skipped.
+        let events = vec![
+            ValidationEvent {
+                day: 138,
+                hit_count: 2,
+                total_changed: 4,
+                accuracy_pct: 50.0,
+                emerging_accuracy_pct: Some(100.0),
+            },
+            ValidationEvent {
+                day: 138,
+                hit_count: 1,
+                total_changed: 4,
+                accuracy_pct: 25.0,
+                emerging_accuracy_pct: None, // ungraded — must not drag the average
+            },
+            ValidationEvent {
+                day: 139,
+                hit_count: 3,
+                total_changed: 4,
+                accuracy_pct: 75.0,
+                emerging_accuracy_pct: Some(50.0),
+            },
+        ];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.emerging_samples, 2);
+        let avg = stats.emerging_avg_pct.expect("two graded events → Some");
+        assert!(
+            (avg - 75.0).abs() < 0.1,
+            "avg of 100 and 50 is 75, got {avg}"
+        );
+    }
+
+    #[test]
+    fn test_compute_accuracy_stats_emerging_none_when_ungraded() {
+        // All-None history (the 24 historical lines) → no emerging stats.
+        let events = vec![ValidationEvent {
+            day: 110,
+            hit_count: 3,
+            total_changed: 5,
+            accuracy_pct: 60.0,
+            emerging_accuracy_pct: None,
+        }];
+        let stats = compute_accuracy_stats(&events);
+        assert_eq!(stats.emerging_samples, 0);
+        assert!(stats.emerging_avg_pct.is_none());
+    }
+
+    #[test]
+    fn test_format_accuracy_report_shows_emerging_line() {
+        let events = vec![ValidationEvent {
+            day: 139,
+            hit_count: 2,
+            total_changed: 4,
+            accuracy_pct: 50.0,
+            emerging_accuracy_pct: Some(75.0),
+        }];
+        let stats = compute_accuracy_stats(&events);
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("Emerging:"),
+            "report must surface the anticipatory accuracy line: {report}"
+        );
+        assert!(
+            report.contains("75%"),
+            "graded emerging accuracy must appear: {report}"
+        );
+    }
+
+    #[test]
+    fn test_format_accuracy_report_emerging_dash_when_ungraded() {
+        let events = vec![ValidationEvent {
+            day: 110,
+            hit_count: 3,
+            total_changed: 5,
+            accuracy_pct: 60.0,
+            emerging_accuracy_pct: None,
+        }];
+        let stats = compute_accuracy_stats(&events);
+        let report = format_accuracy_report(&stats);
+        assert!(
+            report.contains("Emerging:"),
+            "line present even without data so the gap is visible: {report}"
+        );
+        assert!(report.contains('—'), "ungraded → em-dash placeholder");
     }
 
     #[test]
@@ -421,6 +545,8 @@ mod tests {
             trend: AccuracyTrend::Improving,
             best_day: Some((115, 80.0)),
             worst_day: Some((108, 20.0)),
+            emerging_samples: 0,
+            emerging_avg_pct: None,
         };
         let report = format_accuracy_report(&stats);
         assert!(report.contains("Risk Prediction Accuracy"));
