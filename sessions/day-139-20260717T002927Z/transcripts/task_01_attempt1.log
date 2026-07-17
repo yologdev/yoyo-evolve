@@ -1,0 +1,190 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status && git log --oneline …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging_accuracy_pct" … ✓ (4ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emerging" src/commands_… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (190 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '150,168p' src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=150 && NR<=167' src/com… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (2 → 89 lines)
+  +     #[test]
+  +     fn test_compute_accuracy_stats_emerging_average() {
+  +         // Emerging (anticipatory) accuracy: average only the graded events,
+  +         // count how many were graded. None-events (older snapshots) are skipped.
+  +         let events = vec![
+  +             ValidationEvent {
+  +                 day: 138,
+  +                 hit_count: 2,
+  +                 total_changed: 4,
+  +                 accuracy_pct: 50.0,
+  +                 emerging_accuracy_pct: Some(100.0),
+  +             },
+  +             ValidationEvent {
+  +                 day: 138,
+  +                 hit_count: 1,
+  +                 total_changed: 4,
+  +                 accuracy_pct: 25.0,
+  +                 emerging_accuracy_pct: None, // ungraded — must not drag the average
+  +             },
+  +             ValidationEvent {
+  ... (69 more lines)
+ ✓ (10.9s)
+  +     #[test]
+  +     fn test_compute_accuracy_stats_emerging_average() {
+  +         // Emerging (anticipatory) accuracy: average only the graded events,
+  +         // count how many were graded. None-events (older snapshots) are skipped.
+  +         let events = vec![
+  +             ValidationEvent {
+  +                 day: 138,
+  +                 hit_count: 2,
+  ... (13 more lines)
+  7 tools completed in 1m 19s (7 ✓)
+
+Tests are red as expected. Now the implementation — struct fields, computation, and the report line:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (3 → 8 lines)
+        pub(crate) best_day: Option<(u32, f64)>, // (day, accuracy_pct)
+        pub(crate) worst_day: Option<(u32, f64)>, // (day, accuracy_pct)
+  +     /// Number of events whose anticipatory (emerging) prediction was graded.
+  +     pub(crate) emerging_samples: usize,
+  +     /// Average anticipatory accuracy across graded events. `None` when no
+  +     /// event carries an emerging grade yet (older validation history).
+  +     pub(crate) emerging_avg_pct: Option<f64>,
+    }
+ ✓ (10.2s)
+        pub(crate) best_day: Option<(u32, f64)>, // (day, accuracy_pct)
+        pub(crate) worst_day: Option<(u32, f64)>, // (day, accuracy_pct)
+  +     /// Number of events whose anticipatory (emerging) prediction was graded.
+  +     pub(crate) emerging_samples: usize,
+  +     /// Average anticipatory accuracy across graded events. `None` when no
+  +     /// event carries an emerging grade yet (older validation history).
+  +     pub(crate) emerging_avg_pct: Option<f64>,
+    }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (4 → 6 lines)
+                best_day: None,
+                worst_day: None,
+  +             emerging_samples: 0,
+  +             emerging_avg_pct: None,
+            };
+        }
+ ✓ (10.5s)
+                best_day: None,
+                worst_day: None,
+  +             emerging_samples: 0,
+  +             emerging_avg_pct: None,
+            };
+        }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (11 → 24 lines)
+        let trend = compute_accuracy_trend(events);
+  + 
+  +     // Anticipatory (emerging) accuracy: average only the graded events.
+  +     // `None` grades come from snapshots that carried no emerging list —
+  +     // skipping them keeps the 24 historical lines from dragging the average.
+  +     let graded: Vec<f64> = events.iter().filter_map(|e| e.emerging_accuracy_pct).collect();
+  +     let emerging_samples = graded.len();
+  +     let emerging_avg_pct = if graded.is_empty() {
+  +         None
+  +     } else {
+  +         Some(graded.iter().sum::<f64>() / graded.len() as f64)
+  +     };
+    
+        AccuracyStats {
+            total_validations,
+  ···
+            trend,
+            best_day,
+            worst_day,
+  +         emerging_samples,
+  ... (2 more lines)
+ ✓ (10.6s)
+        let trend = compute_accuracy_trend(events);
+  + 
+  +     // Anticipatory (emerging) accuracy: average only the graded events.
+  +     // `None` grades come from snapshots that carried no emerging list —
+  +     // skipping them keeps the 24 historical lines from dragging the average.
+  +     let graded: Vec<f64> = events.iter().filter_map(|e| e.emerging_accuracy_pct).collect();
+  +     let emerging_samples = graded.len();
+  +     let emerging_avg_pct = if graded.is_empty() {
+  ... (13 more lines)
+  3 tools completed in 50.5s (3 ✓)
+
+Now the report line (which also resolves the dead-code error) and the remaining test initializer:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (4 → 13 lines)
+        let worst_str = match stats.worst_day {
+            Some((day, pct)) => format!("Day {day} ({pct:.0}%)"),
+            None => "—".to_string(),
+  +     };
+  +     // Anticipatory accuracy line — shown even when ungraded so the gap
+  +     // between the two prediction meters stays visible.
+  +     let emerging_str = match stats.emerging_avg_pct {
+  +         Some(pct) => {
+  +             let rounded = (pct * 10.0).round() / 10.0;
+  +             format!("{rounded:.0}% avg ({} graded)", stats.emerging_samples)
+  +         }
+  +         None => "— (not graded yet)".to_string(),
+        };
+ ✓ (10.5s)
+        let worst_str = match stats.worst_day {
+            Some((day, pct)) => format!("Day {day} ({pct:.0}%)"),
+            None => "—".to_string(),
+  +     };
+  +     // Anticipatory accuracy line — shown even when ungraded so the gap
+  +     // between the two prediction meters stays visible.
+  +     let emerging_str = match stats.emerging_avg_pct {
+  +         Some(pct) => {
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (1 → 2 lines)
+             {BOLD}  │{RESET} Worst day:    {:<13}{BOLD}│{RESET}\n\
+  +          {BOLD}  │{RESET} Emerging:     {:<25}{BOLD}│{RESET}\n\
+ ✓ (10.6s)
+             {BOLD}  │{RESET} Worst day:    {:<13}{BOLD}│{RESET}\n\
+  +          {BOLD}  │{RESET} Emerging:     {:<25}{BOLD}│{RESET}\n\
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (4 → 5 lines)
+            trend_str,
+            best_str,
+            worst_str,
+  +         emerging_str,
+        )
+ ✓ (10.6s)
+            trend_str,
+            best_str,
+            worst_str,
+  +         emerging_str,
+        )
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '528,548p' src/commands_r… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_accuracy.rs (3 → 5 lines)
+                best_day: Some((115, 80.0)),
+                worst_day: Some((108, 20.0)),
+  +             emerging_samples: 0,
+  +             emerging_avg_pct: None,
+            };
+ ✓ (1m 37s)
+                best_day: Some((115, 80.0)),
+                worst_day: Some((108, 20.0)),
+  +             emerging_samples: 0,
+  +             emerging_avg_pct: None,
+            };
+  5 tools completed in 2m 38s (5 ✓)
+
+Auto-check passed. Now remove the #[allow(dead_code)] on the snapshot field since it's genuinely read now:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_risk_snapshots.rs (5 → 4 lines)
+        /// Anticipatory (emerging / momentum) prediction accuracy for this event.
+        /// `None` when the underlying snapshot carried no emerging list (older
+        /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
+  -     #[allow(dead_code)]
+        pub(crate) emerging_accuracy_pct: Option<f64>,
+ ✓ (1m 36s)
+        /// Anticipatory (emerging / momentum) prediction accuracy for this event.
+        /// `None` when the underlying snapshot carried no emerging list (older
+        /// snapshots) — distinct from `Some(0.0)` which means "graded, 0% accurate".
+  -     #[allow(dead_code)]
+        pub(crate) emerging_accuracy_pct: Option<f64>,
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (1m 38s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test commands_risk_accurac… ✓ (302ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo emerging 2… ✓ (1.8s)
+  4 tools completed in 3m 31s (4 ✓)
+
+  watch: no files changed this turn — skipping
+
