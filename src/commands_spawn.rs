@@ -3372,4 +3372,120 @@ mod tests {
         let path = std::path::Path::new("/nonexistent/does/not/exist-xyz.json");
         assert!(read_spawn_manifest(path).is_none());
     }
+
+    // --- /spawn replay (#341: the reader half of the manifest door) ---
+
+    /// Write a manifest for `run_id` with the given tasks into `dir`.
+    fn write_test_manifest(dir: &Path, run_id: &str, tasks: &[&str]) -> PathBuf {
+        let tasks: Vec<String> = tasks.iter().map(|t| t.to_string()).collect();
+        let results: Vec<(String, SpawnStatus)> = tasks
+            .iter()
+            .map(|t| (t.clone(), SpawnStatus::Completed))
+            .collect();
+        let manifest = build_spawn_manifest(run_id, &tasks, &results);
+        write_spawn_manifest(dir, &manifest).expect("write manifest")
+    }
+
+    #[test]
+    fn select_replay_manifest_latest_picks_newest_of_multiple() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        write_test_manifest(&dir, "20260101T000000Z", &["old task"]);
+        write_test_manifest(&dir, "20260301T120000Z", &["newest task"]);
+        write_test_manifest(&dir, "20260201T090000Z", &["middle task"]);
+
+        // Both bare (None) and explicit "latest" resolve to the newest run id.
+        let picked = select_replay_manifest(&dir, None).expect("latest");
+        assert!(picked.ends_with("20260301T120000Z.json"), "{picked:?}");
+        let picked = select_replay_manifest(&dir, Some("latest")).expect("latest");
+        assert!(picked.ends_with("20260301T120000Z.json"), "{picked:?}");
+    }
+
+    #[test]
+    fn select_replay_manifest_specific_id_resolves_path() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        write_test_manifest(&dir, "20260101T000000Z", &["a task"]);
+
+        let picked = select_replay_manifest(&dir, Some("20260101T000000Z")).expect("by id");
+        assert!(picked.ends_with("20260101T000000Z.json"), "{picked:?}");
+    }
+
+    #[test]
+    fn select_replay_manifest_empty_dir_is_honest_error() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let missing = tmp.path().join("no_such_dir");
+        let err = select_replay_manifest(&missing, None).expect_err("must error");
+        assert!(err.contains("no spawn manifests found"), "{err}");
+        assert!(err.contains("--parallel"), "points at the writer: {err}");
+    }
+
+    #[test]
+    fn select_replay_manifest_unknown_id_is_honest_error() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        write_test_manifest(&dir, "20260101T000000Z", &["a task"]);
+
+        let err = select_replay_manifest(&dir, Some("bogus-id")).expect_err("must error");
+        assert!(err.contains("bogus-id"), "names the missing id: {err}");
+        assert!(err.contains("/spawn runs"), "points at discovery: {err}");
+    }
+
+    #[test]
+    fn load_replay_tasks_roundtrips_written_manifest() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        write_test_manifest(&dir, "20260101T000000Z", &["fix auth", "write docs"]);
+
+        let (manifest, tasks) = load_replay_tasks(&dir, Some("20260101T000000Z")).expect("load");
+        assert_eq!(manifest.run_id, "20260101T000000Z");
+        assert_eq!(tasks, vec!["fix auth".to_string(), "write docs".to_string()]);
+    }
+
+    #[test]
+    fn load_replay_tasks_corrupt_json_is_honest_error() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("20260101T000000Z.json"), "{not valid json").expect("write");
+
+        let err = load_replay_tasks(&dir, Some("20260101T000000Z")).expect_err("must error");
+        assert!(err.contains("corrupt"), "names corruption: {err}");
+    }
+
+    #[test]
+    fn load_replay_tasks_empty_task_list_is_honest_error() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let dir = tmp.path().join("spawn_runs");
+        // A structurally valid manifest with zero tasks.
+        let manifest = build_spawn_manifest("20260101T000000Z", &[], &[]);
+        write_spawn_manifest(&dir, &manifest).expect("write manifest");
+
+        let err = load_replay_tasks(&dir, Some("20260101T000000Z")).expect_err("must error");
+        assert!(err.contains("no tasks to replay"), "{err}");
+        assert!(err.contains("20260101T000000Z"), "names the run: {err}");
+    }
+
+    #[test]
+    fn manifest_replay_tasks_skips_empty_entries() {
+        let manifest = ParsedManifest {
+            run_id: "r".to_string(),
+            created_ts: "ts".to_string(),
+            task_count: 3,
+            tasks: vec![
+                ParsedManifestTask {
+                    index: 0,
+                    task: "real task".to_string(),
+                    status: "completed".to_string(),
+                },
+                ParsedManifestTask {
+                    index: 1,
+                    task: String::new(),
+                    status: "completed".to_string(),
+                },
+            ],
+        };
+        let tasks = manifest_replay_tasks(&manifest).expect("non-empty");
+        assert_eq!(tasks, vec!["real task".to_string()]);
+    }
 }

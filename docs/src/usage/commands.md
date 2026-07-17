@@ -380,6 +380,17 @@ Degradation is graceful and reported honestly, and the local branch always remai
 - PR creation fails after a successful push → the pushed branch is reported alongside the failure
 - worker made no changes (or no handoff commit) → the PR step is skipped quietly
 
+**Replaying parallel fan-outs**: every `/spawn --parallel task1 --- task2 [--- task3...]` run records a rerunnable manifest at `.yoyo/spawn_runs/<run_id>.json` capturing the tasks and their outcomes. You can discover and re-launch recorded runs:
+
+```
+/spawn runs                    # list recorded run manifests (aliases: /spawn replay --list)
+/spawn replay                  # re-launch the most recent fan-out
+/spawn replay latest           # same as bare replay
+/spawn replay 20260709T100000Z # re-launch a specific run by id
+```
+
+Replay re-launches the same task list as a fresh parallel fan-out (which records its own new manifest). Failure modes are reported honestly: no manifests yet, an unknown run id, corrupt JSON, or an empty task list each produce one clear message — never a silent no-op. Nothing replays automatically; this is explicit-invocation only.
+
 > **Automatic sub-agent delegation**: In addition to `/spawn`, the model can autonomously delegate subtasks to a built-in `sub_agent` tool. This happens transparently — the model decides when a subtask benefits from a fresh context window (e.g., researching a codebase section, running a series of tests). You'll see a 🐙 indicator when delegation occurs.
 
 ## Git

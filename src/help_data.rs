@@ -901,7 +901,9 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /spawn --system <prompt> <task> Custom system prompt for the subagent\n\
              \x20 /spawn --bg -o <f> <task>       Background with output capture\n\
              \x20 /spawn collect <id>             Collect a finished background spawn\n\
-             \x20 /spawn status                   Show all tracked spawns\n\n\
+             \x20 /spawn status                   Show all tracked spawns\n\
+             \x20 /spawn runs                     List recorded --parallel run manifests\n\
+             \x20 /spawn replay [<run_id>|latest] Re-launch a recorded fan-out\n\n\
              Creates a new AI agent with a separate context window to\n\
              handle the given task. The subagent has access to the same\n\
              tools but operates independently.\n\n\
@@ -917,6 +919,11 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Parallel spawns launch all tasks as background agents simultaneously.\n\
              Use /spawn status to monitor and /spawn collect <id> to retrieve\n\
              results. Maximum 10 parallel tasks.\n\n\
+             Each --parallel fan-out writes a rerunnable manifest to\n\
+             .yoyo/spawn_runs/<run_id>.json. Use /spawn runs (or\n\
+             /spawn replay --list) to see recorded runs, and\n\
+             /spawn replay <run_id> (or `latest`, or bare /spawn replay)\n\
+             to re-launch the same fan-out from its manifest.\n\n\
              Examples:\n\
              \x20 /spawn write unit tests for the parser module\n\
              \x20 /spawn --model claude-haiku-4-5 summarize this file\n\
@@ -926,6 +933,8 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /spawn --parallel fix auth tests --- write parser docs --- add error handling\n\
              \x20 /spawn --parallel -m claude-sonnet-4-20250514 task A --- task B\n\
              \x20 /spawn collect 1\n\
+             \x20 /spawn runs\n\
+             \x20 /spawn replay latest\n\
              \x20 /spawn status",
         ),
         "review" => Some(
