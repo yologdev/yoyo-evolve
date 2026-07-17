@@ -667,6 +667,50 @@ pub async fn handle_spawn(
     let cwd = std::env::current_dir().unwrap_or_default();
     cleanup_stale_worktrees(&cwd, std::time::Duration::from_secs(3600));
 
+    // Handle /spawn replay [--list|latest|<run_id>] and /spawn runs — the
+    // read-back half of the --parallel manifest door (#341): re-launch a
+    // recorded fan-out from its manifest.
+    if rest == "runs" || rest == "replay --list" {
+        handle_spawn_manifest_list();
+        return None;
+    }
+    if rest == "replay" || rest.starts_with("replay ") {
+        let arg = rest.strip_prefix("replay").unwrap_or("").trim();
+        let id_arg = if arg.is_empty() { None } else { Some(arg) };
+        match load_replay_tasks(Path::new(SPAWN_RUNS_DIR), id_arg) {
+            Ok((manifest, tasks)) => {
+                println!(
+                    "{CYAN}  🐙 replaying run {} ({} task(s), recorded {}){RESET}",
+                    manifest.run_id,
+                    tasks.len(),
+                    manifest.created_ts
+                );
+                let replay_args = SpawnArgs {
+                    task: String::new(),
+                    output_path: None,
+                    background: true,
+                    collect_id: None,
+                    model: None,
+                    system_prompt: None,
+                    parallel_tasks: Some(tasks.clone()),
+                    pr: false,
+                };
+                return handle_spawn_parallel(
+                    &tasks,
+                    &replay_args,
+                    agent_config,
+                    model,
+                    main_messages,
+                    tracker,
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  ✗ {e}{RESET}");
+                return None;
+            }
+        }
+    }
+
     let args = match parse_spawn_args(input) {
         Some(a) => a,
         None => {
@@ -1052,6 +1096,23 @@ fn handle_spawn_parallel(
 /// Directory where `/spawn --parallel` fan-out manifests are written.
 const SPAWN_RUNS_DIR: &str = ".yoyo/spawn_runs";
 
+/// Subcommands/flags for `/spawn` tab-completion in the REPL.
+pub const SPAWN_SUBCOMMANDS: &[&str] = &[
+    "status",
+    "worktrees",
+    "collect",
+    "manifest",
+    "manifests",
+    "replay",
+    "runs",
+    "--bg",
+    "--parallel",
+    "--model",
+    "--system",
+    "--pr",
+    "-o",
+];
+
 /// Max bytes stored for a task string in a manifest entry (char-boundary safe).
 const MANIFEST_TASK_CAP: usize = 200;
 
@@ -1229,7 +1290,6 @@ pub fn parse_spawn_manifest(json: &str) -> Option<ParsedManifest> {
 
 /// Read and parse a manifest file from disk. Returns `None` if the file is
 /// missing/unreadable or the JSON is malformed. Read-only, never panics.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn read_spawn_manifest(path: &std::path::Path) -> Option<ParsedManifest> {
     let json = std::fs::read_to_string(path).ok()?;
     parse_spawn_manifest(&json)
@@ -1259,6 +1319,76 @@ fn list_spawn_manifests(dir: &Path) -> Vec<(String, PathBuf)> {
     // Newest-first: run_ids are timestamp-prefixed, so reverse lexical works.
     out.sort_by(|a, b| b.0.cmp(&a.0));
     out
+}
+
+/// Resolve which manifest a `/spawn replay` invocation refers to.
+///
+/// `None` or `Some("latest")` picks the newest manifest in `dir` (run ids are
+/// timestamp-prefixed, so `list_spawn_manifests`' newest-first order is
+/// chronological). A specific id resolves to `<dir>/<id>.json`. Each failure
+/// mode gets one honest message — never a silent no-op.
+fn select_replay_manifest(dir: &Path, id_arg: Option<&str>) -> Result<PathBuf, String> {
+    match id_arg {
+        None | Some("latest") => list_spawn_manifests(dir)
+            .into_iter()
+            .next()
+            .map(|(_, path)| path)
+            .ok_or_else(|| {
+                format!(
+                    "no spawn manifests found in {} — run /spawn --parallel first",
+                    dir.display()
+                )
+            }),
+        Some(id) => {
+            let path = dir.join(format!("{id}.json"));
+            if path.is_file() {
+                Ok(path)
+            } else {
+                Err(format!(
+                    "no manifest for run '{id}' (looked in {}) — /spawn runs lists available runs",
+                    dir.display()
+                ))
+            }
+        }
+    }
+}
+
+/// Extract the replayable task list from a parsed manifest.
+///
+/// Empty-task entries are skipped (defensive parse artifacts); an entirely
+/// empty list is an error worth naming, never a silent no-op.
+fn manifest_replay_tasks(manifest: &ParsedManifest) -> Result<Vec<String>, String> {
+    let tasks: Vec<String> = manifest
+        .tasks
+        .iter()
+        .map(|t| t.task.clone())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tasks.is_empty() {
+        Err(format!(
+            "manifest '{}' has no tasks to replay",
+            manifest.run_id
+        ))
+    } else {
+        Ok(tasks)
+    }
+}
+
+/// Load the tasks for `/spawn replay [<run_id>|latest]`.
+///
+/// Combines manifest selection, read, and task extraction. Honest errors for
+/// each failure mode: no manifests at all, unknown run id, corrupt JSON,
+/// empty task list. Returns the parsed manifest (for the replay banner) plus
+/// the task list to re-launch.
+fn load_replay_tasks(
+    dir: &Path,
+    id_arg: Option<&str>,
+) -> Result<(ParsedManifest, Vec<String>), String> {
+    let path = select_replay_manifest(dir, id_arg)?;
+    let manifest = read_spawn_manifest(&path)
+        .ok_or_else(|| format!("manifest {} is unreadable or corrupt JSON", path.display()))?;
+    let tasks = manifest_replay_tasks(&manifest)?;
+    Ok((manifest, tasks))
 }
 
 /// Pure formatter: render a parsed manifest JSON as a human line-per-task

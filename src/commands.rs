@@ -241,7 +241,7 @@ pub fn command_arg_hint(cmd: &str) -> Option<&'static str> {
         "provider" => Some("<provider-name>"),
         "context" => Some("show | files | clear"),
         "skill" => Some("list | show | path"),
-        "spawn" => Some("[--bg] <prompt>"),
+        "spawn" => Some("<task> | replay [run|latest] | runs | status"),
         "grep" => Some("<pattern> [path] [-i] [-n]"),
         "find" => Some("<filename-pattern>"),
         "blame" => Some("<file> [line-range]"),
@@ -319,6 +319,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         }
         "/web" => filter_candidates(crate::commands_web::WEB_SUBCOMMANDS, &partial_lower),
         "/risk" => filter_candidates(crate::commands_risk::RISK_SUBCOMMANDS, &partial_lower),
+        "/spawn" => filter_candidates(crate::commands_spawn::SPAWN_SUBCOMMANDS, &partial_lower),
         _ => Vec::new(),
     }
 }
