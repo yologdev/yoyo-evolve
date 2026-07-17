@@ -66,6 +66,7 @@ mod commands_risk_accuracy;
 mod commands_risk_emerging;
 mod commands_risk_report;
 mod commands_risk_snapshots;
+mod commands_risk_weights;
 mod commands_run;
 mod commands_search;
 mod commands_session;

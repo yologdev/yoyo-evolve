@@ -3439,7 +3439,10 @@ mod tests {
 
         let (manifest, tasks) = load_replay_tasks(&dir, Some("20260101T000000Z")).expect("load");
         assert_eq!(manifest.run_id, "20260101T000000Z");
-        assert_eq!(tasks, vec!["fix auth".to_string(), "write docs".to_string()]);
+        assert_eq!(
+            tasks,
+            vec!["fix auth".to_string(), "write docs".to_string()]
+        );
     }
 
     #[test]
