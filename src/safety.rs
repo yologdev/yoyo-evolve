@@ -23,6 +23,9 @@
 //! - Piping internet content to script interpreters (`curl | python3`)
 //! - Symlink attacks on system files (`ln -sf /dev/null /etc/passwd`)
 //! - Archive extraction to system paths (`tar -xf ... -C /etc/`)
+//! - Oversized commands (>10k bytes fail closed — too large to analyze reliably)
+//! - Fd-redirect smuggling (`exec N<>file`, writes into `/dev/fd/N`,
+//!   odd `N>&M` dups combined with command substitution)
 
 /// A safety check function: receives `(cmd, cmd_lower)` and returns
 /// `Some(reason)` if the command matches a destructive pattern.
@@ -32,10 +35,12 @@ type SafetyCheck = fn(&str, &str) -> Option<String>;
 /// To add a new check: write the function with signature `fn(&str, &str) -> Option<String>`
 /// and append it here.
 const SAFETY_CHECKS: &[SafetyCheck] = &[
+    check_oversized_command,
     check_rm_destruction,
     check_git_force,
     check_permission_changes,
     check_file_overwrites,
+    check_fd_redirect,
     check_system_commands,
     check_database_destruction,
     check_pipe_from_internet,
@@ -130,6 +135,129 @@ const SYSTEM_TARGET_PATHS: &[&str] = &[
     "/etc/hosts",
     "/etc/cron",
 ];
+
+/// Commands longer than this always fail closed, regardless of content.
+///
+/// Pattern matching over huge payloads is unreliable: a destructive operation
+/// can hide anywhere inside a 10k+ character blob (encoded scripts, giant
+/// heredocs, generated one-liners), and the per-pattern checks below were
+/// never designed to reason about that much surface. Legitimate interactive
+/// commands are never this long, so the false-positive cost is near zero.
+/// The threshold compares byte length (`.len()`) — a conservative proxy for
+/// character count — and does no slicing, so there is no char-boundary risk
+/// with multi-byte UTF-8 (#250).
+const MAX_ANALYZABLE_COMMAND_BYTES: usize = 10_000;
+
+/// Fail closed on commands too large to analyze reliably.
+fn check_oversized_command(cmd: &str, _cmd_lower: &str) -> Option<String> {
+    if cmd.len() > MAX_ANALYZABLE_COMMAND_BYTES {
+        return Some(format!(
+            "Oversized command: {} bytes exceeds the {MAX_ANALYZABLE_COMMAND_BYTES}-byte analysis limit — too large to check reliably, failing closed",
+            cmd.len()
+        ));
+    }
+    None
+}
+
+/// Check for file-descriptor manipulation forms that can smuggle destructive
+/// writes past pattern-based analysis. Three shapes fail closed:
+///
+/// 1. `exec N<>path` — opens a read-write descriptor on a file; later writes
+///    go through `>&N` and never mention the file, so the pattern list can't
+///    see the real target.
+/// 2. Redirects into `/dev/fd/N` or `/proc/self/fd/N` for N >= 3 (or a
+///    non-numeric fd) — writes through an fd path whose target was set up
+///    earlier. Fds 0–2 are the standard streams (`> /dev/fd/2` ≡ `>&2`) and
+///    stay benign; reading (`cat /dev/fd/3`) is never flagged.
+/// 3. Non-standard fd duplication (`N>&M` other than `2>&1` / `1>&2`)
+///    combined with command substitution — the shape used to route a
+///    substituted command's effect through a hidden descriptor.
+///
+/// Ordinary `2>&1`, `> /dev/null 2>&1`, and `cmd > file` are deliberately NOT
+/// flagged: they're ubiquitous, and a false-positive storm would train users
+/// to ignore the guard entirely (a misfiring guardrail is worse than none).
+fn check_fd_redirect(cmd: &str, _cmd_lower: &str) -> Option<String> {
+    // Shape 1: `exec N<>path` (read-write fd open).
+    let mut search_from = 0;
+    while let Some(pos) = cmd[search_from..].find("exec ") {
+        let abs_pos = search_from + pos;
+        if is_at_word_boundary(cmd, abs_pos) {
+            let after = &cmd[abs_pos + 5..];
+            for token in after.split_whitespace() {
+                // Token granularity: digits immediately followed by `<>`
+                // (e.g. `3<>/etc/passwd` or a bare `3<>` before the path).
+                let digits = token.bytes().take_while(|b| b.is_ascii_digit()).count();
+                if digits > 0 && token[digits..].starts_with("<>") {
+                    return Some(
+                        "File-descriptor manipulation: 'exec N<>file' opens a read-write descriptor that hides later writes from analysis".into(),
+                    );
+                }
+            }
+        }
+        search_from = abs_pos + 5;
+    }
+
+    // Shape 2: redirect into /dev/fd/N or /proc/self/fd/N.
+    for prefix in ["/dev/fd/", "/proc/self/fd/"] {
+        let mut from = 0;
+        while let Some(pos) = cmd[from..].find(prefix) {
+            let abs_pos = from + pos;
+            // Only flag when the fd path is a redirect *target*: the nearest
+            // non-space character before it must be `>` (covers `>`, `>>`,
+            // `2>`). A plain read like `cat /dev/fd/3` stays benign.
+            let is_redirect_target = cmd[..abs_pos].trim_end().ends_with('>');
+            if is_redirect_target {
+                let after = &cmd[abs_pos + prefix.len()..];
+                let fd: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+                // Fds 0–2 are the standard streams — writing to them is
+                // equivalent to `>&1` / `>&2` and benign. Anything else
+                // (including a non-numeric fd like `$FD`) fails closed.
+                if !matches!(fd.as_str(), "0" | "1" | "2") {
+                    return Some(format!(
+                        "File-descriptor manipulation: redirect into '{prefix}…' writes through a descriptor whose real target is hidden from analysis"
+                    ));
+                }
+            }
+            from = abs_pos + prefix.len();
+        }
+    }
+
+    // Shape 3: non-standard fd duplication combined with command substitution.
+    // `2>&1` and `1>&2` (incl. bare `>&2` / `>&1`, where the source defaults
+    // to stdout) are exempt — they are everyday stream plumbing.
+    if cmd.contains("$(") || cmd.contains('`') {
+        let bytes = cmd.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'>' && bytes[i + 1] == b'&' {
+                // Source fd: digits immediately before `>` (defaults to 1).
+                let mut start = i;
+                while start > 0 && bytes[start - 1].is_ascii_digit() {
+                    start -= 1;
+                }
+                let src = if start == i { "1" } else { &cmd[start..i] };
+                // Target fd: digits after `&` (must be numeric to be a dup;
+                // `>&file` old-style redirection is handled by other checks).
+                let mut end = i + 2;
+                while end < bytes.len() && bytes[end].is_ascii_digit() {
+                    end += 1;
+                }
+                if end > i + 2 {
+                    let dst = &cmd[i + 2..end];
+                    let is_standard = (src == "2" && dst == "1") || (src == "1" && dst == "2");
+                    if !is_standard {
+                        return Some(format!(
+                            "File-descriptor manipulation: '{src}>&{dst}' with command substitution can route writes through a hidden descriptor"
+                        ));
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+
+    None
+}
 
 /// Check for rm -rf with dangerous target paths.
 fn check_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
@@ -2162,6 +2290,86 @@ mod tests {
         assert!(analyze_bash_command("unzip file.zip -d /home/user/project/").is_none());
         // Safe: tar create (not extract)
         assert!(analyze_bash_command("tar -cf archive.tar /etc/config").is_none());
+    }
+
+    #[test]
+    fn test_oversized_command_fails_closed() {
+        // Fixture table: (command, should_flag). Pattern analysis over huge
+        // payloads is unreliable, so >10k bytes fails closed regardless of content.
+        let over = "a".repeat(10_001); // 10,001 chars of pure benign content
+        let reason = analyze_bash_command(&over);
+        assert!(reason.is_some(), "10,001-char command must fail closed");
+        assert!(
+            reason.unwrap().contains("Oversized"),
+            "reason must attribute the flag to size, not content"
+        );
+
+        // Near-miss side of the boundary: 9,999 chars of benign content passes.
+        let under = format!("echo {}", "a".repeat(9_994)); // exactly 9,999 bytes
+        assert_eq!(under.len(), 9_999);
+        assert!(
+            analyze_bash_command(&under).is_none(),
+            "9,999-char benign command must NOT be flagged"
+        );
+
+        // Exactly at the threshold: not over, so not flagged.
+        let exact = format!("echo {}", "a".repeat(9_995)); // exactly 10,000 bytes
+        assert_eq!(exact.len(), 10_000);
+        assert!(analyze_bash_command(&exact).is_none());
+
+        // Multi-byte UTF-8 content: must flag (12,005 bytes) and must not panic.
+        let multibyte = format!("echo {}", "✓".repeat(4_000));
+        let reason = analyze_bash_command(&multibyte);
+        assert!(reason.is_some(), "multi-byte oversized command must flag");
+        assert!(reason.unwrap().contains("Oversized"));
+    }
+
+    #[test]
+    fn test_fd_redirect_fixture_table() {
+        // Adversarial shapes that must fail closed: fd manipulation can smuggle
+        // destructive writes past pattern-based analysis.
+        let flagged = [
+            "exec 3<>/etc/passwd",              // read-write fd open on a file
+            "exec 3<> /tmp/target",             // same, with space before path
+            "sudo exec 4<>/var/log/x",          // exec not at position 0
+            "echo pwned > /dev/fd/3",           // write through an fd path
+            "echo pwned >/dev/fd/3",            // no space after redirect
+            "echo pwned >> /proc/self/fd/3",    // append through fd path
+            "echo x > /dev/fd/$FD",             // non-numeric fd — fail closed
+            "cat payload 3>&1 $(fetch-stage2)", // odd fd dup + command substitution
+            "run 4>&2 `payload`",               // odd fd dup + backtick substitution
+        ];
+        for cmd in &flagged {
+            let reason = analyze_bash_command(cmd);
+            assert!(reason.is_some(), "must flag fd-redirect form: {cmd}");
+            assert!(
+                reason.unwrap().contains("descriptor"),
+                "reason for {cmd} must attribute the flag to fd manipulation"
+            );
+        }
+
+        // Near-miss cases that must NOT fire (the boundary's benign side):
+        // these are ubiquitous, and a false-positive storm trains users to
+        // ignore the guard.
+        let benign = [
+            "cmd 2>&1",
+            "cargo test > /dev/null 2>&1",
+            "command > out.txt",
+            "echo error >&2",
+            "make 2>&1 | tee build.log",
+            "echo $(date) 2>&1",         // command substitution + standard dup
+            "echo done $(hostname) >&2", // substitution + explicit stderr dup
+            "ls 3>&1",                   // odd dup alone, no substitution
+            "cat /dev/fd/3",             // reading an fd path, not writing
+            "echo hi > /dev/fd/2",       // fd 2 is stderr — same as >&2
+            "exec bash",                 // exec without fd open
+        ];
+        for cmd in &benign {
+            assert!(
+                analyze_bash_command(cmd).is_none(),
+                "must NOT flag benign form: {cmd}"
+            );
+        }
     }
 
     #[test]
