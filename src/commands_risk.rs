@@ -589,6 +589,13 @@ pub(crate) fn is_unknown_risk_subcommand(sub: &str) -> bool {
     !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
 }
 
+/// Human-readable list of `/risk` subcommands, derived from
+/// [`RISK_SUBCOMMANDS`] so the unknown-subcommand error can never drift out
+/// of sync with the actual dispatch table (single source of truth).
+pub(crate) fn risk_subcommand_list() -> String {
+    RISK_SUBCOMMANDS.join(" | ")
+}
+
 /// Handle the `/risk` command — display per-file risk scores.
 pub(crate) fn handle_risk(input: &str) {
     let sub = input.strip_prefix("/risk").unwrap_or(input).trim();
@@ -628,9 +635,7 @@ pub(crate) fn handle_risk(input: &str) {
     // here — the user believed a snapshot was recorded when nothing was.
     if is_unknown_risk_subcommand(sub) {
         println!("Unknown /risk subcommand: {sub}");
-        println!(
-            "Available: snapshot | validate | history | predict | accuracy | effectiveness | --all"
-        );
+        println!("Available: {}", risk_subcommand_list());
         return;
     }
 
@@ -1979,6 +1984,20 @@ fn handle_risk_validate() {
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_risk_subcommand_list_covers_every_subcommand() {
+        // Drift guard: the unknown-subcommand error derives its "Available:"
+        // list from RISK_SUBCOMMANDS via this helper. If anyone reverts to a
+        // hardcoded string, this pins that every real subcommand is present.
+        let list = risk_subcommand_list();
+        for sub in RISK_SUBCOMMANDS {
+            assert!(
+                list.contains(sub),
+                "risk_subcommand_list() is missing `{sub}`"
+            );
+        }
+        assert!(!list.is_empty());
+    }
     // ── Risk scoring tests ────────────────────────────────────────────
 
     #[test]
