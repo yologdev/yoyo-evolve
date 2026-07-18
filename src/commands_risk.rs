@@ -582,6 +582,13 @@ pub(crate) const RISK_SUBCOMMANDS: &[&str] = &[
     "--all",
 ];
 
+/// True if `sub` is not a recognized `/risk` subcommand. Empty input means
+/// "show the default report" and is never unknown. Kept in sync with
+/// [`RISK_SUBCOMMANDS`] so tab-completion and dispatch agree by construction.
+pub(crate) fn is_unknown_risk_subcommand(sub: &str) -> bool {
+    !sub.is_empty() && !RISK_SUBCOMMANDS.contains(&sub)
+}
+
 /// Handle the `/risk` command — display per-file risk scores.
 pub(crate) fn handle_risk(input: &str) {
     let sub = input.strip_prefix("/risk").unwrap_or(input).trim();
@@ -613,6 +620,17 @@ pub(crate) fn handle_risk(input: &str) {
 
     if sub == "effectiveness" {
         handle_risk_effectiveness();
+        return;
+    }
+
+    // Unknown subcommand: fail loudly instead of silently printing the
+    // default report. A typo like `yoyo risk snapshoot` used to fall through
+    // here — the user believed a snapshot was recorded when nothing was.
+    if is_unknown_risk_subcommand(sub) {
+        println!("Unknown /risk subcommand: {sub}");
+        println!(
+            "Available: snapshot | validate | history | predict | accuracy | effectiveness | --all"
+        );
         return;
     }
 
@@ -2035,6 +2053,24 @@ mod tests {
         // Smoke test — just verify it doesn't crash
         handle_risk("/risk");
         handle_risk("/risk --all");
+    }
+
+    #[test]
+    fn test_is_unknown_risk_subcommand() {
+        // Every documented subcommand is known
+        for sub in RISK_SUBCOMMANDS {
+            assert!(
+                !is_unknown_risk_subcommand(sub),
+                "{sub} should be a known /risk subcommand"
+            );
+        }
+        // Empty means "show the report" — not unknown
+        assert!(!is_unknown_risk_subcommand(""));
+        // A typo must be flagged, not silently fall through to the report
+        // (a user typing `yoyo risk snapshoot` would otherwise believe a
+        // snapshot was recorded when nothing was)
+        assert!(is_unknown_risk_subcommand("snapshoot"));
+        assert!(is_unknown_risk_subcommand("foo --all"));
     }
 
     #[test]
