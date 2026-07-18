@@ -15,7 +15,7 @@ use crate::format::*;
 
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use yoagent::types::AgentTool;
@@ -892,6 +892,72 @@ pub(crate) fn with_lite_description(tool: Box<dyn AgentTool>) -> Box<dyn AgentTo
         }
         None => tool,
     }
+}
+
+// ---------------------------------------------------------------------------
+// SessionCapTool — session-wide call-count circuit breaker
+// ---------------------------------------------------------------------------
+
+/// Session-wide cap on calls to high-leverage tools (`web_search`, `sub_agent`).
+/// Matches Claude Code's 200/session runaway-loop circuit breaker. Far above
+/// any legitimate interactive session's usage, so normal users never hit it.
+pub(crate) const SESSION_TOOL_CALL_CAP: usize = 200;
+
+/// A wrapper tool that enforces a session-wide cap on the number of times the
+/// wrapped tool may be called. Once the cap is exceeded, every subsequent call
+/// returns an honest error explaining why the tool stopped working (never a
+/// silent no-op, never a panic). The counter is per-process, which is the
+/// right scope for both the REPL and single-prompt modes.
+pub(crate) struct SessionCapTool {
+    inner: Box<dyn AgentTool>,
+    counter: Arc<AtomicUsize>,
+    cap: usize,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for SessionCapTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: yoagent::types::ToolContext,
+    ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        let used = self.counter.fetch_add(1, Ordering::SeqCst);
+        if used >= self.cap {
+            return Err(yoagent::types::ToolError::Failed(format!(
+                "{} session cap reached ({} calls) — this usually means a runaway \
+                 loop. Start a new session to reset.",
+                self.inner.name(),
+                self.cap
+            )));
+        }
+        self.inner.execute(params, ctx).await
+    }
+}
+
+/// Wrap a tool with a session-wide call cap. Each wrapped tool gets its own
+/// independent counter.
+pub(crate) fn with_session_cap(tool: Box<dyn AgentTool>, cap: usize) -> Box<dyn AgentTool> {
+    Box::new(SessionCapTool {
+        inner: tool,
+        counter: Arc::new(AtomicUsize::new(0)),
+        cap,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2934,5 +3000,88 @@ mod tests {
                 "{tool_name} should have an example in lite mode"
             );
         }
+    }
+
+    // === SessionCapTool tests ===
+
+    #[tokio::test]
+    async fn test_session_cap_executes_below_cap() {
+        let tool = with_session_cap(
+            Box::new(MockTool {
+                tool_name: "web_search",
+                result_text: "search results".to_string(),
+            }),
+            3,
+        );
+        for _ in 0..3 {
+            let result = tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .unwrap();
+            let text = match &result.content[0] {
+                yoagent::Content::Text { text } => text.clone(),
+                _ => panic!("Expected text content"),
+            };
+            assert_eq!(text, "search results");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_cap_errors_past_cap() {
+        let tool = with_session_cap(
+            Box::new(MockTool {
+                tool_name: "web_search",
+                result_text: "search results".to_string(),
+            }),
+            2,
+        );
+        // First `cap` calls succeed.
+        for _ in 0..2 {
+            assert!(tool
+                .execute(serde_json::json!({}), test_tool_context())
+                .await
+                .is_ok());
+        }
+        // Call cap+1 returns an error mentioning the cap and the tool name.
+        let err = tool
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("session cap reached"), "got: {msg}");
+        assert!(msg.contains("2 calls"), "cap should be in message: {msg}");
+        assert!(msg.contains("web_search"), "tool name in message: {msg}");
+    }
+
+    #[tokio::test]
+    async fn test_session_cap_independent_counters() {
+        let search = with_session_cap(
+            Box::new(MockTool {
+                tool_name: "web_search",
+                result_text: "ok".to_string(),
+            }),
+            1,
+        );
+        let sub = with_session_cap(
+            Box::new(MockTool {
+                tool_name: "sub_agent",
+                result_text: "ok".to_string(),
+            }),
+            1,
+        );
+        // Exhaust the search cap.
+        assert!(search
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .is_ok());
+        assert!(search
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .is_err());
+        // sub_agent's counter is untouched.
+        assert!(sub
+            .execute(serde_json::json!({}), test_tool_context())
+            .await
+            .is_ok());
     }
 }

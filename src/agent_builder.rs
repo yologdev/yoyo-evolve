@@ -20,6 +20,7 @@ use crate::format::*;
 use crate::hooks;
 use crate::prompt::{run_prompt, run_prompt_with_content, PromptOutcome};
 use crate::prompt_budget::is_audit_enabled;
+use crate::tool_wrappers::{with_session_cap, SESSION_TOOL_CALL_CAP};
 use crate::tools::{build_sub_agent_tool, build_tools};
 
 /// Return the User-Agent header value for yoyo.
@@ -569,13 +570,19 @@ impl AgentConfig {
                 }
             }
 
-            agent = agent.with_tools(tools);
-
-            // Add sub-agent tool via the dedicated API (separate from build_tools count).
-            // The SharedState handle is kept for future use (e.g. pre-populating context
-            // before dispatching sub-agents like analyze-trajectory).
+            // Add sub-agent tool (separate from build_tools count and the
+            // allowed/disallowed filters above, same as the old with_sub_agent
+            // wiring — which just pushed the tool into this same list). Wrapped
+            // with a session-wide call cap as a runaway-loop circuit breaker.
+            // The SharedState handle is kept for future use (e.g. pre-populating
+            // context before dispatching sub-agents like analyze-trajectory).
             let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
-            agent = agent.with_sub_agent(sub_agent_tool);
+            tools.push(with_session_cap(
+                Box::new(sub_agent_tool),
+                SESSION_TOOL_CALL_CAP,
+            ));
+
+            agent = agent.with_tools(tools);
         }
 
         // Tell yoagent the context window size so its built-in compaction knows the budget.

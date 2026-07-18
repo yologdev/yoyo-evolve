@@ -22,7 +22,8 @@ use crate::safety::analyze_bash_command;
 use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
-    with_recovery_hints, with_truncation, ToolFailureTracker,
+    with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+    SESSION_TOOL_CALL_CAP,
 };
 use crate::AgentConfig;
 
@@ -1052,10 +1053,14 @@ pub fn build_tools(
     // TodoTool is always available — it only modifies in-memory state, not filesystem
     tools.push(maybe_hook(Box::new(TodoTool), &hooks));
 
-    // WebSearchTool — agent-callable web search (always available)
+    // WebSearchTool — agent-callable web search (always available), with a
+    // session-wide call cap as a runaway-loop circuit breaker.
     tools.push(maybe_hook(
         with_recovery_hints(
-            with_truncation(Box::new(WebSearchTool), max_tool_output),
+            with_session_cap(
+                with_truncation(Box::new(WebSearchTool), max_tool_output),
+                SESSION_TOOL_CALL_CAP,
+            ),
             &failure_tracker,
         ),
         &hooks,
