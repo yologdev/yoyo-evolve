@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 195,230p src/commands_ris…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event(… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (9.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (10.0s)
+  4 tools completed in 28.6s (4 ✓)
+
+Five test call sites missing the new snapshot_git_hash argument. Let me look at them:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1285,1365p src/commands_r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (19.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1m 6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (51.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (17.9s)
+  5 tools completed in 2m 56s (5 ✓)
+
+All green. 
+
+What was wrong: write_validation_event gained a 9th parameter (`snapshot_git_hash: Option<&str>) for the green-grading dedup work, but 5 pre-existing unit-test call sites in src/commands_risk_snapshots.rs` (lines ~1296, 1322, 1356, 1358, 1435) were still passing 8 arguments.
+
+Fix: Appended None as the snapshot_git_hash argument at each of the 5 test call sites — these tests exercise the pre-existing event shapes, where no snapshot hash applies, so None is the correct value (it omits the key from the JSON, preserving the shapes the tests assert against).
+
+Verified:
+• `cargo fmt — clean (fmt -- --check` passes)
+• cargo build — ok
+• cargo test — 4343 + 88 passed, 0 failed
+• cargo clippy --all-targets -- -D warnings — clean
+
+  watch: no files changed this turn — skipping
+

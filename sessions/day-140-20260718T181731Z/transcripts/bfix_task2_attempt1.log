@@ -1,0 +1,138 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '10,25p' src/tool_wrapper… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionCapTool\|AtomicU… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct TruncatingTool" … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '145,240p' src/tool_wrapp… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_error\|ToolResult {"… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '620,645p' src/tool_wrapp… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ToolError" src/tool_wra… ✓ (10ms)
+  8 tools completed in 45.1s (8 ✓)
+
+Now let me see how the sub_agent tool is attached to the agent:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_sub_agent_tool\|w… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '565,585p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn with_sub_agent" ~/.c… ✓ (4ms)
+  ▶ $ sed -n '415,440p' ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent… ✓ (5ms)
+  ▶ $ sed -n '300,315p' ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent… ✓ (3ms)
+  5 tools completed in 42.8s (5 ✓)
+
+with_sub_agent is just self.tools.push(Box::new(sub)), so I can wrap the sub_agent tool as a boxed dyn tool and push it via the tools vec instead. Let me view the agent_builder wiring context:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '520,578p' src/agent_buil… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '578,600p' src/agent_buil… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^// ----" src/tool_wrap… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '890,905p' src/tool_wrapp… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct \w*Tool" src/too… ✓ (8ms)
+  5 tools completed in 36.4s (5 ✓)
+
+Now I'll add the SessionCapTool implementation before the Tests section:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tool_wrappers.rs (3 → 69 lines)
+  + // ---------------------------------------------------------------------------
+  + // SessionCapTool — session-wide call-count circuit breaker
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Session-wide cap on calls to high-leverage tools (`web_search`, `sub_agent`).
+  + /// Matches Claude Code's 200/session runaway-loop circuit breaker. Far above
+  + /// any legitimate interactive session's usage, so normal users never hit it.
+  + pub(crate) const SESSION_TOOL_CALL_CAP: usize = 200;
+  + 
+  + /// A wrapper tool that enforces a session-wide cap on the number of times the
+  + /// wrapped tool may be called. Once the cap is exceeded, every subsequent call
+  + /// returns an honest error explaining why the tool stopped working (never a
+  + /// silent no-op, never a panic). The counter is per-process, which is the
+  + /// right scope for both the REPL and single-prompt modes.
+  + pub(crate) struct SessionCapTool {
+  +     inner: Box<dyn AgentTool>,
+  +     counter: Arc<AtomicUsize>,
+  +     cap: usize,
+  + }
+  + 
+  ... (49 more lines)
+ ✓ (16.9s)
+  + // ---------------------------------------------------------------------------
+  + // SessionCapTool — session-wide call-count circuit breaker
+  + // ---------------------------------------------------------------------------
+  + 
+  + /// Session-wide cap on calls to high-leverage tools (`web_search`, `sub_agent`).
+  + /// Matches Claude Code's 200/session runaway-loop circuit breaker. Far above
+  + /// any legitimate interactive session's usage, so normal users never hit it.
+  + pub(crate) const SESSION_TOOL_CALL_CAP: usize = 200;
+  ... (13 more lines)
+
+Expected until wired. Now wire web_search in tools.rs:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '22,27p' src/tools.rs ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (3 → 4 lines)
+        maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+  -     with_recovery_hints, with_truncation, ToolFailureTracker,
+  +     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  +     SESSION_TOOL_CALL_CAP,
+    };
+ ✓ (16.9s)
+        maybe_confirm, maybe_guard, maybe_guard_arc, with_auto_check, with_lite_description,
+  -     with_recovery_hints, with_truncation, ToolFailureTracker,
+  +     with_recovery_hints, with_session_cap, with_truncation, ToolFailureTracker,
+  +     SESSION_TOOL_CALL_CAP,
+    };
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/tools.rs (8 → 12 lines)
+  -     // WebSearchTool — agent-callable web search (always available)
+  +     // WebSearchTool — agent-callable web search (always available), with a
+  +     // session-wide call cap as a runaway-loop circuit breaker.
+        tools.push(maybe_hook(
+            with_recovery_hints(
+  -             with_truncation(Box::new(WebSearchTool), max_tool_output),
+  +             with_session_cap(
+  +                 with_truncation(Box::new(WebSearchTool), max_tool_output),
+  +                 SESSION_TOOL_CALL_CAP,
+  +             ),
+                &failure_tracker,
+            ),
+            &hooks,
+ ✓ (1m 39s)
+  -     // WebSearchTool — agent-callable web search (always available)
+  +     // WebSearchTool — agent-callable web search (always available), with a
+  +     // session-wide call cap as a runaway-loop circuit breaker.
+        tools.push(maybe_hook(
+            with_recovery_hints(
+  -             with_truncation(Box::new(WebSearchTool), max_tool_output),
+  +             with_session_cap(
+  +                 with_truncation(Box::new(WebSearchTool), max_tool_output),
+  ... (5 more lines)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (7 → 13 lines)
+  -             agent = agent.with_tools(tools);
+  - 
+  -             // Add sub-agent tool via the dedicated API (separate from build_tools count).
+  -             // The SharedState handle is kept for future use (e.g. pre-populating context
+  -             // before dispatching sub-agents like analyze-trajectory).
+  +             // Add sub-agent tool (separate from build_tools count and the
+  +             // allowed/disallowed filters above, same as the old with_sub_agent
+  +             // wiring — which just pushed the tool into this same list). Wrapped
+  +             // with a session-wide call cap as a runaway-loop circuit breaker.
+  +             // The SharedState handle is kept for future use (e.g. pre-populating
+  +             // context before dispatching sub-agents like analyze-trajectory).
+                let (sub_agent_tool, _shared_state) = build_sub_agent_tool(self);
+  -             agent = agent.with_sub_agent(sub_agent_tool);
+  +             tools.push(with_session_cap(
+  +                 Box::new(sub_agent_tool),
+  +                 SESSION_TOOL_CALL_CAP,
+  +             ));
+  + 
+  +             agent = agent.with_tools(tools);
+ ✓ (10.5s)
+  -             agent = agent.with_tools(tools);
+  - 
+  -             // Add sub-agent tool via the dedicated API (separate from build_tools count).
+  -             // The SharedState handle is kept for future use (e.g. pre-populating context
+  -             // before dispatching sub-agents like analyze-trajectory).
+  +             // Add sub-agent tool (separate from build_tools count and the
+  +             // allowed/disallowed filters above, same as the old with_sub_agent
+  +             // wiring — which just pushed the tool into this same list). Wrapped
+  ... (11 more lines)
+  4 tools completed in 2m 23s (4 ✓)
+
+  watch: no files changed this turn — skipping
+

@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'analyze_bash_command' in src (*.rs) ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib safety::tests::… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib -- safety::test… ✓ (134ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- safety:… ✓ (152ms)
+  4 tools completed in 16.5s (4 ✓)
+
+Both new tests pass and exercise the new code paths. Evidence is complete.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_3.md (2 lines) ✓ (1m 4s)
+
+Verdict written: PASS.
+
+Summary of evidence:
+1. Implementation matches the task — both requested checks (oversized >10k fail-closed, fd-redirect smuggling forms) live in src/safety.rs and are appended to the existing SAFETY_CHECKS table; no new public API.
+2. Wiring confirmed — `analyze_bash_command (the function StreamingBashTool` consults at src/tools.rs:200) iterates that table, so the new verdicts flow through the existing ConfirmTool path.
+3. **Tests are the requested adversarial fixture tables** — boundary cases on both sides (9,999 / 10,000 / 10,001 bytes), multi-byte UTF-8 no-panic, flagged fd shapes, and the critical benign near-misses (2>&1, >/dev/null 2>&1, `cmd > file`, fd reads, fds 0–2). I ran the two new tests directly: both pass.
+4. No char-boundary risk — all string slicing uses indices derived from ASCII pattern matches or ascii-digit byte counts, which are always valid boundaries; the threshold check uses .len() with no slicing, as the task specified.
+
+  watch: no files changed this turn — skipping
+

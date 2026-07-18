@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ search 'watch_success' in src  ▶ search 'handle_risk_validate' in src ✓ (9ms)
+ ✓ (8ms)
+  ▶ read src/commands_risk.rs:1800..1960  ▶ read src/commands_risk_snapshots.rs:150..410 ✓ (2ms)
+ ✓ (4ms)
+  ▶ read src/commands_risk.rs:1959..2039  ▶ read src/watch.rs:1390..1430 ✓ (1ms)
+ ✓ (2ms)
+  ▶ read src/commands_risk_snapshots.rs:409..539  ▶ search 'fn classify_broke_files|fn compute_validation|fn parse_git_l…' in src ✓ (2ms)
+ ✓ (10ms)
+  ▶ search 'classify_broke_files|parse_git_log_name_only|compute_validat…' in src ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn classify_broke_file… ✓ (16ms)
+  ▶ read src/commands_risk.rs:1398..1538  ▶ read src/commands_risk_accuracy.rs:40..130 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "write_validation_event… ✓ (43ms)
+  ▶ read src/commands_risk.rs (30 lines)  ▶ read src/commands_risk_snapshots.rs:1140..1200 ✓ (1ms)
+ ✓ (2ms)
+  ▶ edit src/commands_risk_snapshots.rs (16 → 23 lines)
+    /// `severity` tags what *kind* of outcome this event graded against —
+  - /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
+  - /// stayed green), `"revert"` (full revert — reserved for higher-severity
+  - /// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
+  - /// so the file stays backward-compatible with historical severity-less entries.
+  + /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (green
+  + /// outcome: watch stayed green, or CLI validate found no breakage since the
+  + /// snapshot — one vocabulary for "graded against a green outcome"), `"revert"`
+  + /// (full revert — reserved for higher-severity wiring). `None` omits the key
+  + /// entirely (CLI manual grading, legacy lines), so the file stays
+  + /// backward-compatible with severity-less entries.
+  + ///
+  + /// `snapshot_git_hash` records which snapshot this event graded — used by the
+  + /// green-outcome dedup (grade each snapshot at most once). `None` omits the
+  + /// key (all pre-existing event shapes).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_validation_event(
+        validation_path: &std::path::Path,
+  ···
+        accuracy_pct: f64,
+  ... (4 more lines)
+ ✓ (10.7s)
+    /// `severity` tags what *kind* of outcome this event graded against —
+  - /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (watch
+  - /// stayed green), `"revert"` (full revert — reserved for higher-severity
+  - /// wiring). `None` omits the key entirely (CLI manual grading, legacy lines),
+  - /// so the file stays backward-compatible with historical severity-less entries.
+  + /// `"watch_failure"` (post-prompt watch went red), `"watch_success"` (green
+  + /// outcome: watch stayed green, or CLI validate found no breakage since the
+  + /// snapshot — one vocabulary for "graded against a green outcome"), `"revert"`
+  ... (13 more lines)
+  16 tools completed in 2m 27s (16 ✓)
+
+Expected — call sites need updating. First, add the field emission in the body:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (7 → 15 lines)
+        if let Some(sev) = severity {
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("severity".to_string(), serde_json::json!(sev));
+  +         }
+  +     }
+  + 
+  +     // Snapshot hash is optional — only green-outcome events carry it (it's
+  +     // the dedup key for "grade each snapshot at most once").
+  +     if let Some(hash) = snapshot_git_hash {
+  +         if let Some(obj) = event.as_object_mut() {
+  +             obj.insert("snapshot_git_hash".to_string(), serde_json::json!(hash));
+            }
+        }
+ ✓ (10.7s)
+        if let Some(sev) = severity {
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("severity".to_string(), serde_json::json!(sev));
+  +         }
+  +     }
+  + 
+  +     // Snapshot hash is optional — only green-outcome events carry it (it's
+  +     // the dedup key for "grade each snapshot at most once").
+  ... (5 more lines)
+  ▶ edit src/commands_risk_snapshots.rs (5 → 119 lines)
+        let pct = (hits as f64 / changed.len() as f64) * 100.0;
+        let pct_rounded = (pct * 10.0).round() / 10.0;
+        (hits, pct_rounded)
+  + }
+  + 
+  + /// Return true if a validation event referencing this snapshot's git hash
+  + /// already exists in the validations JSONL content. Only green-outcome events
+  + /// carry `snapshot_git_hash`, so this is exactly the "was this snapshot
+  + /// already green-graded?" question — the dedup that keeps repeated
+  + /// `yoyo risk validate` runs from spamming duplicate green events.
+  + pub(crate) fn green_event_exists_for(content: &str, snapshot_git_hash: &str) -> bool {
+  +     content
+  +         .lines()
+  +         .filter(|l| !l.trim().is_empty())
+  +         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+  +         .any(|v| v.get("snapshot_git_hash").and_then(|h| h.as_str()) == Some(snapshot_git_hash))
+  + }
+  + 
+  + /// Outcome of attempting to record a green (no-failure) validation event.
+  + #[derive(Debug, PartialEq)]
+  ... (98 more lines)
+ ✓ (10.9s)
+        let pct = (hits as f64 / changed.len() as f64) * 100.0;
+        let pct_rounded = (pct * 10.0).round() / 10.0;
+        (hits, pct_rounded)
+  + }
+  + 
+  + /// Return true if a validation event referencing this snapshot's git hash
+  + /// already exists in the validations JSONL content. Only green-outcome events
+  + /// carry `snapshot_git_hash`, so this is exactly the "was this snapshot
+  ... (13 more lines)
+  2 tools completed in 46.1s (2 ✓)
+
+Now update the existing call sites. First auto_validate_after_failure_to:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk_snapshots.rs (4 → 5 lines)
+            accuracy_pct_rounded,
+            emerging_accuracy_pct,
+            Some(severity),
+  +         None, // not a green-grade event — no snapshot dedup key
+        ) {
+ ✓ (10.9s)
+            accuracy_pct_rounded,
+            emerging_accuracy_pct,
+            Some(severity),
+  +         None, // not a green-grade event — no snapshot dedup key
+        ) {
+
+Now the red-path call in commands_risk.rs, plus the new green branch in handle_risk_validate:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_risk.rs (14 → 61 lines)
+                accuracy_pct_rounded,
+                emerging_accuracy_pct,
+                None, // CLI manual grading — untagged severity
+  +             None, // red-path event — no green dedup key
+            ) {
+                eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
+  +         }
+  +     } else {
+  +         // GREEN outcome: commits happened since the snapshot but nothing
+  +         // broke. Grade it anyway — predicted-risky files that were touched
+  +         // without breaking are false-positive evidence, and a meter that only
+  +         // records failures can never measure false positives (Day 140). Uses
+  +         // the same "watch_success" green marker the watch path writes, and
+  +         // dedups by snapshot git hash so repeated validate runs stay quiet.
+  +         let changed: std::collections::BTreeSet<String> = entries
+  +             .iter()
+  +             .flat_map(|e| e.files.iter().cloned())
+  +             .collect();
+  +         let changed: Vec<String> = changed.into_iter().collect();
+  +         let emerging = emerging_paths_from_snapshot(&snapshot);
+  ... (35 more lines)
+ ✓ (10.9s)
+                accuracy_pct_rounded,
+                emerging_accuracy_pct,
+                None, // CLI manual grading — untagged severity
+  +             None, // red-path event — no green dedup key
+            ) {
+                eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
+  +         }
+  +     } else {
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "write_validation_event(… ✓ (3ms)
+  2 tools completed in 14.1s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

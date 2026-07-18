@@ -1,0 +1,84 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,20p src/agent_builder.r… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "use crate::" src/agent_… ✓ (5ms)
+  ▶ edit src/agent_builder.rs (2 → 3 lines)
+    use crate::prompt_budget::is_audit_enabled;
+  + use crate::tool_wrappers::{with_session_cap, SESSION_TOOL_CALL_CAP};
+    use crate::tools::{build_sub_agent_tool, build_tools};
+ ✓ (1m 42s)
+    use crate::prompt_budget::is_audit_enabled;
+  + use crate::tool_wrappers::{with_session_cap, SESSION_TOOL_CALL_CAP};
+    use crate::tools::{build_sub_agent_tool, build_tools};
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | tail -15 ✓ (50.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test session_cap 2>&1 | gr… ✓ (163ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SessionCapTool\|SESSION… ✓ (111ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib tool_wrappers 2… ✓ (106ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo tool_wrapp… ✓ (165ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo tool_wrapp… ✓ (163ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 890,1000p src/tool_wrappe… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "SessionCapTool\|sessio… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "impl AgentTool for\|str… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1380,1470p src/tool_wrapp… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -40 src/tool_wrappers.rs ✓ (3ms)
+  ▶ edit src/tool_wrappers.rs (11 → 94 lines)
+                    tool.description().contains("Example:"),
+                    "{tool_name} should have an example in lite mode"
+                );
+  +         }
+  +     }
+  + 
+  +     // === SessionCapTool tests ===
+  + 
+  +     #[tokio::test]
+  +     async fn test_session_cap_executes_below_cap() {
+  +         let tool = with_session_cap(
+  +             Box::new(MockTool {
+  +                 tool_name: "web_search",
+  +                 result_text: "search results".to_string(),
+  +             }),
+  +             3,
+  +         );
+  +         for _ in 0..3 {
+  +             let result = tool
+  +                 .execute(serde_json::json!({}), test_tool_context())
+  ... (69 more lines)
+ ✓ (1m 41s)
+                    tool.description().contains("Example:"),
+                    "{tool_name} should have an example in lite mode"
+                );
+  +         }
+  +     }
+  + 
+  +     // === SessionCapTool tests ===
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tool_wrappers.rs" CLAUD… ✓ (3ms)
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool) and helper wrappers
+  + - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool, SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap) and helper wrappers
+ ✓ (1m 20s)
+  - - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool) and helper wrappers
+  + - `tool_wrappers.rs` — Tool decorator types (GuardedTool, TruncatingTool, ConfirmTool, ArcGuardedTool, AutoCheckTool, RecoveryHintTool, ToolFailureTracker, LiteDescriptionTool, SessionCapTool — session-wide 200-call circuit breaker on `web_search`/`sub_agent`, honest error past the cap) and helper wrappers
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1m 10s)
+  21 tools completed in 9m 34s (21 ✓)
+
+All green. Summary of the fix:
+
+Root cause: src/agent_builder.rs called with_session_cap(...) and SESSION_TOOL_CALL_CAP (to wrap the sub_agent tool) but never imported them from tool_wrappers.
+
+Changes:
+1. `src/agent_builder.rs` — added `use crate::tool_wrappers::{with_session_cap, SESSION_TOOL_CALL_CAP};`. That resolved both E0425 errors.
+2. **src/tool_wrappers.rs** — the SessionCapTool implementation existed but the task's required unit tests were missing. Added three tests reusing the existing MockTool/test_tool_context helpers:
+   • test_session_cap_executes_below_cap — passthrough below the cap
+   • test_session_cap_errors_past_cap — cap calls OK, cap+1 errors with "session cap reached", the cap number, and the tool name in the message
+   • test_session_cap_independent_counters — exhausting web_search's counter doesn't affect sub_agent's
+3. **`CLAUDE.md** — added SessionCapTool to the tool_wrappers.rs` bullet, per the task's docs requirement.
+
+**Verified:** cargo build ✓, cargo test (4350 + 88 passed, incl. the 3 new tests) ✓, cargo clippy --all-targets -- -D warnings ✓, cargo fmt -- --check ✓.
+
+  watch: no files changed this turn — skipping
+

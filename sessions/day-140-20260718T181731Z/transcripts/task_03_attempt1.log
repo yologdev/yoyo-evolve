@@ -1,0 +1,124 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ read src/safety.rs ✓ (13ms)
+  ▶ read src/safety.rs:100..350 ✓ (2ms)
+  ▶ $ grep -n "SENSITIVE_PATHS\|fn check_bare_truncation\|fn check_reverse_shell\|mod … ✓ (5ms)
+  ▶ read src/safety.rs:905..965  ▶ read src/safety.rs:1093..1123 ✓ (1ms)
+ ✓ (2ms)
+  5 tools completed in 1m 47s (5 ✓)
+
+Structure is clear. Now I'll write the tests first (adversarial fixture tables), then the implementation. Adding the fixture tests at the end of the test module:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (2 → 82 lines)
+  +     #[test]
+  +     fn test_oversized_command_fails_closed() {
+  +         // Fixture table: (command, should_flag). Pattern analysis over huge
+  +         // payloads is unreliable, so >10k bytes fails closed regardless of content.
+  +         let over = "a".repeat(10_001); // 10,001 chars of pure benign content
+  +         let reason = analyze_bash_command(&over);
+  +         assert!(reason.is_some(), "10,001-char command must fail closed");
+  +         assert!(
+  +             reason.unwrap().contains("Oversized"),
+  +             "reason must attribute the flag to size, not content"
+  +         );
+  + 
+  +         // Near-miss side of the boundary: 9,999 chars of benign content passes.
+  +         let under = format!("echo {}", "a".repeat(9_994)); // exactly 9,999 bytes
+  +         assert_eq!(under.len(), 9_999);
+  +         assert!(
+  +             analyze_bash_command(&under).is_none(),
+  +             "9,999-char benign command must NOT be flagged"
+  +         );
+  + 
+  ... (62 more lines)
+ ✓ (1m 36s)
+  +     #[test]
+  +     fn test_oversized_command_fails_closed() {
+  +         // Fixture table: (command, should_flag). Pattern analysis over huge
+  +         // payloads is unreliable, so >10k bytes fails closed regardless of content.
+  +         let over = "a".repeat(10_001); // 10,001 chars of pure benign content
+  +         let reason = analyze_bash_command(&over);
+  +         assert!(reason.is_some(), "10,001-char command must fail closed");
+  +         assert!(
+  ... (13 more lines)
+
+Tests fail as expected — the checks don't exist yet. Now the implementation:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (2 → 3 lines)
+    const SAFETY_CHECKS: &[SafetyCheck] = &[
+  +     check_oversized_command,
+        check_rm_destruction,
+ ✓ (11.0s)
+    const SAFETY_CHECKS: &[SafetyCheck] = &[
+  +     check_oversized_command,
+        check_rm_destruction,
+  ▶ edit src/safety.rs (1 → 2 lines)
+        check_file_overwrites,
+  +     check_fd_redirect,
+ ✓ (11.3s)
+        check_file_overwrites,
+  +     check_fd_redirect,
+  2 tools completed in 29.4s (2 ✓)
+
+Now the two check functions:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (1 → 124 lines)
+  + /// Commands longer than this always fail closed, regardless of content.
+  + ///
+  + /// Pattern matching over huge payloads is unreliable: a destructive operation
+  + /// can hide anywhere inside a 10k+ character blob (encoded scripts, giant
+  + /// heredocs, generated one-liners), and the per-pattern checks below were
+  + /// never designed to reason about that much surface. Legitimate interactive
+  + /// commands are never this long, so the false-positive cost is near zero.
+  + /// The threshold compares byte length (`.len()`) — a conservative proxy for
+  + /// character count — and does no slicing, so there is no char-boundary risk
+  + /// with multi-byte UTF-8 (#250).
+  + const MAX_ANALYZABLE_COMMAND_BYTES: usize = 10_000;
+  + 
+  + /// Fail closed on commands too large to analyze reliably.
+  + fn check_oversized_command(cmd: &str, _cmd_lower: &str) -> Option<String> {
+  +     if cmd.len() > MAX_ANALYZABLE_COMMAND_BYTES {
+  +         return Some(format!(
+  +             "Oversized command: {} bytes exceeds the {MAX_ANALYZABLE_COMMAND_BYTES}-byte analysis limit — too large to check reliably, failing closed",
+  +             cmd.len()
+  +         ));
+  +     }
+  ... (104 more lines)
+ ✓ (1m 40s)
+  + /// Commands longer than this always fail closed, regardless of content.
+  + ///
+  + /// Pattern matching over huge payloads is unreliable: a destructive operation
+  + /// can hide anywhere inside a 10k+ character blob (encoded scripts, giant
+  + /// heredocs, generated one-liners), and the per-pattern checks below were
+  + /// never designed to reason about that much surface. Legitimate interactive
+  + /// commands are never this long, so the false-positive cost is near zero.
+  + /// The threshold compares byte length (`.len()`) — a conservative proxy for
+  ... (13 more lines)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 && cargo t… ✓ (40.6s)
+  2 tools completed in 2m 29s (2 ✓)
+
+Safety tests pass and clippy is clean. Now the full suite to catch any regression elsewhere (other modules feed commands through analyze_bash_command too):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -2 && cargo test 2>&1 | tail -6 ✓ (1m 2s)
+  ▶ $ cargo test 2>&1 | grep "test result"  ✓ (50.8s)
+  2 tools completed in 2m 1s (2 ✓)
+
+All 4,440 tests pass. Let me update the module doc comment and check the safety docs page:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (2 → 5 lines)
+    //! - Symlink attacks on system files (`ln -sf /dev/null /etc/passwd`)
+    //! - Archive extraction to system paths (`tar -xf ... -C /etc/`)
+  + //! - Oversized commands (>10k bytes fail closed — too large to analyze reliably)
+  + //! - Fd-redirect smuggling (`exec N<>file`, writes into `/dev/fd/N`,
+  + //!   odd `N>&M` dups combined with command substitution)
+  ▶ $ grep -n -i "pattern\|dangerous\|destructive" docs/src/troubleshooting/safety.md … ✓ (1m 42s)
+    //! - Symlink attacks on system files (`ln -sf /dev/null /etc/passwd`)
+    //! - Archive extraction to system paths (`tar -xf ... -C /etc/`)
+  + //! - Oversized commands (>10k bytes fail closed — too large to analyze reliably)
+  + //! - Fd-redirect smuggling (`exec N<>file`, writes into `/dev/fd/N`,
+  + //!   odd `N>&M` dups combined with command substitution)
+ ✓ (1m 42s)
+  2 tools completed in 1m 42s (2 ✓)
+
+  watch: no files changed this turn — skipping
+

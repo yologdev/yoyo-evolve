@@ -1,0 +1,90 @@
+  yoyo (piped mode) — model: claude-fable-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git stat…  ▶ search 'record_green_validation_to|green_event_exists_for|GreenGrade' in src ✓ (9ms)
+ ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "green\|Green" src/comma… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "green\|Green" src/comma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GreenGrade\|record_gree… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "GreenGrade\|record_gre… ✓ (12ms)
+  ▶ read src/commands_risk_snapshots.rs:180..460 ✓ (2ms)
+  7 tools completed in 18.6s (7 ✓)
+
+The implementation exists; the missing pieces are the tests and the CLAUDE.md fix. Let me verify both.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "24 historical lines" CL… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '681,760p' src/commands_r… ✓ (5ms)
+  2 tools completed in 8.7s (2 ✓)
+
+The implementation is present but the three required unit tests and the CLAUDE.md fix are missing. Let me look at the accuracy readers first so the third test is accurate.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '/fn parse_validation_eve… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '30,140p' src/commands_ri… ✓ (4ms)
+  2 tools completed in 12.7s (2 ✓)
+
+The readers count green events like any other. Now let me check how existing tests create temp dirs so I mirror the pattern:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n '1290,1330p' src/commands… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_risk_accuracy\… ✓ (5ms)
+  ▶ edit src/commands_risk_snapshots.rs (5 → 141 lines)
+            let events = parse_validation_events(&contents);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].emerging_accuracy_pct, Some(75.0));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_record_green_validation_writes_one_graded_event() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  +         let path = dir.path().join("validations.jsonl");
+  + 
+  +         let changed = vec![
+  +             "src/main.rs".to_string(),
+  +             "src/cli.rs".to_string(),
+  +             "README.md".to_string(), // non-src: filtered out of grading
+  +         ];
+  +         let top_10 = vec!["src/main.rs".to_string(), "src/prompt.rs".to_string()];
+  +         let emerging = vec!["src/cli.rs".to_string()];
+  + 
+  +         let grade = record_green_validation_to(&path, 140, "abc1234", &changed, &top_10, &emerging)
+  +             .expect("record green validation");
+  ... (121 more lines)
+ ✓ (1m 41s)
+            let events = parse_validation_events(&contents);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].emerging_accuracy_pct, Some(75.0));
+  +     }
+  + 
+  +     #[test]
+  +     fn test_record_green_validation_writes_one_graded_event() {
+  +         let dir = tempfile::tempdir().expect("create temp dir");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "total_changed\|hit_coun… ✓ (4ms)
+  4 tools completed in 2m 24s (4 ✓)
+
+hit_count = hits array len (1), total_changed = hits+surprises (2) — test expectations match. Now fix CLAUDE.md:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit CLAUDE.md (1 → 1 lines)
+  - `ValidationEvent` now also carries an optional `emerging_accuracy_pct` (absent → `None` on read, backward-compatible with the 24 historical lines), and `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (shared `pub(crate) accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half. The CLI validate path (`handle_risk_validate` in `commands_risk.rs`, behind `yoyo risk validate` — the crank that actually turns every session) grades both columns too via the same `accuracy_of` helper (Day 139): legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average);
+  + `ValidationEvent` now also carries an optional `emerging_accuracy_pct` (absent → `None` on read; all optional fields are parsed defensively so severity-less / emerging-less lines stay valid), and `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (shared `pub(crate) accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half. The CLI validate path (`handle_risk_validate` in `commands_risk.rs`, behind `yoyo risk validate` — the crank that actually turns every session) grades both columns too via the same `accuracy_of` helper (Day 139): legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average). Day 140: `yoyo risk validate` also grades GREEN outcomes — when commits exist since the last snapshot but nothing broke, `record_green_validation_to` writes a `severity:"watch_success"` event (`trigger:"cli"`; same green marker the watch path uses, so readers see one vocabulary) grading both `top_10` and `emerging` against the files that were touched — under a green outcome a predicted-risky file that changed without breaking is false-positive evidence, the meter's other half. Each snapshot is green-graded at most once: the event carries `snapshot_git_hash` and `green_event_exists_for` skips repeats (`GreenGrade::Deduped`, silent); no-src-change sessions write nothing (`GreenGrade::NoSrcChanges` — a 0/0 event would drag the average); a recorded green event prints one honest stderr line. Green events count toward `compute_accuracy_stats` like any other graded event;
+ ✓ (1m 20s)
+  - `ValidationEvent` now also carries an optional `emerging_accuracy_pct` (absent → `None` on read, backward-compatible with the 24 historical lines), and `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (shared `pub(crate) accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half. The CLI validate path (`handle_risk_validate` in `commands_risk.rs`, behind `yoyo risk validate` — the crank that actually turns every session) grades both columns too via the same `accuracy_of` helper (Day 139): legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average);
+  + `ValidationEvent` now also carries an optional `emerging_accuracy_pct` (absent → `None` on read; all optional fields are parsed defensively so severity-less / emerging-less lines stay valid), and `auto_validate_after_failure` grades BOTH the reactive `top_10` AND the anticipatory `emerging` list against the same outcome (shared `pub(crate) accuracy_of` helper) — closing the loop the Day 138 "persist emerging predictions" task opened, so the allostatic-vs-homeostatic comparison is now recorded (and surfaced as a one-line stderr comparison), not just the reactive half. The CLI validate path (`handle_risk_validate` in `commands_risk.rs`, behind `yoyo risk validate` — the crank that actually turns every session) grades both columns too via the same `accuracy_of` helper (Day 139): legacy snapshots without an `emerging` key gracefully yield `None` (ungraded, doesn't drag the average). Day 140: `yoyo risk validate` also grades GREEN outcomes — when commits exist since the last snapshot but nothing broke, `record_green_validation_to` writes a `severity:"watch_success"` event (`trigger:"cli"`; same green marker the watch path uses, so readers see one vocabulary) grading both `top_10` and `emerging` against the files that were touched — under a green outcome a predicted-risky file that changed without breaking is false-positive evidence, the meter's other half. Each snapshot is green-graded at most once: the event carries `snapshot_git_hash` and `green_event_exists_for` skips repeats (`GreenGrade::Deduped`, silent); no-src-change sessions write nothing (`GreenGrade::NoSrcChanges` — a 0/0 event would drag the average); a recorded green event prints one honest stderr line. Green events count toward `compute_accuracy_stats` like any other graded event;
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "24 historical" src/ CL… ✓ (7ms)
+  ▶ edit src/commands_risk_accuracy.rs (1 → 1 lines)
+  -     // skipping them keeps the 24 historical lines from dragging the average.
+  +     // skipping them keeps legacy emerging-less lines from dragging the average.
+  ▶ edit src/commands_risk_accuracy.rs (1 → 1 lines)
+  -         // All-None history (the 24 historical lines) → no emerging stats.
+  +         // All-None history (legacy emerging-less lines) → no emerging stats.
+  ▶ edit src/commands_risk_snapshots.rs (1 → 1 lines)
+  -             "absent emerging_accuracy_pct → None (24 historical lines stay valid)"
+  +             "absent emerging_accuracy_pct → None (legacy emerging-less lines stay valid)"
+ ✓ (1m 39s)
+  -     // skipping them keeps the 24 historical lines from dragging the average.
+  +     // skipping them keeps legacy emerging-less lines from dragging the average.
+ ✓ (2m 57s)
+  -         // All-None history (the 24 historical lines) → no emerging stats.
+  +         // All-None history (legacy emerging-less lines) → no emerging stats.
+ ✓ (4m 17s)
+  -             "absent emerging_accuracy_pct → None (24 historical lines stay valid)"
+  +             "absent emerging_accuracy_pct → None (legacy emerging-less lines stay valid)"
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-…
